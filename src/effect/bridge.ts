@@ -77,6 +77,11 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
 const EFFECT_RUNTIME = Symbol('effectRuntime')
 
 /**
+ * Symbol for storing Effect bridge config in Hono context.
+ */
+const EFFECT_BRIDGE_CONFIG = Symbol('effectBridgeConfig')
+
+/**
  * Symbol for storing schema in Hono context.
  */
 const EFFECT_SCHEMA = Symbol('effectSchema')
@@ -149,6 +154,7 @@ declare module 'hono' {
       | ResponseFactoryService,
       never
     >
+    [EFFECT_BRIDGE_CONFIG]?: EffectBridgeConfig<any, any>
     [EFFECT_SCHEMA]?: Record<string, unknown>
   }
 }
@@ -443,6 +449,28 @@ export function getEffectRuntime<E extends Env>(
 }
 
 /**
+ * Store the Effect bridge config on Hono context for downstream handlers.
+ */
+export function setEffectBridgeConfig<E extends Env, CustomServices = never>(
+  c: HonoContext<E>,
+  config?: EffectBridgeConfig<E, CustomServices>
+): void {
+  if (!config) return
+  // Hono's context typing does not preserve symbol-keyed variables through c.set/c.var.
+  c.set(EFFECT_BRIDGE_CONFIG as any, config as EffectBridgeConfig<any, any>)
+}
+
+/**
+ * Get the Effect bridge config from Hono context.
+ */
+export function getEffectBridgeConfig<E extends Env>(
+  c: HonoContext<E>
+): EffectBridgeConfig<any, any> | undefined {
+  // Read through `any` for the same symbol-keyed context limitation as setEffectBridgeConfig.
+  return (c as any).var?.[EFFECT_BRIDGE_CONFIG]
+}
+
+/**
  * Middleware that sets up the Effect runtime for each request.
  */
 export function effectBridge<E extends Env, CustomServices = never>(
@@ -452,6 +480,7 @@ export function effectBridge<E extends Env, CustomServices = never>(
     const testLayer =
       (c as any).var?.__testLayer ?? (c.env as Record<string, unknown> | undefined)?.__testLayer
     const hasTestLayer = Layer.isLayer(testLayer)
+    setEffectBridgeConfig(c, config)
     let layer = buildContextLayer(c, config)
     if (hasTestLayer) {
       layer = Layer.merge(layer, testLayer as Layer.Layer<any, never, never>)

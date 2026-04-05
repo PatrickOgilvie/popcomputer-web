@@ -1705,6 +1705,135 @@ registerErrorHandlers(app, {
 })
 ```
 
+### External Error Reporting
+
+Honertia can report request-time Effect failures to one optional observer service. You define that observer once in `setupHonertia({ effect: { services } })`, and the same observer receives:
+
+- framework-reported unhandled request failures and defects
+- user-reported handled/recovered failures via `reportEffectError(...)`
+
+This is the main integration point for PostHog, Sentry, or any other external reporting system. The observer is best-effort: if it is not installed, nothing happens; if it fails, request behavior does not change.
+
+```typescript
+import { Effect, Layer } from 'effect'
+import { setupHonertia } from 'honertia'
+import {
+  EffectErrorObserverService,
+  type EffectErrorEvent,
+} from 'honertia/effect'
+
+function makeErrorObserver(apiKey?: string) {
+  return Layer.succeed(EffectErrorObserverService, {
+    observe: (event: EffectErrorEvent) => {
+      if (!apiKey) return Effect.void
+
+      return Effect.tryPromise({
+        try: () =>
+          fetch('https://eu.i.posthog.com/capture/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              api_key: apiKey,
+              event:
+                event.source === 'framework'
+                  ? 'honertia_unhandled_error'
+                  : 'honertia_handled_error',
+              properties: {
+                handling: event.handling,
+                kind: event.kind,
+                message:
+                  event.error instanceof Error
+                    ? event.error.message
+                    : String(event.error),
+                honertiaCode: event.structured?.code ?? null,
+                httpStatus: event.structured?.httpStatus ?? null,
+                metadata: event.metadata ?? null,
+              },
+            }),
+          }),
+        catch: () => undefined,
+      }).pipe(Effect.asVoid, Effect.catchAll(() => Effect.void))
+    },
+  })
+}
+
+app.use('*', setupHonertia<Env>({
+  honertia: {
+    version,
+    render,
+    database: (c) => createDb(c.env.DB),
+    auth: (c) => createAuth({
+      db: c.var.db,
+      secret: c.env.BETTER_AUTH_SECRET,
+      baseURL: new URL(c.req.url).origin,
+    }),
+    schema,
+  },
+  effect: {
+    services: (c) => makeErrorObserver(c.env.POSTHOG_API_KEY),
+  },
+}))
+```
+
+Replace the `fetch(...)` block with `Sentry.captureException(...)` or any other telemetry client if you prefer. The important part is that the reporting sink is configured once, at app setup, instead of inside every action.
+
+The observer receives events with this shape:
+
+```typescript
+type EffectErrorEvent = {
+  source: 'framework' | 'user'
+  handling: 'unhandled' | 'handled'
+  kind: 'failure' | 'defect'
+  error: unknown
+  structured?: HonertiaStructuredError
+  metadata?: Record<string, unknown>
+}
+```
+
+Framework-emitted events use `source: 'framework'` and `handling: 'unhandled'`. User-emitted events use `source: 'user'` and `handling: 'handled'`.
+
+### Reporting Recovered Errors from Userland
+
+Unhandled request failures are reported automatically by Honertia. Use `reportEffectError(...)` only when you intentionally recover from an error and still want it forwarded to the same observer.
+
+```typescript
+import { Effect } from 'effect'
+import { action, render, reportEffectError } from 'honertia/effect'
+
+export const showHome = action(
+  Effect.gen(function* () {
+    const hasPendingNotifications = yield* Effect.tryPromise({
+      try: () => hasPendingNotificationsForUser(),
+      catch: (error) => error,
+    }).pipe(
+      Effect.tapError((error) =>
+        reportEffectError(error, {
+          // the metadata object can be anything you want to forward onto your
+          // reporting service - use it to add any extra context that would be helpful
+          metadata: {
+            area: 'home',
+            operation: 'hasPendingNotificationsForUser',
+            fallbackStrategy: 'assume_no_pending_notifications',
+            userImpact: 'notifications_badge_hidden',
+          },
+        })
+      ),
+      Effect.catchAll(() => Effect.succeed(false))
+    )
+
+    return yield* render('Home', { hasPendingNotifications })
+  })
+)
+```
+
+For the common case, the minimal form is enough:
+
+```typescript
+Effect.tapError((error) => reportEffectError(error))
+```
+
+`reportEffectError(error)` always expands to a handled user failure event. `metadata` is optional and only needed when extra context helps with debugging or analytics.
+
 ### Error Page Component
 
 ```tsx

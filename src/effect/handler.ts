@@ -6,7 +6,11 @@
 
 import { Effect, Exit, Cause, ManagedRuntime } from 'effect'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
-import { getEffectRuntime, buildContextLayer } from './bridge.js'
+import {
+  getEffectBridgeConfig,
+  getEffectRuntime,
+  buildContextLayer,
+} from './bridge.js'
 import {
   ValidationError,
   UnauthorizedError,
@@ -25,6 +29,10 @@ import {
   TerminalErrorFormatter,
 } from './error-formatter.js'
 import type { HonertiaStructuredError } from './error-types.js'
+import {
+  observeEffectErrorEvent,
+  type EffectErrorEvent,
+} from './error-observer.js'
 
 /**
  * Memoized formatter instances to avoid recreation on every error.
@@ -122,6 +130,20 @@ function isDevelopment<E extends Env>(c: HonoContext<E>): boolean {
 }
 
 /**
+ * Observe an Effect error without changing request behavior.
+ */
+async function observeEffectError<E extends Env>(
+  c: HonoContext<E>,
+  event: EffectErrorEvent,
+  runtime?: ManagedRuntime.ManagedRuntime<any, never>
+): Promise<void> {
+  const activeRuntime = runtime ?? getEffectRuntime(c)
+  if (!activeRuntime) return
+
+  await activeRuntime.runPromise(observeEffectErrorEvent(event))
+}
+
+/**
  * Convert an Effect error to an HTTP response.
  *
  * Most errors are re-thrown so Hono's onError handler can render them
@@ -131,7 +153,8 @@ function isDevelopment<E extends Env>(c: HonoContext<E>): boolean {
  */
 export async function errorToResponse<E extends Env>(
   error: AppError,
-  c: HonoContext<E>
+  c: HonoContext<E>,
+  runtime?: ManagedRuntime.ManagedRuntime<any, never>
 ): Promise<Response> {
   const context = captureErrorContext(c)
   const isDev = isDevelopment(c)
@@ -142,6 +165,18 @@ export async function errorToResponse<E extends Env>(
 
   // Convert to structured error
   const structured = toStructuredError(error, context)
+
+  await observeEffectError(
+    c,
+    {
+      source: 'framework',
+      handling: 'unhandled',
+      kind: 'failure',
+      error,
+      structured,
+    },
+    runtime
+  )
 
   // Log in development
   logStructuredError(structured, isDev)
@@ -236,19 +271,19 @@ export function effectHandler<E extends Env, R, Err extends AppError>(
 
     if (!runtime) {
       // No runtime set up, create one for this request
-      const layer = buildContextLayer(c)
+      const layer = buildContextLayer(c, getEffectBridgeConfig(c))
       const tempRuntime = ManagedRuntime.make(layer)
 
       try {
         const exit = await tempRuntime.runPromiseExit(effect as Effect.Effect<Response | Redirect, AppError, any>)
-        return await handleExit(exit, c)
+        return await handleExit(exit, c, tempRuntime)
       } finally {
         await tempRuntime.dispose()
       }
     }
 
     const exit = await runtime.runPromiseExit(effect as Effect.Effect<Response | Redirect, AppError, any>)
-    return await handleExit(exit, c)
+    return await handleExit(exit, c, runtime)
   }
 }
 
@@ -259,8 +294,9 @@ export function effectHandler<E extends Env, R, Err extends AppError>(
  * Defects (unexpected errors) are re-thrown for Hono's onError handler.
  */
 async function handleExit<E extends Env>(
-  exit: Exit.Exit<Response | Redirect, AppError>,
-  c: HonoContext<E>
+  exit: Exit.Exit<Response | Redirect, unknown>,
+  c: HonoContext<E>,
+  runtime?: ManagedRuntime.ManagedRuntime<any, never>
 ): Promise<Response> {
   if (Exit.isSuccess(exit)) {
     const value = exit.value
@@ -276,7 +312,7 @@ async function handleExit<E extends Env>(
   if (Cause.isFailure(cause)) {
     const error = Cause.failureOption(cause)
     if (error._tag === 'Some') {
-      return await errorToResponse(error.value, c)
+      return await errorToResponse(error.value as AppError, c, runtime)
     }
   }
 
@@ -289,9 +325,22 @@ async function handleExit<E extends Env>(
       const err = defect.value
 
       // If the defect is already a structured error (like HonertiaConfigurationError),
-      // convert it using its own toStructured method
+      // convert it using its own toStructured method.
+      // This branch always throws after observing, so the generic defect path below
+      // only runs for defects that do not implement toStructured.
       if (err && typeof err === 'object' && 'toStructured' in err && typeof (err as any).toStructured === 'function') {
         const structured = (err as any).toStructured(context)
+        await observeEffectError(
+          c,
+          {
+            source: 'framework',
+            handling: 'unhandled',
+            kind: 'defect',
+            error: err,
+            structured,
+          },
+          runtime
+        )
         const wrapped = new Error((err as any).message ?? String(err))
         ;(wrapped as any).__honertiaStructured = structured
         ;(wrapped as any).hint = (err as any).hint
@@ -303,6 +352,18 @@ async function handleExit<E extends Env>(
         ErrorCodes.INT_801_EFFECT_DEFECT,
         { reason: err instanceof Error ? err.message : String(err) },
         context
+      )
+
+      await observeEffectError(
+        c,
+        {
+          source: 'framework',
+          handling: 'unhandled',
+          kind: 'defect',
+          error: err,
+          structured,
+        },
+        runtime
       )
 
       if (err instanceof Error) {
@@ -321,6 +382,17 @@ async function handleExit<E extends Env>(
     ErrorCodes.INT_800_UNEXPECTED,
     { reason: 'Unknown effect failure' },
     context
+  )
+  await observeEffectError(
+    c,
+    {
+      source: 'framework',
+      handling: 'unhandled',
+      kind: 'defect',
+      error: new Error('Unknown effect failure'),
+      structured,
+    },
+    runtime
   )
   const fallbackError = new Error('Unknown effect failure')
   ;(fallbackError as any).__honertiaStructured = structured

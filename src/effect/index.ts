@@ -77,6 +77,13 @@ export type {
   FixGenerator,
 } from './error-types.js'
 
+// Error Observer
+export {
+  EffectErrorObserverService,
+  reportEffectError,
+  type EffectErrorEvent,
+} from './error-observer.js'
+
 // Error Catalog
 export {
   ErrorCodes,

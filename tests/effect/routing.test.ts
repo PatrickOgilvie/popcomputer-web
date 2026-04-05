@@ -7,7 +7,7 @@ import { Hono } from 'hono'
 import { Effect, Layer, Context, Schema as S } from 'effect'
 import { effectRoutes, EffectRouteBuilder } from '../../src/effect/routing.js'
 import { honertia } from '../../src/middleware.js'
-import { effectBridge } from '../../src/effect/bridge.js'
+import { effectBridge, type EffectBridgeConfig } from '../../src/effect/bridge.js'
 import {
   DatabaseService,
   HonertiaService,
@@ -15,10 +15,14 @@ import {
   type AuthUser,
 } from '../../src/effect/services.js'
 import { Redirect, UnauthorizedError } from '../../src/effect/errors.js'
+import {
+  EffectErrorObserverService,
+  type EffectErrorEvent,
+} from '../../src/effect/error-observer.js'
 import { uuid } from '../../src/effect/schema.js'
 
 // Helper to create test app
-const createApp = () => {
+const createApp = (bridgeConfig?: EffectBridgeConfig<any, any>) => {
   const app = new Hono()
 
   app.use(
@@ -34,7 +38,26 @@ const createApp = () => {
     await next()
   })
 
-  app.use('*', effectBridge())
+  app.use('*', effectBridge(bridgeConfig))
+
+  return app
+}
+
+const createAppWithoutBridge = () => {
+  const app = new Hono()
+
+  app.use(
+    '*',
+    honertia({
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+    })
+  )
+
+  app.use('*', async (c, next) => {
+    c.set('db' as any, { name: 'test-db' })
+    await next()
+  })
 
   return app
 }
@@ -66,6 +89,74 @@ describe('effectRoutes', () => {
     const builder = effectRoutes(app)
 
     expect(builder).toBeInstanceOf(EffectRouteBuilder)
+  })
+})
+
+describe('Effect Route Error Observation', () => {
+  test('observes validation failures exactly once', async () => {
+    const events: EffectErrorEvent[] = []
+    const app = createApp({
+      services: () =>
+        Layer.succeed(EffectErrorObserverService, {
+          observe: (event) =>
+            Effect.sync(() => {
+              events.push(event)
+            }),
+        }),
+    })
+
+    effectRoutes(app).post(
+      '/users',
+      Effect.succeed(new Response('Created')),
+      {
+        body: S.Struct({ name: S.String }),
+      }
+    )
+
+    const res = await app.request('/users', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({}),
+    })
+
+    expect(res.status).toBe(422)
+    expect(events).toHaveLength(1)
+    expect(events[0]?.source).toBe('framework')
+    expect(events[0]?.handling).toBe('unhandled')
+    expect(events[0]?.kind).toBe('failure')
+    expect((events[0]?.error as { _tag?: string })._tag).toBe('ValidationError')
+  })
+
+  test('observes failures in the temp runtime path when no runtime is pre-installed', async () => {
+    const events: EffectErrorEvent[] = []
+    const app = createAppWithoutBridge()
+
+    effectRoutes(app, {
+      services: () =>
+        Layer.succeed(EffectErrorObserverService, {
+          observe: (event) =>
+            Effect.sync(() => {
+              events.push(event)
+            }),
+        }),
+    }).get(
+      '/temp-runtime',
+      Effect.fail(new UnauthorizedError({ message: 'Login required' }))
+    )
+
+    const res = await app.request('/temp-runtime', {
+      headers: { Accept: 'application/json' },
+    })
+
+    expect(res.status).toBe(401)
+    expect(events).toHaveLength(1)
+    expect(events[0]?.source).toBe('framework')
+    expect(events[0]?.handling).toBe('unhandled')
+    expect(events[0]?.kind).toBe('failure')
+    expect(events[0]?.structured.httpStatus).toBe(401)
   })
 })
 

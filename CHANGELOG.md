@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.44] - 2026-04-05
+
+### Added
+
+- **`EffectErrorObserverService` — optional error reporting sink**: Register a single observer in `setupHonertia({ effect: { services } })` and receive every request-time Effect failure or defect, whether handled or not. This is the main integration point for PostHog, Sentry, and similar telemetry systems.
+
+  ```typescript
+  import { EffectErrorObserverService, type EffectErrorEvent } from 'honertia/effect'
+
+  app.use('*', setupHonertia<Env>({
+    effect: {
+      services: (c) =>
+        Layer.succeed(EffectErrorObserverService, {
+          observe: (event: EffectErrorEvent) =>
+            Effect.tryPromise({ try: () => reportToSentry(event), catch: () => undefined })
+              .pipe(Effect.asVoid, Effect.catchAll(() => Effect.void)),
+        }),
+    },
+  }))
+  ```
+
+- **`reportEffectError(error, options?)`**: Report intentionally recovered errors to the same observer. Use this with `Effect.tapError` when you catch an error and fall back gracefully but still want it tracked. The observer always receives it as a `source: 'user'`, `handling: 'handled'` event. `metadata` is optional.
+
+  ```typescript
+  yield* Effect.tryPromise({ ... }).pipe(
+    Effect.tapError((error) => reportEffectError(error, { metadata: { area: 'home' } })),
+    Effect.catchAll(() => Effect.succeed(false))
+  )
+  ```
+
+- **Error observer events for defects and the temp-runtime path**: The observer now fires for all unhandled failure paths — typed failures, structured defects, generic defects, and the fallback unknown failure path. It also fires correctly when `effectHandler` or `EffectRouteBuilder` creates its own temporary runtime (i.e. when no `effectBridge` middleware is present), by propagating `EffectBridgeConfig` through Hono context.
+
+### Fixed
+
+- **`ValidationError` propagation from `EffectRouteBuilder` schema validation**: Body and query validation now runs through a proper `Exit`-aware wrapper (`runValidation`) instead of bare `Effect.runPromise`. Previously, a `ValidationError` thrown during schema validation could surface as an untyped exception rather than being handled by the structured error path.
+
 ## [0.1.43] - 2026-02-18
 
 ### Changed

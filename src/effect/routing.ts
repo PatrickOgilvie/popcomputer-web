@@ -4,7 +4,7 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Effect, Exit, Layer, Option, Schema as S } from 'effect'
+import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import type { Context as HonoContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { effectHandler, errorToResponse } from './handler.js'
 import {
@@ -12,6 +12,7 @@ import {
   getEffectRuntime,
   getEffectSchema,
   isUnconfiguredService,
+  setEffectBridgeConfig,
   type EffectBridgeConfig,
 } from './bridge.js'
 import {
@@ -153,6 +154,22 @@ async function hydrateRequestDb<E extends Env>(c: HonoContext<E>): Promise<void>
   if (Option.isSome(maybeDb) && !isUnconfiguredService(maybeDb.value)) {
     c.set('db' as any, maybeDb.value)
   }
+}
+
+async function runValidation<A>(
+  effect: Effect.Effect<A, ValidationError, never>
+): Promise<A> {
+  const exit = await Effect.runPromiseExit(effect)
+  if (Exit.isSuccess(exit)) {
+    return exit.value
+  }
+
+  const error = Cause.failureOption(exit.cause)
+  if (Option.isSome(error)) {
+    throw error.value
+  }
+
+  throw Cause.squash(exit.cause)
 }
 
 /**
@@ -375,6 +392,8 @@ export class EffectRouteBuilder<
     const bridgeConfig = this.bridgeConfig
 
     return async (c) => {
+      setEffectBridgeConfig(c, bridgeConfig)
+
       // Get schema from bridgeConfig or from context (set by setupHonertia/effectBridge)
       const schema = bridgeConfig?.schema ?? getEffectSchema(c)
 
@@ -400,7 +419,7 @@ export class EffectRouteBuilder<
       try {
         if (shouldValidateBody && !BODYLESS_METHODS.has(c.req.method.toUpperCase())) {
           const body = await parseRequestBody(c)
-          validatedBody = await Effect.runPromise(
+          validatedBody = await runValidation(
             validateUnknown(bodySchema as S.Schema.AnyNoContext, body)
           )
           hasValidatedBody = true
@@ -408,7 +427,7 @@ export class EffectRouteBuilder<
 
         if (querySchema) {
           const query = c.req.query()
-          validatedQuery = await Effect.runPromise(
+          validatedQuery = await runValidation(
             validateUnknown(querySchema as S.Schema.AnyNoContext, query)
           )
           hasValidatedQuery = true

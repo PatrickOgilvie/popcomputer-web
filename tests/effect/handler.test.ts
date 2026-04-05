@@ -4,9 +4,9 @@
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { Effect } from 'effect'
+import { Effect, Layer } from 'effect'
 import { effectHandler, effect, handle, errorToResponse } from '../../src/effect/handler.js'
-import { effectBridge } from '../../src/effect/bridge.js'
+import { effectBridge, type EffectBridgeConfig } from '../../src/effect/bridge.js'
 import { honertia } from '../../src/middleware.js'
 import {
   ValidationError,
@@ -17,9 +17,15 @@ import {
   Redirect,
 } from '../../src/effect/errors.js'
 import { HonertiaService, DatabaseService } from '../../src/effect/services.js'
+import {
+  EffectErrorObserverService,
+  reportEffectError,
+  type EffectErrorEvent,
+} from '../../src/effect/error-observer.js'
+import { createErrorHandlers } from '../../src/setup.js'
 
 // Helper to create test app with all middleware
-const createApp = () => {
+const createApp = (bridgeConfig?: EffectBridgeConfig<any, any>) => {
   const app = new Hono()
 
   app.use(
@@ -35,7 +41,26 @@ const createApp = () => {
     await next()
   })
 
-  app.use('*', effectBridge())
+  app.use('*', effectBridge(bridgeConfig))
+
+  return app
+}
+
+const createObservedApp = (
+  observe: (event: EffectErrorEvent) => Effect.Effect<void, never>,
+  options?: { registerErrorHandlers?: boolean }
+) => {
+  const app = createApp({
+    services: () =>
+      Layer.succeed(EffectErrorObserverService, {
+        observe,
+      }),
+  })
+
+  if (options?.registerErrorHandlers) {
+    const { onError } = createErrorHandlers()
+    app.onError(onError)
+  }
 
   return app
 }
@@ -427,6 +452,234 @@ describe('errorToResponse', () => {
     // New structured format includes code and validation details
     expect(json.code).toBe('HON_VAL_004_SCHEMA_MISMATCH')
     expect(json.validation.fields.field.message).toBe('Error')
+  })
+
+  test('works without a runtime or observer installed', async () => {
+    const app = new Hono()
+
+    app.get('/test', async (c) => {
+      return await errorToResponse(
+        new ValidationError({ errors: { field: 'Error' } }),
+        c
+      )
+    })
+
+    const res = await app.request('/test', {
+      headers: { Accept: 'application/json' },
+    })
+
+    expect(res.status).toBe(422)
+    const json = await res.json()
+    expect(json.code).toBe('HON_VAL_004_SCHEMA_MISMATCH')
+    expect(json.validation.fields.field.message).toBe('Error')
+  })
+})
+
+describe('EffectErrorObserverService', () => {
+  test('calls observer exactly once for typed failures', async () => {
+    const events: EffectErrorEvent[] = []
+    const app = createObservedApp((event) =>
+      Effect.sync(() => {
+        events.push(event)
+      })
+    )
+
+    app.get(
+      '/',
+      effectHandler(
+        Effect.fail(new ForbiddenError({ message: 'Access denied' }))
+      )
+    )
+
+    const res = await app.request('/', {
+      headers: { Accept: 'application/json' },
+    })
+
+    expect(res.status).toBe(403)
+    expect(events).toHaveLength(1)
+    expect(events[0]?.source).toBe('framework')
+    expect(events[0]?.handling).toBe('unhandled')
+    expect(events[0]?.kind).toBe('failure')
+    expect((events[0]?.error as { _tag?: string })._tag).toBe('ForbiddenError')
+    expect(events[0]?.structured.httpStatus).toBe(403)
+  })
+
+  test('swallows observer failures and preserves the original response', async () => {
+    const app = createObservedApp(() =>
+      Effect.sync(() => {
+        throw new Error('observer failed')
+      })
+    )
+
+    app.get(
+      '/',
+      effectHandler(
+        Effect.fail(
+          new HttpError({
+            status: 429,
+            message: 'Rate limited',
+          })
+        )
+      )
+    )
+
+    const res = await app.request('/', {
+      headers: { Accept: 'application/json' },
+    })
+
+    expect(res.status).toBe(429)
+    const json = await res.json()
+    expect(json.message).toBe('Rate limited')
+  })
+
+  test('calls observer exactly once for defects', async () => {
+    const events: EffectErrorEvent[] = []
+    const app = createObservedApp(
+      (event) =>
+        Effect.sync(() => {
+          events.push(event)
+        }),
+      { registerErrorHandlers: true }
+    )
+
+    app.get(
+      '/',
+      effectHandler(
+        Effect.sync((): Response => {
+          throw new Error('boom')
+        })
+      )
+    )
+
+    const res = await app.request('/', {
+      headers: { Accept: 'application/json' },
+    })
+
+    expect(res.status).toBe(500)
+    expect(events).toHaveLength(1)
+    expect(events[0]?.source).toBe('framework')
+    expect(events[0]?.handling).toBe('unhandled')
+    expect(events[0]?.kind).toBe('defect')
+    expect((events[0]?.error as Error).message).toBe('boom')
+    expect(events[0]?.structured.code).toBe('HON_INT_801_EFFECT_DEFECT')
+  })
+})
+
+describe('reportEffectError', () => {
+  test('defaults to handled user failures', async () => {
+    const events: EffectErrorEvent[] = []
+    const app = createObservedApp((event) =>
+      Effect.sync(() => {
+        events.push(event)
+      })
+    )
+
+    app.get(
+      '/',
+      effectHandler(
+        Effect.gen(function* () {
+          const fallback = yield* Effect.try({
+            try: () => {
+              throw new Error('handled failure')
+            },
+            catch: (error) => error,
+          }).pipe(
+            Effect.tapError((error) =>
+              reportEffectError(error)
+            ),
+            Effect.catchAll(() => Effect.succeed('fallback'))
+          )
+
+          return new Response(fallback)
+        })
+      )
+    )
+
+    const res = await app.request('/')
+
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('fallback')
+    expect(events).toHaveLength(1)
+    expect(events[0]?.source).toBe('user')
+    expect(events[0]?.handling).toBe('handled')
+    expect(events[0]?.kind).toBe('failure')
+    expect(events[0]?.structured).toBeUndefined()
+    expect(events[0]?.metadata).toBeUndefined()
+  })
+
+  test('accepts optional metadata', async () => {
+    const events: EffectErrorEvent[] = []
+    const app = createObservedApp((event) =>
+      Effect.sync(() => {
+        events.push(event)
+      })
+    )
+
+    app.get(
+      '/',
+      effectHandler(
+        Effect.gen(function* () {
+          const fallback = yield* Effect.try({
+            try: () => {
+              throw new Error('handled failure')
+            },
+            catch: (error) => error,
+          }).pipe(
+            Effect.tapError((error) =>
+              reportEffectError(error, {
+                metadata: {
+                  area: 'test',
+                  fallback: 'used',
+                },
+              })
+            ),
+            Effect.catchAll(() => Effect.succeed('fallback'))
+          )
+
+          return new Response(fallback)
+        })
+      )
+    )
+
+    const res = await app.request('/')
+
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('fallback')
+    expect(events).toHaveLength(1)
+    expect(events[0]?.metadata).toEqual({
+      area: 'test',
+      fallback: 'used',
+    })
+  })
+
+  test('is safe when no observer is installed', async () => {
+    const app = createApp()
+
+    app.get(
+      '/',
+      effectHandler(
+        Effect.gen(function* () {
+          const fallback = yield* Effect.try({
+            try: () => {
+              throw new Error('handled without observer')
+            },
+            catch: (error) => error,
+          }).pipe(
+            Effect.tapError((error) =>
+              reportEffectError(error)
+            ),
+            Effect.catchAll(() => Effect.succeed('fallback'))
+          )
+
+          return new Response(fallback)
+        })
+      )
+    )
+
+    const res = await app.request('/')
+
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('fallback')
   })
 })
 
