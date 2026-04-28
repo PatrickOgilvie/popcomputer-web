@@ -27,6 +27,18 @@ export interface TemplateOptions {
 }
 
 /**
+ * Serialize an Inertia page object for embedding in a
+ * `<script type="application/json">` initial page payload.
+ *
+ * Escaping `/` prevents a `</script>` sequence inside JSON data from closing
+ * the script element early. This mirrors the approach used by @hono/inertia
+ * and Inertia's script-element initial page transport.
+ */
+export function serializePage(page: PageObject): string {
+  return JSON.stringify(page).replace(/\//g, '\\/')
+}
+
+/**
  * Creates a template renderer function.
  * 
  * Can accept either static options or a function that receives context
@@ -83,11 +95,7 @@ export function createTemplate(
       .map(href => `<link rel="stylesheet" href="${escapeHtml(href)}">`)
       .join('\n    ')
 
-    const pageJson = JSON.stringify(page)
-      .replace(/</g, '\\u003c')
-      .replace(/>/g, '\\u003e')
-      .replace(/&/g, '\\u0026')
-      .replace(/'/g, '\\u0027')
+    const pageJson = serializePage(page)
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -99,7 +107,8 @@ export function createTemplate(
     ${head}
   </head>
   <body>
-    <div id="${escapeHtml(rootId)}" data-page='${pageJson}'></div>
+    <script data-page="${escapeHtml(rootId)}" type="application/json">${pageJson}</script>
+    <div id="${escapeHtml(rootId)}"></div>
     ${scriptTags}
   </body>
 </html>`

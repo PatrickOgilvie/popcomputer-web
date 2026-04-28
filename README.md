@@ -508,6 +508,15 @@ registerErrorHandlers(app)
 export default app
 ```
 
+`createTemplate()` emits Inertia's script-element initial page payload:
+
+```html
+<script data-page="app" type="application/json">...</script>
+<div id="app"></div>
+```
+
+If you provide a custom template renderer, use `serializePage(page)` from `honertia` for the JSON script body so `</script>` sequences inside props cannot close the element early.
+
 ### 6. src/routes.ts (REQUIRED)
 
 Route definitions.

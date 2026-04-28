@@ -7,6 +7,7 @@
 
 import { Hono } from 'hono'
 import { honertia, HEADERS } from './middleware.js'
+import { serializePage } from './helpers.js'
 import type { PageObject, HonertiaConfig } from './types.js'
 
 // =============================================================================
@@ -42,7 +43,7 @@ export function createTestApp(options: TestAppOptions = {}) {
   const {
     version = '1.0.0',
     render = (page: PageObject) =>
-      `<!DOCTYPE html><html><body><div id="app" data-page='${JSON.stringify(page)}'></div></body></html>`,
+      `<!DOCTYPE html><html><body><script data-page="app" type="application/json">${serializePage(page)}</script><div id="app"></div></body></html>`,
   } = options
 
   const app = new Hono()
@@ -142,12 +143,14 @@ export async function parseInertiaResponse(res: Response): Promise<PageObject> {
  */
 export async function parseHtmlResponse(res: Response): Promise<PageObject | null> {
   const html = await res.text()
-  const match = html.match(/data-page='([^']+)'/)
-  
-  if (match) {
-    return JSON.parse(match[1]) as PageObject
+  const scriptMatch = html.match(
+    /<script\s+data-page="[^"]+"\s+type="application\/json">([\s\S]*?)<\/script>/
+  )
+
+  if (scriptMatch) {
+    return JSON.parse(scriptMatch[1]) as PageObject
   }
-  
+
   return null
 }
 

@@ -5,6 +5,7 @@
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { honertia, HEADERS } from '../src/middleware.js'
+import { serializePage } from '../src/helpers.js'
 import type { PageObject } from '../src/types.js'
 import {
   createTestApp,
@@ -27,7 +28,7 @@ const createApp = (version = '1.0.0') => {
     honertia({
       version,
       render: (page: PageObject) =>
-        `<!DOCTYPE html><html><body><div id="app" data-page='${JSON.stringify(page)}'></div></body></html>`,
+        `<!DOCTYPE html><html><body><script data-page="app" type="application/json">${serializePage(page)}</script><div id="app"></div></body></html>`,
     })
   )
 
@@ -47,7 +48,8 @@ describe('Honertia Middleware', () => {
 
       const html = await res.text()
       expect(html).toContain('<!DOCTYPE html>')
-      expect(html).toContain('data-page')
+      expect(html).toContain('<script data-page="app" type="application/json">')
+      expect(html).toContain('<div id="app"></div>')
       expect(html).toContain('"component":"Home"')
     })
 

@@ -5,7 +5,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { createTemplate, createVersion } from '../src/helpers.js'
+import { createTemplate, createVersion, serializePage } from '../src/helpers.js'
 import type { PageObject } from '../src/types.js'
 
 describe('createTemplate', () => {
@@ -114,7 +114,7 @@ describe('createTemplate', () => {
       expect(html).toContain('id="inertia-root"')
     })
 
-    test('includes data-page attribute with serialized page object', () => {
+    test('includes script element with serialized page object', () => {
       const template = createTemplate({})
       const page: PageObject = {
         component: 'Dashboard',
@@ -125,9 +125,10 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      expect(html).toContain("data-page='")
+      expect(html).toContain('<script data-page="app" type="application/json">')
+      expect(html).toContain('<div id="app"></div>')
       expect(html).toContain('"component":"Dashboard"')
-      expect(html).toContain('"url":"/dashboard"')
+      expect(html).toContain('"url":"\\/dashboard"')
       expect(html).toContain('"version":"2.0.0"')
     })
   })
@@ -184,7 +185,7 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      expect(html).not.toContain('<script')
+      expect(html).not.toContain('<script type="module"')
     })
 
     test('handles empty styles array', () => {
@@ -243,7 +244,7 @@ describe('createTemplate', () => {
   })
 
   describe('XSS Prevention', () => {
-    test('escapes HTML entities in page props to prevent XSS', () => {
+    test('neutralizes closing script tags in page props', () => {
       const template = createTemplate({})
       const page: PageObject = {
         component: 'Home',
@@ -256,13 +257,13 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      // The script should be escaped in the JSON
-      expect(html).not.toContain('<script>alert("xss")</script>')
-      expect(html).toContain('\\u003c')
-      expect(html).toContain('\\u003e')
+      expect(html).not.toContain('</script><script>alert("xss")')
+      expect(html).toContain('<\\/script>')
+      expect(html.match(/<script data-page="app" type="application\/json">/g)).toHaveLength(1)
+      expect(html.match(/<\/script>/g)).toHaveLength(1)
     })
 
-    test('escapes ampersands in props', () => {
+    test('does not need HTML entity escaping inside JSON script payload', () => {
       const template = createTemplate({})
       const page: PageObject = {
         component: 'Home',
@@ -275,11 +276,11 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      // Ampersands in JSON should be escaped
-      expect(html).toContain('\\u0026')
+      expect(html).toContain('foo&bar&baz')
+      expect(html).not.toContain('\\u0026')
     })
 
-    test('escapes single quotes in props', () => {
+    test('allows single quotes in props without attribute escaping', () => {
       const template = createTemplate({})
       const page: PageObject = {
         component: 'Home',
@@ -292,8 +293,8 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      // Single quotes should be escaped to prevent breaking out of data-page attribute
-      expect(html).toContain('\\u0027')
+      expect(html).toContain("it's working")
+      expect(html).not.toContain('\\u0027')
     })
 
     test('escapes title to prevent XSS', () => {
@@ -362,10 +363,8 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      // Should be escaped properly
-      expect(html).toContain('\\u0027') // escaped single quote
-      expect(html).toContain('\\u003c') // escaped <
-      expect(html).toContain('\\u0026') // escaped &
+      expect(html).toContain("O'Brien")
+      expect(html).toContain('Loves <coding> & testing')
     })
 
     test('handles unicode characters', () => {
@@ -556,7 +555,8 @@ describe('Template Integration', () => {
     expect(html).toContain('<!DOCTYPE html>')
     expect(html).toContain('<title>My Dashboard</title>')
     expect(html).toContain('id="root"')
-    expect(html).toContain('data-page=')
+    expect(html).toContain('<script data-page="root" type="application/json">')
+    expect(html).toContain('<div id="root"></div>')
 
     // Check assets
     expect(html).toContain('src="/assets/main.js"')
@@ -566,6 +566,34 @@ describe('Template Integration', () => {
 
     // Check page data
     expect(html).toContain('"component":"Dashboard"')
-    expect(html).toContain('"url":"/dashboard"')
+    expect(html).toContain('"url":"\\/dashboard"')
+  })
+})
+
+describe('serializePage', () => {
+  test('serializes page data as JSON parseable script text', () => {
+    const page: PageObject = {
+      component: 'Home',
+      props: { message: 'Hello' },
+      url: '/',
+      version: '1.0.0',
+    }
+
+    expect(JSON.parse(serializePage(page))).toEqual(page)
+  })
+
+  test('escapes forward slashes to prevent closing script injection', () => {
+    const page: PageObject = {
+      component: 'Home',
+      props: { userInput: '</script><script>alert("xss")</script>' },
+      url: '/',
+      version: '1.0.0',
+    }
+
+    const serialized = serializePage(page)
+
+    expect(serialized).toContain('<\\/script>')
+    expect(serialized).not.toContain('</script>')
+    expect(JSON.parse(serialized)).toEqual(page)
   })
 })

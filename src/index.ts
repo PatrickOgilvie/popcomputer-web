@@ -35,6 +35,7 @@ export type {
 export {
   createTemplate,
   createVersion,
+  serializePage,
   vite,
   type PageProps,
 } from './helpers.js'
