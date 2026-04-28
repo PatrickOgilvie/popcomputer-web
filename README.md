@@ -2,6 +2,130 @@
 
 Inertia.js adapter for Hono with Effect.ts. Server-driven app with SPA behavior.
 
+## Why Honertia
+
+Honertia brings the Laravel/Inertia productivity loop to Hono and Cloudflare Workers, with Effect powering the backend control flow instead of ad-hoc promises and unchecked exceptions.
+
+- **Server-driven SPA pages on Hono**: Render Inertia-style pages from Hono routes while keeping React/Vite on the client and Worker-friendly request handling on the server.
+- **Effect-native route handlers**: Write actions as typed Effect programs with explicit services, structured failures, redirects, validation errors, and testable dependency layers.
+- **One setup path for real apps**: `setupHonertia()` wires the Inertia middleware, database, auth, shared page props, user loading, and per-request Effect runtime in the right order.
+- **Laravel-style route model binding**: Use paths like `/projects/{project}` or `/users/{user}/posts/{post}` and access resolved models with `yield* bound('project')`, backed by your Drizzle schema.
+- **Safe mutation boundaries**: `validateRequest`, `asValidated`, `asTrusted`, `dbMutation`, and `dbTransaction` make writes explicit and keep unvalidated request data out of database mutations.
+- **Auth built in, not bolted on**: Better Auth helpers cover authenticated routes, guest-only routes, form actions, typed `authorize()`, session loading, and shared auth props.
+- **Effect-aware cache wrapper**: Cache expensive reads with schema-checked serialization, TTLs, stale-while-revalidate, and Worker `waitUntil` background refreshes.
+- **Agent-friendly CLI**: Generate actions, CRUD routes, features, OpenAPI specs, route listings, project checks, and migration previews from a single `honertia` binary.
+- **Production observability hooks**: Structured errors and `EffectErrorObserverService` provide a single integration point for Sentry, PostHog, or any Effect-aware reporting pipeline.
+
+Demo Worker: [PatrickOgilvie/honertia-worker-demo](https://github.com/PatrickOgilvie/honertia-worker-demo)
+
+One-click demo deploy:
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/PatrickOgilvie/honertia-worker-demo)
+
+## Laravel-Style Helpers
+
+Honertia keeps common app code small and expressive. The helpers are Effect-native, but the shape should feel familiar if you like Laravel controllers, form requests, redirects, cache wrappers, and route model binding.
+
+```typescript
+import { effectRoutes } from 'honertia/effect'
+import { indexProjects, showProject, updateProject } from './actions/projects'
+
+effectRoutes(app)
+  .get('/projects', indexProjects, { name: 'projects.index' })
+  .get('/projects/{project}', showProject, { name: 'projects.show' })
+  .put('/projects/{project}', updateProject, { name: 'projects.update' })
+```
+
+```typescript
+import { Effect, Schema as S, Duration } from 'effect'
+import { action, authorize, bound, DatabaseService, render } from 'honertia/effect'
+import { cache } from 'honertia/cache'
+import { eq } from 'drizzle-orm'
+import { projectViews } from '~/db/schema'
+
+const ProjectStats = S.Struct({
+  views: S.Number,
+  lastViewedAt: S.NullOr(S.Date),
+})
+
+export const showProject = action(
+  Effect.gen(function* () {
+    const project = yield* bound('project')
+    yield* authorize((auth) => auth.user.id === project.userId)
+    const db = yield* DatabaseService
+
+    const stats = yield* cache(
+      `projects:${project.id}:stats`,
+      Effect.tryPromise(async () => {
+        const views = await db.query.projectViews.findMany({
+          where: eq(projectViews.projectId, project.id),
+          orderBy: (view, { desc }) => [desc(view.createdAt)],
+        })
+
+        return {
+          views: views.length,
+          lastViewedAt: views[0]?.createdAt ?? null,
+        }
+      }),
+      ProjectStats,
+      { ttl: Duration.minutes(5), swr: Duration.minutes(1), version: true }
+    )
+
+    return yield* render('Projects/Show', { project, stats })
+  })
+)
+```
+
+```typescript
+import { Effect, Schema as S } from 'effect'
+import {
+  action,
+  authorize,
+  validateRequest,
+  DatabaseService,
+  dbMutation,
+  asTrusted,
+  redirect,
+  requiredString,
+} from 'honertia/effect'
+import { projects } from '~/db/schema'
+
+const CreateProject = S.Struct({
+  name: requiredString,
+  description: S.optional(S.String),
+})
+
+export const storeProject = action(
+  Effect.gen(function* () {
+    const auth = yield* authorize()
+    const input = yield* validateRequest(CreateProject, {
+      errorComponent: 'Projects/Create',
+    })
+    const db = yield* DatabaseService
+
+    yield* dbMutation(db, async (tx) => {
+      await tx.insert(projects).values(asTrusted({
+        name: input.name,
+        description: input.description ?? null,
+        userId: auth.user.id,
+      }))
+    })
+
+    return yield* redirect('/projects')
+  })
+)
+```
+
+```typescript
+import { render, redirect, notFound, forbidden, jsonOrRender } from 'honertia/effect'
+
+return yield* render('Dashboard', { stats })
+return yield* redirect('/login')
+return yield* notFound('Project', projectId)
+return yield* forbidden('You cannot edit this project')
+return yield* jsonOrRender('Projects/Index', { projects })
+```
+
 ## CLI Commands
 
 `honertia` is shipped as a package binary. You can run commands with:
