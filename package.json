@@ -7,7 +7,7 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "honertia": "./dist/cli/bin.js"
+    "honertia": "dist/cli/bin.js"
   },
   "exports": {
     ".": {
@@ -64,7 +64,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/patrickogilvie/honertia"
+    "url": "git+https://github.com/patrickogilvie/honertia.git"
   },
   "dependencies": {
     "effect": "^3.12.0"
