@@ -10,7 +10,7 @@ Honertia brings the Laravel/Inertia productivity loop to Hono and Cloudflare Wor
 - **Effect-native route handlers**: Write actions as typed Effect programs with explicit services, structured failures, redirects, validation errors, and testable dependency layers.
 - **One setup path for real apps**: `setupHonertia()` wires the Inertia middleware, database, auth, shared page props, user loading, and per-request Effect runtime in the right order.
 - **Laravel-style route model binding**: Use paths like `/projects/{project}` or `/users/{user}/posts/{post}` and access resolved models with `yield* bound('project')`, backed by your Drizzle schema.
-- **Safe mutation boundaries**: `validateRequest`, `asValidated`, `asTrusted`, `dbMutation`, and `dbTransaction` make writes explicit and keep unvalidated request data out of database mutations.
+- **Safe mutation boundaries**: `validateRequest`, scoped `dbMutation`, and `dbTransaction` make writes explicit and keep unvalidated request data out of database mutations.
 - **Auth built in, not bolted on**: Better Auth helpers cover authenticated routes, guest-only routes, form actions, typed `authorize()`, session loading, and shared auth props.
 - **Effect-aware cache wrapper**: Cache expensive reads with schema-checked serialization, TTLs, stale-while-revalidate, and Worker `waitUntil` background refreshes.
 - **Agent-friendly CLI**: Generate actions, CRUD routes, features, OpenAPI specs, route listings, project checks, and migration previews from a single `honertia` binary.
@@ -37,41 +37,51 @@ effectRoutes(app)
 ```
 
 ```typescript
-import { Effect, Schema as S, Duration } from 'effect'
-import { action, authorize, bound, DatabaseService, render } from 'honertia/effect'
-import { cache } from 'honertia/cache'
-import { eq } from 'drizzle-orm'
-import { projectViews } from '~/db/schema'
-
-const ProjectStats = S.Struct({
-  views: S.Number,
-  lastViewedAt: S.NullOr(S.Date),
-})
+import { Effect } from 'effect'
+import { action, authorize, bound, render } from 'honertia/effect'
 
 export const showProject = action(
   Effect.gen(function* () {
     const project = yield* bound('project')
     yield* authorize((auth) => auth.user.id === project.userId)
+
+    return yield* render('Projects/Show', { project })
+  })
+)
+```
+
+```typescript
+import { Effect, Schema as S, Duration } from 'effect'
+import { action, authorize, DatabaseService, render } from 'honertia/effect'
+import { cache } from 'honertia/cache'
+import { eq } from 'drizzle-orm'
+import { projects } from '~/db/schema'
+
+const ProjectSummary = S.Struct({
+  id: S.String,
+  name: S.String,
+  updatedAt: S.Date,
+})
+
+export const indexProjects = action(
+  Effect.gen(function* () {
+    const auth = yield* authorize()
     const db = yield* DatabaseService
 
-    const stats = yield* cache(
-      `projects:${project.id}:stats`,
-      Effect.tryPromise(async () => {
-        const views = await db.query.projectViews.findMany({
-          where: eq(projectViews.projectId, project.id),
-          orderBy: (view, { desc }) => [desc(view.createdAt)],
+    const userProjects = yield* cache(
+      `users:${auth.user.id}:projects`,
+      Effect.tryPromise(() =>
+        db.query.projects.findMany({
+          columns: { id: true, name: true, updatedAt: true },
+          where: eq(projects.userId, auth.user.id),
+          orderBy: (project, { desc }) => [desc(project.updatedAt)],
         })
-
-        return {
-          views: views.length,
-          lastViewedAt: views[0]?.createdAt ?? null,
-        }
-      }),
-      ProjectStats,
+      ),
+      S.Array(ProjectSummary),
       { ttl: Duration.minutes(5), swr: Duration.minutes(1), version: true }
     )
 
-    return yield* render('Projects/Show', { project, stats })
+    return yield* render('Projects/Index', { projects: userProjects })
   })
 )
 ```
@@ -81,37 +91,39 @@ import { Effect, Schema as S } from 'effect'
 import {
   action,
   authorize,
+  bound,
   validateRequest,
   DatabaseService,
   dbMutation,
-  asTrusted,
   redirect,
   requiredString,
 } from 'honertia/effect'
+import { eq } from 'drizzle-orm'
 import { projects } from '~/db/schema'
 
-const CreateProject = S.Struct({
+const UpdateProject = S.Struct({
   name: requiredString,
   description: S.optional(S.String),
 })
 
-export const storeProject = action(
+export const updateProject = action(
   Effect.gen(function* () {
-    const auth = yield* authorize()
-    const input = yield* validateRequest(CreateProject, {
-      errorComponent: 'Projects/Create',
+    const project = yield* bound('project')
+    yield* authorize((auth) => auth.user.id === project.userId)
+
+    const input = yield* validateRequest(UpdateProject, {
+      errorComponent: 'Projects/Edit',
     })
     const db = yield* DatabaseService
 
-    yield* dbMutation(db, async (tx) => {
-      await tx.insert(projects).values(asTrusted({
-        name: input.name,
-        description: input.description ?? null,
-        userId: auth.user.id,
-      }))
+    yield* dbMutation(db, input, async (tx, input) => {
+      await tx
+        .update(projects)
+        .set(input)
+        .where(eq(projects.id, project.id))
     })
 
-    return yield* redirect('/projects')
+    return yield* redirect(`/projects/${project.id}`)
   })
 )
 ```
