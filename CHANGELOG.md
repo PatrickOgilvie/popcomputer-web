@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.45] - 2026-04-28
+
+### Added
+
+- **`serializePage(page)` helper**: Added a public helper for safely embedding an Inertia page object inside a `<script type="application/json">` initial page payload. The serializer follows the approach used by `@hono/inertia`, escaping forward slashes so `</script>` sequences inside props cannot close the script element early.
+
+### Changed
+
+- **`createTemplate()` now uses Inertia's script-element bootstrap payload**: The default template now emits:
+
+  ```html
+  <script data-page="app" type="application/json">...</script>
+  <div id="app"></div>
+  ```
+
+  instead of storing the page object in a `data-page` attribute on the root div. This aligns Honertia with the newer Inertia script-element initial page transport and avoids HTML attribute encoding for large page props.
+
+### Fixed
+
+- **Test utilities now parse script-element page payloads**: `parseHtmlResponse()` and the default test app renderer now understand the new initial page payload format.
+
 ## [0.1.44] - 2026-04-05
 
 ### Added
