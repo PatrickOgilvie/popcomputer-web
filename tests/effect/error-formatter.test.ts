@@ -106,3 +106,24 @@ describe('detectOutputFormat dev heuristic', () => {
     )
   })
 })
+
+describe('createFormatter', () => {
+  test('json formatter scrubs sensitive messages in production', async () => {
+    const { createFormatter } = await import('../../src/effect/error-formatter.js')
+
+    const output = createFormatter('json', false).format(internalError())
+    const serialized = JSON.stringify(output)
+
+    expect(serialized).not.toContain('secret')
+    expect(serialized).toContain(SAFE_GENERIC)
+  })
+
+  test('json formatter keeps the real message in development', async () => {
+    const { createFormatter } = await import('../../src/effect/error-formatter.js')
+
+    const serialized = JSON.stringify(
+      createFormatter('json', true).format(internalError())
+    )
+    expect(serialized).toContain('secret')
+  })
+})

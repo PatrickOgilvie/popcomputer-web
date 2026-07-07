@@ -503,6 +503,9 @@ export function createFormatter(
         includeContext: isDev,
         includeFixes: true,
         includeDocs: true,
+        // Match the framework's own production handlers: sensitive-category
+        // messages must never reach clients through this public factory.
+        safeMessages: !isDev,
       })
 
     case 'terminal':

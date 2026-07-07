@@ -45,7 +45,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "dev": "tsc --watch",
     "test": "bun test",
     "test:watch": "bun test --watch",
