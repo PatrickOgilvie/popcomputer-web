@@ -340,6 +340,60 @@ describe('Honertia Middleware', () => {
       expect(json.props.users).toEqual([1, 2, 3])
       expect(json.props.projects).toEqual([4, 5, 6])
     })
+
+    test('does not evaluate lazy shared props excluded by a partial reload', async () => {
+      const app = createApp()
+      let cheapEvaluated = 0
+      let expensiveEvaluated = 0
+
+      app.get('/', (c) => {
+        c.var.honertia.share('cheap', () => {
+          cheapEvaluated++
+          return 'cheap-value'
+        })
+        c.var.honertia.share('expensive', () => {
+          expensiveEvaluated++
+          return 'expensive-value'
+        })
+        return c.var.honertia.render('Dashboard')
+      })
+
+      const res = await app.request('/', {
+        headers: {
+          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.PARTIAL_COMPONENT]: 'Dashboard',
+          [HEADERS.PARTIAL_DATA]: 'cheap',
+        },
+      })
+
+      const json = (await res.json()) as PageObject
+      expect(json.props.cheap).toBe('cheap-value')
+      expect(json.props.expensive).toBeUndefined()
+      // The excluded lazy prop must never run — that is the point of a partial reload.
+      expect(cheapEvaluated).toBe(1)
+      expect(expensiveEvaluated).toBe(0)
+    })
+
+    test('does not evaluate a lazy shared prop overridden by a passed prop', async () => {
+      const app = createApp()
+      let sharedEvaluated = 0
+
+      app.get('/', (c) => {
+        c.var.honertia.share('user', () => {
+          sharedEvaluated++
+          return { id: 'shared' }
+        })
+        return c.var.honertia.render('Dashboard', { user: { id: 'passed' } })
+      })
+
+      const res = await app.request('/', {
+        headers: { [HEADERS.HONERTIA]: 'true' },
+      })
+
+      const json = (await res.json()) as PageObject
+      expect(json.props.user).toEqual({ id: 'passed' })
+      expect(sharedEvaluated).toBe(0)
+    })
   })
 
   describe('Redirect Handling', () => {

@@ -252,18 +252,35 @@ describe('shareAuth', () => {
       Layer.succeed(HonertiaService, mockHonertia)
     )
 
-    await Effect.runPromise(Effect.provide(shareAuth, layer))
+    await Effect.runPromise(Effect.provide(shareAuth(), layer))
 
     expect(mockHonertia.shared.auth).toEqual({
       user: mockUser.user,
     })
   })
 
+  test('projects only whitelisted fields when configured', async () => {
+    const mockUser = createMockUser({ name: 'John Doe' })
+    const mockHonertia = createMockHonertia()
+
+    const layer = Layer.mergeAll(
+      Layer.succeed(AuthUserService, mockUser),
+      Layer.succeed(HonertiaService, mockHonertia)
+    )
+
+    await Effect.runPromise(
+      Effect.provide(shareAuth({ fields: ['id', 'name'] }), layer)
+    )
+
+    const shared = mockHonertia.shared.auth as { user: Record<string, unknown> }
+    expect(Object.keys(shared.user).sort()).toEqual(['id', 'name'])
+  })
+
   test('shares null when not authenticated', async () => {
     const mockHonertia = createMockHonertia()
     const layer = Layer.succeed(HonertiaService, mockHonertia)
 
-    await Effect.runPromise(Effect.provide(shareAuth, layer))
+    await Effect.runPromise(Effect.provide(shareAuth(), layer))
 
     expect(mockHonertia.shared.auth).toEqual({
       user: null,

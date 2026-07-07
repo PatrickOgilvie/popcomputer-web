@@ -8,8 +8,11 @@
 import { createMiddleware } from 'hono/factory'
 import type { MiddlewareHandler, Env, Context } from 'hono'
 import { honertia } from './middleware.js'
+import { verifyOrigin, type VerifyOriginConfig } from './security.js'
 import type { HonertiaConfig } from './types.js'
 import { loadUser, shareAuthMiddleware } from './effect/auth.js'
+import { openHonertiaContext } from './request-context.js'
+import type { DatabaseType, AuthType } from './effect/services.js'
 import { effectBridge, type EffectBridgeConfig } from './effect/bridge.js'
 import { getStructuredFromThrown } from './effect/handler.js'
 import { toStructuredError } from './effect/errors.js'
@@ -44,19 +47,19 @@ export interface HonertiaFullConfig<E extends Env = Env, DB = unknown, Auth = un
 
   /**
    * Auth factory function.
-   * Creates the auth client for each request.
-   * Receives context with `c.var.db` already set (if database is configured).
+   * Creates the auth client for each request. The database created by the
+   * `database` factory (if configured) is passed as the second argument.
    *
    * @example
    * ```typescript
-   * auth: (c) => createAuth({
-   *   db: c.var.db,
+   * auth: (c, { db }) => createAuth({
+   *   db,
    *   secret: c.env.BETTER_AUTH_SECRET,
    *   baseURL: new URL(c.req.url).origin,
    * })
    * ```
    */
-  auth?: (c: Context<E & { Variables: { db: DB } }>) => Auth
+  auth?: (c: Context<E>, services: { db?: DB }) => Auth
 
   /**
    * Drizzle schema for route model binding.
@@ -104,8 +107,21 @@ export interface HonertiaSetupConfig<
    * Controls how the authenticated user is loaded from the session.
    */
   auth?: {
-    userKey?: string
     sessionCookie?: string
+    /**
+     * Whitelist of user fields shared with the client as `auth.user`.
+     * Without this, the entire user record (email, admin flags, …) is
+     * serialized into every page payload. Ignored when `mapSharedUser` is set.
+     *
+     * @example shareFields: ['id', 'name', 'image']
+     */
+    shareFields?: string[]
+    /**
+     * Project the user before sharing with the client. Overrides `shareFields`.
+     *
+     * @example mapSharedUser: (u) => ({ id: u.id, name: u.name })
+     */
+    mapSharedUser?: (user: Record<string, unknown>) => unknown
   }
 
   /**
@@ -113,13 +129,26 @@ export interface HonertiaSetupConfig<
    * These run in order after effectBridge.
    */
   middleware?: MiddlewareHandler<E>[]
+
+  /**
+   * Optional security hardening.
+   */
+  security?: {
+    /**
+     * Enable CSRF defense-in-depth by verifying the `Origin`/`Referer` of
+     * state-changing requests. Opt-in — see {@link VerifyOriginConfig}.
+     * Runs before all other Honertia middleware so rejected requests
+     * short-circuit cheaply.
+     */
+    verifyOrigin?: VerifyOriginConfig
+  }
 }
 
 /**
  * Sets up all Honertia middleware in the correct order.
  *
  * This bundles:
- * - Database and auth setup (sets `c.var.db` and `c.var.auth`)
+ * - Database and auth setup in the typed Honertia request context
  * - `honertia()` - Core Honertia middleware
  * - `loadUser()` - Loads authenticated user into context
  * - `shareAuthMiddleware()` - Shares auth state with pages
@@ -135,8 +164,8 @@ export interface HonertiaSetupConfig<
  *     version: '1.0.0',
  *     render: createTemplate({ title: 'My App', scripts: [...] }),
  *     database: (c) => createDb(c.env.DATABASE_URL),
- *     auth: (c) => createAuth({
- *       db: c.var.db,
+ *     auth: (c, { db }) => createAuth({
+ *       db,
  *       secret: c.env.BETTER_AUTH_SECRET,
  *       baseURL: new URL(c.req.url).origin,
  *     }),
@@ -153,17 +182,21 @@ export function setupHonertia<
 >(config: HonertiaSetupConfig<E, DB, Auth, CustomServices>): MiddlewareHandler<E> {
   const { database, auth, schema, ...honertiaConfig } = config.honertia
 
-  // Middleware to set up db and auth on c.var
+  // Middleware to wire db and auth into the typed request context
   const setupServices: MiddlewareHandler<E> = createMiddleware<E>(async (c, next) => {
+    const requestCtx = openHonertiaContext(c)
+
     // Set up database first (auth may depend on it)
-    if (database) {
-      c.set('db' as any, database(c))
+    // SAFETY: DB/Auth generics are the app's declared client types; the
+    // HonertiaDatabaseType/HonertiaAuthType module augmentations make these
+    // the same types DatabaseService/AuthService hand back to handlers.
+    const db = database ? database(c) : undefined
+    if (db !== undefined) {
+      requestCtx.db = db as DatabaseType
     }
 
-    // Set up auth (can access c.var.db since database middleware ran first)
     if (auth) {
-      // Cast c to include db in Variables since we just set it above
-      c.set('auth' as any, auth(c as Context<E & { Variables: { db: DB } }>))
+      requestCtx.auth = auth(c, { db }) as AuthType
     }
 
     await next()
@@ -172,38 +205,47 @@ export function setupHonertia<
   // Build effect bridge config, passing schema from honertia config
   const effectConfig: EffectBridgeConfig<E, CustomServices> = {
     ...config.effect,
-    authUserKey: config.auth?.userKey ?? config.effect?.authUserKey,
     schema: schema ?? config.effect?.schema,
   }
 
   const middlewares: MiddlewareHandler<E>[] = [
+    // Origin verification runs first so cross-origin writes are rejected
+    // before any per-request setup work (db/auth client creation) happens.
+    ...(config.security?.verifyOrigin
+      ? [verifyOrigin<E>(config.security.verifyOrigin)]
+      : []),
     setupServices,
     honertia(honertiaConfig),
     loadUser<E>(config.auth),
-    shareAuthMiddleware<E>(config.auth),
+    shareAuthMiddleware<E>({
+      fields: config.auth?.shareFields,
+      mapUser: config.auth?.mapSharedUser,
+    }),
     effectBridge<E, CustomServices>(effectConfig),
     ...(config.middleware ?? []),
   ]
 
   return createMiddleware<E>(async (c, next) => {
-    const dispatch = async (i: number): Promise<Response | void> => {
+    // Mirrors Hono's compose contract: next() resolves to void, wrapper
+    // middleware observe downstream responses via c.res after awaiting it,
+    // and a middleware that returns a Response (without finalizing the
+    // context) has that response adopted — exactly like hono/compose.
+    const dispatch = async (i: number): Promise<void> => {
       if (i >= middlewares.length) {
         await next()
-        // Return response for proper propagation in forwarding/proxy scenarios
-        return c.res
+        return
       }
-      // Call middleware and capture result (following Hono's compose pattern)
       const res = await middlewares[i](c, async () => {
         await dispatch(i + 1)
       })
-      // If middleware returned a Response and context isn't finalized, set c.res
-      if (res && !c.finalized) {
+      if (res instanceof Response && !c.finalized) {
         c.res = res
       }
     }
+
     await dispatch(0)
 
-    // Return the response to ensure proper propagation in forwarding/proxy scenarios
+    // Return the response for proper propagation in forwarding/proxy scenarios
     return c.res
   })
 }
@@ -280,6 +322,7 @@ export function createErrorHandlers<E extends Env>(config: ErrorHandlerConfig = 
         includeSource: false,
         includeContext: false,
         includeFixes: true,
+        safeMessages: true,
       }),
       inertia: new InertiaErrorFormatter({ isDev: false, includeFixes: false }),
     },
@@ -314,8 +357,9 @@ export function createErrorHandlers<E extends Env>(config: ErrorHandlerConfig = 
     }
 
     // Render Inertia error component (if honertia middleware has run)
-    if (c.var.honertia?.render) {
-      return c.var.honertia.render(component, fmt.inertia.format(structured) as Record<string, unknown>)
+    const honertiaInstance = openHonertiaContext(c).honertia
+    if (honertiaInstance) {
+      return honertiaInstance.render(component, fmt.inertia.format(structured) as Record<string, unknown>)
     }
 
     // Fallback: return JSON if honertia isn't available
@@ -359,8 +403,9 @@ export function createErrorHandlers<E extends Env>(config: ErrorHandlerConfig = 
     }
 
     // Render Inertia error component (if honertia middleware has run)
-    if (c.var.honertia?.render) {
-      return c.var.honertia.render(component, fmt.inertia.format(structured) as Record<string, unknown>)
+    const honertiaInstance = openHonertiaContext(c).honertia
+    if (honertiaInstance) {
+      return honertiaInstance.render(component, fmt.inertia.format(structured) as Record<string, unknown>)
     }
 
     // Fallback: return JSON if honertia isn't available

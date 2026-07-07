@@ -409,7 +409,7 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
   static authNotConfigured(): HonertiaConfigurationError {
     return new HonertiaConfigurationError({
       message: 'AuthService is not configured. Add it to setupHonertia.',
-      hint: 'auth: (c) => betterAuth({ database: c.var.db })',
+      hint: 'auth: (c, { db }) => betterAuth({ database: db })',
       service: 'AuthService',
       code: ErrorCodes.CFG_301_AUTH_NOT_CONFIGURED,
     })

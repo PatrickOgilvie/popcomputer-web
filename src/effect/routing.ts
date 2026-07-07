@@ -5,26 +5,37 @@
  */
 
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
+import type { ParseOptions } from 'effect/SchemaAST'
 import type { Context as HonoContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { effectHandler, errorToResponse } from './handler.js'
 import {
   buildContextLayer,
-  getEffectRuntime,
   getEffectSchema,
-  isUnconfiguredService,
   setEffectBridgeConfig,
   type EffectBridgeConfig,
 } from './bridge.js'
 import {
   type AppError,
+  HonertiaConfigurationError,
   Redirect,
   ValidationError,
 } from './errors.js'
+import { openHonertiaContext } from '../request-context.js'
+import {
+  applyCachePolicy,
+  decideCachePolicy,
+  deriveCacheTags,
+  hasSessionCookie,
+  isPartialReloadRequest,
+  ResponseCacheService,
+  type RouteCacheOptions,
+} from './response-cache.js'
 import {
   DatabaseService,
   AuthService,
   HonertiaService,
   RequestService,
+  RequestStateService,
   ResponseFactoryService,
   BindingsService,
 } from './services.js'
@@ -61,6 +72,8 @@ export type EffectHandler<R = never, E extends AppError | Error = AppError | Err
  */
 export type BaseServices =
   | RequestService
+  | RequestStateService
+  | ResponseCacheService
   | ResponseFactoryService
   | HonertiaService
   | DatabaseService
@@ -126,9 +139,48 @@ export interface EffectRouteOptions {
    * Defaults to false.
    */
   validateResponse?: boolean
+  /**
+   * Effect Schema ParseOptions applied to body and query validation.
+   * Use `{ onExcessProperty: 'error' }` to reject request payloads that
+   * carry fields the schema does not declare (mass-assignment hardening).
+   */
+  parseOptions?: ParseOptions
+  /**
+   * Cache this route's responses via Cloudflare Workers Cache.
+   * Applied to successful GET/HEAD responses only; partial reloads are
+   * marked no-store and HTML/JSON page objects vary on X-Inertia.
+   * Requires `"cache": { "enabled": true }` in wrangler config.
+   */
+  cache?: RouteCacheOptions
+  /**
+   * After this route's effect succeeds (any Redirect, or a Response below
+   * 400), purge these Workers Cache tags. `true` derives the tags from the
+   * route's bindings with the same scheme used for Cache-Tag on reads, so
+   * PUT /projects/{project} purges `project:{id}` and `projects`.
+   */
+  purges?: true | readonly string[]
 }
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
+
+/**
+ * Whether the app is running in development. Used to gate developer warnings.
+ * Mirrors the explicit-signal policy used elsewhere (no CF_PAGES_BRANCH).
+ */
+function isDevEnv<E extends Env>(c: HonoContext<E>): boolean {
+  const env = c.env as Record<string, unknown> | undefined
+  return env?.ENVIRONMENT === 'development' || env?.NODE_ENV === 'development'
+}
+
+function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
+  const requestCtx = openHonertiaContext(c)
+  return (
+    requestCtx.authUser !== undefined ||
+    c.req.header('Authorization') !== undefined ||
+    hasSessionCookie(c.req.header('Cookie'), requestCtx.sessionCookies ?? [])
+  )
+}
+
 
 async function parseRequestBody<E extends Env>(
   c: HonoContext<E>
@@ -143,16 +195,6 @@ async function parseRequestBody<E extends Env>(
     return await c.req.parseBody()
   } catch (error) {
     throw createBodyParseValidationError(error, contentType)
-  }
-}
-
-async function hydrateRequestDb<E extends Env>(c: HonoContext<E>): Promise<void> {
-  const runtime = getEffectRuntime(c)
-  if (!runtime) return
-
-  const maybeDb = await runtime.runPromise(Effect.serviceOption(DatabaseService))
-  if (Option.isSome(maybeDb) && !isUnconfiguredService(maybeDb.value)) {
-    c.set('db' as any, maybeDb.value)
   }
 }
 
@@ -239,6 +281,38 @@ export class EffectRouteBuilder<
       this.registry,
       [...this.middlewares, ...handlers]
     )
+  }
+
+  /**
+   * Attach Hono middleware to the builder's whole prefix, including paths
+   * that match no route. Use this for cross-cutting response policy (error
+   * redaction, envelope shaping, security headers) that must also apply to
+   * 404s — per-route `.middleware()` never runs when no route matches.
+   *
+   * Registers immediately against the current prefix, so call it after
+   * `.prefix()`:
+   *
+   * @example
+   * ```typescript
+   * effectRoutes(app)
+   *   .prefix('/api')
+   *   .prefixMiddleware(redactErrorDetails)  // wraps /api hits AND misses
+   *   .group((route) => {
+   *     route.get('/status', showStatus)
+   *   })
+   * ```
+   */
+  prefixMiddleware(
+    ...handlers: MiddlewareHandler<E>[]
+  ): EffectRouteBuilder<E, ProvidedServices, CustomServices> {
+    if (this.pathPrefix) {
+      // Two patterns: '/api/*' does not match '/api' itself in Hono
+      this.app.use(this.pathPrefix, ...handlers)
+      this.app.use(`${this.pathPrefix}/*`, ...handlers)
+    } else {
+      this.app.use('/*', ...handlers)
+    }
+    return this
   }
 
   /**
@@ -344,7 +418,8 @@ export class EffectRouteBuilder<
 
       // If we have a parent, try to scope the query
       if (parent) {
-        const relation = findRelation(schema, tableName, parent.tableName)
+        const relation = await findRelation(schema, tableName, parent.tableName)
+        let scoped = false
         if (relation) {
           const foreignKeyColumn = table[relation.foreignKey]
           const parentReferenceValue = parent.model[relation.references]
@@ -360,7 +435,24 @@ export class EffectRouteBuilder<
                 parentReferenceValue
               ) as Parameters<typeof and>[1]
             )
+            scoped = true
           }
+        }
+
+        // The nested binding could not be scoped to its parent, so it resolves
+        // by primary key alone — a different parent's child can be loaded by
+        // guessing its id. Binding is resolution, not authorization, but this
+        // silent widening is an easy IDOR footgun. Warn in development so the
+        // handler author adds an explicit ownership check (or a relation).
+        if (!scoped && isDevEnv(c)) {
+          console.warn(
+            `[honertia] Route model binding '{${binding.param}}' is nested under ` +
+              `parent table '${parent.tableName}' but could not be scoped to it ` +
+              `(no usable relation found between '${tableName}' and '${parent.tableName}'). ` +
+              `The child is being resolved by '${binding.column}' alone and is NOT ` +
+              `restricted to the parent. Add an explicit authorization check in the ` +
+              `handler, or define a Drizzle relation so the binding can be scoped.`
+          )
         }
       }
 
@@ -390,6 +482,9 @@ export class EffectRouteBuilder<
   ): MiddlewareHandler<E> {
     const layers = this.layers
     const bridgeConfig = this.bridgeConfig
+    // Dev-only observability for an ineffective `cache` option:
+    // once per route (this handler closure), not once per request.
+    let warnedIneffectiveCache = false
 
     return async (c) => {
       setEffectBridgeConfig(c, bridgeConfig)
@@ -420,7 +515,9 @@ export class EffectRouteBuilder<
         if (shouldValidateBody && !BODYLESS_METHODS.has(c.req.method.toUpperCase())) {
           const body = await parseRequestBody(c)
           validatedBody = await runValidation(
-            validateUnknown(bodySchema as S.Schema.AnyNoContext, body)
+            validateUnknown(bodySchema as S.Schema.AnyNoContext, body, {
+              parseOptions: options?.parseOptions,
+            })
           )
           hasValidatedBody = true
         }
@@ -428,7 +525,9 @@ export class EffectRouteBuilder<
         if (querySchema) {
           const query = c.req.query()
           validatedQuery = await runValidation(
-            validateUnknown(querySchema as S.Schema.AnyNoContext, query)
+            validateUnknown(querySchema as S.Schema.AnyNoContext, query, {
+              parseOptions: options?.parseOptions,
+            })
           )
           hasValidatedQuery = true
         }
@@ -439,18 +538,20 @@ export class EffectRouteBuilder<
         throw error
       }
 
-      await hydrateRequestDb(c)
-
       // Build context layer from Hono context
       const contextLayer = buildContextLayer(c, bridgeConfig)
 
       // Resolve route model bindings if we have any and schema is configured
       let boundModelsLayer: Layer.Layer<BoundModels, never, never>
+      let boundModels: ReadonlyMap<string, unknown> = new Map()
 
       if (bindings.length > 0 && schema) {
-        const db = (c as { var?: { db?: unknown } }).var?.db
+        const db = openHonertiaContext(c).db
         if (!db) {
-          return c.notFound() as Response
+          // A binding cannot be resolved without a database; this is
+          // misconfiguration, not a missing row. Thrown to Hono's onError,
+          // which renders the structured configuration error.
+          throw HonertiaConfigurationError.databaseNotConfigured()
         }
 
         const result = await this.resolveBindings(c, bindings, db, schema)
@@ -458,7 +559,8 @@ export class EffectRouteBuilder<
           return result
         }
 
-        boundModelsLayer = Layer.succeed(BoundModels, result as ReadonlyMap<string, unknown>)
+        boundModels = result as ReadonlyMap<string, unknown>
+        boundModelsLayer = Layer.succeed(BoundModels, boundModels)
       } else if (bindings.length > 0 && !schema) {
         // Bindings exist but no schema - provide a map that signals this for better errors
         const unconfiguredMap = new Map<string, unknown>()
@@ -487,11 +589,66 @@ export class EffectRouteBuilder<
         fullLayer = Layer.provideMerge(layer, fullLayer)
       }
 
+      // After a successful mutation, purge the declared Workers Cache tags.
+      // Runs inside the effect so a failed purge surfaces in the typed error
+      // channel instead of leaving stale entries silently.
+      const purges = options?.purges
+      let handlerEffect: Effect.Effect<Response | Redirect, unknown, unknown> =
+        effect as Effect.Effect<Response | Redirect, unknown, unknown>
+      if (purges) {
+        handlerEffect = handlerEffect.pipe(
+          Effect.tap((result) => {
+            const succeeded =
+              result instanceof Redirect ||
+              (result instanceof Response && result.status < 400)
+            if (!succeeded) return Effect.void
+
+            const tags =
+              purges === true ? deriveCacheTags(bindings, boundModels) : purges
+            if (tags.length === 0) return Effect.void
+
+            return Effect.flatMap(ResponseCacheService, (cache) =>
+              cache.purge({ tags })
+            )
+          })
+        )
+      }
+
       // Run the effect with the combined layer
-      const program = effect.pipe(Effect.provide(fullLayer))
+      const program = handlerEffect.pipe(Effect.provide(fullLayer as Layer.Layer<any, never, never>))
 
       // Use the handler
-      return effectHandler<E, never, AppError>(program as any)(c, async () => {})
+      const response = await effectHandler<E, never, AppError>(program as any)(
+        c,
+        async () => {}
+      )
+
+      if (!options?.cache || !(response instanceof Response)) {
+        return response
+      }
+
+      const decision = decideCachePolicy({
+        method: c.req.method,
+        status: response.status,
+        isPartialReload: isPartialReloadRequest((name) => c.req.header(name)),
+        setsCookie: response.headers.has('Set-Cookie'),
+        hasPrivateRequestState: hasPrivateRequestState(c),
+        existingCacheControl: response.headers.get('Cache-Control'),
+        derivedTags: deriveCacheTags(bindings, boundModels),
+        options: options.cache,
+      })
+
+      if (
+        decision._tag === 'skip' &&
+        decision.warning &&
+        !warnedIneffectiveCache &&
+        isDevEnv(c)
+      ) {
+        warnedIneffectiveCache = true
+        console.warn(`[honertia] Route '${c.req.path}' ${decision.warning}`)
+      }
+
+      return applyCachePolicy(response, decision)
     }
   }
 

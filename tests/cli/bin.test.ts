@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs'
 describe('CLI binary packaging', () => {
   test('package.json exposes honertia executable', async () => {
     const packageJson = await import('../../package.json')
-    expect(packageJson.default?.bin?.honertia).toBe('./dist/cli/bin.js')
+    expect(packageJson.default?.bin?.honertia).toBe('dist/cli/bin.js')
   })
 
   test('CLI entrypoint source file exists', () => {

@@ -173,102 +173,120 @@ export function pluralize(word: string): string {
 
 /**
  * Information about a relation between tables.
+ *
+ * Both fields are JS property keys (e.g., 'workspaceId'), not SQL column
+ * names (e.g., 'workspace_id'), so they can index Drizzle table objects and
+ * query result rows directly.
  */
 export interface RelationInfo {
-  /** Foreign key column on the child table (e.g., 'userId') */
+  /** Foreign key property key on the child table (e.g., 'workspaceId') */
   foreignKey: string
-  /** Referenced column on the parent table (e.g., 'id') */
+  /** Referenced property key on the parent table (e.g., 'id') */
   references: string
 }
 
 /**
  * Find a relation from child table to parent table.
- * Uses Drizzle's relations metadata to discover foreign keys.
+ *
+ * Discovers the foreign key from the child table's inline `.references()`
+ * metadata first, then falls back to introspecting a `<child>Relations`
+ * definition created with Drizzle's `relations()`.
  *
  * @param schema - The Drizzle schema object
- * @param childTableName - Name of the child table (e.g., 'posts')
- * @param parentTableName - Name of the parent table (e.g., 'users')
- * @returns Relation info or null if no relation found
+ * @param childTableName - Schema key of the child table (e.g., 'posts')
+ * @param parentTableName - Schema key of the parent table (e.g., 'users')
+ * @returns Relation info (JS property keys) or null if no relation found
  */
-export function findRelation(
+export async function findRelation(
   schema: Record<string, unknown>,
   childTableName: string,
   parentTableName: string
-): RelationInfo | null {
-  // Look for relations definition (e.g., postsRelations)
-  const relationsKey = `${childTableName}Relations`
-  const relations = schema[relationsKey]
-
-  if (!relations || typeof relations !== 'object') {
+): Promise<RelationInfo | null> {
+  const childTable = schema[childTableName]
+  const parentTable = schema[parentTableName]
+  if (
+    !childTable ||
+    typeof childTable !== 'object' ||
+    !parentTable ||
+    typeof parentTable !== 'object'
+  ) {
     return null
   }
 
-  // Drizzle stores relations config - we need to inspect it
-  // The relations object has a config property with the relation definitions
-  const config = (relations as any).config
+  // Dynamic import to avoid requiring drizzle-orm for non-binding users
+  const { getTableColumns, createTableRelationsHelpers } = await import('drizzle-orm')
 
-  if (!config || typeof config !== 'function') {
+  // Map a Drizzle column object back to its JS property key on a table.
+  // Column objects carry only the SQL name; table objects and result rows are
+  // keyed by the JS property key, so we match by identity.
+  const jsKeyOf = (table: object, column: unknown): string | null => {
+    for (const [key, value] of Object.entries(getTableColumns(table as Table))) {
+      if (value === column) return key
+    }
     return null
   }
 
-  // Try to extract relation info by calling the config
-  // This is a bit hacky but necessary to introspect Drizzle relations
-  try {
-    const relationDefs = config({
-      one: (table: any, opts: any) => ({ type: 'one', table, ...opts }),
-      many: (table: any, opts: any) => ({ type: 'many', table, ...opts }),
-    })
+  const toRelationInfo = (
+    childColumn: unknown,
+    parentColumn: unknown
+  ): RelationInfo | null => {
+    const foreignKey = jsKeyOf(childTable, childColumn)
+    const references = jsKeyOf(parentTable, parentColumn)
+    return foreignKey && references ? { foreignKey, references } : null
+  }
 
-    for (const [_name, rel] of Object.entries(relationDefs)) {
-      const relation = rel as any
-      if (relation.type !== 'one') continue
-
-      // Check if this relation points to the parent table
-      const relatedTableName = getTableName(relation.table)
-      if (relatedTableName === parentTableName && relation.fields && relation.references) {
-        return {
-          foreignKey: getColumnName(relation.fields[0]),
-          references: getColumnName(relation.references[0]),
+  // 1. Inline foreign keys declared with .references() on the child table.
+  // Stored under a dialect-specific symbol (e.g., 'drizzle:SQLiteInlineForeignKeys').
+  const fkSymbol = Object.getOwnPropertySymbols(childTable).find((sym) =>
+    sym.description?.endsWith('InlineForeignKeys')
+  )
+  if (fkSymbol) {
+    const foreignKeys = (childTable as Record<symbol, unknown>)[fkSymbol]
+    if (Array.isArray(foreignKeys)) {
+      for (const fk of foreignKeys) {
+        if (typeof fk?.reference !== 'function') continue
+        const reference = fk.reference() as {
+          foreignTable: unknown
+          columns: unknown[]
+          foreignColumns: unknown[]
         }
+        if (reference.foreignTable !== parentTable) continue
+        const info = toRelationInfo(reference.columns[0], reference.foreignColumns[0])
+        if (info) return info
       }
     }
-  } catch {
-    // If introspection fails, fall back to convention
+  }
+
+  // 2. relations() definitions (e.g., postsRelations). Evaluate the config
+  // with Drizzle's real helpers so the returned One/Many instances are valid.
+  const relations = schema[`${childTableName}Relations`] as
+    | { table?: unknown; config?: (helpers: unknown) => Record<string, unknown> }
+    | undefined
+  if (relations?.table && typeof relations.config === 'function') {
+    try {
+      const helpers = createTableRelationsHelpers(relations.table as Table)
+      const relationDefs = relations.config(helpers)
+
+      for (const rel of Object.values(relationDefs)) {
+        const relation = rel as {
+          referencedTable?: unknown
+          config?: { fields?: unknown[]; references?: unknown[] }
+        }
+        if (relation.referencedTable !== parentTable) continue
+        // Only One relations carry fields/references; Many has no config.fields
+        const fields = relation.config?.fields
+        const references = relation.config?.references
+        if (!fields?.length || !references?.length) continue
+        const info = toRelationInfo(fields[0], references[0])
+        if (info) return info
+      }
+    } catch {
+      // Malformed relations definition - fall through to null; resolveBindings
+      // warns in development when a nested binding could not be scoped.
+    }
   }
 
   return null
-}
-
-/**
- * Get table name from a Drizzle table object.
- */
-function getTableName(table: unknown): string {
-  if (table && typeof table === 'object') {
-    // Drizzle tables have a Symbol for the table name
-    const symbols = Object.getOwnPropertySymbols(table)
-    for (const sym of symbols) {
-      if (sym.description === 'drizzle:Name') {
-        return (table as any)[sym] as string
-      }
-    }
-    // Fallback: check for _ property
-    if ('_' in table && typeof (table as any)._ === 'object') {
-      return (table as any)._.name
-    }
-  }
-  return ''
-}
-
-/**
- * Get column name from a Drizzle column object.
- */
-function getColumnName(column: unknown): string {
-  if (column && typeof column === 'object') {
-    if ('name' in column) {
-      return (column as any).name as string
-    }
-  }
-  return ''
 }
 
 /**

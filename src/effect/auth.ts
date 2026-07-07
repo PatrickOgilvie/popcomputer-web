@@ -9,10 +9,10 @@ import type { Hono, MiddlewareHandler, Env } from 'hono'
 import { AuthUserService, AuthService, DatabaseService, HonertiaService, RequestService, type AuthUser } from './services.js'
 import { UnauthorizedError, ValidationError } from './errors.js'
 import { effectRoutes, type EffectHandler } from './routing.js'
+import { openHonertiaContext } from '../request-context.js'
 import { render } from './responses.js'
 import { validateRequest } from './validation.js'
 
-const DEFAULT_AUTH_USER_KEY = 'authUser'
 
 /**
  * Layer that requires an authenticated user.
@@ -181,32 +181,86 @@ export const requireGuest = (
   )
 
 /**
- * Share auth state with Honertia.
+ * How the authenticated user is shaped before being shared with the client.
+ *
+ * By default the entire user record is shared as `auth.user`, which mirrors
+ * Inertia's convention but also serializes every column (email, role/admin
+ * flags, etc.) into the page payload. Use `fields` or `mapUser` to expose only
+ * what the client actually needs and keep PII / privileged flags server-side.
  */
-export const shareAuth: Effect.Effect<void, never, HonertiaService> =
-  Effect.gen(function* () {
+export interface ShareAuthUserConfig {
+  /**
+   * Whitelist of user fields to include in the shared `auth.user`.
+   * Ignored when `mapUser` is provided.
+   *
+   * @example { fields: ['id', 'name', 'image'] }
+   */
+  fields?: string[]
+  /**
+   * Full control over the shared user shape. Receives the raw user record and
+   * returns the value placed at `auth.user`. Overrides `fields`.
+   *
+   * @example { mapUser: (u) => ({ id: u.id, name: u.name }) }
+   */
+  mapUser?: (user: Record<string, unknown>) => unknown
+}
+
+/**
+ * Apply the field/map projection to a raw user record.
+ */
+function projectSharedUser(
+  user: Record<string, unknown> | null | undefined,
+  config: ShareAuthUserConfig
+): unknown {
+  if (!user) return null
+  if (config.mapUser) return config.mapUser(user)
+  if (config.fields) {
+    const picked: Record<string, unknown> = {}
+    for (const key of config.fields) {
+      if (key in user) picked[key] = user[key]
+    }
+    return picked
+  }
+  return user
+}
+
+/**
+ * Share auth state with Honertia.
+ *
+ * Pass a `fields` whitelist or `mapUser` projection to avoid serializing the
+ * full user record (email, admin flags, …) into every page payload.
+ */
+export function shareAuth(
+  config: ShareAuthUserConfig = {}
+): Effect.Effect<void, never, HonertiaService> {
+  return Effect.gen(function* () {
     const honertia = yield* HonertiaService
     const user = yield* currentUser
-    honertia.share('auth', { user: user?.user ?? null })
+    honertia.share('auth', {
+      user: projectSharedUser(user?.user as Record<string, unknown> | undefined, config),
+    })
   })
+}
 
 /**
  * Middleware version of shareAuth for use with app.use().
+ *
+ * @example
+ * // Share only safe fields instead of the whole user record
+ * app.use('*', shareAuthMiddleware({ fields: ['id', 'name', 'image'] }))
  */
 export function shareAuthMiddleware<E extends Env>(
-  config: { userKey?: string } = {}
+  config: ShareAuthUserConfig = {}
 ): MiddlewareHandler<E> {
-  const userKey = config.userKey ?? DEFAULT_AUTH_USER_KEY
-
   return async (c, next) => {
-    const honertia = (c as any).var?.honertia
-    const authUser =
-      (c as any).var?.[userKey] ??
-      (userKey !== DEFAULT_AUTH_USER_KEY
-        ? (c as any).var?.[DEFAULT_AUTH_USER_KEY]
-        : undefined)
+    const { honertia, authUser } = openHonertiaContext(c)
     if (honertia) {
-      honertia.share('auth', { user: authUser?.user ?? null })
+      honertia.share('auth', {
+        user: projectSharedUser(
+          authUser?.user as Record<string, unknown> | undefined,
+          config
+        ),
+      })
     }
     await next()
 
@@ -368,15 +422,12 @@ export function effectAuthRoutes<E extends Env>(
           })
         )
 
-        // Clear cookie and redirect
+        // Clear cookie(s) and redirect. Clear both the plain and the
+        // `__Secure-` prefixed variant so HTTPS sessions are also revoked.
         const sessionCookie = config.sessionCookie ?? 'better-auth.session_token'
-        return new Response(null, {
-          status: 303,
-          headers: {
-            'Location': logoutRedirect,
-            'Set-Cookie': `${sessionCookie}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax`,
-          },
-        })
+        const headers = new Headers({ Location: logoutRedirect })
+        appendLogoutCookies(headers, [sessionCookie])
+        return new Response(null, { status: 303, headers })
       })
     )
   }
@@ -425,8 +476,8 @@ export function effectAuthRoutes<E extends Env>(
   }
 
   app.all(`${apiPath}/*`, async (c) => {
-    const auth = (c as any).var?.auth
-    if (!auth) {
+    const auth = openHonertiaContext(c).auth as { handler?: (req: Request) => Response | Promise<Response> } | undefined
+    if (!auth?.handler) {
       return c.json({ error: 'Auth not configured' }, 500)
     }
     return auth.handler(c.req.raw)
@@ -439,14 +490,30 @@ export function effectAuthRoutes<E extends Env>(
  */
 export function loadUser<E extends Env>(
   config: {
-    userKey?: string
     sessionCookie?: string
   } = {}
 ): MiddlewareHandler<E> {
-  const { userKey = DEFAULT_AUTH_USER_KEY, sessionCookie } = config
+  const { sessionCookie } = config
 
   return async (c, next) => {
-    const auth = (c as any).var?.auth
+    const requestCtx = openHonertiaContext(c)
+
+    // Register the configured session cookie so the response-cache policy
+    // treats it as private request state — even when auth isn't configured,
+    // the cookie name is knowledge worth keeping.
+    if (sessionCookie) {
+      requestCtx.sessionCookies = [...(requestCtx.sessionCookies ?? []), sessionCookie]
+    }
+
+    const auth = requestCtx.auth as
+      | {
+          api: {
+            getSession: (input: {
+              headers: Headers
+            }) => Promise<{ user: unknown; session: unknown } | null>
+          }
+        }
+      | undefined
     if (!auth) {
       await next()
       // Return response for proper propagation in forwarding/proxy scenarios
@@ -467,10 +534,10 @@ export function loadUser<E extends Env>(
     try {
       const session = await auth.api.getSession({ headers: c.req.raw.headers })
       if (session) {
-        c.set(userKey as any, {
+        openHonertiaContext(c).authUser = {
           user: session.user,
           session: session.session,
-        })
+        } as AuthUser
       }
     } catch {
       // Session fetch failed, continue without user

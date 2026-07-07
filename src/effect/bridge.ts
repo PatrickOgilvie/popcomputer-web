@@ -5,28 +5,32 @@
  */
 
 import { Effect, Layer, ManagedRuntime, Option } from 'effect'
-import { HonertiaConfigurationError } from './errors.js'
-import { ErrorCodes, type ErrorCode } from './error-catalog.js'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
+import { openHonertiaContext } from '../request-context.js'
+import {
+  ResponseCacheService,
+  createWorkersResponseCacheClient,
+  createUnavailableResponseCacheClient,
+  resolveWorkersCachePurgeApi,
+} from './response-cache.js'
 import {
   DatabaseService,
   AuthService,
   AuthUserService,
   HonertiaService,
   RequestService,
+  RequestStateService,
   ResponseFactoryService,
   BindingsService,
   CacheService,
   CacheClientError,
   ExecutionContextService,
-  type AuthUser,
   type RequestContext,
+  type RequestStateClient,
   type ResponseFactory,
   type HonertiaRenderer,
   type CacheClient,
   type ExecutionContextClient,
-  type DatabaseType,
-  type AuthType,
   type BindingsType,
 } from './services.js'
 import { TestCaptureService } from './test-layers.js'
@@ -59,11 +63,6 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
    */
   services?: (c: HonoContext<E>) => Layer.Layer<CustomServices, never, never>
   /**
-   * Context variable key where loadUser middleware stores the authenticated user.
-   * Defaults to `authUser`.
-   */
-  authUserKey?: string
-  /**
    * Drizzle schema for route model binding.
    * Usually configured via `setupHonertia({ honertia: { schema } })`.
    * Can also be passed here for standalone effectBridge usage.
@@ -71,93 +70,12 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
   schema?: Record<string, unknown>
 }
 
-/**
- * Symbol for storing Effect runtime in Hono context.
- */
-const EFFECT_RUNTIME = Symbol('effectRuntime')
-
-/**
- * Symbol for storing Effect bridge config in Hono context.
- */
-const EFFECT_BRIDGE_CONFIG = Symbol('effectBridgeConfig')
-
-/**
- * Symbol for storing schema in Hono context.
- */
-const EFFECT_SCHEMA = Symbol('effectSchema')
-
-/**
- * Creates a proxy that throws a helpful error when any property is accessed.
- * Used when a service (database, auth) is not configured but the user tries to use it.
- *
- * @param serviceName - The name of the unconfigured service.
- * @param configPath - The configuration path hint (e.g., 'database: (c) => ...').
- * @param example - An example of how to configure the service.
- * @param errorCode - The specific error code to use.
- */
-const UNCONFIGURED_SERVICE = Symbol('unconfiguredService')
-
-export function isUnconfiguredService(value: unknown): boolean {
-  try {
-    return (value as { [UNCONFIGURED_SERVICE]?: boolean })?.[UNCONFIGURED_SERVICE] === true
-  } catch {
-    return false
-  }
-}
-
-function createUnconfiguredServiceProxy(
-  serviceName: string,
-  configPath: string,
-  example: string,
-  errorCode: ErrorCode
-): unknown {
-  const message = `${serviceName} is not configured. Add it to setupHonertia: setupHonertia({ honertia: { ${configPath} } })`
-
-  return new Proxy(
-    {},
-    {
-      get(_, prop) {
-        // Allow certain properties that might be checked without meaning to "use" the service
-        if (
-          prop === UNCONFIGURED_SERVICE ||
-          prop === 'then' ||
-          prop === Symbol.toStringTag ||
-          prop === Symbol.iterator
-        ) {
-          if (prop === UNCONFIGURED_SERVICE) {
-            return true
-          }
-          return undefined
-        }
-        throw new HonertiaConfigurationError({
-          message,
-          hint: `Example: ${example}`,
-          code: errorCode,
-          service: serviceName,
-        })
-      },
-    }
-  )
-}
-
-/**
- * Extend Hono context with Effect runtime and schema.
- */
-declare module 'hono' {
-  interface ContextVariableMap {
-    [EFFECT_RUNTIME]?: ManagedRuntime.ManagedRuntime<
-      | DatabaseService
-      | AuthService
-      | AuthUserService
-      | HonertiaService
-      | RequestService
-      | ResponseFactoryService,
-      never
-    >
-    [EFFECT_BRIDGE_CONFIG]?: EffectBridgeConfig<any, any>
-    [EFFECT_SCHEMA]?: Record<string, unknown>
-  }
-}
+// Unconfigured services are simply not provided to the Effect layer. When a
+// handler yields a tag that was never configured, Effect dies with a
+// missing-service defect that handler.ts classifies into the structured
+// HonertiaConfigurationError response (see classifyMissingService).
+// The per-request runtime, bridge config, and binding schema live in the
+// typed request context (see request-context.ts).
 
 /**
  * Create a RequestContext from Hono context.
@@ -177,6 +95,22 @@ function createRequestContext<E extends Env>(c: HonoContext<E>): RequestContext 
     json: <T>() => c.req.json<T>(),
     parseBody: () => c.req.parseBody() as Promise<Record<string, unknown>>,
     header: (name: string) => c.req.header(name),
+  }
+}
+
+/**
+ * Create a RequestStateClient backed by Hono context variables.
+ * Values are shared with Hono middleware through c.set / c.var.
+ */
+function createRequestStateClient<E extends Env>(c: HonoContext<E>): RequestStateClient {
+  return {
+    // Arbitrary keys are not represented in Hono's ContextVariableMap typing,
+    // so reads and writes go through the untyped context surface.
+    get: <T>(key: string) =>
+      ((c.var as Record<string, unknown> | undefined)?.[key]) as T | undefined,
+    set: (key: string, value: unknown) => {
+      ;(c as { set: (key: string, value: unknown) => void }).set(key, value)
+    },
   }
 }
 
@@ -300,7 +234,7 @@ function createNoopExecutionContextClient(): ExecutionContextClient {
  * Create a HonertiaRenderer from Hono context.
  */
 function createHonertiaRenderer<E extends Env>(c: HonoContext<E>): HonertiaRenderer {
-  const honertia = (c as any).var?.honertia
+  const honertia = openHonertiaContext(c).honertia
   if (!honertia) {
     return {
       render: async () => c.text('Honertia not configured', 500),
@@ -309,7 +243,7 @@ function createHonertiaRenderer<E extends Env>(c: HonoContext<E>): HonertiaRende
     }
   }
   return {
-    render: (component, props) => honertia.render(component, props),
+    render: (component, props) => Promise.resolve(honertia.render(component, props)),
     share: (key, value) => honertia.share(key, value),
     setErrors: (errors) => honertia.setErrors(errors),
   }
@@ -323,6 +257,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   config?: EffectBridgeConfig<E, CustomServices>
 ): Layer.Layer<
   | RequestService
+  | RequestStateService
   | ResponseFactoryService
   | HonertiaService
   | DatabaseService
@@ -335,9 +270,11 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   never,
   never
 > {
-  const authUserKey = config?.authUserKey ?? 'authUser'
-
   const requestLayer = Layer.succeed(RequestService, createRequestContext(c))
+  const requestStateLayer = Layer.succeed(
+    RequestStateService,
+    createRequestStateClient(c)
+  )
   const responseLayer = Layer.succeed(ResponseFactoryService, createResponseFactory(c))
   const honertiaLayer = Layer.succeed(HonertiaService, createHonertiaRenderer(c))
 
@@ -354,31 +291,11 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     kv ? createKVCacheClient(kv) : createUnconfiguredCacheClient()
   )
 
-  // Database layer - provide helpful error proxy if not configured
-  const db = (c as any).var?.db
-  const databaseLayer = Layer.succeed(
-    DatabaseService,
-    (db ??
-      createUnconfiguredServiceProxy(
-        'DatabaseService',
-        'database: (c) => createDb(...)',
-        'database: (c) => drizzle(c.env.DB)',
-        ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED
-      )) as DatabaseType
-  )
-
-  // Auth layer - provide helpful error proxy if not configured
-  const auth = (c as any).var?.auth
-  const authLayer = Layer.succeed(
-    AuthService,
-    (auth ??
-      createUnconfiguredServiceProxy(
-        'AuthService',
-        'auth: (c) => createAuth(...)',
-        'auth: (c) => betterAuth({ database: c.var.db, ... })',
-        ErrorCodes.CFG_301_AUTH_NOT_CONFIGURED
-      )) as AuthType
-  )
+  // Database and auth come from the typed request context (written by
+  // setupHonertia's service wiring or the honertiaServices middleware).
+  // They are provided IFF configured; absence surfaces as a missing-service
+  // defect that handler.ts classifies into a configuration error.
+  const requestCtx = openHonertiaContext(c)
 
   // ExecutionContext layer - for background task execution
   // Note: Hono's executionCtx getter throws in non-Worker environments, so we wrap in try/catch
@@ -395,25 +312,41 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
       : createNoopExecutionContextClient()
   )
 
-  let baseLayer = Layer.mergeAll(
+  // Workers Cache purge API: probes ctx.cache, then the cloudflare:workers
+  // module export; unavailable (no-op purge, isAvailable: false) elsewhere.
+  const responseCacheLayer = Layer.effect(
+    ResponseCacheService,
+    resolveWorkersCachePurgeApi(executionCtx).pipe(
+      Effect.map((api) =>
+        api
+          ? createWorkersResponseCacheClient(api)
+          : createUnavailableResponseCacheClient()
+      )
+    )
+  )
+
+  let baseLayer: Layer.Layer<any, never, never> = Layer.mergeAll(
     requestLayer,
+    requestStateLayer,
     responseLayer,
     honertiaLayer,
     bindingsLayer,
     cacheLayer,
-    databaseLayer,
-    authLayer,
-    executionContextLayer
+    executionContextLayer,
+    responseCacheLayer
   )
 
-  const authUserFromContext =
-    (c as any).var?.[authUserKey] ??
-    (authUserKey !== 'authUser' ? (c as any).var?.authUser : undefined)
+  if (requestCtx.db !== undefined) {
+    baseLayer = Layer.merge(baseLayer, Layer.succeed(DatabaseService, requestCtx.db))
+  }
+  if (requestCtx.auth !== undefined) {
+    baseLayer = Layer.merge(baseLayer, Layer.succeed(AuthService, requestCtx.auth))
+  }
 
-  if (authUserFromContext) {
+  if (requestCtx.authUser !== undefined) {
     baseLayer = Layer.merge(
       baseLayer,
-      Layer.succeed(AuthUserService, authUserFromContext as AuthUser)
+      Layer.succeed(AuthUserService, requestCtx.authUser)
     )
   }
 
@@ -425,6 +358,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
 
   return baseLayer as Layer.Layer<
     | RequestService
+    | RequestStateService
     | ResponseFactoryService
     | HonertiaService
     | BindingsService
@@ -440,34 +374,32 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
 }
 
 /**
- * Get the Effect runtime from Hono context.
+ * Get the per-request Effect runtime (set by effectBridge).
  */
 export function getEffectRuntime<E extends Env>(
   c: HonoContext<E>
 ): ManagedRuntime.ManagedRuntime<any, never> | undefined {
-  return (c as any).var?.[EFFECT_RUNTIME]
+  return openHonertiaContext(c).runtime
 }
 
 /**
- * Store the Effect bridge config on Hono context for downstream handlers.
+ * Store the Effect bridge config on the request context for downstream handlers.
  */
 export function setEffectBridgeConfig<E extends Env, CustomServices = never>(
   c: HonoContext<E>,
   config?: EffectBridgeConfig<E, CustomServices>
 ): void {
   if (!config) return
-  // Hono's context typing does not preserve symbol-keyed variables through c.set/c.var.
-  c.set(EFFECT_BRIDGE_CONFIG as any, config as EffectBridgeConfig<any, any>)
+  openHonertiaContext(c).bridgeConfig = config as EffectBridgeConfig<E, unknown>
 }
 
 /**
- * Get the Effect bridge config from Hono context.
+ * Get the Effect bridge config from the request context.
  */
 export function getEffectBridgeConfig<E extends Env>(
   c: HonoContext<E>
 ): EffectBridgeConfig<any, any> | undefined {
-  // Read through `any` for the same symbol-keyed context limitation as setEffectBridgeConfig.
-  return (c as any).var?.[EFFECT_BRIDGE_CONFIG]
+  return openHonertiaContext(c).bridgeConfig as EffectBridgeConfig<any, any> | undefined
 }
 
 /**
@@ -477,6 +409,9 @@ export function effectBridge<E extends Env, CustomServices = never>(
   config?: EffectBridgeConfig<E, CustomServices>
 ): MiddlewareHandler<E> {
   return async (c, next) => {
+    // SAFETY: test-layer injection seam used by honertia/test (see
+    // test-layers.ts). Deliberately untyped and unchanged for now; making it
+    // a construction-time config option is tracked as a follow-up.
     const testLayer =
       (c as any).var?.__testLayer ?? (c.env as Record<string, unknown> | undefined)?.__testLayer
     const hasTestLayer = Layer.isLayer(testLayer)
@@ -487,12 +422,11 @@ export function effectBridge<E extends Env, CustomServices = never>(
     }
     const runtime = ManagedRuntime.make(layer)
 
-    // Store runtime in context
-    c.set(EFFECT_RUNTIME as any, runtime)
-
-    // Store schema in context for route model binding
+    // Store runtime and binding schema on the request context
+    const requestCtx = openHonertiaContext(c)
+    requestCtx.runtime = runtime
     if (config?.schema) {
-      c.set(EFFECT_SCHEMA as any, config.schema)
+      requestCtx.schema = config.schema
     }
 
     try {
@@ -524,10 +458,10 @@ export function effectBridge<E extends Env, CustomServices = never>(
 }
 
 /**
- * Get the schema from Hono context (set by effectBridge).
+ * Get the binding schema from the request context (set by effectBridge).
  */
 export function getEffectSchema<E extends Env>(
   c: HonoContext<E>
 ): Record<string, unknown> | undefined {
-  return (c as any).var?.[EFFECT_SCHEMA]
+  return openHonertiaContext(c).schema
 }

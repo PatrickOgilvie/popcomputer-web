@@ -12,6 +12,7 @@ import { Effect, Layer, Context } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { effectBridge, buildContextLayer } from '../../src/effect/bridge.js'
 import { honertia } from '../../src/middleware.js'
+import { honertiaServices } from '../../src/request-context.js'
 import { setupHonertia } from '../../src/setup.js'
 import { DatabaseService } from '../../src/effect/services.js'
 
@@ -73,8 +74,8 @@ const createTestApp = () => {
     })
   )
 
+  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
   app.use('*', async (c, next) => {
-    c.set('db' as any, { name: 'test-db' })
     // Simulate Cloudflare Worker bindings
     ;(c.env as any) = {
       KV_DATA: { 'user:123': 'John Doe', 'config:theme': 'dark' },
@@ -198,8 +199,8 @@ describe('Custom Services via effectBridge', () => {
     )
 
     // Simulate Cloudflare Worker bindings and set up db
+    app.use('*', honertiaServices(() => ({ db: { name: 'custom-db' } as never })))
     app.use('*', async (c, next) => {
-      c.set('db' as any, { name: 'custom-db' })
       ;(c.env as any) = {
         KV_DATA: { 'user:123': 'John Doe', 'config:theme': 'dark' },
         FEATURES: ['new-dashboard', 'beta-api'],
@@ -245,8 +246,8 @@ describe('Custom Services via setupHonertia', () => {
   test('injects custom services via effect config', async () => {
     const app = new Hono<TestEnv>()
 
+    app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
     app.use('*', async (c, next) => {
-      c.set('db' as any, { name: 'test-db' })
       ;(c.env as any) = {
         KV_DATA: { 'user:123': 'John Doe', 'config:theme': 'dark' },
         FEATURES: ['new-dashboard', 'beta-api'],

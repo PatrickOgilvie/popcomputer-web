@@ -3471,3 +3471,133 @@ The answer: explicit, composable, introspectable, schema-driven, and Effect-nati
 *Document generated: January 9, 2026*
 *Conversation between: Human developer and Claude Code (Opus 4.5)*
 *Context: Defining the agent-first architecture for Honertia*
+
+---
+
+# The Next Phase: Effect 4, Drizzle 1.0, Workers Cache
+
+*Added: July 6, 2026*
+
+Honertia's next phase is built on three platform bets: Effect 4 (runtime and
+bundle-size), Drizzle 1.0 (relations and a possible Effect-native driver), and
+Cloudflare Workers Cache (responses served without running the Worker at
+all). The first two are upgrade tracks below; Workers Cache landed as a
+feature in 0.2.0 and has its own follow-up track.
+
+## Workers Cache (shipped in 0.2.0; follow-ups tracked here)
+
+0.2.0 ships the foundation: the `cache` route option (correct
+`Cache-Control`/`Vary`/`Cache-Tag` with Inertia-aware guard rails),
+binding-derived cache tags, the `purges` route option, and the typed
+`ResponseCacheService` over `ctx.cache`.
+
+**Follow-ups:**
+
+- [x] ~~Verify the purge surface against the Workers runtime~~ Probed
+      2026-07-07 with wrangler 4.107 (local **and** remote preview, compat
+      date 2026-07-01, `"cache": { "enabled": true }`): `ctx.cache` is
+      undefined and the `cloudflare:workers` module exports `cache` as an
+      empty stub — the purge method has not shipped in dev/preview runtimes
+      yet. Honertia's adapter now probes **both** documented surfaces
+      (`ctx.cache`, then `import('cloudflare:workers').cache`) and degrades
+      to an observable no-op (`isAvailable: false`). Cache headers/tags work
+      regardless (pure HTTP, read server-side by Workers Cache).
+- [ ] Re-probe purge availability on a **deployed** worker (and on newer
+      wrangler releases) — flip the README status note when it lights up.
+- [ ] Implicit purge convention: derive purges automatically for mutating
+      routes that share a binding with a cached GET (today it's explicit
+      `purges: true`). Adopt once real apps validate the tag scheme.
+- [ ] Per-user caching recipe: document (or wrap) the gateway-entrypoint +
+      `ctx.props` pattern for caching authenticated pages safely.
+- [ ] Deploy-time `purge({ everything: true })` hook once a CLI deploy
+      command exists (agent-first CLI section above).
+
+# Platform Upgrade Plan: Effect 4 & Drizzle 1.0 → Honertia 2.0
+
+Honertia's two foundational dependencies both have major versions in flight.
+Neither is ready to adopt today, and neither blocks current work — every fix in
+0.2.0 landed on Effect 3 + Drizzle 0.3x. But both are breaking for consumers
+(Honertia declares `effect` as a peer dependency, so upgrading forces every app
+to migrate with us), so they should ship together as **Honertia 2.0**, one
+migration event instead of two.
+
+## Effect 4 (currently beta; adopt at stable)
+
+**Status (July 2026):** in beta; the Effect team recommends v3 for production.
+Once stable, v4 becomes an LTS release and v3 goes into feature-freeze
+(bug/security fixes only).
+
+**Why it matters for Honertia:**
+
+- **Bundle size.** The rewritten runtime shrinks a minimal
+  Effect+Stream+Schema bundle from ~70 kB to ~20 kB — significant under
+  Cloudflare Workers bundle limits, which is Honertia's home turf.
+- **Unified versioning.** `effect`, `@effect/sql-*`, and platform packages
+  share one version number, simplifying our peer-dependency story.
+- **Schema rewrite.** v4 Schema is a substantial redesign with its own
+  migration guide. Honertia surfaces Effect Schema directly in its public API
+  (`validateRequest`, route `body`/`query` options, `parseOptions`), so this
+  is where most of our migration work will be.
+
+**Preconditions before starting:**
+
+1. Effect 4 reaches stable (not beta/RC).
+2. The official v3→v4 codemods and the Schema migration guide are published.
+3. The v4 testing story (`@effect/vitest` equivalents) is settled for our
+   bun test setup.
+
+**Migration checklist (tracked here until it becomes issues):**
+
+- [ ] Audit every public API that leaks an Effect type (`EffectHandler`,
+      `BaseServices`, service tags, `ValidateOptions.parseOptions`,
+      `S.Schema` route options) — these define the 2.0 breaking surface.
+- [ ] Port validation: v4 Schema `ParseOptions` shape and `onExcessProperty`
+      behavior must be re-verified; any app-side schema-level `parseOptions`
+      annotation trick is v3-specific.
+- [ ] Re-verify per-request `ManagedRuntime` construction cost against the v4
+      runtime (it may get cheaper — measure, don't assume).
+- [ ] Measure Worker bundle size before/after; publish the delta in the 2.0
+      release notes.
+
+## Drizzle 1.0 (currently beta/RC; adopt at stable)
+
+**Why it matters for Honertia:**
+
+- **Relations v2 (`defineRelations`).** The relations API changes shape again.
+  As of 0.2.0, Honertia discovers foreign keys from **table metadata**
+  (inline `.references()` FKs, identity-matched to JS property keys) first
+  and `relations()` second — the first path is stable across 0.3x and 1.0,
+  but the `relations()` fallback in `findRelation` will need a
+  `defineRelations` branch when 1.0 lands.
+- **Native Effect integration.** Drizzle now ships an Effect-native client —
+  but **PostgreSQL-only** (`@effect/sql-pg`) as of mid-2026. Honertia is
+  D1/SQLite-first, so this is not adoptable yet. When Effect drivers for
+  D1/SQLite exist, `DatabaseService` could be backed by a drizzle-native
+  Effect client, eliminating our `Effect.tryPromise` wrapping. Watch for it;
+  don't build on it before it exists.
+
+**Migration checklist:**
+
+- [ ] Add a `defineRelations` discovery branch to `findRelation`, with the
+      same JS-property-key contract and regression tests as the 0.2.0 paths.
+- [ ] Re-run the binding-scoping suite against drizzle 1.0 stable
+      (`tests/effect/binding-scoping.test.ts` is the gate).
+- [ ] Extend the peer range (`>=0.30.0` → include 1.x) only after the above
+      pass.
+- [ ] Evaluate the Effect-native client for D1/SQLite if/when drivers ship.
+
+## Sequencing
+
+1. **Now (0.2.x):** framework hardening on Effect 3 + Drizzle 0.3x — done in
+   0.2.0. Keep shipping features here; nothing below blocks 0.2.x work.
+2. **When Drizzle 1.0 goes stable:** add `defineRelations` support and widen
+   the peer range in a **0.x minor** — this is additive and shouldn't wait
+   for 2.0.
+3. **When Effect 4 goes stable:** branch `v2`, run the codemods, port the
+   Schema surface, re-verify validation behavior, measure bundles.
+4. **Honertia 2.0:** Effect 4 + Drizzle 1.x peers, a migration guide for apps
+   (validation `parseOptions`, any Schema-facing changes), and bundle-size
+   numbers in the release notes.
+
+**Explicit non-goals until then:** adopting Effect 4 beta APIs, building on
+`effect/unstable/*` modules, or coupling to the Postgres-only Effect client.

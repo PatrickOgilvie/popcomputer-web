@@ -7,13 +7,52 @@
  * - Inertia for browser rendering
  */
 
-import type { HonertiaStructuredError, RequestContext } from './error-types.js'
+import type { HonertiaStructuredError } from './error-types.js'
 
 /**
  * Interface for error formatters.
  */
 export interface ErrorFormatter {
   format(error: HonertiaStructuredError): string | object
+}
+
+/**
+ * Error categories whose messages may contain sensitive internals
+ * (raw exception text, DB driver output, connection details, config values)
+ * and must never be sent to clients in production.
+ */
+const SENSITIVE_MESSAGE_CATEGORIES = new Set<HonertiaStructuredError['category']>([
+  'configuration',
+  'internal',
+  'database',
+  'service',
+])
+
+/**
+ * Generic, client-safe message used in place of sensitive error messages.
+ */
+const SAFE_GENERIC_MESSAGE = 'An error occurred. Please try again later.'
+
+/**
+ * Return a client-safe message for an error.
+ *
+ * In development the real message is returned to aid debugging. In production
+ * (or whenever `isDev` is false), messages for sensitive categories are replaced
+ * with a generic string so raw exception text — which can leak stack details,
+ * DB errors, secrets, or connection strings — never reaches the client.
+ *
+ * Shared by every client-facing formatter (JSON and Inertia) so the two paths
+ * cannot drift apart.
+ */
+export function getClientSafeMessage(
+  error: HonertiaStructuredError,
+  isDev: boolean
+): string {
+  if (isDev) return error.message
+  if (SENSITIVE_MESSAGE_CATEGORIES.has(error.category)) {
+    return SAFE_GENERIC_MESSAGE
+  }
+  return error.message
 }
 
 /**
@@ -30,6 +69,13 @@ export interface JsonFormatterOptions {
   includeFixes?: boolean
   /** Include documentation links */
   includeDocs?: boolean
+  /**
+   * Replace messages for sensitive error categories (internal, database,
+   * configuration, service) with a generic string. Enable in production so
+   * raw exception text never reaches API/JSON clients.
+   * @default false
+   */
+  safeMessages?: boolean
 }
 
 /**
@@ -45,6 +91,7 @@ export class JsonErrorFormatter implements ErrorFormatter {
       includeContext: true,
       includeFixes: true,
       includeDocs: true,
+      safeMessages: false,
       ...options,
     }
   }
@@ -57,7 +104,7 @@ export class JsonErrorFormatter implements ErrorFormatter {
       tag: error.tag,
       category: error.category,
       title: error.title,
-      message: error.message,
+      message: getClientSafeMessage(error, !this.options.safeMessages),
       httpStatus: error.httpStatus,
       timestamp: error.timestamp,
     }
@@ -311,7 +358,7 @@ export class InertiaErrorFormatter implements ErrorFormatter {
       status: error.httpStatus,
       code: error.code,
       title: error.title,
-      message: this.options.isDev ? error.message : this.getSafeMessage(error),
+      message: getClientSafeMessage(error, this.options.isDev ?? false),
     }
 
     if (this.options.includeFixes && error.fixes.length > 0) {
@@ -341,22 +388,6 @@ export class InertiaErrorFormatter implements ErrorFormatter {
     }
 
     return props
-  }
-
-  /**
-   * Get a safe message for production (no sensitive details).
-   */
-  private getSafeMessage(error: HonertiaStructuredError): string {
-    // Configuration and internal errors should show generic messages in production
-    if (
-      error.category === 'configuration' ||
-      error.category === 'internal' ||
-      error.category === 'database'
-    ) {
-      return 'An error occurred. Please try again later.'
-    }
-
-    return error.message
   }
 }
 
@@ -431,11 +462,12 @@ export function detectOutputFormat(
     return 'json'
   }
 
-  // Development mode defaults to terminal-style logging
+  // Development mode defaults to terminal-style logging.
+  // Must be explicitly signalled — CF_PAGES_BRANCH is intentionally excluded
+  // because it is present on production Pages deployments too.
   const isDev =
     env.ENVIRONMENT === 'development' ||
-    env.NODE_ENV === 'development' ||
-    env.CF_PAGES_BRANCH !== undefined // Cloudflare Pages preview
+    env.NODE_ENV === 'development'
 
   if (isDev) {
     return 'terminal'

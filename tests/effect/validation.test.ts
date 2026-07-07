@@ -375,6 +375,79 @@ describe('validateUnknown', () => {
   })
 })
 
+describe('parseOptions', () => {
+  const schema = S.Struct({
+    name: S.String,
+  })
+
+  test('excess properties are ignored by default', () => {
+    const result = Effect.runSync(
+      validateUnknown(schema, { name: 'Test', extra: 'field' })
+    )
+    expect(result).toEqual({ name: 'Test' })
+  })
+
+  test('validateUnknown rejects excess properties with onExcessProperty error', () => {
+    const exit = Effect.runSyncExit(
+      validateUnknown(
+        schema,
+        { name: 'Test', extra: 'field' },
+        { parseOptions: { onExcessProperty: 'error' } }
+      )
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const option = Cause.failureOption(exit.cause)
+      expect(option._tag).toBe('Some')
+      if (option._tag === 'Some') {
+        const error = option.value as ValidationError
+        expect(error).toBeInstanceOf(ValidationError)
+        expect(error.errors.extra).toBeDefined()
+        expect(error.code).toBe(ErrorCodes.VAL_004_SCHEMA_MISMATCH)
+      }
+    }
+  })
+
+  test('validateRequest rejects excess body properties with onExcessProperty error', async () => {
+    const request = createMockRequest({
+      method: 'POST',
+      body: { name: 'Test', workspaceId: 'attacker-ws' },
+    })
+
+    const exit = await runWithRequestAsync(
+      validateRequest(schema, {
+        request: 'laravel',
+        parseOptions: { onExcessProperty: 'error' },
+      }),
+      request
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const option = Cause.failureOption(exit.cause)
+      expect(option._tag).toBe('Some')
+      if (option._tag === 'Some') {
+        const error = option.value as ValidationError
+        expect(error).toBeInstanceOf(ValidationError)
+        expect(error.errors.workspaceId).toBeDefined()
+      }
+    }
+  })
+
+  test('validate rejects excess properties with onExcessProperty error', () => {
+    const exit = Effect.runSyncExit(
+      validate(
+        schema,
+        { name: 'Test', extra: 'field' } as unknown as { name: string },
+        { parseOptions: { onExcessProperty: 'error' } }
+      )
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+  })
+})
+
 describe('validateRequest', () => {
   test('validates request data against schema', async () => {
     const schema = S.Struct({

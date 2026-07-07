@@ -7,6 +7,7 @@ import { Hono } from 'hono'
 import { Effect, Layer, Context, Schema as S } from 'effect'
 import { effectRoutes, EffectRouteBuilder } from '../../src/effect/routing.js'
 import { honertia } from '../../src/middleware.js'
+import { honertiaServices } from '../../src/request-context.js'
 import { effectBridge, type EffectBridgeConfig } from '../../src/effect/bridge.js'
 import {
   DatabaseService,
@@ -33,10 +34,7 @@ const createApp = (bridgeConfig?: EffectBridgeConfig<any, any>) => {
     })
   )
 
-  app.use('*', async (c, next) => {
-    c.set('db' as any, { name: 'test-db' })
-    await next()
-  })
+  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
 
   app.use('*', effectBridge(bridgeConfig))
 
@@ -54,10 +52,7 @@ const createAppWithoutBridge = () => {
     })
   )
 
-  app.use('*', async (c, next) => {
-    c.set('db' as any, { name: 'test-db' })
-    await next()
-  })
+  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
 
   return app
 }
@@ -89,6 +84,41 @@ describe('effectRoutes', () => {
     const builder = effectRoutes(app)
 
     expect(builder).toBeInstanceOf(EffectRouteBuilder)
+  })
+})
+
+describe('route-level body validation parseOptions', () => {
+  const postJson = (app: Hono, body: unknown) =>
+    app.request('/users', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+
+  test('excess body properties are ignored by default', async () => {
+    const app = createApp()
+
+    effectRoutes(app).post('/users', Effect.succeed(new Response('Created')), {
+      body: S.Struct({ name: S.String }),
+    })
+
+    const res = await postJson(app, { name: 'Test', role: 'admin' })
+    expect(res.status).toBe(200)
+  })
+
+  test('excess body properties are rejected with onExcessProperty error', async () => {
+    const app = createApp()
+
+    effectRoutes(app).post('/users', Effect.succeed(new Response('Created')), {
+      body: S.Struct({ name: S.String }),
+      parseOptions: { onExcessProperty: 'error' },
+    })
+
+    const res = await postJson(app, { name: 'Test', role: 'admin' })
+    expect(res.status).toBe(422)
   })
 })
 

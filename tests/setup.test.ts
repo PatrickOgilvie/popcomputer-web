@@ -37,7 +37,7 @@ type TestEnv = {
 // =============================================================================
 
 describe('setupHonertia basic configuration', () => {
-  test('sets up database on c.var.db', async () => {
+  test('database factory result is provided as DatabaseService', async () => {
     const app = new Hono<TestEnv>()
 
     app.use(
@@ -66,7 +66,7 @@ describe('setupHonertia basic configuration', () => {
     expect(json.dbName).toBe('test-db')
   })
 
-  test('sets up auth on c.var.auth with access to c.var.db', async () => {
+  test('auth factory receives the database and its result is provided as AuthService', async () => {
     const app = new Hono<TestEnv>()
 
     app.use(
@@ -76,9 +76,9 @@ describe('setupHonertia basic configuration', () => {
           version: '1.0.0',
           render: (page) => JSON.stringify(page),
           database: () => ({ name: 'auth-db' }),
-          auth: (c) => ({
+          auth: (_c, { db }) => ({
             // Auth can access db because database runs first
-            dbName: (c.var as any).db?.name,
+            dbName: (db as { name?: string } | undefined)?.name,
             secret: 'test-secret',
           }),
         },
@@ -279,8 +279,8 @@ describe('setupHonertia schema configuration', () => {
   })
 })
 
-describe('setupHonertia auth userKey configuration', () => {
-  test('custom userKey is respected by AuthUserService and shared auth props', async () => {
+describe('setupHonertia auth session loading', () => {
+  test('loaded session user reaches AuthUserService and shared auth props', async () => {
     const app = new Hono<TestEnv>()
 
     const getSessionCalls: string[] = []
@@ -311,7 +311,6 @@ describe('setupHonertia auth userKey configuration', () => {
           }),
         },
         auth: {
-          userKey: 'sessionUser',
           sessionCookie,
         },
       })
@@ -527,12 +526,17 @@ describe('setupHonertia configuration errors', () => {
 // =============================================================================
 
 describe('setupHonertia database configuration errors', () => {
-  test('route model binding returns 404 when database not configured', async () => {
+  test('route model binding without a configured database is a configuration error', async () => {
     const app = new Hono<TestEnv>()
 
     const mockSchema = {
       projects: { id: { name: 'id' } },
     }
+
+    app.use('*', async (c, next) => {
+      ;(c.env as any) = { ENVIRONMENT: 'development' }
+      await next()
+    })
 
     app.use(
       '*',
@@ -546,6 +550,13 @@ describe('setupHonertia database configuration errors', () => {
       })
     )
 
+    registerErrorHandlers(app, {
+      component: 'Error',
+      showDevErrors: true,
+      envKey: 'ENVIRONMENT',
+      devValue: 'development',
+    })
+
     effectRoutes(app).get(
       '/projects/{project}',
       Effect.gen(function* () {
@@ -554,9 +565,11 @@ describe('setupHonertia database configuration errors', () => {
       })
     )
 
-    // Should 404 because there's no database to query
+    // A binding needs a database; its absence is misconfiguration, not a 404
     const res = await app.request('/projects/123')
-    expect(res.status).toBe(404)
+    const body = await res.json()
+    expect(body.component).toBe('Error')
+    expect(body.props.message).toContain('DatabaseService is not configured')
   })
 
   test('helpful error when using DatabaseService without database configured', async () => {
@@ -651,7 +664,7 @@ describe('setupHonertia database configuration errors', () => {
     expect(body.props.hint).toContain('auth')
   })
 
-  test('no error when DatabaseService is accessed but not used', async () => {
+  test('routes that do not yield DatabaseService work without a configured db', async () => {
     const app = new Hono<TestEnv>()
 
     app.use(
@@ -660,23 +673,58 @@ describe('setupHonertia database configuration errors', () => {
         honertia: {
           version: '1.0.0',
           render: (page) => JSON.stringify(page),
-          // database NOT configured, but we won't use it
+          // database NOT configured, and this route never asks for it
         },
       })
     )
 
+    effectRoutes(app).get('/no-db-use', Effect.succeed(new Response('OK')))
+
+    const res = await app.request('/no-db-use')
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('OK')
+  })
+
+  test('yielding DatabaseService without a configured db is a configuration error even if unused', async () => {
+    const app = new Hono<TestEnv>()
+
+    app.use('*', async (c, next) => {
+      ;(c.env as any) = { ENVIRONMENT: 'development' }
+      await next()
+    })
+
+    app.use(
+      '*',
+      setupHonertia({
+        honertia: {
+          version: '1.0.0',
+          render: (page) => JSON.stringify(page),
+          // database NOT configured
+        },
+      })
+    )
+
+    registerErrorHandlers(app, {
+      component: 'Error',
+      showDevErrors: true,
+      envKey: 'ENVIRONMENT',
+      devValue: 'development',
+    })
+
     effectRoutes(app).get(
-      '/no-db-use',
+      '/declare-db',
       Effect.gen(function* () {
-        // Access but don't use - should not throw
+        // Declaring the dependency without configuring it is misconfiguration,
+        // regardless of whether the value is subsequently used.
         yield* DatabaseService
         return new Response('OK')
       })
     )
 
-    const res = await app.request('/no-db-use')
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('OK')
+    const res = await app.request('/declare-db')
+    const body = await res.json()
+    expect(body.component).toBe('Error')
+    expect(body.props.message).toContain('DatabaseService is not configured')
   })
 })
 
@@ -837,9 +885,9 @@ describe('setupHonertia full configuration', () => {
           version: '1.0.0',
           render: (page) => JSON.stringify(page),
           database: () => mockDb,
-          auth: (c) => ({
+          auth: (_c, { db }) => ({
             getUser: () => ({ id: 'user-1', name: 'Test User' }),
-            dbRef: (c.var as any).db, // Can access db
+            dbRef: db, // Can access db
           }),
           schema: mockSchema,
         },
@@ -929,6 +977,35 @@ describe('setupHonertia middleware dispatcher (regression)', () => {
     expect(executed).toContain('custom-before')
     expect(executed).toContain('handler')
     expect(executed).toContain('custom-after')
+  })
+
+  test('wrapper middleware can transform the downstream response via c.res', async () => {
+    const app = new Hono<TestEnv>()
+
+    app.use(
+      '*',
+      setupHonertia({
+        honertia: {
+          version: '1.0.0',
+          render: (page) => JSON.stringify(page),
+        },
+        middleware: [
+          async (c, next) => {
+            await next()
+            // Hono's contract: next() resolves to void; wrappers observe and
+            // transform the downstream response through c.res.
+            c.res.headers.set('X-Transformed', 'yes')
+          },
+        ],
+      })
+    )
+
+    effectRoutes(app).get('/page', Effect.succeed(new Response('content')))
+
+    const res = await app.request('/page')
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('content')
+    expect(res.headers.get('X-Transformed')).toBe('yes')
   })
 
   test('dispatcher handles early return from custom middleware', async () => {

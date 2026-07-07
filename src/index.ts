@@ -24,6 +24,18 @@ export {
 // Core middleware (for manual setup)
 export { honertia, HEADERS } from './middleware.js'
 
+// Request context: typed framework state for plain Hono middleware,
+// and service wiring for apps composing middleware manually.
+export {
+  honertiaContext,
+  honertiaServices,
+  type HonertiaRequestContext,
+  type HonertiaProvidedServices,
+} from './request-context.js'
+
+// Security middleware (opt-in CSRF defense-in-depth)
+export { verifyOrigin, type VerifyOriginConfig } from './security.js'
+
 export type {
   PageObject,
   HonertiaConfig,

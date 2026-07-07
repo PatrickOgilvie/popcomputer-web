@@ -5,9 +5,16 @@
 import type { Context, MiddlewareHandler } from 'hono'
 import type { HonertiaConfig, HonertiaInstance, PageObject, RenderOptions } from './types.js'
 import { HEADERS } from './types.js'
+import { openHonertiaContext } from './request-context.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
+    /**
+     * Honertia's public rendering API for plain Hono handlers:
+     * `c.var.honertia.render('Home', props)`. This key is deliberate public
+     * surface (typed here); framework internals read the same instance from
+     * the request context instead.
+     */
     honertia: HonertiaInstance
   }
 }
@@ -19,32 +26,38 @@ async function resolveValue<T>(value: T | (() => T | Promise<T>)): Promise<T> {
   return value
 }
 
-function filterPartialProps(
-  props: Record<string, unknown>,
+/**
+ * Build a predicate deciding whether a prop key survives a partial reload.
+ *
+ * Mirrors Inertia's `only`/`except` semantics: `errors` is always retained so
+ * validation feedback is never dropped from a partial response.
+ */
+function createPartialPredicate(
   include?: string,
   exclude?: string
+): (key: string) => boolean {
+  const includeKeys = include
+    ? include.split(',').map((k) => k.trim())
+    : undefined
+  const excludeKeys = exclude
+    ? exclude.split(',').map((k) => k.trim())
+    : undefined
+
+  return (key: string): boolean => {
+    if (key === 'errors') return true
+    if (includeKeys && !includeKeys.includes(key)) return false
+    if (excludeKeys && excludeKeys.includes(key)) return false
+    return true
+  }
+}
+
+function filterPartialProps(
+  props: Record<string, unknown>,
+  keep: (key: string) => boolean
 ): Record<string, unknown> {
-  let filteredProps = { ...props }
-
-  if (include) {
-    const includeKeys = include.split(',').map(k => k.trim())
-    filteredProps = Object.fromEntries(
-      Object.entries(props).filter(([key]) => 
-        includeKeys.includes(key) || key === 'errors'
-      )
-    )
-  }
-
-  if (exclude) {
-    const excludeKeys = exclude.split(',').map(k => k.trim())
-    filteredProps = Object.fromEntries(
-      Object.entries(filteredProps).filter(([key]) => 
-        !excludeKeys.includes(key) || key === 'errors'
-      )
-    )
-  }
-
-  return filteredProps
+  return Object.fromEntries(
+    Object.entries(props).filter(([key]) => keep(key))
+  )
 }
 
 export function honertia(config: HonertiaConfig): MiddlewareHandler {
@@ -85,9 +98,27 @@ export function honertia(config: HonertiaConfig): MiddlewareHandler {
         props: T = {} as T,
         options: RenderOptions = {}
       ): Promise<Response> {
-        // Resolve lazy shared props
+        // Determine whether this is an active partial reload for this component.
+        // When it is, we can skip evaluating lazy shared props that the client
+        // filtered out — that's the whole point of a partial reload.
+        let partialKeep: ((key: string) => boolean) | undefined
+        if (isHonertia) {
+          const partialComponent = c.req.header(HEADERS.PARTIAL_COMPONENT)
+          const partialData = c.req.header(HEADERS.PARTIAL_DATA)
+          const partialExcept = c.req.header(HEADERS.PARTIAL_EXCEPT)
+
+          if (partialComponent === component && (partialData || partialExcept)) {
+            partialKeep = createPartialPredicate(partialData, partialExcept)
+          }
+        }
+
+        // Resolve lazy shared props. Skip any shared prop that is overridden by
+        // an explicitly passed prop (the passed value wins) or that a partial
+        // reload would discard — avoiding wasted work for deferred/lazy props.
         const resolvedShared: Record<string, unknown> = {}
         for (const [key, value] of Object.entries(sharedProps)) {
+          if (key in props) continue
+          if (partialKeep && !partialKeep(key)) continue
           resolvedShared[key] = await resolveValue(value)
         }
 
@@ -98,24 +129,19 @@ export function honertia(config: HonertiaConfig): MiddlewareHandler {
 
         // Add errors
         if (Object.keys(errors).length > 0) {
-          mergedProps.errors = { 
+          mergedProps.errors = {
             ...(mergedProps.errors as Record<string, string> || {}),
-            ...errors 
+            ...errors
           }
         }
         if (!mergedProps.errors) {
           mergedProps.errors = {}
         }
 
-        // Handle partial reloads
-        if (isHonertia) {
-          const partialComponent = c.req.header(HEADERS.PARTIAL_COMPONENT)
-          const partialData = c.req.header(HEADERS.PARTIAL_DATA)
-          const partialExcept = c.req.header(HEADERS.PARTIAL_EXCEPT)
-
-          if (partialComponent === component && (partialData || partialExcept)) {
-            mergedProps = filterPartialProps(mergedProps, partialData, partialExcept)
-          }
+        // Apply the partial filter to the full merged object so explicitly
+        // passed props also honor `only`/`except`.
+        if (partialKeep) {
+          mergedProps = filterPartialProps(mergedProps, partialKeep)
         }
 
         const page: PageObject = {
@@ -141,6 +167,7 @@ export function honertia(config: HonertiaConfig): MiddlewareHandler {
       },
     }
 
+    openHonertiaContext(c).honertia = instance
     c.set('honertia', instance)
     await next()
 

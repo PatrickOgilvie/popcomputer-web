@@ -493,8 +493,8 @@ app.use('*', setupHonertia<Env>({
       styles: manifest['src/main.tsx']?.css ?? [],
     })),
     database: (c) => createDb(c.env.DB),
-    auth: (c) => createAuth({
-      db: c.var.db,
+    auth: (c, { db }) => createAuth({
+      db,
       secret: c.env.BETTER_AUTH_SECRET,
       baseURL: new URL(c.req.url).origin,
     }),
@@ -1499,7 +1499,7 @@ effectRoutes(app).get('/projects/{project:slug}', showProject)
 // Route: /users/{user}/posts/{post}
 // Queries:
 //   1. SELECT * FROM users WHERE id = :user
-//   2. SELECT * FROM posts WHERE id = :post AND userId = :user.id
+//   2. SELECT * FROM posts WHERE id = :post AND user_id = :user.id
 
 effectRoutes(app).get('/users/{user}/posts/{post}', showUserPost)
 
@@ -1511,6 +1511,16 @@ const showUserPost = action(
   })
 )
 ```
+
+The child's foreign key is discovered from the Drizzle schema: first from an
+inline `.references(() => users.id)` on the child table, then from a
+`postsRelations = relations(posts, ...)` definition. Works with the idiomatic
+camelCase-property / snake_case-column shape (`userId: text('user_id')`).
+
+If neither is declared, the child **cannot be scoped** and resolves by its own
+key alone — Honertia warns in development when this happens. Binding is
+resolution, not authorization: for tenant boundaries, still authorize in the
+handler.
 
 ### Mixed Notation
 
@@ -1907,8 +1917,8 @@ app.use('*', setupHonertia<Env>({
     version,
     render,
     database: (c) => createDb(c.env.DB),
-    auth: (c) => createAuth({
-      db: c.var.db,
+    auth: (c, { db }) => createAuth({
+      db,
       secret: c.env.BETTER_AUTH_SECRET,
       baseURL: new URL(c.req.url).origin,
     }),
@@ -2037,9 +2047,78 @@ return yield* httpError(429, 'Rate limited')
 
 ---
 
-## Caching
+## Response Caching (Workers Cache)
 
-Honertia provides a `CacheService` for caching expensive database operations. It's automatically provided and backed by Cloudflare KV by default, but can be swapped for Redis, Memcached, or any other implementation.
+Honertia has first-class support for Cloudflare Workers Cache — a response
+cache in **front** of your Worker. On a cache hit your Worker never runs:
+zero CPU billing, no Effect runtime, no database queries.
+
+Enable it in your wrangler config first:
+
+```json
+{ "cache": { "enabled": true } }
+```
+
+Then declare caching per route:
+
+```typescript
+effectRoutes(app).get('/pricing', showPricing, {
+  cache: { maxAge: 300, staleWhileRevalidate: 3600 },
+})
+```
+
+Honertia owns the correctness rules so you don't have to:
+
+- headers are applied to successful GET/HEAD responses only;
+- HTML and JSON page objects are separate variants (`Vary: X-Inertia`);
+- partial reloads are marked `no-store` (unbounded variant space);
+- a handler's own stricter `Cache-Control` (`no-store`, `private`,
+  `no-cache`) always wins over the route option;
+- responses that set cookies are never publicly cached;
+- private requests are never publicly cached: an `Authorization` header, a
+  loaded `authUser`, or a session cookie (better-auth's cookies, plus any
+  custom name configured via `loadUser({ sessionCookie })`) all disable
+  caching for that request, with a once-per-route dev warning. Unrelated
+  cookies (analytics, consent, `__cf_bm`) do **not** disable caching, so
+  real browser traffic still gets cache hits.
+
+If you authenticate with custom cookies outside Honertia's auth, register
+the cookie name via `loadUser({ sessionCookie: 'your_cookie' })` or don't
+mark those routes cacheable — Workers Cache serves hits without running
+your Worker, so no in-handler auth check can protect a cached response.
+
+Bound routes tag their responses automatically — `GET /projects/{project}`
+emits `Cache-Tag: project:123,projects` — and mutating routes can purge the
+same derived tags with zero manual bookkeeping:
+
+```typescript
+effectRoutes(app).put('/projects/{project}', updateProject, {
+  purges: true, // purges project:{id} and projects after success
+})
+```
+
+For manual purging (or purge-everything on deploy), use the typed service:
+
+```typescript
+import { ResponseCacheService } from 'honertia/effect'
+
+const cache = yield* ResponseCacheService
+yield* cache.purge({ tags: ['projects'] })
+```
+
+Outside a Workers runtime (tests, local tooling) the service reports
+`isAvailable: false` and purges no-op.
+
+> **Runtime status (July 2026):** cache headers and tags are pure HTTP and
+> work everywhere today. The *programmatic purge* API is still rolling out
+> to Workers runtimes — Honertia probes both documented surfaces
+> (`ctx.cache` and `cloudflare:workers`'s `cache` export) and no-ops with
+> `isAvailable: false` until your runtime exposes it. Check
+> `cache.isAvailable` if you depend on purges.
+
+## Data Caching (KV)
+
+Honertia provides a `CacheService` for caching expensive database operations. It's automatically provided and backed by Cloudflare KV by default, but can be swapped for Redis, Memcached, or any other implementation. This is the data cache *inside* your actions — it composes with the response cache above.
 
 ### Setup
 

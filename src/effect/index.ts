@@ -12,6 +12,7 @@ export {
   EmailService,
   HonertiaService,
   RequestService,
+  RequestStateService,
   ResponseFactoryService,
   BindingsService,
   CacheService,
@@ -22,6 +23,7 @@ export {
   type EmailClient,
   type HonertiaRenderer,
   type RequestContext,
+  type RequestStateClient,
   type ResponseFactory,
   type CacheClient,
   type ExecutionContextClient,
@@ -35,6 +37,16 @@ export {
   type AuthType,
   type BindingsType,
 } from './services.js'
+
+// Workers Cache integration
+export {
+  ResponseCacheService,
+  ResponseCachePurgeError,
+  deriveCacheTags,
+  type ResponseCacheClient,
+  type ResponseCachePurgeInput,
+  type RouteCacheOptions,
+} from './response-cache.js'
 
 // Errors
 export {

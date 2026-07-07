@@ -285,6 +285,36 @@ export class RequestService extends Context.Tag('honertia/Request')<
 >() {}
 
 /**
+ * Request State - request-scoped variables shared with Hono middleware
+ *
+ * Backed by Hono's context variables (c.set / c.var). Values an action sets
+ * are visible to wrapping Hono middleware after next() and to later reads in
+ * the same request; values middleware set before the route ran are readable
+ * inside the action.
+ *
+ * @example
+ * ```typescript
+ * // In the action: publish the verified key's environment
+ * const state = yield* RequestStateService
+ * state.set('apiKeyEnvironment', apiKey.environment)
+ *
+ * // In wrapping Hono middleware, after next():
+ * const environment = c.var.apiKeyEnvironment
+ * ```
+ */
+export interface RequestStateClient {
+  /** Read a request-scoped variable. Returns undefined when unset. */
+  get<T = unknown>(key: string): T | undefined
+  /** Write a request-scoped variable, visible via c.var to middleware. */
+  set(key: string, value: unknown): void
+}
+
+export class RequestStateService extends Context.Tag('honertia/RequestState')<
+  RequestStateService,
+  RequestStateClient
+>() {}
+
+/**
  * Response Factory - Create HTTP responses
  */
 export interface ResponseFactory {

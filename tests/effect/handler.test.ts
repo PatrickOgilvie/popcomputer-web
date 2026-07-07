@@ -8,6 +8,7 @@ import { Effect, Layer } from 'effect'
 import { effectHandler, effect, handle, errorToResponse } from '../../src/effect/handler.js'
 import { effectBridge, type EffectBridgeConfig } from '../../src/effect/bridge.js'
 import { honertia } from '../../src/middleware.js'
+import { honertiaServices } from '../../src/request-context.js'
 import {
   ValidationError,
   UnauthorizedError,
@@ -36,10 +37,7 @@ const createApp = (bridgeConfig?: EffectBridgeConfig<any, any>) => {
     })
   )
 
-  app.use('*', async (c, next) => {
-    c.set('db' as any, { name: 'test-db' })
-    await next()
-  })
+  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
 
   app.use('*', effectBridge(bridgeConfig))
 

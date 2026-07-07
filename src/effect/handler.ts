@@ -17,6 +17,7 @@ import {
   NotFoundError,
   HttpError,
   RouteConfigurationError,
+  HonertiaConfigurationError,
   Redirect,
   toStructuredError,
   type AppError,
@@ -33,6 +34,7 @@ import {
   observeEffectErrorEvent,
   type EffectErrorEvent,
 } from './error-observer.js'
+import { openHonertiaContext } from '../request-context.js'
 
 /**
  * Memoized formatter instances to avoid recreation on every error.
@@ -57,6 +59,7 @@ const memoizedFormatters = {
       includeSource: false,
       includeContext: false,
       includeFixes: true,
+      safeMessages: true,
     }),
   },
 }
@@ -119,14 +122,43 @@ function createFormatDetectionContext<E extends Env>(c: HonoContext<E>) {
 
 /**
  * Determine if we're in development mode.
+ *
+ * Development must be explicitly signalled via ENVIRONMENT or NODE_ENV.
+ * We deliberately do NOT treat the presence of Cloudflare's CF_PAGES_BRANCH
+ * as development: that variable is set on every Pages deployment including
+ * production, so keying off it would expose stack traces, source locations,
+ * and raw error messages to clients on production Pages sites. Pages preview
+ * environments that want verbose errors should set ENVIRONMENT=development.
  */
 function isDevelopment<E extends Env>(c: HonoContext<E>): boolean {
   const env = c.env as Record<string, unknown> | undefined
   return (
     env?.ENVIRONMENT === 'development' ||
-    env?.NODE_ENV === 'development' ||
-    env?.CF_PAGES_BRANCH !== undefined
+    env?.NODE_ENV === 'development'
   )
+}
+
+/**
+ * Classify Effect's missing-service defect for a known Honertia tag into the
+ * structured configuration error. Unconfigured services are not provided to
+ * the layer, so the first `yield*` of their tag dies here with
+ * "Service not found: <tagId> (...)". Returns null for any other defect.
+ */
+function classifyMissingService(defect: unknown): HonertiaConfigurationError | null {
+  if (!(defect instanceof Error)) return null
+  const prefix = 'Service not found: '
+  if (!defect.message.startsWith(prefix)) return null
+
+  // Exact tag id match ('honertia/Auth' must not also match 'honertia/AuthUser')
+  const tagId = defect.message.slice(prefix.length).split(' ')[0]
+  switch (tagId) {
+    case 'honertia/Database':
+      return HonertiaConfigurationError.databaseNotConfigured()
+    case 'honertia/Auth':
+      return HonertiaConfigurationError.authNotConfigured()
+    default:
+      return null
+  }
 }
 
 /**
@@ -194,15 +226,15 @@ export async function errorToResponse<E extends Env>(
     }
 
     // For Inertia requests with a component, render the component with errors
-    if (error.component && (c as any).var?.honertia) {
-      const honertia = (c as any).var.honertia
-      honertia.setErrors(error.errors)
-      return await honertia.render(error.component)
+    const honertiaInstance = openHonertiaContext(c).honertia
+    if (error.component && honertiaInstance) {
+      honertiaInstance.setErrors(error.errors)
+      return await honertiaInstance.render(error.component)
     }
 
     // Redirect back with errors
     const referer = c.req.header('Referer') || '/'
-    ;(c as any).var?.honertia?.setErrors(error.errors)
+    honertiaInstance?.setErrors(error.errors)
     return c.redirect(referer, 303)
   }
 
@@ -322,7 +354,9 @@ async function handleExit<E extends Env>(
   if (Cause.isDie(cause)) {
     const defect = Cause.dieOption(cause)
     if (defect._tag === 'Some') {
-      const err = defect.value
+      // A missing Honertia service is a configuration defect; translate it to
+      // the structured configuration error before the generic defect paths.
+      const err = classifyMissingService(defect.value) ?? defect.value
 
       // If the defect is already a structured error (like HonertiaConfigurationError),
       // convert it using its own toStructured method.

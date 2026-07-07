@@ -5,6 +5,7 @@
  */
 
 import { Effect, Schema as S, ParseResult } from 'effect'
+import type { ParseOptions } from 'effect/SchemaAST'
 import { RequestService } from './services.js'
 import { ValidationError } from './errors.js'
 import type { FieldError } from './error-types.js'
@@ -411,6 +412,16 @@ export interface ValidateOptions {
    * with merge order and conflict policy controls.
    */
   request?: RequestValidationConfig
+
+  /**
+   * Effect Schema ParseOptions passed to the decode call.
+   * Use `{ onExcessProperty: 'error' }` to reject request payloads that
+   * carry fields the schema does not declare (mass-assignment hardening).
+   *
+   * @example
+   * validateRequest(CreateProject, { parseOptions: { onExcessProperty: 'error' } })
+   */
+  parseOptions?: ParseOptions
 }
 
 /**
@@ -465,7 +476,7 @@ function runValidation<A, I>(
   data: unknown,
   options: ValidateOptions
 ): Effect.Effect<Validated<A>, ValidationError, never> {
-  return S.decodeUnknown(schema)(data).pipe(
+  return S.decodeUnknown(schema, options.parseOptions)(data).pipe(
     Effect.mapError((error) => {
       const { errors, details } = formatSchemaErrorsWithDetails(
         error,
