@@ -49,10 +49,56 @@ export function getClientSafeMessage(
   isDev: boolean
 ): string {
   if (isDev) return error.message
-  if (SENSITIVE_MESSAGE_CATEGORIES.has(error.category)) {
+  if (
+    error.httpStatus >= 500 ||
+    SENSITIVE_MESSAGE_CATEGORIES.has(error.category)
+  ) {
     return SAFE_GENERIC_MESSAGE
   }
   return error.message
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * Project validation details onto the client protocol without echoing the
+ * rejected values. Those values can contain passwords, tokens, or other
+ * request data even though the validation messages themselves are safe.
+ */
+function projectValidationExtension(value: unknown): object | undefined {
+  if (!isRecord(value) || !isRecord(value.fields)) {
+    return undefined
+  }
+
+  const fields: Record<string, Record<string, unknown>> = {}
+
+  for (const [name, field] of Object.entries(value.fields)) {
+    if (!isRecord(field)) continue
+
+    const projected: Record<string, unknown> = {}
+    if (typeof field.expected === 'string') projected.expected = field.expected
+    if (typeof field.message === 'string') projected.message = field.message
+    if (
+      Array.isArray(field.path) &&
+      field.path.every((segment) => typeof segment === 'string')
+    ) {
+      projected.path = field.path
+    }
+    if (typeof field.schemaType === 'string') {
+      projected.schemaType = field.schemaType
+    }
+
+    fields[name] = projected
+  }
+
+  return {
+    fields,
+    ...(typeof value.component === 'string'
+      ? { component: value.component }
+      : {}),
+  }
 }
 
 /**
@@ -70,9 +116,9 @@ export interface JsonFormatterOptions {
   /** Include documentation links */
   includeDocs?: boolean
   /**
-   * Replace messages for sensitive error categories (internal, database,
-   * configuration, service) with a generic string. Enable in production so
-   * raw exception text never reaches API/JSON clients.
+   * Emit the client-safe production projection: replace server-error messages,
+   * omit server-error bodies and unknown extensions, and remove rejected
+   * values from validation details.
    * @default false
    */
   safeMessages?: boolean
@@ -125,14 +171,28 @@ export class JsonErrorFormatter implements ErrorFormatter {
       output.fixes = error.fixes
     }
 
-    // Include extended properties (validation, configuration, binding, etc.)
-    const baseKeys = new Set([
-      'code', 'tag', 'category', 'title', 'message', 'httpStatus',
-      'timestamp', 'requestId', 'source', 'context', 'fixes', 'docs'
-    ])
-    for (const key of Object.keys(errorObj)) {
-      if (!baseKeys.has(key)) {
-        output[key] = errorObj[key]
+    if (this.options.safeMessages) {
+      const validation = projectValidationExtension(errorObj.validation)
+      if (validation) {
+        output.validation = validation
+      }
+
+      // HttpError.body is an intentional client payload for 4xx responses.
+      // Never forward it for 5xx responses, where arbitrary internals may have
+      // been attached by a caller.
+      if (error.httpStatus < 500 && errorObj.body !== undefined) {
+        output.body = errorObj.body
+      }
+    } else {
+      // Development formatters retain every extension for diagnosis.
+      const baseKeys = new Set([
+        'code', 'tag', 'category', 'title', 'message', 'httpStatus',
+        'timestamp', 'requestId', 'source', 'context', 'fixes', 'docs'
+      ])
+      for (const key of Object.keys(errorObj)) {
+        if (!baseKeys.has(key)) {
+          output[key] = errorObj[key]
+        }
       }
     }
 

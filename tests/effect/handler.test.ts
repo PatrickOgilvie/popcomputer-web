@@ -208,6 +208,41 @@ describe('Error Handling', () => {
       expect(json.validation.fields.email.message).toBe('Invalid')
     })
 
+    test('does not echo rejected input values in production JSON', async () => {
+      const app = createApp()
+
+      app.post(
+        '/',
+        effectHandler(
+          Effect.fail(
+            new ValidationError({
+              errors: { password: 'Password is too short' },
+              fieldDetails: {
+                password: {
+                  value: 'secret-password',
+                  expected: 'at least 12 characters',
+                  message: 'Password is too short',
+                  path: ['password'],
+                },
+              },
+            })
+          )
+        )
+      )
+
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      })
+
+      expect(res.status).toBe(422)
+      const body = await res.text()
+      expect(body).not.toContain('secret-password')
+      expect(JSON.parse(body).validation.fields.password.message).toBe(
+        'Password is too short'
+      )
+    })
+
     test('renders component with errors for Inertia requests', async () => {
       const app = createApp()
 
@@ -396,6 +431,33 @@ describe('Error Handling', () => {
       expect(json.message).toBe('Bad request')
       // Body is now in structured format under 'body' property
       expect(json.body.retryAfter).toBe(60)
+    })
+
+    test('redacts message and body for 5xx JSON responses', async () => {
+      const app = createApp()
+
+      app.get(
+        '/',
+        effectHandler(
+          Effect.fail(
+            new HttpError({
+              status: 500,
+              message: 'db://user:secret@host',
+              body: { connection: 'db://user:secret@host' },
+            })
+          )
+        )
+      )
+
+      const res = await app.request('/', {
+        headers: { Accept: 'application/json' },
+      })
+
+      expect(res.status).toBe(500)
+      const json = await res.json()
+      expect(json.message).toBe('An error occurred. Please try again later.')
+      expect(json.body).toBeUndefined()
+      expect(JSON.stringify(json)).not.toContain('secret')
     })
   })
 

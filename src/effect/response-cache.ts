@@ -31,6 +31,116 @@ export interface RouteCacheOptions {
   tags?: readonly string[]
 }
 
+const MAX_CACHE_TAG_LENGTH = 1024
+const MAX_CACHE_TAG_COUNT = 1000
+const MAX_CACHE_TAG_HEADER_LENGTH = 16 * 1024
+const MAX_CACHE_PURGE_TAG_COUNT = 100
+
+export type PreparedCacheTags =
+  | { readonly _tag: 'valid'; readonly tags: readonly string[] }
+  | { readonly _tag: 'invalid'; readonly reason: string }
+
+/**
+ * Convert tags to Cloudflare's printable-ASCII wire format. Valid tag
+ * characters remain unchanged; whitespace, Unicode, control characters, and
+ * commas are percent-encoded so reads and purges use the same stable value.
+ */
+function prepareCacheTagsWithLimits(
+  tags: readonly string[],
+  limits: {
+    readonly maxCount: number
+    readonly maxAggregateLength?: number
+  }
+): PreparedCacheTags {
+  const prepared: string[] = []
+  const identities = new Set<string>()
+
+  for (const [index, tag] of tags.entries()) {
+    if (typeof tag !== 'string' || tag.length === 0) {
+      return {
+        _tag: 'invalid',
+        reason: `cache tag at index ${index} must be a non-empty string`,
+      }
+    }
+
+    let encoded = ''
+    for (const character of tag) {
+      const codePoint = character.codePointAt(0)
+      if (
+        codePoint !== undefined &&
+        codePoint >= 0x21 &&
+        codePoint <= 0x7e &&
+        character !== ','
+      ) {
+        encoded += character
+        continue
+      }
+
+      try {
+        encoded += encodeURIComponent(character)
+      } catch {
+        return {
+          _tag: 'invalid',
+          reason: `cache tag at index ${index} contains invalid Unicode`,
+        }
+      }
+    }
+
+    if (encoded.length > MAX_CACHE_TAG_LENGTH) {
+      return {
+        _tag: 'invalid',
+        reason:
+          `cache tag at index ${index} exceeds Cloudflare's ` +
+          `${MAX_CACHE_TAG_LENGTH}-character limit after encoding`,
+      }
+    }
+
+    const identity = encoded.toLowerCase()
+    if (!identities.has(identity)) {
+      identities.add(identity)
+      prepared.push(encoded)
+    }
+  }
+
+  if (prepared.length > limits.maxCount) {
+    return {
+      _tag: 'invalid',
+      reason: `cache tag count exceeds Cloudflare's ${limits.maxCount}-tag limit`,
+    }
+  }
+
+  if (
+    limits.maxAggregateLength !== undefined &&
+    prepared.join(',').length > limits.maxAggregateLength
+  ) {
+    return {
+      _tag: 'invalid',
+      reason:
+        `Cache-Tag header exceeds Cloudflare's ` +
+        `${limits.maxAggregateLength}-character aggregate limit`,
+    }
+  }
+
+  return { _tag: 'valid', tags: prepared }
+}
+
+export function prepareCacheTags(
+  tags: readonly string[]
+): PreparedCacheTags {
+  return prepareCacheTagsWithLimits(tags, {
+    maxCount: MAX_CACHE_TAG_COUNT,
+    maxAggregateLength: MAX_CACHE_TAG_HEADER_LENGTH,
+  })
+}
+
+export function prepareCachePurgeTags(
+  tags: readonly string[]
+): PreparedCacheTags {
+  return prepareCacheTagsWithLimits(tags, {
+    maxCount: MAX_CACHE_PURGE_TAG_COUNT,
+  })
+}
+
 /**
  * Derive Cache-Tag values from a route's resolved bindings: one
  * `{param}:{value}` tag per bound model (value = the binding's lookup
@@ -158,9 +268,20 @@ export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision 
     Vary: HEADERS.HONERTIA,
   }
 
-  const tags = [...input.derivedTags, ...(input.options.tags ?? [])]
-  if (tags.length > 0) {
-    headers['Cache-Tag'] = tags.join(',')
+  const preparedTags = prepareCacheTags([
+    ...input.derivedTags,
+    ...(input.options.tags ?? []),
+  ])
+  if (preparedTags._tag === 'invalid') {
+    return {
+      _tag: 'skip',
+      warning:
+        `has an invalid Cache-Tag configuration (${preparedTags.reason}); ` +
+        'public caching is disabled for it.',
+    }
+  }
+  if (preparedTags.tags.length > 0) {
+    headers['Cache-Tag'] = preparedTags.tags.join(',')
   }
 
   return { _tag: 'apply', headers }
@@ -317,6 +438,52 @@ export interface WorkersCachePurgeApi {
   purge(input: { tags?: string[]; purgeEverything?: boolean }): Promise<unknown>
 }
 
+interface WorkersCachePurgeFailure {
+  readonly code?: number
+  readonly message?: string
+}
+
+type WorkersCachePurgeResult =
+  | { readonly _tag: 'accepted' }
+  | {
+      readonly _tag: 'rejected'
+      readonly errors: readonly WorkersCachePurgeFailure[]
+    }
+  | { readonly _tag: 'invalid' }
+
+function parseWorkersCachePurgeResult(value: unknown): WorkersCachePurgeResult {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return { _tag: 'invalid' }
+  }
+
+  const result = value as Record<string, unknown>
+  if (typeof result.success !== 'boolean') {
+    return { _tag: 'invalid' }
+  }
+  if (result.success) {
+    return { _tag: 'accepted' }
+  }
+
+  const errors = Array.isArray(result.errors)
+    ? result.errors.flatMap((error): WorkersCachePurgeFailure[] => {
+        if (error === null || typeof error !== 'object' || Array.isArray(error)) {
+          return []
+        }
+        const candidate = error as Record<string, unknown>
+        return [{
+          ...(typeof candidate.code === 'number'
+            ? { code: candidate.code }
+            : {}),
+          ...(typeof candidate.message === 'string'
+            ? { message: candidate.message }
+            : {}),
+        }]
+      })
+    : []
+
+  return { _tag: 'rejected', errors }
+}
+
 /** Memoized once per isolate: the cloudflare:workers module never changes. */
 let workersModuleCacheProbe: Promise<WorkersCachePurgeApi | null> | undefined
 
@@ -364,16 +531,53 @@ export function createWorkersResponseCacheClient(
 ): ResponseCacheClient {
   return {
     isAvailable: true,
-    purge: (input) =>
-      Effect.tryPromise({
+    purge: (input) => {
+      const preparedTags = input.everything
+        ? { _tag: 'valid' as const, tags: [] as readonly string[] }
+        : prepareCachePurgeTags(input.tags ?? [])
+
+      if (preparedTags._tag === 'invalid') {
+        return Effect.fail(
+          new ResponseCachePurgeError({
+            input,
+            cause: {
+              _tag: 'InvalidCacheTags',
+              reason: preparedTags.reason,
+            },
+          })
+        )
+      }
+
+      return Effect.tryPromise({
         try: () =>
           cache.purge(
             input.everything
               ? { purgeEverything: true }
-              : { tags: [...(input.tags ?? [])] }
+              : { tags: [...preparedTags.tags] }
           ),
         catch: (cause) => new ResponseCachePurgeError({ input, cause }),
-      }).pipe(Effect.asVoid),
+      }).pipe(
+        Effect.flatMap((result) => {
+          const parsed = parseWorkersCachePurgeResult(result)
+          if (parsed._tag === 'accepted') {
+            return Effect.void
+          }
+
+          return Effect.fail(
+            new ResponseCachePurgeError({
+              input,
+              cause:
+                parsed._tag === 'rejected'
+                  ? {
+                      _tag: 'WorkersCachePurgeRejected',
+                      errors: parsed.errors,
+                    }
+                  : { _tag: 'InvalidWorkersCachePurgeResult' },
+            })
+          )
+        })
+      )
+    },
   }
 }
 

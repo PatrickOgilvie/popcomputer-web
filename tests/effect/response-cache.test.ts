@@ -15,6 +15,8 @@ import { effectRoutes } from '../../src/effect/routing.js'
 import { honertia } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import {
+  createWorkersResponseCacheClient,
+  ResponseCachePurgeError,
   ResponseCacheService,
   type ResponseCachePurgeInput,
 } from '../../src/effect/response-cache.js'
@@ -365,6 +367,42 @@ describe('cache route option', () => {
     expect(res.headers.get('Cache-Tag')).toBe('workspace:ws-1,workspaces,marketing')
   })
 
+  test('percent-encodes Cache-Tag characters Cloudflare cannot represent', async () => {
+    const app = createApp()
+
+    effectRoutes(app).get('/tagged', Effect.succeed(new Response('tagged')), {
+      cache: {
+        maxAge: 300,
+        tags: ['post:hello world', 'post:日本語', 'post:a,b'],
+      },
+    })
+
+    const res = await app.request('/tagged')
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Tag')).toBe(
+      'post:hello%20world,post:%E6%97%A5%E6%9C%AC%E8%AA%9E,post:a%2Cb'
+    )
+  })
+
+  test('does not cache when the aggregate Cache-Tag header exceeds 16 KB', async () => {
+    const app = createApp()
+    const tags = Array.from(
+      { length: 17 },
+      (_, index) => `${index.toString().padStart(2, '0')}${'x'.repeat(1022)}`
+    )
+
+    effectRoutes(app).get('/too-many-tag-bytes', Effect.succeed(new Response('tagged')), {
+      cache: { maxAge: 300, tags },
+    })
+
+    const res = await app.request('/too-many-tag-bytes')
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toBeNull()
+    expect(res.headers.get('Cache-Tag')).toBeNull()
+  })
+
   test('routes without the cache option are untouched', async () => {
     const app = createApp()
 
@@ -430,6 +468,31 @@ describe('purges route option', () => {
 
     expect(res.status).toBe(200)
     expect(purges).toEqual([{ tags: ['marketing', 'pricing'] }])
+  })
+
+  test('static purge tags use the same encoding as response tags', async () => {
+    const { purges, layer } = recordingCacheLayer()
+
+    const app = new Hono()
+    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', effectBridge())
+
+    effectRoutes(app, { services: () => layer }).post(
+      '/refresh',
+      Effect.succeed(new Response('ok')),
+      { purges: ['post:hello world', 'post:日本語', 'post:a,b'] }
+    )
+
+    const res = await app.request('/refresh', { method: 'POST' })
+
+    expect(res.status).toBe(200)
+    expect(purges).toEqual([{
+      tags: [
+        'post:hello%20world',
+        'post:%E6%97%A5%E6%9C%AC%E8%AA%9E',
+        'post:a%2Cb',
+      ],
+    }])
   })
 
   test('failed validation does not purge', async () => {
@@ -499,5 +562,101 @@ describe('ResponseCacheService default client', () => {
     const res = await app.request('/cache-status')
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ available: false })
+  })
+})
+
+describe('Workers ResponseCacheClient', () => {
+  test('succeeds only when Workers Cache confirms the purge', async () => {
+    const calls: Array<{ tags?: string[]; purgeEverything?: boolean }> = []
+    const client = createWorkersResponseCacheClient({
+      purge: async (input) => {
+        calls.push(input)
+        return { success: true, errors: [] }
+      },
+    })
+
+    await Effect.runPromise(
+      client.purge({ tags: ['post:hello world', 'post:日本語', 'post:a,b'] })
+    )
+
+    expect(calls).toEqual([{
+      tags: [
+        'post:hello%20world',
+        'post:%E6%97%A5%E6%9C%AC%E8%AA%9E',
+        'post:a%2Cb',
+      ],
+    }])
+  })
+
+  test('fails when Workers Cache resolves with success false', async () => {
+    const client = createWorkersResponseCacheClient({
+      purge: async () => ({
+        success: false,
+        errors: [{ code: 10000, message: 'rate limited' }],
+      }),
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(client.purge({ tags: ['posts'] }))
+    )
+
+    expect(error).toBeInstanceOf(ResponseCachePurgeError)
+    expect(error.cause).toEqual({
+      _tag: 'WorkersCachePurgeRejected',
+      errors: [{ code: 10000, message: 'rate limited' }],
+    })
+  })
+
+  test('fails when Workers Cache returns a malformed result', async () => {
+    const client = createWorkersResponseCacheClient({
+      purge: async () => undefined,
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(client.purge({ tags: ['posts'] }))
+    )
+
+    expect(error).toBeInstanceOf(ResponseCachePurgeError)
+    expect(error.cause).toEqual({ _tag: 'InvalidWorkersCachePurgeResult' })
+  })
+
+  test('rejects overlong tags before calling Workers Cache', async () => {
+    let calls = 0
+    const client = createWorkersResponseCacheClient({
+      purge: async () => {
+        calls++
+        return { success: true }
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(client.purge({ tags: ['x'.repeat(1025)] }))
+    )
+
+    expect(error).toBeInstanceOf(ResponseCachePurgeError)
+    expect(error.cause).toMatchObject({ _tag: 'InvalidCacheTags' })
+    expect(calls).toBe(0)
+  })
+
+  test('rejects more than 100 purge tags before calling Workers Cache', async () => {
+    let calls = 0
+    const client = createWorkersResponseCacheClient({
+      purge: async () => {
+        calls++
+        return { success: true }
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        client.purge({
+          tags: Array.from({ length: 101 }, (_, index) => `tag-${index}`),
+        })
+      )
+    )
+
+    expect(error).toBeInstanceOf(ResponseCachePurgeError)
+    expect(error.cause).toMatchObject({ _tag: 'InvalidCacheTags' })
+    expect(calls).toBe(0)
   })
 })

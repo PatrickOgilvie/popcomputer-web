@@ -49,7 +49,35 @@ const membershipsRelations = relations(memberships, ({ one }) => ({
   }),
 }))
 
-const schema = { workspaces, apiKeys, memberships, membershipsRelations }
+const parents = sqliteTable('parents', {
+  tenantId: text('tenant_id').notNull(),
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+})
+
+const childs = sqliteTable('childs', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id').notNull(),
+  parentId: text('parent_id').notNull(),
+  name: text('name').notNull(),
+})
+
+const childsRelations = relations(childs, ({ one }) => ({
+  parent: one(parents, {
+    fields: [childs.tenantId, childs.parentId],
+    references: [parents.tenantId, parents.id],
+  }),
+}))
+
+const schema = {
+  workspaces,
+  apiKeys,
+  memberships,
+  membershipsRelations,
+  parents,
+  childs,
+  childsRelations,
+}
 
 function createTestDb() {
   const sqlite = new Database(':memory:')
@@ -59,6 +87,12 @@ function createTestDb() {
   )
   sqlite.run(
     `CREATE TABLE memberships (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, role TEXT NOT NULL)`
+  )
+  sqlite.run(
+    `CREATE TABLE parents (tenant_id TEXT NOT NULL, id TEXT PRIMARY KEY, name TEXT NOT NULL)`
+  )
+  sqlite.run(
+    `CREATE TABLE childs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, parent_id TEXT NOT NULL, name TEXT NOT NULL)`
   )
 
   const db = drizzle(sqlite, { schema })
@@ -74,6 +108,24 @@ function createTestDb() {
   db.insert(memberships).values([
     { id: 'mem-1', workspaceId: 'ws-1', role: 'admin' },
     { id: 'mem-2', workspaceId: 'ws-2', role: 'member' },
+  ]).run()
+  db.insert(parents).values([
+    { tenantId: 'tenant-1', id: 'parent-1', name: 'First parent' },
+    { tenantId: 'tenant-1', id: 'parent-2', name: 'Second parent' },
+  ]).run()
+  db.insert(childs).values([
+    {
+      id: 'child-1',
+      tenantId: 'tenant-1',
+      parentId: 'parent-1',
+      name: 'First child',
+    },
+    {
+      id: 'child-2',
+      tenantId: 'tenant-1',
+      parentId: 'parent-2',
+      name: 'Second child',
+    },
   ]).run()
 
   return db
@@ -102,6 +154,14 @@ function createApp() {
     Effect.gen(function* () {
       const membership = yield* bound('membership')
       return Response.json(membership)
+    })
+  )
+
+  routes.get(
+    '/parents/{parent}/childs/{child}',
+    Effect.gen(function* () {
+      const child = yield* bound('child')
+      return Response.json(child)
     })
   )
 
@@ -151,19 +211,57 @@ describe('nested binding scoping', () => {
       })
     })
   })
+
+  describe('composite FK discovered from relations() definitions', () => {
+    test('child matching only the first relation column returns 404', async () => {
+      const app = createApp()
+
+      // Both parents share tenant-1. Scoping by tenantId alone would resolve
+      // child-2 under parent-1 even though parentId points to parent-2.
+      const res = await app.request('/parents/parent-1/childs/child-2')
+      expect(res.status).toBe(404)
+    })
+
+    test('child matching every relation column resolves', async () => {
+      const app = createApp()
+
+      const res = await app.request('/parents/parent-1/childs/child-1')
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({
+        id: 'child-1',
+        tenantId: 'tenant-1',
+        parentId: 'parent-1',
+      })
+    })
+  })
 })
 
 describe('findRelation', () => {
   test('discovers FK from .references() metadata using JS property keys', async () => {
     const relation = await findRelation(schema, 'apiKeys', 'workspaces')
 
-    expect(relation).toEqual({ foreignKey: 'workspaceId', references: 'id' })
+    expect(relation).toEqual({
+      columnPairs: [{ foreignKey: 'workspaceId', references: 'id' }],
+    })
   })
 
   test('discovers FK from relations() definitions using JS property keys', async () => {
     const relation = await findRelation(schema, 'memberships', 'workspaces')
 
-    expect(relation).toEqual({ foreignKey: 'workspaceId', references: 'id' })
+    expect(relation).toEqual({
+      columnPairs: [{ foreignKey: 'workspaceId', references: 'id' }],
+    })
+  })
+
+  test('returns every column in a composite relation', async () => {
+    const relation = await findRelation(schema, 'childs', 'parents')
+
+    expect(relation).toEqual({
+      columnPairs: [
+        { foreignKey: 'tenantId', references: 'tenantId' },
+        { foreignKey: 'parentId', references: 'id' },
+      ],
+    })
   })
 
   test('returns null when no relation links the tables', async () => {

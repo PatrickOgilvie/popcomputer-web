@@ -27,6 +27,9 @@ import {
   deriveCacheTags,
   hasSessionCookie,
   isPartialReloadRequest,
+  prepareCachePurgeTags,
+  prepareCacheTags,
+  ResponseCachePurgeError,
   ResponseCacheService,
   type RouteCacheOptions,
 } from './response-cache.js'
@@ -421,20 +424,33 @@ export class EffectRouteBuilder<
         const relation = await findRelation(schema, tableName, parent.tableName)
         let scoped = false
         if (relation) {
-          const foreignKeyColumn = table[relation.foreignKey]
-          const parentReferenceValue = parent.model[relation.references]
-          if (
-            foreignKeyColumn &&
-            parentReferenceValue !== undefined &&
-            parentReferenceValue !== null
-          ) {
-            whereCondition = and(
-              whereCondition as Parameters<typeof and>[0],
+          const conditions: Parameters<typeof and> = [
+            whereCondition as Parameters<typeof and>[number],
+          ]
+          let completeRelation = true
+
+          for (const pair of relation.columnPairs) {
+            const foreignKeyColumn = table[pair.foreignKey]
+            const parentReferenceValue = parent.model[pair.references]
+            if (
+              !foreignKeyColumn ||
+              parentReferenceValue === undefined ||
+              parentReferenceValue === null
+            ) {
+              completeRelation = false
+              break
+            }
+
+            conditions.push(
               eq(
                 foreignKeyColumn as Parameters<typeof eq>[0],
                 parentReferenceValue
-              ) as Parameters<typeof and>[1]
+              ) as Parameters<typeof and>[number]
             )
+          }
+
+          if (completeRelation) {
+            whereCondition = and(...conditions)
             scoped = true
           }
         }
@@ -607,8 +623,21 @@ export class EffectRouteBuilder<
               purges === true ? deriveCacheTags(bindings, boundModels) : purges
             if (tags.length === 0) return Effect.void
 
+            const preparedTags = prepareCachePurgeTags(tags)
+            if (preparedTags._tag === 'invalid') {
+              return Effect.fail(
+                new ResponseCachePurgeError({
+                  input: { tags },
+                  cause: {
+                    _tag: 'InvalidCacheTags',
+                    reason: preparedTags.reason,
+                  },
+                })
+              )
+            }
+
             return Effect.flatMap(ResponseCacheService, (cache) =>
-              cache.purge({ tags })
+              cache.purge({ tags: preparedTags.tags })
             )
           })
         )

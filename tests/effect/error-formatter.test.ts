@@ -14,6 +14,7 @@ import {
   detectOutputFormat,
 } from '../../src/effect/error-formatter.js'
 import { createStructuredError, ErrorCodes } from '../../src/effect/error-catalog.js'
+import { HttpError, ValidationError } from '../../src/effect/errors.js'
 
 const SAFE_GENERIC = 'An error occurred. Please try again later.'
 
@@ -44,6 +45,12 @@ describe('getClientSafeMessage', () => {
     const error = validationError()
     expect(getClientSafeMessage(error, false)).toBe(error.message)
   })
+
+  test('scrubs all 5xx messages regardless of category', () => {
+    const error = HttpError.internal('db://user:secret@host').toStructured()
+    expect(error.category).toBe('http')
+    expect(getClientSafeMessage(error, false)).toBe(SAFE_GENERIC)
+  })
 })
 
 describe('JsonErrorFormatter safeMessages', () => {
@@ -68,6 +75,65 @@ describe('JsonErrorFormatter safeMessages', () => {
       error
     ) as Record<string, unknown>
     expect(out.message).toBe(error.message)
+  })
+
+  test('omits rejected values from production validation details', () => {
+    const error = new ValidationError({
+      errors: { password: 'Password is too short' },
+      fieldDetails: {
+        password: {
+          value: 'secret-password',
+          expected: 'at least 12 characters',
+          message: 'Password is too short',
+          path: ['password'],
+        },
+      },
+    }).toStructured()
+
+    const out = new JsonErrorFormatter({ safeMessages: true }).format(error)
+    expect(JSON.stringify(out)).not.toContain('secret-password')
+    expect(out).toMatchObject({
+      validation: {
+        fields: {
+          password: {
+            expected: 'at least 12 characters',
+            message: 'Password is too short',
+            path: ['password'],
+          },
+        },
+      },
+    })
+  })
+
+  test('omits arbitrary bodies from production 5xx errors', () => {
+    const error = new HttpError({
+      status: 500,
+      message: 'db://user:secret@host',
+      body: { connection: 'db://user:secret@host' },
+    }).toStructured()
+
+    const out = new JsonErrorFormatter({ safeMessages: true }).format(
+      error
+    ) as Record<string, unknown>
+
+    expect(out.message).toBe(SAFE_GENERIC)
+    expect(out.body).toBeUndefined()
+    expect(JSON.stringify(out)).not.toContain('secret')
+  })
+
+  test('retains full extensions in development', () => {
+    const error = new HttpError({
+      status: 500,
+      message: 'diagnostic detail',
+      body: { trace: 'full detail' },
+    }).toStructured()
+
+    const out = new JsonErrorFormatter({ safeMessages: false }).format(
+      error
+    ) as Record<string, unknown>
+
+    expect(out.message).toBe('diagnostic detail')
+    expect(out.body).toEqual({ trace: 'full detail' })
   })
 })
 

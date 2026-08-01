@@ -178,11 +178,16 @@ export function pluralize(word: string): string {
  * names (e.g., 'workspace_id'), so they can index Drizzle table objects and
  * query result rows directly.
  */
-export interface RelationInfo {
+export interface RelationColumnPair {
   /** Foreign key property key on the child table (e.g., 'workspaceId') */
   foreignKey: string
   /** Referenced property key on the parent table (e.g., 'id') */
   references: string
+}
+
+export interface RelationInfo {
+  /** Every child/parent column pair that defines the relation. */
+  columnPairs: readonly RelationColumnPair[]
 }
 
 /**
@@ -227,12 +232,25 @@ export async function findRelation(
   }
 
   const toRelationInfo = (
-    childColumn: unknown,
-    parentColumn: unknown
+    childColumns: readonly unknown[],
+    parentColumns: readonly unknown[]
   ): RelationInfo | null => {
-    const foreignKey = jsKeyOf(childTable, childColumn)
-    const references = jsKeyOf(parentTable, parentColumn)
-    return foreignKey && references ? { foreignKey, references } : null
+    if (
+      childColumns.length === 0 ||
+      childColumns.length !== parentColumns.length
+    ) {
+      return null
+    }
+
+    const columnPairs: RelationColumnPair[] = []
+    for (let index = 0; index < childColumns.length; index++) {
+      const foreignKey = jsKeyOf(childTable, childColumns[index])
+      const references = jsKeyOf(parentTable, parentColumns[index])
+      if (!foreignKey || !references) return null
+      columnPairs.push({ foreignKey, references })
+    }
+
+    return { columnPairs }
   }
 
   // 1. Inline foreign keys declared with .references() on the child table.
@@ -251,7 +269,7 @@ export async function findRelation(
           foreignColumns: unknown[]
         }
         if (reference.foreignTable !== parentTable) continue
-        const info = toRelationInfo(reference.columns[0], reference.foreignColumns[0])
+        const info = toRelationInfo(reference.columns, reference.foreignColumns)
         if (info) return info
       }
     }
@@ -277,7 +295,7 @@ export async function findRelation(
         const fields = relation.config?.fields
         const references = relation.config?.references
         if (!fields?.length || !references?.length) continue
-        const info = toRelationInfo(fields[0], references[0])
+        const info = toRelationInfo(fields, references)
         if (info) return info
       }
     } catch {
