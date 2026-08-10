@@ -14,7 +14,7 @@ import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { relations } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { Effect } from 'effect'
+import { Effect, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { honertia } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
@@ -79,6 +79,19 @@ const schema = {
   childsRelations,
 }
 
+const bindings = {
+  workspace: S.Struct({ id: S.String, slug: S.String }),
+  apiKey: S.Struct({ id: S.String, workspaceId: S.String, label: S.String }),
+  membership: S.Struct({ id: S.String, workspaceId: S.String, role: S.String }),
+  parent: S.Struct({ tenantId: S.String, id: S.String, name: S.String }),
+  child: S.Struct({
+    id: S.String,
+    tenantId: S.String,
+    parentId: S.String,
+    name: S.String,
+  }),
+}
+
 function createTestDb() {
   const sqlite = new Database(':memory:')
   sqlite.run(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, slug TEXT NOT NULL)`)
@@ -137,9 +150,9 @@ function createApp() {
 
   app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
   app.use('*', honertiaServices(() => ({ db: db as never })))
-  app.use('*', effectBridge({ schema }))
+  app.use('*', effectBridge({ schema, bindings }))
 
-  const routes = effectRoutes(app, { schema })
+  const routes = effectRoutes(app, { schema, bindings })
 
   routes.get(
     '/workspaces/{workspace}/api-keys/{apiKey}',

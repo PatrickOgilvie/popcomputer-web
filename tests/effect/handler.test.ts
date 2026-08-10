@@ -14,6 +14,7 @@ import {
   UnauthorizedError,
   NotFoundError,
   ForbiddenError,
+  AuthRateLimitError,
   HttpError,
   Redirect,
 } from '../../src/effect/errors.js'
@@ -180,6 +181,37 @@ describe('handle alias', () => {
 })
 
 describe('Error Handling', () => {
+  describe('AuthRateLimitError', () => {
+    test('returns 429 with standard retry guidance', async () => {
+      const app = createApp()
+
+      app.post(
+        '/',
+        effectHandler(
+          Effect.fail(
+            new AuthRateLimitError({
+              retryAfterSeconds: 37,
+              cause: new Error('provider rate limit'),
+            })
+          )
+        )
+      )
+
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      })
+
+      expect(res.status).toBe(429)
+      expect(res.headers.get('Retry-After')).toBe('37')
+      expect(await res.json()).toMatchObject({
+        code: 'HON_AUTH_104_RATE_LIMITED',
+        tag: 'AuthRateLimitError',
+        body: { retryAfter: 37 },
+      })
+    })
+  })
+
   describe('ValidationError', () => {
     test('returns JSON 422 for JSON requests', async () => {
       const app = createApp()

@@ -1,14 +1,9 @@
-/**
- * Honertia Test Utilities
- * 
- * Shared utilities for testing Honertia middleware and components.
- * Inspired by Inertia.js test patterns.
- */
+/** Shared utilities for testing @popcomputer/web applications. */
 
 import { Hono } from 'hono'
-import { honertia, HEADERS } from './middleware.js'
+import { web, HEADERS } from './middleware.js'
 import { serializePage } from './helpers.js'
-import type { PageObject, HonertiaConfig } from './types.js'
+import type { PageObject } from './types.js'
 
 // =============================================================================
 // Types
@@ -37,7 +32,7 @@ export interface InertiaRequestOptions extends TestRequestOptions {
 // =============================================================================
 
 /**
- * Creates a test Hono app with honertia middleware configured
+ * Creates a test Hono app with the page middleware configured.
  */
 export function createTestApp(options: TestAppOptions = {}) {
   const {
@@ -50,7 +45,7 @@ export function createTestApp(options: TestAppOptions = {}) {
 
   app.use(
     '*',
-    honertia({
+    web({
       version,
       render,
     })

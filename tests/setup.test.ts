@@ -9,16 +9,18 @@
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { Effect } from 'effect'
-import { setupHonertia, registerErrorHandlers } from '../src/setup.js'
+import { Effect, Schema as S } from 'effect'
+import { setupWeb, setupHonertia, registerErrorHandlers } from '../src/setup.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import {
   DatabaseService,
   AuthService,
   AuthUserService,
+  PageService,
   HonertiaService,
 } from '../src/effect/services.js'
-import { bound } from '../src/effect/binding.js'
+import { bound, routeBinding } from '../src/effect/binding.js'
+import { NotFoundError } from '../src/effect/errors.js'
 
 // =============================================================================
 // Test Types
@@ -32,11 +34,81 @@ type TestEnv = {
   }
 }
 
+describe('setupWeb', () => {
+  test('composes a flat config and exposes the canonical rendering APIs', async () => {
+    const app = new Hono<TestEnv>()
+    const application = setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => ({ name: 'test-db' }),
+    })
+
+    app.get('/plain', (c) => c.var.web.render('Plain', { source: 'hono' }))
+    effectRoutes(app).get(
+      '/effect',
+      Effect.gen(function* () {
+        const page = yield* PageService
+        return yield* Effect.promise(() => page.render('Effect', { source: 'effect' }))
+      })
+    )
+
+    expect(application.app).toBe(app)
+
+    const plain = await app.request('/plain', {
+      headers: { 'X-Inertia': 'true' },
+    })
+    expect((await plain.json()).component).toBe('Plain')
+
+    const effect = await app.request('/effect', {
+      headers: { 'X-Inertia': 'true' },
+    })
+    expect((await effect.json()).component).toBe('Effect')
+  })
+})
+
 // =============================================================================
 // Basic setupHonertia Configuration Tests
 // =============================================================================
 
 describe('setupHonertia basic configuration', () => {
+  test('configures middleware, errors, and app-owned routes in one call', async () => {
+    const app = new Hono<TestEnv>()
+    const configured = setupHonertia(app, {
+      honertia: {
+        version: '1.0.0',
+        render: (page) => JSON.stringify(page),
+      },
+      errors: { component: 'Problem' },
+    })
+
+    effectRoutes(app).get('/healthy', Effect.succeed(new Response('OK')), {
+      name: 'health.show',
+    })
+    effectRoutes(app).get(
+      '/failed',
+      Effect.fail(new NotFoundError({ resource: 'project', id: 'missing' }))
+    )
+
+    expect(configured.app).toBe(app)
+    expect(configured.routes.findByName('health.show')?.path).toBe('/healthy')
+
+    const missing = await app.request('/missing', undefined, {
+      DATABASE_URL: 'unused',
+      AUTH_SECRET: 'unused',
+      ENVIRONMENT: 'test',
+    })
+    expect(missing.status).toBe(404)
+    expect((await missing.json()).component).toBe('Problem')
+
+    const failed = await app.request('/failed', undefined, {
+      DATABASE_URL: 'unused',
+      AUTH_SECRET: 'unused',
+      ENVIRONMENT: 'test',
+    })
+    expect(failed.status).toBe(404)
+    expect((await failed.json()).component).toBe('Problem')
+  })
+
   test('database factory result is provided as DatabaseService', async () => {
     const app = new Hono<TestEnv>()
 
@@ -76,9 +148,11 @@ describe('setupHonertia basic configuration', () => {
           version: '1.0.0',
           render: (page) => JSON.stringify(page),
           database: () => ({ name: 'auth-db' }),
-          auth: (_c, { db }) => ({
+        },
+        auth: {
+          client: (_c, { db }) => ({
             // Auth can access db because database runs first
-            dbName: (db as { name?: string } | undefined)?.name,
+            dbName: db.name,
             secret: 'test-secret',
           }),
         },
@@ -131,6 +205,51 @@ describe('setupHonertia basic configuration', () => {
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('OK')
   })
+
+  test('stateless auth receives only request context and is provided as AuthService', async () => {
+    const app = new Hono<TestEnv>()
+    let authFactoryArgumentCount: number | undefined
+
+    app.use(
+      '*',
+      setupHonertia({
+        honertia: {
+          version: '1.0.0',
+          render: (page) => JSON.stringify(page),
+        },
+        auth: {
+          client: function (context) {
+            authFactoryArgumentCount = arguments.length
+            return {
+              mode: 'stateless',
+              secret: context.env.AUTH_SECRET,
+            }
+          },
+        },
+      })
+    )
+
+    effectRoutes(app).get(
+      '/stateless-auth-test',
+      Effect.gen(function* () {
+        const auth = yield* AuthService
+        return new Response(JSON.stringify(auth))
+      })
+    )
+
+    const res = await app.request('/stateless-auth-test', undefined, {
+      DATABASE_URL: 'unused',
+      AUTH_SECRET: 'stateless-secret',
+      ENVIRONMENT: 'test',
+    })
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      mode: 'stateless',
+      secret: 'stateless-secret',
+    })
+    expect(authFactoryArgumentCount).toBe(1)
+  })
 })
 
 // =============================================================================
@@ -141,11 +260,11 @@ describe('setupHonertia schema configuration', () => {
   // Mock schema for testing
   const mockSchema = {
     projects: {
-      id: { name: 'id' },
+      id: { name: 'id', columnType: 'SQLiteText' },
       name: { name: 'name' },
     },
     users: {
-      id: { name: 'id' },
+      id: { name: 'id', columnType: 'SQLiteText' },
       email: { name: 'email' },
     },
   }
@@ -172,6 +291,9 @@ describe('setupHonertia schema configuration', () => {
           render: (page) => JSON.stringify(page),
           database: () => mockDb,
           schema: mockSchema,
+          bindings: {
+            project: S.Struct({ id: S.String, name: S.String }),
+          },
         },
       })
     )
@@ -196,11 +318,11 @@ describe('setupHonertia schema configuration', () => {
     const app = new Hono<TestEnv>()
 
     const usersTable = {
-      id: { name: 'id' },
+      id: { name: 'id', columnType: 'SQLiteText' },
     }
 
     const postsTable = {
-      id: { name: 'id' },
+      id: { name: 'id', columnType: 'SQLiteText' },
       userId: { name: 'userId' },
     }
 
@@ -260,6 +382,13 @@ describe('setupHonertia schema configuration', () => {
           render: (page) => JSON.stringify(page),
           database: () => mockDb,
           schema: mockSchema,
+          bindings: {
+            user: S.Struct({ id: S.String }),
+            post: routeBinding(
+              S.Struct({ id: S.String, userId: S.String }),
+              { scope: { user: { foreignKey: 'userId' } } }
+            ),
+          },
         },
       })
     )
@@ -292,7 +421,9 @@ describe('setupHonertia auth session loading', () => {
         honertia: {
           version: '1.0.0',
           render: (page) => JSON.stringify(page),
-          auth: () => ({
+        },
+        auth: {
+          client: () => ({
             api: {
               getSession: async ({ headers }: { headers: Headers }) => {
                 getSessionCalls.push(headers.get('cookie') ?? '')
@@ -300,17 +431,24 @@ describe('setupHonertia auth session loading', () => {
                   user: {
                     id: 'user-42',
                     email: 'user42@example.com',
+                    name: 'User 42',
+                    emailVerified: true,
+                    image: null,
+                    createdAt: new Date('2026-01-01T00:00:00Z'),
+                    updatedAt: new Date('2026-01-01T00:00:00Z'),
                   },
                   session: {
                     id: 'session-42',
                     userId: 'user-42',
+                    expiresAt: new Date('2027-01-01T00:00:00Z'),
+                    token: 'redacted-test-token',
+                    createdAt: new Date('2026-01-01T00:00:00Z'),
+                    updatedAt: new Date('2026-01-01T00:00:00Z'),
                   },
                 }
               },
             },
           }),
-        },
-        auth: {
           sessionCookie,
         },
       })
@@ -354,7 +492,9 @@ describe('setupHonertia auth session loading', () => {
         honertia: {
           version: '1.0.0',
           render: (page) => JSON.stringify(page),
-          auth: () => ({
+        },
+        auth: {
+          client: () => ({
             api: {
               getSession: async () => {
                 getSessionCalls += 1
@@ -362,8 +502,6 @@ describe('setupHonertia auth session loading', () => {
               },
             },
           }),
-        },
-        auth: {
           sessionCookie: 'custom_auth_cookie',
         },
       })
@@ -379,6 +517,92 @@ describe('setupHonertia auth session loading', () => {
     expect(await res.text()).toBe('ok')
     expect(getSessionCalls).toBe(0)
   })
+
+  test('distinguishes an unavailable session provider from an anonymous session', async () => {
+    const app = new Hono<TestEnv>()
+    setupHonertia(app, {
+      honertia: {
+        version: '1.0.0',
+        render: (page) => JSON.stringify(page),
+      },
+      auth: {
+        client: () => ({
+          api: {
+            getSession: async () => {
+              throw new Error('provider offline')
+            },
+          },
+        }),
+      },
+    })
+    app.get('/', (c) => c.text('unreachable'))
+
+    const res = await app.request('/', undefined, {
+      DATABASE_URL: 'unused',
+      AUTH_SECRET: 'unused',
+      ENVIRONMENT: 'test',
+    })
+
+    expect(res.status).toBe(503)
+  })
+
+  test('rejects malformed provider sessions at the boundary', async () => {
+    const app = new Hono<TestEnv>()
+    setupHonertia(app, {
+      honertia: {
+        version: '1.0.0',
+        render: (page) => JSON.stringify(page),
+      },
+      auth: {
+        client: () => ({
+          api: {
+            getSession: async () => ({
+              user: { id: 'user-1' },
+              session: { id: 'session-1' },
+            }),
+          },
+        }),
+      },
+    })
+    app.get('/', (c) => c.text('unreachable'))
+
+    const res = await app.request('/', undefined, {
+      DATABASE_URL: 'unused',
+      AUTH_SECRET: 'unused',
+      ENVIRONMENT: 'test',
+    })
+
+    expect(res.status).toBe(500)
+  })
+
+  test('treats a null session as anonymous', async () => {
+    const app = new Hono<TestEnv>()
+    setupHonertia(app, {
+      honertia: {
+        version: '1.0.0',
+        render: (page) => JSON.stringify(page),
+      },
+      auth: {
+        client: () => ({ api: { getSession: async () => null } }),
+      },
+    })
+    effectRoutes(app).get(
+      '/',
+      Effect.gen(function* () {
+        const user = yield* Effect.serviceOption(AuthUserService)
+        return Response.json({ anonymous: user._tag === 'None' })
+      })
+    )
+
+    const res = await app.request('/', undefined, {
+      DATABASE_URL: 'unused',
+      AUTH_SECRET: 'unused',
+      ENVIRONMENT: 'test',
+    })
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ anonymous: true })
+  })
 })
 
 // =============================================================================
@@ -386,6 +610,39 @@ describe('setupHonertia auth session loading', () => {
 // =============================================================================
 
 describe('setupHonertia configuration errors', () => {
+  test('rejects legacy auth ownership at the setup boundary', () => {
+    const app = new Hono<TestEnv>()
+    const legacyConfig = {
+      honertia: {
+        version: '1.0.0',
+        render: (page: unknown) => JSON.stringify(page),
+        auth: () => ({ mode: 'legacy' }),
+      },
+    }
+
+    expect(() => setupHonertia(app, legacyConfig)).toThrow(
+      'move honertia.auth to top-level auth.client'
+    )
+  })
+
+  test('rejects Effect schema ownership at the setup boundary', () => {
+    const app = new Hono<TestEnv>()
+    const legacyConfig = {
+      honertia: {
+        version: '1.0.0',
+        render: (page: unknown) => JSON.stringify(page),
+      },
+      effect: {
+        services: undefined,
+        schema: {},
+      },
+    }
+
+    expect(() => setupHonertia(app, legacyConfig)).toThrow(
+      'move effect.schema to honertia.schema'
+    )
+  })
+
   test('helpful error when using route model binding without schema', async () => {
     const app = new Hono<TestEnv>()
 
@@ -428,7 +685,7 @@ describe('setupHonertia configuration errors', () => {
     const res = await app.request('/projects/123')
 
     // Error should be rendered via Honertia
-    expect(res.status).toBe(200) // Inertia renders with 200
+    expect(res.status).toBe(500)
 
     const body = await res.json()
     expect(body.component).toBe('Error')
@@ -530,7 +787,7 @@ describe('setupHonertia database configuration errors', () => {
     const app = new Hono<TestEnv>()
 
     const mockSchema = {
-      projects: { id: { name: 'id' } },
+      projects: { id: { name: 'id', columnType: 'SQLiteText' } },
     }
 
     app.use('*', async (c, next) => {
@@ -546,6 +803,7 @@ describe('setupHonertia database configuration errors', () => {
           render: (page) => JSON.stringify(page),
           // database NOT configured
           schema: mockSchema,
+          bindings: { project: S.Struct({ id: S.String }) },
         },
       })
     )
@@ -613,7 +871,7 @@ describe('setupHonertia database configuration errors', () => {
 
     expect(body.component).toBe('Error')
     expect(body.props.message).toContain('DatabaseService is not configured')
-    expect(body.props.message).toContain('setupHonertia')
+    expect(body.props.message).toContain('setupWeb')
     // Hint now comes from fix suggestions
     expect(body.props.hint).toContain('database')
   })
@@ -659,7 +917,7 @@ describe('setupHonertia database configuration errors', () => {
 
     expect(body.component).toBe('Error')
     expect(body.props.message).toContain('AuthService is not configured')
-    expect(body.props.message).toContain('setupHonertia')
+    expect(body.props.message).toContain('setupWeb')
     // Hint now comes from fix suggestions
     expect(body.props.hint).toContain('auth')
   })
@@ -737,12 +995,12 @@ describe('setupHonertia integration with effectRoutes', () => {
     const app = new Hono<TestEnv>()
 
     const setupSchema = {
-      projects: { id: { name: 'id' } },
+      projects: { id: { name: 'id', columnType: 'SQLiteText' } },
     }
 
     const routeSchema = {
       tasks: {
-        id: { name: 'id' },
+        id: { name: 'id', columnType: 'SQLiteText' },
         title: { name: 'title' },
       },
     }
@@ -770,7 +1028,10 @@ describe('setupHonertia integration with effectRoutes', () => {
     )
 
     // effectRoutes can pass its own schema to override
-    effectRoutes(app, { schema: routeSchema }).get(
+    effectRoutes(app, {
+      schema: routeSchema,
+      bindings: { task: S.Struct({ id: S.String, title: S.String }) },
+    }).get(
       '/tasks/{task}',
       Effect.gen(function* () {
         const task = yield* bound('task')
@@ -788,8 +1049,8 @@ describe('setupHonertia integration with effectRoutes', () => {
     const app = new Hono<TestEnv>()
 
     const mockSchema = {
-      projects: { id: { name: 'id' }, name: { name: 'name' } },
-      users: { id: { name: 'id' }, email: { name: 'email' } },
+      projects: { id: { name: 'id', columnType: 'SQLiteText' }, name: { name: 'name' } },
+      users: { id: { name: 'id', columnType: 'SQLiteText' }, email: { name: 'email' } },
     }
 
     let queryCount = 0
@@ -820,6 +1081,10 @@ describe('setupHonertia integration with effectRoutes', () => {
           render: (page) => JSON.stringify(page),
           database: () => mockDb,
           schema: mockSchema,
+          bindings: {
+            project: S.Struct({ id: S.String, name: S.String }),
+            user: S.Struct({ id: S.String, email: S.String }),
+          },
         },
       })
     )
@@ -863,7 +1128,7 @@ describe('setupHonertia full configuration', () => {
     const app = new Hono<TestEnv>()
 
     const mockSchema = {
-      projects: { id: { name: 'id' }, ownerId: { name: 'ownerId' } },
+      projects: { id: { name: 'id', columnType: 'SQLiteText' }, ownerId: { name: 'ownerId' } },
     }
 
     const mockDb = {
@@ -885,11 +1150,16 @@ describe('setupHonertia full configuration', () => {
           version: '1.0.0',
           render: (page) => JSON.stringify(page),
           database: () => mockDb,
-          auth: (_c, { db }) => ({
+          schema: mockSchema,
+          bindings: {
+            project: S.Struct({ id: S.String, ownerId: S.String }),
+          },
+        },
+        auth: {
+          client: (_c, { db }) => ({
             getUser: () => ({ id: 'user-1', name: 'Test User' }),
             dbRef: db, // Can access db
           }),
-          schema: mockSchema,
         },
         middleware: [
           async (c, next) => {

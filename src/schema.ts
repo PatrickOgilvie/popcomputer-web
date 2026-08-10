@@ -1,9 +1,4 @@
-/**
- * Honertia Schema Validators
- *
- * Re-exports all Effect Schema validators and validation helpers.
- * Import from 'honertia/schema' for validation functionality.
- */
+/** Common Effect Schema validators for web requests. */
 
 // Schema Validators (Effect Schema based)
 export {

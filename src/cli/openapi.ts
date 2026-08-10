@@ -9,9 +9,9 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   RouteRegistry,
-  getGlobalRegistry,
   type RouteMetadata,
 } from '../effect/route-registry.js'
+import { loadAppRouteRegistry } from './load-app.js'
 import type { Schema as S } from 'effect'
 import * as JSONSchema from 'effect/JSONSchema'
 
@@ -422,7 +422,7 @@ function generateRequestBody(route: RouteMetadata): OpenApiOperation['requestBod
  *
  * @example
  * ```typescript
- * import { generateOpenApi, getGlobalRegistry } from 'honertia/cli'
+ * import { generateOpenApi, getGlobalRegistry } from '@popcomputer/web/cli'
  *
  * // After routes are registered
  * const spec = generateOpenApi(getGlobalRegistry(), {
@@ -435,7 +435,7 @@ function generateRequestBody(route: RouteMetadata): OpenApiOperation['requestBod
  * ```
  */
 export function generateOpenApi(
-  registry: RouteRegistry = getGlobalRegistry(),
+  registry: RouteRegistry,
   options: GenerateOpenApiOptions
 ): OpenApiSpec {
   const routes = registry.all()
@@ -600,6 +600,7 @@ function writeOutputFile(outputPath: string, content: string): void {
  * Options for the generate:openapi CLI command.
  */
 export interface GenerateOpenApiCliOptions {
+  app?: string
   title?: string
   version?: string
   description?: string
@@ -621,6 +622,9 @@ export function parseGenerateOpenApiArgs(args: string[]): GenerateOpenApiCliOpti
     const arg = args[i]
 
     switch (arg) {
+      case '--app':
+        options.app = args[++i]
+        break
       case '--title':
       case '-t':
         options.title = args[++i]
@@ -665,12 +669,13 @@ export function parseGenerateOpenApiArgs(args: string[]): GenerateOpenApiCliOpti
  */
 export function generateOpenApiHelp(): string {
   return `
-honertia generate:openapi - Generate OpenAPI 3.1 specification
+popweb generate:openapi - Generate OpenAPI 3.1 specification
 
 USAGE:
-  honertia generate:openapi [OPTIONS]
+  popweb generate:openapi --app <entrypoint> [OPTIONS]
 
 OPTIONS:
+  --app <path>         Application entrypoint exporting the app or route registry
   -t, --title         API title (default: 'API')
   -v, --version       API version (default: '1.0.0')
   -d, --description   API description
@@ -683,19 +688,19 @@ OPTIONS:
 
 EXAMPLES:
   # Generate OpenAPI spec
-  honertia generate:openapi --title "My API" --version "1.0.0"
+  popweb generate:openapi --app src/app.ts --title "My API" --version "1.0.0"
 
   # Output to file
-  honertia generate:openapi -o openapi.json
+  popweb generate:openapi --app src/app.ts -o openapi.json
 
   # Include only API routes
-  honertia generate:openapi --include /api
+  popweb generate:openapi --app src/app.ts --include /api
 
   # Exclude internal routes
-  honertia generate:openapi --exclude /internal,/admin
+  popweb generate:openapi --app src/app.ts --exclude /internal,/admin
 
   # Add server URL
-  honertia generate:openapi --server https://api.example.com
+  popweb generate:openapi --app src/app.ts --server https://api.example.com
 `.trim()
 }
 
@@ -704,7 +709,7 @@ EXAMPLES:
  */
 export async function runGenerateOpenApi(
   args: string[] = [],
-  registry: RouteRegistry = getGlobalRegistry()
+  registry?: RouteRegistry
 ): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(generateOpenApiHelp())
@@ -712,8 +717,14 @@ export async function runGenerateOpenApi(
   }
 
   const cliOptions = parseGenerateOpenApiArgs(args)
+  const resolvedRegistry = registry ?? (
+    cliOptions.app ? await loadAppRouteRegistry(cliOptions.app) : undefined
+  )
+  if (!resolvedRegistry) {
+    throw new Error('Missing application entrypoint. Pass --app src/app.ts.')
+  }
 
-  const spec = generateOpenApi(registry, {
+  const spec = generateOpenApi(resolvedRegistry, {
     info: {
       title: cliOptions.title ?? 'API',
       version: cliOptions.version ?? '1.0.0',

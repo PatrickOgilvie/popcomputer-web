@@ -352,6 +352,23 @@ export class RouteRegistry {
  */
 let globalRegistry: RouteRegistry | null = null
 
+const appRegistries = new WeakMap<object, RouteRegistry>()
+
+/** Get the registry owned by one Hono application. */
+export function getAppRouteRegistry(app: object): RouteRegistry {
+  const existing = appRegistries.get(app)
+  if (existing) return existing
+
+  const registry = new RouteRegistry()
+  appRegistries.set(app, registry)
+  return registry
+}
+
+/** Read an application's registry without creating one. */
+export function findAppRouteRegistry(app: object): RouteRegistry | undefined {
+  return appRegistries.get(app)
+}
+
 /**
  * Get the global route registry.
  * Creates one if it doesn't exist.

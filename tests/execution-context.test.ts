@@ -37,6 +37,18 @@ const makeTestExecutionContext = (): {
           tasks.push(promise)
         })
       ),
+    schedule: (_operation, effect) =>
+      Effect.flatMap(Effect.context<any>(), (context) =>
+        Effect.sync(() => {
+          const promise = Effect.runPromise(
+            effect.pipe(
+              Effect.provide(context),
+              Effect.catchAllCause(() => Effect.void)
+            )
+          )
+          tasks.push(promise)
+        })
+      ),
   }
 
   return {
@@ -56,6 +68,7 @@ const makeNoopExecutionContext = (): {
     isAvailable: false,
     waitUntil: () => {},
     runInBackground: () => Effect.void,
+    schedule: () => Effect.void,
   }
 
   return {

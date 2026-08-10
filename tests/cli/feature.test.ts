@@ -81,7 +81,7 @@ describe('generateFeature', () => {
 
       expect(result.content).toContain("import { Effect } from 'effect'")
       expect(result.content).toContain("import * as S from 'effect/Schema'")
-      expect(result.content).toContain("from 'honertia/effect'")
+      expect(result.content).toContain("from '@popcomputer/web/effect'")
     })
 
     test('includes route metadata', () => {
@@ -465,7 +465,7 @@ describe('generateFeatureHelp', () => {
   test('includes usage information', () => {
     const help = generateFeatureHelp()
 
-    expect(help).toContain('honertia generate:feature')
+    expect(help).toContain('popweb generate:feature')
     expect(help).toContain('USAGE')
     expect(help).toContain('OPTIONS')
     expect(help).toContain('EXAMPLES')

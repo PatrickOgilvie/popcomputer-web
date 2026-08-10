@@ -5,9 +5,8 @@
  * Automatically resolves route parameters to database models.
  */
 
-import { Context, Data, Effect, Schema as S } from 'effect'
+import { Context, Data, Effect, Exit, Schema as S } from 'effect'
 import type { Table } from 'drizzle-orm'
-import type { SchemaType } from './services.js'
 import { RouteConfigurationError } from './errors.js'
 
 /**
@@ -39,6 +38,75 @@ export interface ParsedBinding {
   param: string
   /** The column to query (e.g., 'id' or 'slug' from '{project:slug}') */
   column: string
+}
+
+/** Explicit parent scope for a binding when Drizzle cannot infer it. */
+export interface RouteBindingScope {
+  /** Child-table property key or keys containing the parent reference. */
+  readonly foreignKey: string | readonly string[]
+  /** Parent-table property key or keys. Defaults to `id`. */
+  readonly references?: string | readonly string[]
+}
+
+/** Optional overrides for a parsed route-model binding. */
+export interface RouteBindingOptions {
+  /** Drizzle schema key when it cannot be derived from the route parameter. */
+  readonly table?: string
+  /** Parent binding scopes, keyed by the parent route parameter. */
+  readonly scope?: Readonly<Record<string, RouteBindingScope>>
+}
+
+/** A row parser plus the small amount of metadata inference may need. */
+export interface RouteBindingDefinition<A = unknown> extends RouteBindingOptions {
+  readonly schema: S.Schema<A, unknown, never>
+}
+
+/** Accepted setup value for one binding. */
+export type RouteBindingConfig =
+  | S.Schema.AnyNoContext
+  | RouteBindingDefinition
+
+/** Binding parsers registered once at application composition. */
+export type RouteBindingsConfig = Readonly<Record<string, RouteBindingConfig>>
+
+/**
+ * Augmentable route-binding parser map used by {@link bound}.
+ *
+ * Applications should set `type` to the same object passed as
+ * `bindings` in setupWeb so decoded parser outputs flow into handler types.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface WebRouteBindingsType {}
+
+/** @deprecated Augment {@link WebRouteBindingsType} instead. */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface HonertiaRouteBindingsType {}
+
+/**
+ * Add explicit metadata to a route-model parser.
+ *
+ * Most bindings should register their Effect Schema directly. Use this only
+ * when a table name or nested parent scope is ambiguous.
+ */
+export function routeBinding<A>(
+  schema: S.Schema<A, unknown, never>,
+  options: RouteBindingOptions = {}
+): RouteBindingDefinition<A> {
+  return { schema, ...options }
+}
+
+/** A binding plan compiled once and reused by every request for the route. */
+export interface CompiledRouteBinding {
+  readonly param: string
+  readonly column: string
+  readonly tableName: string
+  readonly table: Record<string, unknown>
+  readonly paramSchema: S.Schema.AnyNoContext
+  readonly rowSchema: S.Schema.AnyNoContext
+  readonly parent?: {
+    readonly param: string
+    readonly relation: RelationInfo
+  }
 }
 
 /**
@@ -78,46 +146,40 @@ export function toHonoPath(path: string): string {
  * Service tag for bound models.
  * Provides access to resolved route models in handlers.
  */
-export class BoundModels extends Context.Tag('honertia/BoundModels')<
+export class BoundModels extends Context.Tag('@popcomputer/web/BoundModels')<
   BoundModels,
   ReadonlyMap<string, unknown>
 >() {}
 
 /**
- * Pluralize a key for schema lookup.
- * Matches the runtime pluralize() function logic.
- */
-type Pluralize<S extends string> =
-  S extends `${infer _}${'a' | 'e' | 'i' | 'o' | 'u'}y` ? `${S}s` :           // day → days (vowel + y)
-  S extends `${infer Base}y` ? `${Base}ies` :                                  // category → categories
-  S extends `${infer _}${'s' | 'ss' | 'x' | 'z' | 'zz' | 'ch' | 'sh'}` ? `${S}es` : // class, buzz, box, match → +es
-  `${S}s`                                                                       // project → projects
-
-/**
- * Error type shown when trying to use bound() without schema configured.
+ * Error type shown when trying to use bound() without parser types configured.
  */
 interface BoundModelNotConfigured<K extends string> {
-  readonly __error: `Cannot infer type for bound('${K}'). Schema not configured for route model binding.`
-  readonly __hint: 'Add module augmentation: declare module "honertia/effect" { interface HonertiaDatabaseType { schema: typeof schema } }'
+  readonly __error: `Cannot infer type for bound('${K}'). Route binding parser type not configured.`
+  readonly __hint: 'Augment WebRouteBindingsType with the object passed to setupWeb as bindings.'
 }
 
-/**
- * Lookup a table type from schema, trying pluralized key first.
- * Shows helpful error if schema is not configured.
- */
+type ConfiguredRouteBindings = WebRouteBindingsType extends {
+  type: infer Bindings
+} ? Bindings
+  : HonertiaRouteBindingsType extends { type: infer Bindings }
+    ? Bindings
+    : never
+
+type RouteBindingOutput<Config> =
+  Config extends S.Schema<infer A, infer _I, infer _R>
+    ? A
+    : Config extends RouteBindingDefinition<infer A>
+      ? A
+      : unknown
+
+/** Decoded output type registered for one route-model binding key. */
 export type BoundModel<K extends string> =
-  // Check if schema is configured (has __error means it's the error type)
-  SchemaType extends { __error: string }
+  [ConfiguredRouteBindings] extends [never]
     ? BoundModelNotConfigured<K>
-    : Pluralize<K> extends keyof SchemaType
-      ? SchemaType[Pluralize<K>] extends Table
-        ? SchemaType[Pluralize<K>]['$inferSelect']
-        : unknown
-      : K extends keyof SchemaType
-        ? SchemaType[K] extends Table
-          ? SchemaType[K]['$inferSelect']
-          : unknown
-        : unknown
+    : K extends keyof ConfiguredRouteBindings
+      ? RouteBindingOutput<ConfiguredRouteBindings[K]>
+      : BoundModelNotConfigured<K>
 
 /**
  * Type-safe accessor for bound models.
@@ -147,8 +209,141 @@ export const bound = <K extends string>(
     if (!model) {
       return yield* new BoundModelNotFound({ key })
     }
-    return model as any
+    // SAFETY: route execution stores the decoded output of the parser keyed by
+    // this binding name. WebRouteBindingsType is the public type-level
+    // mirror of that same parser map.
+    return model as BoundModel<K>
   })
+
+function isBindingDefinition(
+  config: RouteBindingConfig
+): config is RouteBindingDefinition {
+  return typeof config === 'object' && config !== null && 'schema' in config
+}
+
+function normalizeStringList(value: string | readonly string[]): readonly string[] {
+  return typeof value === 'string' ? [value] : value
+}
+
+function explicitRelation(scope: RouteBindingScope): RelationInfo | null {
+  const foreignKeys = normalizeStringList(scope.foreignKey)
+  const references = normalizeStringList(scope.references ?? 'id')
+  if (foreignKeys.length === 0 || foreignKeys.length !== references.length) {
+    return null
+  }
+
+  return {
+    columnPairs: foreignKeys.map((foreignKey, index) => ({
+      foreignKey,
+      references: references[index],
+    })),
+  }
+}
+
+/**
+ * Compile lookup, parsing, and parent-scope policy for a route.
+ *
+ * Nested bindings fail closed when their relationship cannot be proven.
+ */
+export async function compileBindingPlan(
+  bindings: readonly ParsedBinding[],
+  schema: Record<string, unknown>,
+  configured: RouteBindingsConfig
+): Promise<readonly CompiledRouteBinding[]> {
+  const plan: CompiledRouteBinding[] = []
+
+  for (const binding of bindings) {
+    const config = configured[binding.param]
+    if (!config) {
+      throw RouteConfigurationError.bindingParserNotConfigured(binding.param)
+    }
+
+    const definition: RouteBindingDefinition = isBindingDefinition(config)
+      ? config
+      : { schema: config }
+    const tableName = definition.table ?? pluralize(binding.param)
+    const table = schema[tableName]
+    if (!table || typeof table !== 'object') {
+      throw RouteConfigurationError.tableNotFound(tableName)
+    }
+
+    const column = (table as Record<string, unknown>)[binding.column] as
+      | DrizzleColumn
+      | undefined
+    if (!column || typeof column !== 'object' || !('columnType' in column)) {
+      throw RouteConfigurationError.bindingColumnNotFound(
+        binding.param,
+        tableName,
+        binding.column
+      )
+    }
+
+    const parentPlan = plan[plan.length - 1]
+    let parent: CompiledRouteBinding['parent']
+    if (parentPlan) {
+      const explicit = definition.scope?.[parentPlan.param]
+      const relation = explicit
+        ? explicitRelation(explicit)
+        : await findRelation(schema, tableName, parentPlan.tableName)
+
+      if (!relation) {
+        throw RouteConfigurationError.relationNotFound(
+          parentPlan.tableName,
+          tableName,
+          binding.param
+        )
+      }
+
+      for (const pair of relation.columnPairs) {
+        if (!(pair.foreignKey in table) || !(pair.references in parentPlan.table)) {
+          throw RouteConfigurationError.relationNotFound(
+            parentPlan.tableName,
+            tableName,
+            binding.param
+          )
+        }
+      }
+
+      parent = { param: parentPlan.param, relation }
+    }
+
+    plan.push({
+      param: binding.param,
+      column: binding.column,
+      tableName,
+      table: table as Record<string, unknown>,
+      // SAFETY: columnTypeToSchema only constructs schemas from Effect's
+      // context-free primitive schemas and transforms.
+      paramSchema: columnTypeToSchema(column.columnType) as S.Schema.AnyNoContext,
+      rowSchema: definition.schema,
+      ...(parent ? { parent } : {}),
+    })
+  }
+
+  return plan
+}
+
+/** Decode one route parameter through its compiled column parser. */
+export async function decodeBindingParam(
+  binding: CompiledRouteBinding,
+  input: unknown
+): Promise<unknown | undefined> {
+  const exit = await Effect.runPromiseExit(S.decodeUnknown(binding.paramSchema)(input))
+  return Exit.isSuccess(exit) ? exit.value : undefined
+}
+
+/** Decode a persisted row through the parser registered for the binding. */
+export async function decodeBoundRow(
+  binding: CompiledRouteBinding,
+  row: unknown
+): Promise<unknown> {
+  const exit = await Effect.runPromiseExit(S.decodeUnknown(binding.rowSchema)(row))
+  if (Exit.isSuccess(exit)) {
+    return exit.value
+  }
+
+  throw RouteConfigurationError.invalidBoundRow(binding.param, binding.tableName)
+}
 
 /**
  * Pluralize a singular word.

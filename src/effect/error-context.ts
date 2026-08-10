@@ -125,7 +125,7 @@ export function parseStackTrace(stack: string): StackFrame[] {
       const file = match[2]
       const isInternal =
         file.includes('node_modules') ||
-        file.includes('honertia/dist') ||
+        file.includes('@popcomputer/web/dist') ||
         file.includes('effect/dist') ||
         file.startsWith('node:')
 

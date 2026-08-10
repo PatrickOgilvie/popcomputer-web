@@ -1,8 +1,4 @@
-/**
- * Honertia Security Middleware
- *
- * Defense-in-depth helpers that complement cookie `SameSite` protections.
- */
+/** Security middleware for @popcomputer/web applications. */
 
 import type { Context, MiddlewareHandler, Env } from 'hono'
 

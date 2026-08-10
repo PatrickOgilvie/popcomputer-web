@@ -1,5 +1,5 @@
 /**
- * Honertia CLI
+ * Popcomputer Web CLI
  *
  * CLI utilities for introspection and code generation.
  * Designed for both human developers and AI agent workflows.
@@ -7,9 +7,9 @@
 
 import {
   RouteRegistry,
-  getGlobalRegistry,
   type RouteMetadataJson,
 } from '../effect/route-registry.js'
+import { loadAppRouteRegistry } from './load-app.js'
 
 /**
  * Output format for CLI commands.
@@ -20,6 +20,8 @@ export type OutputFormat = 'table' | 'json' | 'minimal'
  * Options for the routes command.
  */
 export interface RoutesCommandOptions {
+  /** Application entrypoint loaded by the CLI. */
+  app?: string
   /**
    * Output format (default: 'table').
    */
@@ -168,8 +170,8 @@ function sortRoutes(
  * @example
  * ```typescript
  * // In a script that imports your app
- * import './app' // This registers routes with the global registry
- * import { routesCommand, getGlobalRegistry } from 'honertia/cli'
+ * // The CLI imports the configured application passed with --app.
+ * import { routesCommand, getGlobalRegistry } from '@popcomputer/web/cli'
  *
  * const result = routesCommand(getGlobalRegistry(), { format: 'json' })
  * console.log(result.output)
@@ -182,7 +184,7 @@ function sortRoutes(
  * ```
  */
 export function routesCommand(
-  registry: RouteRegistry = getGlobalRegistry(),
+  registry: RouteRegistry,
   options: RoutesCommandOptions = {}
 ): RoutesCommandResult {
   const {
@@ -264,6 +266,9 @@ export function parseRoutesArgs(args: string[]): RoutesCommandOptions {
       case '--json':
         options.format = 'json'
         break
+      case '--app':
+        options.app = args[++i]
+        break
       case '--minimal':
         options.format = 'minimal'
         break
@@ -304,12 +309,13 @@ export function parseRoutesArgs(args: string[]): RoutesCommandOptions {
  */
 export function routesHelp(): string {
   return `
-honertia routes - List all registered routes
+popweb routes - List all registered routes
 
 USAGE:
-  honertia routes [OPTIONS]
+  popweb routes --app <entrypoint> [OPTIONS]
 
 OPTIONS:
+  --app <path>     Application entrypoint exporting the app or route registry
   --json          Output as JSON (machine-readable)
   --minimal       Output as minimal list (METHOD PATH)
   --table         Output as formatted table (default)
@@ -324,19 +330,19 @@ OPTIONS:
 
 EXAMPLES:
   # List all routes as a table
-  honertia routes
+  popweb routes --app src/app.ts
 
   # Output as JSON for agent consumption
-  honertia routes --json
+  popweb routes --app src/app.ts --json
 
   # Filter by method
-  honertia routes --method post
+  popweb routes --app src/app.ts --method post
 
   # Filter by prefix
-  honertia routes --prefix /api
+  popweb routes --app src/app.ts --prefix /api
 
   # Find routes matching a pattern
-  honertia routes --pattern '/projects/*'
+  popweb routes --app src/app.ts --pattern '/projects/*'
 `.trim()
 }
 
@@ -347,22 +353,28 @@ EXAMPLES:
  * ```typescript
  * // scripts/routes.ts
  * import './app' // Register routes
- * import { runRoutes } from 'honertia/cli'
+ * import { runRoutes } from '@popcomputer/web/cli'
  *
  * runRoutes(process.argv.slice(2))
  * ```
  */
-export function runRoutes(
+export async function runRoutes(
   args: string[] = [],
-  registry: RouteRegistry = getGlobalRegistry()
-): void {
+  registry?: RouteRegistry
+): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(routesHelp())
     return
   }
 
   const options = parseRoutesArgs(args)
-  const result = routesCommand(registry, options)
+  const resolvedRegistry = registry ?? (
+    options.app ? await loadAppRouteRegistry(options.app) : undefined
+  )
+  if (!resolvedRegistry) {
+    throw new Error('Missing application entrypoint. Pass --app src/app.ts.')
+  }
+  const result = routesCommand(resolvedRegistry, options)
   if (result.error) {
     console.error(result.error)
     process.exit(1)
@@ -371,7 +383,14 @@ export function runRoutes(
 }
 
 // Re-export registry functions for convenience
-export { RouteRegistry, getGlobalRegistry, resetGlobalRegistry } from '../effect/route-registry.js'
+export {
+  RouteRegistry,
+  getAppRouteRegistry,
+  findAppRouteRegistry,
+  getGlobalRegistry,
+  resetGlobalRegistry,
+} from '../effect/route-registry.js'
+export { loadAppRouteRegistry } from './load-app.js'
 
 // Code generation
 export {

@@ -3,6 +3,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
+import { APIError } from 'better-auth'
 import { Effect, Layer, Exit, Cause, Option } from 'effect'
 import {
   RequireAuthLayer,
@@ -19,7 +20,13 @@ import {
   type AuthUser,
   type HonertiaRenderer,
 } from '../../src/effect/services.js'
-import { UnauthorizedError } from '../../src/effect/errors.js'
+import {
+  AuthRateLimitError,
+  HttpError,
+  UnauthorizedError,
+  ValidationError,
+} from '../../src/effect/errors.js'
+import type { BetterAuthActionError } from '../../src/effect/auth.js'
 
 // Mock user data
 const createMockUser = (overrides: Partial<AuthUser['user']> = {}): AuthUser => ({
@@ -255,7 +262,31 @@ describe('shareAuth', () => {
     await Effect.runPromise(Effect.provide(shareAuth(), layer))
 
     expect(mockHonertia.shared.auth).toEqual({
-      user: mockUser.user,
+      user: {
+        id: mockUser.user.id,
+        name: mockUser.user.name,
+        image: mockUser.user.image,
+      },
+    })
+  })
+
+  test('supports an explicit public user projection', async () => {
+    const mockUser = createMockUser({ name: 'John Doe' })
+    const mockHonertia = createMockHonertia()
+    const layer = Layer.mergeAll(
+      Layer.succeed(AuthUserService, mockUser),
+      Layer.succeed(HonertiaService, mockHonertia)
+    )
+
+    await Effect.runPromise(
+      Effect.provide(
+        shareAuth({ project: (auth) => ({ displayName: auth.user.name }) }),
+        layer
+      )
+    )
+
+    expect(mockHonertia.shared.auth).toEqual({
+      user: { displayName: 'John Doe' },
     })
   })
 
@@ -462,7 +493,7 @@ describe('betterAuthFormAction', () => {
       password: S.String,
     })
 
-    const errorMapper = (error: { code?: string; message?: string }) => {
+    const errorMapper = (error: BetterAuthActionError) => {
       switch (error.code) {
         case 'INVALID_EMAIL_OR_PASSWORD':
           return { email: 'Invalid email or password' }
@@ -479,7 +510,10 @@ describe('betterAuthFormAction', () => {
       redirectTo: '/',
       errorMapper,
       call: async () => {
-        throw { code: 'INVALID_EMAIL_OR_PASSWORD', message: 'Invalid credentials' }
+        throw new APIError('UNAUTHORIZED', {
+          code: 'INVALID_EMAIL_OR_PASSWORD',
+          message: 'Invalid credentials',
+        })
       },
     })
 
@@ -519,7 +553,9 @@ describe('betterAuthFormAction', () => {
       redirectTo: '/',
       // No errorMapper provided - should use default
       call: async () => {
-        throw { message: 'Something went wrong' }
+        throw new APIError('BAD_REQUEST', {
+          message: 'Something went wrong',
+        })
       },
     })
 
@@ -544,6 +580,100 @@ describe('betterAuthFormAction', () => {
         expect(error.errors.form).toBe('Something went wrong')
       }
     }
+  })
+
+  test('keeps unknown dependency messages out of form validation', async () => {
+    const LoginSchema = S.Struct({
+      email: S.String,
+      password: S.String,
+    })
+
+    let errorMapperCalled = false
+    const action = betterAuthFormAction({
+      schema: LoginSchema,
+      errorComponent: 'Auth/Login',
+      errorMapper: () => {
+        errorMapperCalled = true
+        return { form: 'This should not be rendered' }
+      },
+      call: async () => {
+        throw {
+          status: 400,
+          code: 'DATABASE_ERROR',
+          message: 'postgres://user:secret@database.example/internal',
+        }
+      },
+    })
+
+    const mockAuth = createMockAuth()
+    const mockRequest = createAuthRequest({
+      body: { email: 'test@example.com', password: 'password123' },
+    })
+    const layer = Layer.mergeAll(
+      Layer.succeed(AuthService, mockAuth),
+      Layer.succeed(RequestService, mockRequest)
+    )
+
+    const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.failureOption(exit.cause)
+      expect(Option.isSome(failure)).toBe(true)
+      if (Option.isSome(failure)) {
+        expect(failure.value).toBeInstanceOf(HttpError)
+        expect(failure.value.status).toBe(502)
+        expect(failure.value.message).toBe('Authentication service failed.')
+      }
+    }
+    expect(errorMapperCalled).toBe(false)
+  })
+
+  test('does not trust APIError identity claimed only by a nested response', async () => {
+    const LoginSchema = S.Struct({
+      email: S.String,
+      password: S.String,
+    })
+
+    let errorMapperCalled = false
+    const action = betterAuthFormAction({
+      schema: LoginSchema,
+      errorComponent: 'Auth/Login',
+      errorMapper: () => {
+        errorMapperCalled = true
+        return { form: 'This should not be rendered' }
+      },
+      call: async () => {
+        const error = new Error('driver diagnostic with internal details')
+        Object.assign(error, {
+          response: { name: 'APIError', status: 401, message: 'spoofed' },
+        })
+        throw error
+      },
+    })
+
+    const mockAuth = createMockAuth()
+    const mockRequest = createAuthRequest({
+      body: { email: 'test@example.com', password: 'password123' },
+    })
+    const layer = Layer.mergeAll(
+      Layer.succeed(AuthService, mockAuth),
+      Layer.succeed(RequestService, mockRequest)
+    )
+
+    const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.failureOption(exit.cause)
+      expect(Option.isSome(failure)).toBe(true)
+      if (Option.isSome(failure)) {
+        expect(failure.value).toBeInstanceOf(HttpError)
+        expect(failure.value.status).toBe(502)
+        expect(failure.value.message).toBe('Authentication service failed.')
+      }
+    }
+    expect(errorMapperCalled).toBe(false)
   })
 
   test('supports dynamic redirectTo as function', async () => {
@@ -615,6 +745,159 @@ describe('betterAuthFormAction', () => {
       expect(response.status).toBe(303)
       expect(response.headers.get('set-cookie')).toContain('test-cookie')
     }
+  })
+
+  test('maps a resolved better-auth 401 Response to ValidationError', async () => {
+    const LoginSchema = S.Struct({
+      email: S.String,
+      password: S.String,
+    })
+
+    let mappedError: BetterAuthActionError | undefined
+    const action = betterAuthFormAction({
+      schema: LoginSchema,
+      errorComponent: 'Auth/Login',
+      redirectTo: '/dashboard',
+      errorMapper: (error) => {
+        mappedError = error
+        return { email: error.code ?? 'MISSING_ERROR_CODE' }
+      },
+      call: async () =>
+        new Response(
+          JSON.stringify({
+            message: 'Invalid email or password',
+            code: 'INVALID_EMAIL_OR_PASSWORD',
+          }),
+          {
+            status: 401,
+            headers: { 'content-type': 'application/json' },
+          }
+        ),
+    })
+
+    const mockAuth = createMockAuth()
+    const mockRequest = createAuthRequest({
+      body: { email: 'test@example.com', password: 'wrong-password' },
+    })
+    const layer = Layer.mergeAll(
+      Layer.succeed(AuthService, mockAuth),
+      Layer.succeed(RequestService, mockRequest)
+    )
+
+    const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.failureOption(exit.cause)
+      expect(Option.isSome(failure)).toBe(true)
+      if (Option.isSome(failure)) {
+        expect(failure.value).toBeInstanceOf(ValidationError)
+        expect(failure.value.errors).toEqual({ email: 'INVALID_EMAIL_OR_PASSWORD' })
+        expect(failure.value.component).toBe('Auth/Login')
+      }
+    }
+
+    expect(mappedError?.status).toBe(401)
+    expect(mappedError?.code).toBe('INVALID_EMAIL_OR_PASSWORD')
+    expect(mappedError?.message).toBe('Invalid email or password')
+  })
+
+  test('keeps resolved better-auth 5xx responses out of the form error mapper', async () => {
+    const LoginSchema = S.Struct({
+      email: S.String,
+      password: S.String,
+    })
+
+    let errorMapperCalled = false
+    const action = betterAuthFormAction({
+      schema: LoginSchema,
+      errorComponent: 'Auth/Login',
+      errorMapper: () => {
+        errorMapperCalled = true
+        return { form: 'This should not be rendered' }
+      },
+      call: async () =>
+        new Response(
+          JSON.stringify({ message: 'Database connection failed' }),
+          {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          }
+        ),
+    })
+
+    const mockAuth = createMockAuth()
+    const mockRequest = createAuthRequest({
+      body: { email: 'test@example.com', password: 'password123' },
+    })
+    const layer = Layer.mergeAll(
+      Layer.succeed(AuthService, mockAuth),
+      Layer.succeed(RequestService, mockRequest)
+    )
+
+    const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.failureOption(exit.cause)
+      expect(Option.isSome(failure)).toBe(true)
+      if (Option.isSome(failure)) {
+        expect(failure.value).toBeInstanceOf(HttpError)
+        expect(failure.value.status).toBe(503)
+        expect(failure.value.message).toBe('Authentication service failed.')
+      }
+    }
+    expect(errorMapperCalled).toBe(false)
+  })
+
+  test('models resolved Better Auth rate limits separately from validation', async () => {
+    const LoginSchema = S.Struct({
+      email: S.String,
+      password: S.String,
+    })
+
+    let errorMapperCalled = false
+    const action = betterAuthFormAction({
+      schema: LoginSchema,
+      errorComponent: 'Auth/Login',
+      errorMapper: () => {
+        errorMapperCalled = true
+        return { form: 'This should not be rendered' }
+      },
+      call: async () =>
+        new Response(
+          JSON.stringify({ message: 'Too many requests. Please try again later.' }),
+          {
+            status: 429,
+            headers: {
+              'content-type': 'application/json',
+              'X-Retry-After': '37',
+            },
+          }
+        ),
+    })
+
+    const mockAuth = createMockAuth()
+    const mockRequest = createAuthRequest({
+      body: { email: 'test@example.com', password: 'password123' },
+    })
+    const layer = Layer.mergeAll(
+      Layer.succeed(AuthService, mockAuth),
+      Layer.succeed(RequestService, mockRequest)
+    )
+
+    const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.failureOption(exit.cause)
+      expect(Option.isSome(failure)).toBe(true)
+      if (Option.isSome(failure)) {
+        expect(failure.value).toBeInstanceOf(AuthRateLimitError)
+        expect(failure.value.retryAfterSeconds).toBe(37)
+      }
+    }
+    expect(errorMapperCalled).toBe(false)
   })
 
   test('handles better-auth Headers object', async () => {

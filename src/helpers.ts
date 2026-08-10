@@ -1,6 +1,4 @@
-/**
- * Honertia Helpers
- */
+/** Rendering and asset helpers for @popcomputer/web. */
 
 import type { Context } from 'hono'
 import type { PageObject } from './types.js'

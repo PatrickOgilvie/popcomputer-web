@@ -44,6 +44,7 @@ export const ErrorCodes = {
   AUTH_101_SESSION_EXPIRED: 'HON_AUTH_101_SESSION_EXPIRED',
   AUTH_102_FORBIDDEN: 'HON_AUTH_102_FORBIDDEN',
   AUTH_103_INVALID_CREDENTIALS: 'HON_AUTH_103_INVALID_CREDENTIALS',
+  AUTH_104_RATE_LIMITED: 'HON_AUTH_104_RATE_LIMITED',
 
   // Resource Errors (RES)
   RES_200_NOT_FOUND: 'HON_RES_200_NOT_FOUND',
@@ -76,6 +77,7 @@ export const ErrorCodes = {
   RTE_601_TABLE_NOT_FOUND: 'HON_RTE_601_TABLE_NOT_FOUND',
   RTE_602_PARAM_VALIDATION: 'HON_RTE_602_PARAM_VALIDATION',
   RTE_603_RELATION_NOT_FOUND: 'HON_RTE_603_RELATION_NOT_FOUND',
+  RTE_604_BOUND_ROW_INVALID: 'HON_RTE_604_BOUND_ROW_INVALID',
 
   // Service Errors (SVC)
   SVC_700_SERVICE_UNAVAILABLE: 'HON_SVC_700_SERVICE_UNAVAILABLE',
@@ -99,15 +101,14 @@ const fixGenerators = {
     id: 'add-database-config',
     type: 'modify_code',
     confidence: 'high',
-    description: 'Add database configuration to setupHonertia',
+    description: 'Add database configuration to setupWeb',
     automated: true,
     operations: [
       {
         type: 'modify_code',
-        position: { after: 'setupHonertia({' },
+        position: { after: 'setupWeb({' },
         content: `
-  honertia: {
-    database: (c) => drizzle(c.env.DB),`,
+  database: (c) => drizzle(c.env.DB),`,
       },
     ],
     postActions: [
@@ -125,15 +126,16 @@ const fixGenerators = {
     id: 'add-auth-config',
     type: 'modify_code',
     confidence: 'high',
-    description: 'Add auth configuration to setupHonertia',
+    description: 'Add auth configuration to setupWeb',
     automated: true,
     operations: [
       {
         type: 'modify_code',
-        position: { after: 'setupHonertia({' },
+        position: { after: 'setupWeb({' },
         content: `
-  honertia: {
-    auth: (c) => betterAuth({ database: c.var.db }),`,
+  auth: {
+    client: (_c, { db }) => betterAuth({ database: db }),
+  },`,
       },
     ],
     postActions: [
@@ -161,8 +163,8 @@ const fixGenerators = {
       },
       {
         type: 'modify_code',
-        position: { after: 'honertia: {' },
-        content: '\n      schema,',
+        position: { after: 'setupWeb({' },
+        content: '\n  schema,',
       },
     ],
     postActions: [
@@ -374,6 +376,18 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
     related: [ErrorCodes.AUTH_100_UNAUTHENTICATED],
   },
 
+  [ErrorCodes.AUTH_104_RATE_LIMITED]: {
+    code: ErrorCodes.AUTH_104_RATE_LIMITED,
+    tag: 'AuthRateLimitError',
+    category: 'auth',
+    title: 'Authentication Rate Limited',
+    messageTemplate: 'Too many authentication attempts. Please try again later.',
+    httpStatus: 429,
+    defaultFixes: [],
+    docsPath: '/errors/auth/rate-limited',
+    related: [ErrorCodes.AUTH_103_INVALID_CREDENTIALS],
+  },
+
   // Resource Errors
   [ErrorCodes.RES_200_NOT_FOUND]: {
     code: ErrorCodes.RES_200_NOT_FOUND,
@@ -455,8 +469,8 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
     code: ErrorCodes.CFG_303_HONERTIA_NOT_CONFIGURED,
     tag: 'HonertiaConfigurationError',
     category: 'configuration',
-    title: 'Honertia Not Configured',
-    messageTemplate: 'Honertia middleware is not configured. Cannot render Inertia responses.',
+    title: 'Page Middleware Not Configured',
+    messageTemplate: '@popcomputer/web middleware is not configured. Cannot render Inertia responses.',
     httpStatus: 500,
     defaultFixes: [],
     docsPath: '/errors/configuration/honertia-not-configured',
@@ -563,7 +577,7 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
 
   [ErrorCodes.DB_501_QUERY_FAILED]: {
     code: ErrorCodes.DB_501_QUERY_FAILED,
-    tag: 'HttpError',
+    tag: 'DatabaseMutationFailed',
     category: 'database',
     title: 'Database Query Failed',
     messageTemplate: 'Database query failed: {reason}',
@@ -575,7 +589,7 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
 
   [ErrorCodes.DB_502_CONSTRAINT_VIOLATION]: {
     code: ErrorCodes.DB_502_CONSTRAINT_VIOLATION,
-    tag: 'HttpError',
+    tag: 'DatabaseConstraintViolation',
     category: 'database',
     title: 'Constraint Violation',
     messageTemplate: 'Database constraint violation: {constraint}',
@@ -587,7 +601,7 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
 
   [ErrorCodes.DB_503_TRANSACTION_FAILED]: {
     code: ErrorCodes.DB_503_TRANSACTION_FAILED,
-    tag: 'HttpError',
+    tag: 'DatabaseTransactionFailed',
     category: 'database',
     title: 'Transaction Failed',
     messageTemplate: 'Database transaction failed and was rolled back: {reason}',
@@ -649,14 +663,27 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
     related: [ErrorCodes.RTE_601_TABLE_NOT_FOUND],
   },
 
+  [ErrorCodes.RTE_604_BOUND_ROW_INVALID]: {
+    code: ErrorCodes.RTE_604_BOUND_ROW_INVALID,
+    tag: 'RouteConfigurationError',
+    category: 'routing',
+    title: 'Bound Row Invalid',
+    messageTemplate:
+      'A row loaded for route binding "{binding}" did not satisfy its registered schema.',
+    httpStatus: 500,
+    defaultFixes: [],
+    docsPath: '/errors/routing/bound-row-invalid',
+    related: [ErrorCodes.RTE_600_BINDING_NOT_FOUND],
+  },
+
   // Service Errors
   [ErrorCodes.SVC_700_SERVICE_UNAVAILABLE]: {
     code: ErrorCodes.SVC_700_SERVICE_UNAVAILABLE,
-    tag: 'HttpError',
+    tag: 'SessionLookupUnavailable',
     category: 'service',
     title: 'Service Unavailable',
     messageTemplate: 'The "{service}" service is not available.',
-    httpStatus: 500,
+    httpStatus: 503,
     defaultFixes: [],
     docsPath: '/errors/service/unavailable',
     related: [ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED],
@@ -664,7 +691,7 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
 
   [ErrorCodes.SVC_701_SERVICE_ERROR]: {
     code: ErrorCodes.SVC_701_SERVICE_ERROR,
-    tag: 'HttpError',
+    tag: 'InvalidAuthSession',
     category: 'service',
     title: 'Service Error',
     messageTemplate: 'The "{service}" service encountered an error: {reason}',
@@ -703,7 +730,7 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
 /**
  * Base URL for error documentation.
  */
-const DOCS_BASE_URL = 'https://honertia.dev'
+const ERROR_GUIDE_URL = 'https://github.com/patrickogilvie/popcomputer-web#responses-and-failures'
 
 /**
  * Create a structured error from an error code and parameters.
@@ -761,7 +788,7 @@ export function createStructuredError(
     context,
     fixes,
     docs: {
-      url: `${DOCS_BASE_URL}${definition.docsPath}`,
+      url: ERROR_GUIDE_URL,
       related: definition.related,
     },
     timestamp: new Date().toISOString(),

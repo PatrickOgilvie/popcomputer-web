@@ -1,6 +1,4 @@
-/**
- * Honertia Types
- */
+/** Public protocol and rendering types. */
 
 import type { Context } from 'hono'
 
@@ -13,7 +11,7 @@ export interface PageObject<TProps = Record<string, unknown>> {
   encryptHistory?: boolean
 }
 
-export interface HonertiaConfig {
+export interface WebConfig {
   version: string | (() => string)
   render: (page: PageObject, ctx?: Context) => string | Promise<string>
 }
@@ -23,7 +21,7 @@ export interface RenderOptions {
   encryptHistory?: boolean
 }
 
-export interface HonertiaInstance {
+export interface WebInstance {
   render<T extends Record<string, unknown>>(
     component: string,
     props?: T,
@@ -34,6 +32,12 @@ export interface HonertiaInstance {
   getShared(): Record<string, unknown>
   setErrors(errors: Record<string, string>): void
 }
+
+/** @deprecated Use {@link WebConfig}. */
+export type HonertiaConfig = WebConfig
+
+/** @deprecated Use {@link WebInstance}. */
+export type HonertiaInstance = WebInstance
 
 export const HEADERS = {
   HONERTIA: 'X-Inertia',

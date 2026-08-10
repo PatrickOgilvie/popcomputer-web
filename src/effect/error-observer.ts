@@ -11,7 +11,7 @@ export interface EffectErrorEvent {
 }
 
 export class EffectErrorObserverService extends Context.Tag(
-  'honertia/EffectErrorObserver'
+  '@popcomputer/web/EffectErrorObserver'
 )<EffectErrorObserverService, {
   readonly observe: (event: EffectErrorEvent) => Effect.Effect<void, never>
 }>() {}

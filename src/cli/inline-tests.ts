@@ -149,10 +149,10 @@ export function parseGenerateInlineTestsRunnerArgs(
  */
 export function generateInlineTestsRunnerHelp(): string {
   return `
-honertia generate:tests-runner - Generate inline tests runner
+popweb generate:tests-runner - Generate inline tests runner
 
 USAGE:
-  honertia generate:tests-runner [OPTIONS]
+  popweb generate:tests-runner [OPTIONS]
 
 OPTIONS:
   -o, --output   Output file path (default: tests/inline-actions.test.ts)
@@ -161,9 +161,9 @@ OPTIONS:
   --json         Output as JSON (machine-readable)
 
 EXAMPLES:
-  honertia generate:tests-runner
-  honertia generate:tests-runner --scan src/actions,src/features
-  honertia generate:tests-runner --preview
+  popweb generate:tests-runner
+  popweb generate:tests-runner --scan src/actions,src/features
+  popweb generate:tests-runner --preview
 `.trim()
 }
 

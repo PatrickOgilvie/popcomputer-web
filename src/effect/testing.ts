@@ -25,7 +25,11 @@ function getBunTestSync(): typeof import('bun:test') {
   return _bunTestModule!
 }
 import type { Hono, Env } from 'hono'
-import { RouteRegistry, getGlobalRegistry, type RouteMetadata } from './route-registry.js'
+import {
+  RouteRegistry,
+  getAppRouteRegistry,
+  type RouteMetadata,
+} from './route-registry.js'
 import type { TestCaptures } from './test-layers.js'
 
 /**
@@ -378,7 +382,7 @@ function createTestFn<E extends Env>(
  *
  * @example
  * ```typescript
- * import { describeRoute, createTestApp } from 'honertia/test'
+ * import { describeRoute, createTestApp } from '@popcomputer/web/test'
  *
  * const app = createTestApp((routes) => {
  *   routes.post('/projects', createProject, { name: 'projects.create' })
@@ -466,12 +470,12 @@ export function describeRoute<E extends Env>(
       config = (callbackOrConfig as TestAppConfig<E>) ?? {}
     }
   } else if (Layer.isLayer(registryOrLayerOrCallback)) {
-    registry = getGlobalRegistry()
+    registry = getAppRouteRegistry(app)
     testLayer = registryOrLayerOrCallback
     callback = layerOrCallbackOrConfig as (test: TestFn) => void
     config = (callbackOrConfig as TestAppConfig<E>) ?? {}
   } else {
-    registry = getGlobalRegistry()
+    registry = getAppRouteRegistry(app)
     callback = registryOrLayerOrCallback
     config = (layerOrCallbackOrConfig as TestAppConfig<E>) ?? {}
   }
@@ -515,7 +519,7 @@ export function describeRoute<E extends Env>(
 export function createRouteTester<E extends Env>(
   routeName: string,
   app: Hono<E>,
-  registry: RouteRegistry = getGlobalRegistry(),
+  registry: RouteRegistry = getAppRouteRegistry(app),
   config: TestAppConfig<E> = {}
 ): TestFn {
   const route = registry.findByName(routeName)
@@ -543,9 +547,10 @@ export function createRouteTester<E extends Env>(
  * // Returns: [{ name: 'returns 404 for invalid params', options: { ... } }, ...]
  * ```
  */
-export function generateTestCases(
+export function generateTestCases<E extends Env>(
   routeName: string,
-  registry: RouteRegistry = getGlobalRegistry()
+  app: Hono<E>,
+  registry: RouteRegistry = getAppRouteRegistry(app)
 ): Array<{ name: string; options: TestCaseOptions }> {
   const route = registry.findByName(routeName)
   if (!route) return []

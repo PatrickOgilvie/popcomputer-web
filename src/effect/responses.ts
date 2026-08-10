@@ -6,7 +6,7 @@
 
 import { Effect } from 'effect'
 import {
-  HonertiaService,
+  PageService,
   ResponseFactoryService,
   RequestService,
 } from './services.js'
@@ -23,7 +23,7 @@ export const redirect = (url: string, status: 302 | 303 = 303): Effect.Effect<Re
   Effect.succeed(new Redirect({ url, status }))
 
 /**
- * Render a Honertia component.
+ * Render a page component.
  *
  * @example
  * return yield* render('Dashboard/Index', { projects })
@@ -31,14 +31,14 @@ export const redirect = (url: string, status: 302 | 303 = 303): Effect.Effect<Re
 export const render = <T extends object>(
   component: string,
   props?: T
-): Effect.Effect<Response, never, HonertiaService> =>
+): Effect.Effect<Response, never, PageService> =>
   Effect.gen(function* () {
-    const honertia = yield* HonertiaService
-    return yield* Effect.promise(() => honertia.render(component, props as Record<string, unknown>))
+    const page = yield* PageService
+    return yield* Effect.promise(() => page.render(component, props as Record<string, unknown>))
   })
 
 /**
- * Render a Honertia component with validation errors pre-set.
+ * Render a page component with validation errors pre-set.
  *
  * @example
  * return yield* renderWithErrors('Auth/Login', { email: 'Invalid' })
@@ -47,11 +47,11 @@ export const renderWithErrors = <T extends object>(
   component: string,
   errors: Record<string, string>,
   props?: T
-): Effect.Effect<Response, never, HonertiaService> =>
+): Effect.Effect<Response, never, PageService> =>
   Effect.gen(function* () {
-    const honertia = yield* HonertiaService
-    honertia.setErrors(errors)
-    return yield* Effect.promise(() => honertia.render(component, props as Record<string, unknown>))
+    const page = yield* PageService
+    page.setErrors(errors)
+    return yield* Effect.promise(() => page.render(component, props as Record<string, unknown>))
   })
 
 /**
@@ -121,12 +121,12 @@ export const prefersJson: Effect.Effect<boolean, never, RequestService> =
   })
 
 /**
- * Return JSON if client prefers it, otherwise render Honertia component.
+ * Return JSON if the client prefers it, otherwise render a page component.
  */
 export const jsonOrRender = <T extends object>(
   component: string,
   data: T
-): Effect.Effect<Response, never, RequestService | HonertiaService | ResponseFactoryService> =>
+): Effect.Effect<Response, never, RequestService | PageService | ResponseFactoryService> =>
   Effect.gen(function* () {
     const wantsJson = yield* prefersJson
     if (wantsJson) {
@@ -136,10 +136,10 @@ export const jsonOrRender = <T extends object>(
   })
 
 /**
- * Share data with all Honertia responses.
+ * Share data with all page responses.
  */
-export const share = (key: string, value: unknown): Effect.Effect<void, never, HonertiaService> =>
+export const share = (key: string, value: unknown): Effect.Effect<void, never, PageService> =>
   Effect.gen(function* () {
-    const honertia = yield* HonertiaService
-    honertia.share(key, value)
+    const page = yield* PageService
+    page.share(key, value)
   })

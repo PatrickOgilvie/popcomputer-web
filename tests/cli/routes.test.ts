@@ -236,6 +236,9 @@ describe('routesCommand', () => {
 })
 
 describe('parseRoutesArgs', () => {
+  test('parses --app option', () => {
+    expect(parseRoutesArgs(['--app', 'src/app.ts']).app).toBe('src/app.ts')
+  })
   test('parses --json flag', () => {
     const options = parseRoutesArgs(['--json'])
     expect(options.format).toBe('json')
@@ -332,7 +335,7 @@ describe('routesHelp', () => {
   test('returns help text', () => {
     const help = routesHelp()
 
-    expect(help).toContain('honertia routes')
+    expect(help).toContain('popweb routes')
     expect(help).toContain('--json')
     expect(help).toContain('--method')
     expect(help).toContain('EXAMPLES')

@@ -4,10 +4,23 @@
  * Authentication and authorization via Effect Layers.
  */
 
-import { Effect, Layer, Option, Schema as S } from 'effect'
+import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import type { Hono, MiddlewareHandler, Env } from 'hono'
-import { AuthUserService, AuthService, DatabaseService, HonertiaService, RequestService, type AuthUser } from './services.js'
-import { UnauthorizedError, ValidationError } from './errors.js'
+import { AuthUserService, AuthService, DatabaseService, PageService, RequestService, type AuthType, type AuthUser } from './services.js'
+import {
+  InvalidAuthSession,
+  HttpError,
+  SessionLookupUnavailable,
+  UnauthorizedError,
+} from './errors.js'
+import type { AppError, AuthRateLimitError, ValidationError } from './errors.js'
+import {
+  classifyBetterAuthFailure,
+  inspectBetterAuthActionResult,
+  toHonertiaAuthError,
+  type BetterAuthActionError,
+  type BetterAuthActionResult,
+} from './better-auth-boundary.js'
 import { effectRoutes, type EffectHandler } from './routing.js'
 import { openHonertiaContext } from '../request-context.js'
 import { render } from './responses.js'
@@ -183,12 +196,12 @@ export const requireGuest = (
 /**
  * How the authenticated user is shaped before being shared with the client.
  *
- * By default the entire user record is shared as `auth.user`, which mirrors
- * Inertia's convention but also serializes every column (email, role/admin
- * flags, etc.) into the page payload. Use `fields` or `mapUser` to expose only
- * what the client actually needs and keep PII / privileged flags server-side.
+ * The default public shape contains only `id`, `name`, and `image`. Prefer an
+ * explicit `project` function when the client needs a different shape.
  */
 export interface ShareAuthUserConfig {
+  /** Project the parsed server-side auth session into public page data. */
+  readonly project?: (auth: AuthUser) => unknown
   /**
    * Whitelist of user fields to include in the shared `auth.user`.
    * Ignored when `mapUser` is provided.
@@ -209,10 +222,13 @@ export interface ShareAuthUserConfig {
  * Apply the field/map projection to a raw user record.
  */
 function projectSharedUser(
-  user: Record<string, unknown> | null | undefined,
+  authUser: AuthUser | null | undefined,
   config: ShareAuthUserConfig
 ): unknown {
-  if (!user) return null
+  if (!authUser) return null
+  if (config.project) return config.project(authUser)
+
+  const user = authUser.user as Record<string, unknown>
   if (config.mapUser) return config.mapUser(user)
   if (config.fields) {
     const picked: Record<string, unknown> = {}
@@ -221,23 +237,27 @@ function projectSharedUser(
     }
     return picked
   }
-  return user
+  return {
+    id: user.id,
+    name: user.name ?? null,
+    image: user.image ?? null,
+  }
 }
 
 /**
- * Share auth state with Honertia.
+ * Share auth state with the page renderer.
  *
- * Pass a `fields` whitelist or `mapUser` projection to avoid serializing the
- * full user record (email, admin flags, …) into every page payload.
+ * The safe default shares only `id`, `name`, and `image`. Pass `project` when
+ * the application needs a different public contract.
  */
 export function shareAuth(
   config: ShareAuthUserConfig = {}
-): Effect.Effect<void, never, HonertiaService> {
+): Effect.Effect<void, never, PageService> {
   return Effect.gen(function* () {
-    const honertia = yield* HonertiaService
+    const page = yield* PageService
     const user = yield* currentUser
-    honertia.share('auth', {
-      user: projectSharedUser(user?.user as Record<string, unknown> | undefined, config),
+    page.share('auth', {
+      user: projectSharedUser(user, config),
     })
   })
 }
@@ -246,20 +266,19 @@ export function shareAuth(
  * Middleware version of shareAuth for use with app.use().
  *
  * @example
- * // Share only safe fields instead of the whole user record
- * app.use('*', shareAuthMiddleware({ fields: ['id', 'name', 'image'] }))
+ * app.use('*', shareAuthMiddleware({
+ *   project: ({ user }) => ({ id: user.id, name: user.name }),
+ * }))
  */
 export function shareAuthMiddleware<E extends Env>(
   config: ShareAuthUserConfig = {}
 ): MiddlewareHandler<E> {
   return async (c, next) => {
-    const { honertia, authUser } = openHonertiaContext(c)
-    if (honertia) {
-      honertia.share('auth', {
-        user: projectSharedUser(
-          authUser?.user as Record<string, unknown> | undefined,
-          config
-        ),
+    const requestContext = openHonertiaContext(c)
+    const page = requestContext.web ?? requestContext.honertia
+    if (page) {
+      page.share('auth', {
+        user: projectSharedUser(requestContext.authUser, config),
       })
     }
     await next()
@@ -279,7 +298,7 @@ export function shareAuthMiddleware<E extends Env>(
  */
 export type AuthActionEffect<
   R = RequestService | AuthService | DatabaseService,
-  E extends Error = Error
+  E extends AppError = AppError
 > = EffectHandler<R, E>
 
 /**
@@ -416,11 +435,18 @@ export function effectAuthRoutes<E extends Env>(
         const request = yield* RequestService
 
         // Revoke session server-side
-        yield* Effect.tryPromise(() =>
-          (auth as any).api.signOut({
-            headers: request.headers,
-          })
-        )
+        yield* Effect.tryPromise({
+          try: () =>
+            (auth as any).api.signOut({
+              headers: request.headers,
+            }),
+          catch: (cause) =>
+            new HttpError({
+              status: 502,
+              message: 'Authentication service failed.',
+              cause,
+            }),
+        })
 
         // Clear cookie(s) and redirect. Clear both the plain and the
         // `__Secure-` prefixed variant so HTTPS sessions are also revoked.
@@ -490,10 +516,11 @@ export function effectAuthRoutes<E extends Env>(
  */
 export function loadUser<E extends Env>(
   config: {
-    sessionCookie?: string
+    readonly sessionCookie?: string
+    readonly session?: S.Schema<AuthUser, unknown, never>
   } = {}
 ): MiddlewareHandler<E> {
-  const { sessionCookie } = config
+  const { sessionCookie, session: sessionSchema = DefaultAuthSessionSchema } = config
 
   return async (c, next) => {
     const requestCtx = openHonertiaContext(c)
@@ -507,14 +534,14 @@ export function loadUser<E extends Env>(
 
     const auth = requestCtx.auth as
       | {
-          api: {
-            getSession: (input: {
+          api?: {
+            getSession?: (input: {
               headers: Headers
             }) => Promise<{ user: unknown; session: unknown } | null>
           }
         }
       | undefined
-    if (!auth) {
+    if (!auth?.api?.getSession) {
       await next()
       // Return response for proper propagation in forwarding/proxy scenarios
       return c.res
@@ -531,16 +558,22 @@ export function loadUser<E extends Env>(
       return c.res
     }
 
+    let session: { user: unknown; session: unknown } | null
     try {
-      const session = await auth.api.getSession({ headers: c.req.raw.headers })
-      if (session) {
-        openHonertiaContext(c).authUser = {
-          user: session.user,
-          session: session.session,
-        } as AuthUser
+      session = await auth.api.getSession({ headers: c.req.raw.headers })
+    } catch (cause: unknown) {
+      throw new SessionLookupUnavailable({ operation: 'getSession', cause })
+    }
+
+    if (session) {
+      const exit = await Effect.runPromiseExit(S.decodeUnknown(sessionSchema)(session))
+      if (Exit.isFailure(exit)) {
+        throw new InvalidAuthSession({
+          operation: 'parseSession',
+          cause: Cause.squash(exit.cause),
+        })
       }
-    } catch {
-      // Session fetch failed, continue without user
+      openHonertiaContext(c).authUser = exit.value
     }
 
     await next()
@@ -550,34 +583,56 @@ export function loadUser<E extends Env>(
   }
 }
 
-/**
- * Result types from better-auth calls that expose headers.
- */
-export type BetterAuthActionResult =
-  | Response
-  | Headers
-  | { headers?: Headers | HeadersInit }
+// SAFETY: AuthUser is the augmentable public contract. Applications that
+// augment it with additional fields provide `auth.session`; this default
+// establishes exactly DefaultAuthUser's runtime shape.
+const DefaultAuthSessionSchema: S.Schema<AuthUser, unknown, never> = S.Struct({
+  user: S.Struct({
+    id: S.String,
+    email: S.String,
+    name: S.NullOr(S.String),
+    emailVerified: S.Boolean,
+    image: S.NullOr(S.String),
+    createdAt: S.DateFromSelf,
+    updatedAt: S.DateFromSelf,
+  }),
+  session: S.Struct({
+    id: S.String,
+    userId: S.String,
+    expiresAt: S.DateFromSelf,
+    token: S.String,
+    createdAt: S.DateFromSelf,
+    updatedAt: S.DateFromSelf,
+  }),
+}) as S.Schema<AuthUser, unknown, never>
+
+export type { BetterAuthActionError, BetterAuthActionResult } from './better-auth-boundary.js'
 
 /**
  * Config for better-auth form actions (login/register).
  */
-export interface BetterAuthFormActionConfig<A, I, AuthClient = unknown> {
-  schema: S.Schema<A, I>
-  errorComponent: string
-  call: (auth: AuthClient, input: A, request: Request) => Promise<BetterAuthActionResult>
-  errorMapper?: (error: unknown) => Record<string, string>
-  redirectTo?: string | ((input: A, result: BetterAuthActionResult) => string)
+export interface BetterAuthFormActionConfig<A, I, AuthClient = AuthType> {
+  readonly schema: S.Schema<A, I>
+  readonly errorComponent: string
+  readonly call: (auth: AuthClient, input: A, request: Request) => Promise<BetterAuthActionResult>
+  readonly errorMapper?: (error: BetterAuthActionError) => Record<string, string>
+  readonly redirectTo?: string | ((input: A, result: BetterAuthActionResult) => string)
 }
 
 /**
  * Create a better-auth form action with Honertia-friendly responses.
  *
  * Copies Set-Cookie headers from better-auth and redirects with 303.
- * Maps errors into ValidationError so the standard error handler can render.
+ * Maps expected Better Auth request rejections into ValidationError, rate
+ * limits into AuthRateLimitError, and dependency failures into HttpError.
  */
-export function betterAuthFormAction<A, I, AuthClient = unknown>(
+export function betterAuthFormAction<A, I, AuthClient = AuthType>(
   config: BetterAuthFormActionConfig<A, I, AuthClient>
-): Effect.Effect<Response, ValidationError, RequestService | AuthService> {
+): Effect.Effect<
+  Response,
+  ValidationError | AuthRateLimitError | HttpError,
+  RequestService | AuthService
+> {
   return Effect.gen(function* () {
     const auth = yield* AuthService
     const request = yield* RequestService
@@ -587,13 +642,11 @@ export function betterAuthFormAction<A, I, AuthClient = unknown>(
 
     const result = yield* Effect.tryPromise({
       try: () => config.call(auth as AuthClient, input, buildAuthRequest(request)),
-      catch: (error) => error,
+      catch: (cause) => classifyBetterAuthFailure(cause),
     }).pipe(
-      Effect.mapError((error) =>
-        new ValidationError({
-          errors: (config.errorMapper ?? defaultAuthErrorMapper)(error),
-          component: config.errorComponent,
-        })
+      Effect.flatMap(inspectBetterAuthActionResult),
+      Effect.mapError((failure) =>
+        toHonertiaAuthError(failure, config.errorComponent, config.errorMapper)
       )
     )
 
@@ -694,19 +747,6 @@ function getHeaders(result: BetterAuthActionResult | undefined): Headers | undef
 
 function coerceHeaders(value: Headers | HeadersInit): Headers {
   return value instanceof Headers ? value : new Headers(value)
-}
-
-function defaultAuthErrorMapper(error: unknown): Record<string, string> {
-  const message = getAuthErrorMessage(error) ?? 'Unable to complete request. Please try again.'
-  return { form: message }
-}
-
-function getAuthErrorMessage(error: unknown): string | undefined {
-  if (!error || typeof error !== 'object') return undefined
-  const candidate = error as { body?: { message?: unknown }; message?: unknown }
-  if (typeof candidate.body?.message === 'string') return candidate.body.message
-  if (typeof candidate.message === 'string') return candidate.message
-  return undefined
 }
 
 function appendSetCookies(target: Headers, source: Headers): void {

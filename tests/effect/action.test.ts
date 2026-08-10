@@ -6,6 +6,7 @@ import { describe, test, expect } from 'bun:test'
 import { Effect, Schema as S, Layer, Exit, Cause } from 'effect'
 import {
   action,
+  dbMutation,
   dbTransaction,
 } from '../../src/effect/action.js'
 import {
@@ -17,7 +18,15 @@ import {
   type RequestContext,
 } from '../../src/effect/services.js'
 import { validateRequest } from '../../src/effect/validation.js'
-import { Redirect, ValidationError, UnauthorizedError, ForbiddenError } from '../../src/effect/errors.js'
+import {
+  DatabaseConstraintViolation,
+  DatabaseMutationFailed,
+  DatabaseTransactionFailed,
+  Redirect,
+  ValidationError,
+  UnauthorizedError,
+  ForbiddenError,
+} from '../../src/effect/errors.js'
 
 // Mock user
 const createMockUser = (overrides: Partial<AuthUser['user']> = {}): AuthUser => ({
@@ -312,7 +321,7 @@ describe('dbTransaction', () => {
     expect(rolledBack).toBe(true)
   })
 
-  test('converts non-Error throws to Error', async () => {
+  test('classifies unknown failures as transaction failures', async () => {
     const mockDb = {
       transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({}),
     }
@@ -326,8 +335,42 @@ describe('dbTransaction', () => {
     if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
       const option = Cause.failureOption(exit.cause)
       if (option._tag === 'Some') {
-        expect(option.value).toBeInstanceOf(Error)
+        expect(option.value).toBeInstanceOf(DatabaseTransactionFailed)
+        expect(option.value._tag).toBe('DatabaseTransactionFailed')
       }
+    }
+  })
+})
+
+describe('database failure classification', () => {
+  test('keeps generic mutation failures out of the broad Error channel', async () => {
+    const exit = await Effect.runPromiseExit(
+      dbMutation({}, async () => {
+        throw new Error('connection reset')
+      })
+    )
+
+    const failure = Exit.isFailure(exit) ? Cause.failureOption(exit.cause) : null
+    expect(failure?._tag).toBe('Some')
+    if (failure?._tag === 'Some') {
+      expect(failure.value).toBeInstanceOf(DatabaseMutationFailed)
+      expect(failure.value.cause).toBeInstanceOf(Error)
+    }
+  })
+
+  test('classifies provider constraint codes separately', async () => {
+    const exit = await Effect.runPromiseExit(
+      dbMutation({}, async () => {
+        throw Object.assign(new Error('duplicate key'), { code: '23505' })
+      })
+    )
+
+    const failure = Exit.isFailure(exit) ? Cause.failureOption(exit.cause) : null
+    expect(failure?._tag).toBe('Some')
+    if (failure?._tag === 'Some') {
+      expect(failure.value).toBeInstanceOf(DatabaseConstraintViolation)
+      expect(failure.value.constraint).toBe('unique')
+      expect(failure.value.httpStatus).toBe(409)
     }
   })
 })

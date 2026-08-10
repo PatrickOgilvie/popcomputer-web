@@ -408,6 +408,9 @@ describe('generateOpenApi', () => {
 })
 
 describe('parseGenerateOpenApiArgs', () => {
+  test('parses --app option', () => {
+    expect(parseGenerateOpenApiArgs(['--app', 'src/app.ts']).app).toBe('src/app.ts')
+  })
   test('parses --title option', () => {
     const options = parseGenerateOpenApiArgs(['--title', 'My API'])
     expect(options.title).toBe('My API')
@@ -479,7 +482,7 @@ describe('generateOpenApiHelp', () => {
   test('includes usage information', () => {
     const help = generateOpenApiHelp()
 
-    expect(help).toContain('honertia generate:openapi')
+    expect(help).toContain('popweb generate:openapi')
     expect(help).toContain('USAGE')
     expect(help).toContain('OPTIONS')
     expect(help).toContain('EXAMPLES')
