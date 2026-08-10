@@ -1,6 +1,6 @@
 {
   "name": "@popcomputer/web",
-  "version": "0.3.0",
+  "version": "0.3.0-rc.1",
   "description": "Effect-native server-driven web applications on Hono",
   "type": "module",
   "main": "./dist/index.js",
