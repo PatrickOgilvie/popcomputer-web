@@ -1,11 +1,4 @@
-/**
- * Honertia - Inertia.js-style adapter for Hono with Effect.js
- *
- * This is the main entry point for core functionality.
- * For Effect integration, import from 'honertia/effect'.
- * For schema validators, import from 'honertia/schema'.
- * For auth helpers, import from 'honertia/auth'.
- */
+/** Main entry point for @popcomputer/web. */
 
 // =============================================================================
 // Core (Setup, Middleware, Types, Helpers)
@@ -13,9 +6,13 @@
 
 // Setup (recommended one-liner for most apps)
 export {
+  setupWeb,
   setupHonertia,
   createErrorHandlers,
   registerErrorHandlers,
+  type WebSetupConfig,
+  type WebFullConfig,
+  type WebApplication,
   type HonertiaSetupConfig,
   type HonertiaFullConfig,
   type ErrorHandlerConfig,
@@ -23,13 +20,17 @@ export {
 } from './setup.js'
 
 // Core middleware (for manual setup)
-export { honertia, HEADERS } from './middleware.js'
+export { web, honertia, HEADERS } from './middleware.js'
 
 // Request context: typed framework state for plain Hono middleware,
 // and service wiring for apps composing middleware manually.
 export {
+  webContext,
+  webServices,
   honertiaContext,
   honertiaServices,
+  type WebRequestContext,
+  type WebProvidedServices,
   type HonertiaRequestContext,
   type HonertiaProvidedServices,
 } from './request-context.js'
@@ -39,6 +40,8 @@ export { verifyOrigin, type VerifyOriginConfig } from './security.js'
 
 export type {
   PageObject,
+  WebConfig,
+  WebInstance,
   HonertiaConfig,
   HonertiaInstance,
   RenderOptions,
@@ -57,11 +60,11 @@ export {
 // Re-exports for convenience (deprecated - use subpath imports instead)
 // =============================================================================
 
-// Effect Integration - prefer: import { ... } from 'honertia/effect'
+// Effect Integration - prefer: import { ... } from '@popcomputer/web/effect'
 export * from './effect/index.js'
 
-// Schema Validators - prefer: import { ... } from 'honertia/schema'
+// Schema Validators - prefer: import { ... } from '@popcomputer/web/schema'
 // (already included via effect/index.js)
 
-// Auth - prefer: import { ... } from 'honertia/auth'
+// Auth - prefer: import { ... } from '@popcomputer/web/auth'
 // (already included via effect/index.js)

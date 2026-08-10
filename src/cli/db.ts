@@ -162,7 +162,7 @@ export interface MigrationDefinition {
  *
  * @example
  * ```typescript
- * import { defineMigration, sql } from 'honertia/cli'
+ * import { defineMigration, sql } from '@popcomputer/web/cli'
  *
  * export const addEmailToProjects = defineMigration({
  *   version: '20250109_001',
@@ -198,7 +198,7 @@ export function sql(strings: TemplateStringsArray, ...values: unknown[]): string
  *
  * @example
  * ```typescript
- * import { dbStatus } from 'honertia/cli'
+ * import { dbStatus } from '@popcomputer/web/cli'
  *
  * const status = await dbStatus({ config: 'drizzle.config.ts' })
  * if (status.pending > 0) {
@@ -247,7 +247,7 @@ export async function dbStatus(options: DbCommandOptions = {}): Promise<DbStatus
  *
  * @example
  * ```typescript
- * import { dbMigrate } from 'honertia/cli'
+ * import { dbMigrate } from '@popcomputer/web/cli'
  *
  * // Preview migrations
  * const preview = await dbMigrate({ preview: true })
@@ -315,7 +315,7 @@ export async function dbMigrate(options: DbCommandOptions = {}): Promise<DbMigra
  *
  * @example
  * ```typescript
- * import { dbRollback } from 'honertia/cli'
+ * import { dbRollback } from '@popcomputer/web/cli'
  *
  * const result = await dbRollback({ preview: true })
  * if (result.migration) {
@@ -383,7 +383,7 @@ export async function dbRollback(options: DbCommandOptions = {}): Promise<DbRoll
  *
  * @example
  * ```typescript
- * import { dbGenerate } from 'honertia/cli'
+ * import { dbGenerate } from '@popcomputer/web/cli'
  *
  * await dbGenerate('add_status_to_projects')
  * // Creates: drizzle/migrations/20250109_001_add_status_to_projects.sql
@@ -461,10 +461,16 @@ function toTrackingObject(applied: Map<string, string | undefined>): Record<stri
   )
 }
 
-async function getTrackingFilePath(configPath?: string): Promise<string> {
+async function getTrackingFilePaths(configPath?: string): Promise<{
+  readonly current: string
+  readonly legacy: string
+}> {
   const path = await import('path')
   const migrationsPath = await findMigrationsPath(configPath)
-  return path.join(migrationsPath, '.honertia-applied.json')
+  return {
+    current: path.join(migrationsPath, '.popweb-applied.json'),
+    legacy: path.join(migrationsPath, '.honertia-applied.json'),
+  }
 }
 
 async function findMigrationsPath(configPath?: string): Promise<string> {
@@ -530,16 +536,20 @@ async function listMigrationFiles(migrationsPath: string): Promise<string[]> {
 }
 
 async function getAppliedMigrations(configPath?: string): Promise<Map<string, string | undefined>> {
-  try {
-    const fs = await import('fs/promises')
-    const trackingPath = await getTrackingFilePath(configPath)
-    const content = await fs.readFile(trackingPath, 'utf-8')
-    const parsed = JSON.parse(content) as Record<string, string>
+  const fs = await import('fs/promises')
+  const trackingPaths = await getTrackingFilePaths(configPath)
 
-    return new Map(Object.entries(parsed))
-  } catch {
-    return new Map()
+  for (const trackingPath of [trackingPaths.current, trackingPaths.legacy]) {
+    try {
+      const content = await fs.readFile(trackingPath, 'utf-8')
+      const parsed = JSON.parse(content) as Record<string, string>
+      return new Map(Object.entries(parsed))
+    } catch (error) {
+      if (!isFileNotFound(error)) throw error
+    }
   }
+
+  return new Map()
 }
 
 async function saveAppliedMigrations(
@@ -548,10 +558,14 @@ async function saveAppliedMigrations(
 ): Promise<void> {
   const fs = await import('fs/promises')
   const path = await import('path')
-  const trackingPath = await getTrackingFilePath(configPath)
+  const { current: trackingPath } = await getTrackingFilePaths(configPath)
 
   await fs.mkdir(path.dirname(trackingPath), { recursive: true })
   await fs.writeFile(trackingPath, JSON.stringify(toTrackingObject(applied), null, 2))
+}
+
+function isFileNotFound(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }
 
 async function runDrizzleMigrate(configPath?: string): Promise<void> {
@@ -683,10 +697,10 @@ function formatMigrateText(result: DbMigrateResult, preview: boolean): string {
  */
 export function dbHelp(): string {
   return `
-honertia db - Database migration commands
+popweb db - Database migration commands
 
 USAGE:
-  honertia db <command> [OPTIONS]
+  popweb db <command> [OPTIONS]
 
 COMMANDS:
   status              Show migration status
@@ -702,22 +716,22 @@ OPTIONS:
 
 EXAMPLES:
   # Show migration status
-  honertia db status
+  popweb db status
 
   # Preview pending migrations
-  honertia db migrate --preview
+  popweb db migrate --preview
 
   # Run migrations
-  honertia db migrate
+  popweb db migrate
 
   # Generate new migration
-  honertia db generate add_status_to_projects
+  popweb db generate add_status_to_projects
 
   # Preview rollback SQL
-  honertia db rollback --preview
+  popweb db rollback --preview
 
   # Use custom config
-  honertia db migrate --config ./drizzle.config.ts
+  popweb db migrate --config ./drizzle.config.ts
 `.trim()
 }
 
@@ -795,7 +809,7 @@ export async function runDb(args: string[] = []): Promise<void> {
     case 'generate': {
       if (!options.name) {
         console.log('Error: Migration name required')
-        console.log('Usage: honertia db generate <name>')
+        console.log('Usage: popweb db generate <name>')
         process.exit(1)
       }
       const result = await dbGenerate(options.name, options)
@@ -816,7 +830,7 @@ export async function runDb(args: string[] = []): Promise<void> {
 
     default:
       console.log(`Unknown command: ${options.command}`)
-      console.log('Run "honertia db --help" for usage')
+      console.log('Run "popweb db --help" for usage')
       process.exit(1)
   }
 }

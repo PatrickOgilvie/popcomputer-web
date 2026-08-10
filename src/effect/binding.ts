@@ -73,8 +73,12 @@ export type RouteBindingsConfig = Readonly<Record<string, RouteBindingConfig>>
  * Augmentable route-binding parser map used by {@link bound}.
  *
  * Applications should set `type` to the same object passed as
- * `honertia.bindings` so decoded parser outputs flow into handler types.
+ * `bindings` in setupWeb so decoded parser outputs flow into handler types.
  */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface WebRouteBindingsType {}
+
+/** @deprecated Augment {@link WebRouteBindingsType} instead. */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface HonertiaRouteBindingsType {}
 
@@ -142,7 +146,7 @@ export function toHonoPath(path: string): string {
  * Service tag for bound models.
  * Provides access to resolved route models in handlers.
  */
-export class BoundModels extends Context.Tag('honertia/BoundModels')<
+export class BoundModels extends Context.Tag('@popcomputer/web/BoundModels')<
   BoundModels,
   ReadonlyMap<string, unknown>
 >() {}
@@ -152,12 +156,15 @@ export class BoundModels extends Context.Tag('honertia/BoundModels')<
  */
 interface BoundModelNotConfigured<K extends string> {
   readonly __error: `Cannot infer type for bound('${K}'). Route binding parser type not configured.`
-  readonly __hint: 'Augment HonertiaRouteBindingsType with the object passed to honertia.bindings.'
+  readonly __hint: 'Augment WebRouteBindingsType with the object passed to setupWeb as bindings.'
 }
 
-type ConfiguredRouteBindings = HonertiaRouteBindingsType extends {
+type ConfiguredRouteBindings = WebRouteBindingsType extends {
   type: infer Bindings
-} ? Bindings : never
+} ? Bindings
+  : HonertiaRouteBindingsType extends { type: infer Bindings }
+    ? Bindings
+    : never
 
 type RouteBindingOutput<Config> =
   Config extends S.Schema<infer A, infer _I, infer _R>
@@ -203,7 +210,7 @@ export const bound = <K extends string>(
       return yield* new BoundModelNotFound({ key })
     }
     // SAFETY: route execution stores the decoded output of the parser keyed by
-    // this binding name. HonertiaRouteBindingsType is the public type-level
+    // this binding name. WebRouteBindingsType is the public type-level
     // mirror of that same parser map.
     return model as BoundModel<K>
   })

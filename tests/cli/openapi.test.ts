@@ -482,7 +482,7 @@ describe('generateOpenApiHelp', () => {
   test('includes usage information', () => {
     const help = generateOpenApiHelp()
 
-    expect(help).toContain('honertia generate:openapi')
+    expect(help).toContain('popweb generate:openapi')
     expect(help).toContain('USAGE')
     expect(help).toContain('OPTIONS')
     expect(help).toContain('EXAMPLES')

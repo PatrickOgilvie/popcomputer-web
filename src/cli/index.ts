@@ -1,5 +1,5 @@
 /**
- * Honertia CLI
+ * Popcomputer Web CLI
  *
  * CLI utilities for introspection and code generation.
  * Designed for both human developers and AI agent workflows.
@@ -171,7 +171,7 @@ function sortRoutes(
  * ```typescript
  * // In a script that imports your app
  * // The CLI imports the configured application passed with --app.
- * import { routesCommand, getGlobalRegistry } from 'honertia/cli'
+ * import { routesCommand, getGlobalRegistry } from '@popcomputer/web/cli'
  *
  * const result = routesCommand(getGlobalRegistry(), { format: 'json' })
  * console.log(result.output)
@@ -309,10 +309,10 @@ export function parseRoutesArgs(args: string[]): RoutesCommandOptions {
  */
 export function routesHelp(): string {
   return `
-honertia routes - List all registered routes
+popweb routes - List all registered routes
 
 USAGE:
-  honertia routes --app <entrypoint> [OPTIONS]
+  popweb routes --app <entrypoint> [OPTIONS]
 
 OPTIONS:
   --app <path>     Application entrypoint exporting the app or route registry
@@ -330,19 +330,19 @@ OPTIONS:
 
 EXAMPLES:
   # List all routes as a table
-  honertia routes --app src/app.ts
+  popweb routes --app src/app.ts
 
   # Output as JSON for agent consumption
-  honertia routes --app src/app.ts --json
+  popweb routes --app src/app.ts --json
 
   # Filter by method
-  honertia routes --app src/app.ts --method post
+  popweb routes --app src/app.ts --method post
 
   # Filter by prefix
-  honertia routes --app src/app.ts --prefix /api
+  popweb routes --app src/app.ts --prefix /api
 
   # Find routes matching a pattern
-  honertia routes --app src/app.ts --pattern '/projects/*'
+  popweb routes --app src/app.ts --pattern '/projects/*'
 `.trim()
 }
 
@@ -353,7 +353,7 @@ EXAMPLES:
  * ```typescript
  * // scripts/routes.ts
  * import './app' // Register routes
- * import { runRoutes } from 'honertia/cli'
+ * import { runRoutes } from '@popcomputer/web/cli'
  *
  * runRoutes(process.argv.slice(2))
  * ```

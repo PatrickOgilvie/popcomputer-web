@@ -41,7 +41,7 @@ import {
 import {
   DatabaseService,
   AuthService,
-  HonertiaService,
+  PageService,
   RequestService,
   RequestStateService,
   ResponseFactoryService,
@@ -85,7 +85,7 @@ export type BaseServices =
   | RequestStateService
   | ResponseCacheService
   | ResponseFactoryService
-  | HonertiaService
+  | PageService
   | DatabaseService
   | AuthService
   | BindingsService
@@ -668,7 +668,7 @@ export class EffectRouteBuilder<
         isDevEnv(c)
       ) {
         warnedIneffectiveCache = true
-        console.warn(`[honertia] Route '${c.req.path}' ${decision.warning}`)
+        console.warn(`[@popcomputer/web] Route '${c.req.path}' ${decision.warning}`)
       }
 
       return applyCachePolicy(response, decision)

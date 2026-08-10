@@ -1,7 +1,7 @@
 /**
  * Code Generation Module
  *
- * Generates colocated action files with inline integration tests for Honertia.
+ * Generates colocated action files with inline integration tests for Popcomputer Web.
  * Designed for AI agent workflows - one file contains everything:
  * - Route metadata
  * - Request schema
@@ -288,7 +288,7 @@ function generateActionContent(options: GenerateActionOptions): string {
 import { ${effectImports.join(', ')} } from 'effect'
 import {
   ${honertiaImports.join(',\n  ')},${schemaImports.length > 0 ? `\n  ${schemaImports.join(',\n  ')},` : ''}
-} from 'honertia/effect'
+} from '@popcomputer/web/effect'
 `
 
   // Add schema if needed
@@ -432,8 +432,8 @@ function generateInlineTests(
 if (typeof Bun !== 'undefined' && Bun.env?.NODE_ENV === 'test') {
   const { describe, test, expect } = await import('bun:test')
   const { Hono } = await import('hono')
-  const { effectRoutes } = await import('honertia/effect')
-  const { setupHonertia } = await import('honertia')
+  const { effectRoutes } = await import('@popcomputer/web/effect')
+  const { setupWeb } = await import('@popcomputer/web')
 
   const sessionCookie = 'better-auth.session_token'
   const sessionToken = 'test-session-token'
@@ -450,12 +450,11 @@ if (typeof Bun !== 'undefined' && Bun.env?.NODE_ENV === 'test') {
   const createTestApp = () => {
     const app = new Hono()
 
-    setupHonertia(app, {
-      honertia: {
-        version: '1.0.0',
-        render: (page) => JSON.stringify(page),
-${method !== 'GET' ? `        database: () => ({}),
-` : ''}      },
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+${method !== 'GET' ? `      database: () => ({}),
+` : ''}
       auth: {
         client: () => ({
           api: {
@@ -695,10 +694,10 @@ export function parseGenerateActionArgs(args: string[]): GenerateActionCliOption
  */
 export function generateActionHelp(): string {
   return `
-honertia generate:action - Generate a colocated action with inline tests
+popweb generate:action - Generate a colocated action with inline tests
 
 USAGE:
-  honertia generate:action <name> [OPTIONS]
+  popweb generate:action <name> [OPTIONS]
 
 ARGUMENTS:
   <name>              Action name (e.g., 'projects/create' or 'CreateProject')
@@ -731,30 +730,30 @@ SCHEMA FORMAT:
 
 EXAMPLES:
   # Basic action
-  honertia generate:action projects/create --method POST --path /projects
+  popweb generate:action projects/create --method POST --path /projects
 
   # Action with authentication
-  honertia generate:action projects/create --method POST --path /projects --auth required
+  popweb generate:action projects/create --method POST --path /projects --auth required
 
   # Action with schema
-  honertia generate:action projects/create \\
+  popweb generate:action projects/create \\
     --method POST \\
     --path /projects \\
     --auth required \\
     --schema "name:string:required, description:string:nullable"
 
   # Action with route parameters
-  honertia generate:action projects/update \\
+  popweb generate:action projects/update \\
     --method PUT \\
     --path "/projects/{project}" \\
     --auth required \\
     --schema "name:string:required"
 
   # Preview generated code
-  honertia generate:action projects/create --preview
+  popweb generate:action projects/create --preview
 
   # Output as JSON (for agents)
-  honertia generate:action projects/create --json --preview
+  popweb generate:action projects/create --json --preview
 `.trim()
 }
 
@@ -771,7 +770,7 @@ export function runGenerateAction(args: string[]): void {
 
   if (!options.name) {
     console.error('Error: Action name is required')
-    console.error('Run "honertia generate:action --help" for usage')
+    console.error('Run "popweb generate:action --help" for usage')
     process.exit(1)
   }
 
@@ -1141,10 +1140,10 @@ export function parseGenerateCrudArgs(args: string[]): GenerateCrudCliOptions {
  */
 export function generateCrudHelp(): string {
   return `
-honertia generate:crud - Generate full CRUD with colocated actions and inline tests
+popweb generate:crud - Generate full CRUD with colocated actions and inline tests
 
 USAGE:
-  honertia generate:crud <resource> [OPTIONS]
+  popweb generate:crud <resource> [OPTIONS]
 
 ARGUMENTS:
   <resource>          Resource name (e.g., 'projects', 'users')
@@ -1176,20 +1175,20 @@ OUTPUT:
 
 EXAMPLES:
   # Generate full CRUD
-  honertia generate:crud projects
+  popweb generate:crud projects
 
   # Generate with schema
-  honertia generate:crud projects \\
+  popweb generate:crud projects \\
     --schema "name:string:required, description:string:nullable"
 
   # Generate only read operations
-  honertia generate:crud projects --only index,show
+  popweb generate:crud projects --only index,show
 
   # Generate all except destroy
-  honertia generate:crud projects --except destroy
+  popweb generate:crud projects --except destroy
 
   # Preview generated code
-  honertia generate:crud projects --preview
+  popweb generate:crud projects --preview
 
   # Run tests for all CRUD actions
   bun test src/actions/projects/
@@ -1209,7 +1208,7 @@ export function runGenerateCrud(args: string[]): void {
 
   if (!cliOptions.resource) {
     console.error('Error: Resource name is required')
-    console.error('Run "honertia generate:crud --help" for usage')
+    console.error('Run "popweb generate:crud --help" for usage')
     process.exit(1)
   }
 

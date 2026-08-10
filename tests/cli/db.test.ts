@@ -139,6 +139,23 @@ describe('dbStatus', () => {
     expect(result.migrations[0].applied).toBe(false)
   })
 
+  test('recognizes migration state written by the former package name', async () => {
+    await writeFile(join(testDir, '0001_test.sql'), 'SELECT 1;')
+    await writeFile(
+      join(testDir, '.honertia-applied.json'),
+      JSON.stringify({ '0001_test': '2026-08-10T00:00:00.000Z' })
+    )
+
+    const configPath = join(testDir, 'drizzle.config.ts')
+    await writeFile(configPath, `export default { out: '${testDir}' }`)
+
+    const result = await dbStatus({ config: configPath })
+
+    expect(result.status).toBe('up-to-date')
+    expect(result.applied).toBe(1)
+    expect(result.pending).toBe(0)
+  })
+
   test('includes statements in verbose mode', async () => {
     await writeFile(
       join(testDir, '0001_test.sql'),
@@ -313,7 +330,7 @@ describe('dbHelp', () => {
   test('includes usage information', () => {
     const help = dbHelp()
 
-    expect(help).toContain('honertia db')
+    expect(help).toContain('popweb db')
     expect(help).toContain('USAGE')
     expect(help).toContain('COMMANDS')
     expect(help).toContain('OPTIONS')

@@ -291,7 +291,7 @@ type ScopedSafeTx<Tx, Scope extends symbol> =
  */
 interface TransactionNotSupported {
   readonly __error: 'Database client does not support transactions. Ensure your database exposes a transaction() method.'
-  readonly __hint: 'Expected signature: db.transaction((tx) => Promise<T>) => Promise<T>. See https://github.com/patrickogilvie/honertia#transactions'
+  readonly __hint: 'Expected signature: db.transaction((tx) => Promise<T>) => Promise<T>. See https://github.com/patrickogilvie/popcomputer-web#validation-and-safe-writes'
 }
 
 type TransactionClient<DB> =

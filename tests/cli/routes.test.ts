@@ -335,7 +335,7 @@ describe('routesHelp', () => {
   test('returns help text', () => {
     const help = routesHelp()
 
-    expect(help).toContain('honertia routes')
+    expect(help).toContain('popweb routes')
     expect(help).toContain('--json')
     expect(help).toContain('--method')
     expect(help).toContain('EXAMPLES')

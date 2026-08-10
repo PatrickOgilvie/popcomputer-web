@@ -1,5 +1,5 @@
 /**
- * Compile-time contracts for setupHonertia's inferred application wiring.
+ * Compile-time contracts for setupWeb's inferred application wiring.
  *
  * This file is checked by `bun run test:types`; it is intentionally not a
  * runtime test because the assertions are TypeScript assignability claims.
@@ -7,8 +7,8 @@
 
 import { Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono, type Context as HonoContext, type MiddlewareHandler } from 'hono'
-import { setupHonertia } from 'honertia'
-import { betterAuthFormAction, bound } from 'honertia/effect'
+import { setupWeb } from '@popcomputer/web'
+import { betterAuthFormAction, bound } from '@popcomputer/web/effect'
 
 type TestDatabase = {
   readonly name: string
@@ -31,20 +31,44 @@ const testRouteBindings = {
   project: S.Struct({ id: S.String }),
 }
 
-declare module 'honertia/effect' {
-  interface HonertiaDatabaseType {
+const TestAuthSession = S.Struct({
+  user: S.Struct({
+    id: S.String,
+    email: S.String,
+    name: S.NullOr(S.String),
+    emailVerified: S.Boolean,
+    image: S.NullOr(S.String),
+    createdAt: S.DateFromSelf,
+    updatedAt: S.DateFromSelf,
+  }),
+  session: S.Struct({
+    id: S.String,
+    userId: S.String,
+    expiresAt: S.DateFromSelf,
+    token: S.String,
+    createdAt: S.DateFromSelf,
+    updatedAt: S.DateFromSelf,
+  }),
+})
+
+declare module '@popcomputer/web/effect' {
+  interface WebDatabaseType {
     type: TestDatabase
   }
 
-  interface HonertiaAuthType {
+  interface WebAuthType {
     type: TestAuth
   }
 
-  interface HonertiaBindingsType {
+  interface WebBindingsType {
     type: TestBindings
   }
 
-  interface HonertiaRouteBindingsType {
+  interface WebAuthUserType {
+    type: S.Schema.Type<typeof TestAuthSession>
+  }
+
+  interface WebRouteBindingsType {
     type: typeof testRouteBindings
   }
 }
@@ -64,12 +88,10 @@ class TestSearchService extends Context.Tag('test/SearchService')<
   { readonly search: () => 'ok' }
 >() {}
 
-const inferredMiddleware: MiddlewareHandler<TestEnv> = setupHonertia({
-  honertia: {
-    version: 'type-test',
-    render: (page) => JSON.stringify(page),
-    database: (context) => ({ name: context.env.DATABASE_NAME }),
-  },
+const inferredMiddleware: MiddlewareHandler<TestEnv> = setupWeb({
+  version: 'type-test',
+  render: (page) => JSON.stringify(page),
+  database: (context) => ({ name: context.env.DATABASE_NAME }),
   auth: {
     client: (context, { db }) => {
       const database: TestDatabase = db
@@ -78,6 +100,7 @@ const inferredMiddleware: MiddlewareHandler<TestEnv> = setupHonertia({
 
       return { databaseName: database.name }
     },
+    session: TestAuthSession,
   },
   effect: {
     services: () =>
@@ -90,11 +113,9 @@ const inferredMiddleware: MiddlewareHandler<TestEnv> = setupHonertia({
 void inferredMiddleware
 
 const app = new Hono<TestEnv>()
-const application = setupHonertia(app, {
-  honertia: {
-    version: 'type-test',
-    render: (page) => JSON.stringify(page),
-  },
+const application = setupWeb(app, {
+  version: 'type-test',
+  render: (page) => JSON.stringify(page),
   errors: { component: 'Problem' },
 })
 const inferredApp: Hono<TestEnv> = application.app
@@ -102,11 +123,9 @@ const routeCount: number = application.routes.count()
 void inferredApp
 void routeCount
 
-setupHonertia({
-  honertia: {
-    version: 'type-test',
-    render: (page) => JSON.stringify(page),
-  },
+setupWeb({
+  version: 'type-test',
+  render: (page) => JSON.stringify(page),
   auth: {
     client: (context) => {
       const secret: string = context.env.AUTH_SECRET
@@ -116,32 +135,26 @@ setupHonertia({
   },
 })
 
-setupHonertia({
-  honertia: {
-    version: 'type-test',
-    render: (page) => JSON.stringify(page),
-    // @ts-expect-error Auth construction has one owner: top-level auth.client.
-    auth: () => ({ databaseName: 'legacy' }),
-  },
+setupWeb({
+  version: 'type-test',
+  render: (page) => JSON.stringify(page),
+  // @ts-expect-error Auth construction has one owner: the auth.client field.
+  auth: () => ({ databaseName: 'legacy' }),
 })
 
-setupHonertia({
-  honertia: {
-    version: 'type-test',
-    render: (page) => JSON.stringify(page),
-  },
+setupWeb({
+  version: 'type-test',
+  render: (page) => JSON.stringify(page),
   effect: {
-    // @ts-expect-error Setup schema belongs to honertia.schema.
+    // @ts-expect-error Setup schema is a top-level setupWeb field.
     schema: {},
   },
 })
 
 // @ts-expect-error Database-backed auth requires a database factory.
-setupHonertia({
-  honertia: {
-    version: 'type-test',
-    render: (page) => JSON.stringify(page),
-  },
+setupWeb({
+  version: 'type-test',
+  render: (page) => JSON.stringify(page),
   auth: {
     client: (_context: HonoContext<TestEnv>, { db }: { readonly db: TestDatabase }) => ({
       databaseName: db.name,
@@ -150,12 +163,10 @@ setupHonertia({
 })
 
 // @ts-expect-error A configured database factory must return a database object.
-setupHonertia({
-  honertia: {
-    version: 'type-test',
-    render: (page) => JSON.stringify(page),
-    database: () => undefined,
-  },
+setupWeb({
+  version: 'type-test',
+  render: (page) => JSON.stringify(page),
+  database: () => undefined,
 })
 
 const typedAuthAction = betterAuthFormAction({

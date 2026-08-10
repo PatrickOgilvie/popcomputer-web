@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 import { Hono } from 'hono'
-import { effectRoutes } from 'honertia/effect'
+import { effectRoutes } from '@popcomputer/web/effect'
 
 const app = new Hono()
 

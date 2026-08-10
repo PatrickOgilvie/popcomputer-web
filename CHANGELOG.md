@@ -9,21 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Declarative, fail-closed route model binding**: Every binding now registers an Effect Schema in `honertia.bindings`. Lookup parameters and database rows are parsed before `bound()` can expose them. Nested bindings must have a relationship discoverable from Drizzle metadata or an explicit `routeBinding(schema, { scope })`; an ambiguous child route now fails with a configuration error instead of silently querying without its parent constraint.
+- **`@popcomputer/web` package identity**: The framework now publishes under the Popcomputer npm organization while remaining in Patrick Ogilvie's personal GitHub account. The package exposes the `popweb` executable and scoped subpath imports such as `@popcomputer/web/effect`.
+- **Clean public names**: `setupWeb`, `web`, `webContext`, `webServices`, `PageService`, `PageRenderer`, and the `Web*Type` augmentation interfaces are the canonical API. Deprecated Honertia-named aliases remain in 0.3 to support controlled source migration.
+- **Declarative, fail-closed route model binding**: Every binding now registers an Effect Schema in top-level `setupWeb({ bindings })`. Lookup parameters and database rows are parsed before `bound()` can expose them. Nested bindings must have a relationship discoverable from Drizzle metadata or an explicit `routeBinding(schema, { scope })`; an ambiguous child route now fails with a configuration error instead of silently querying without its parent constraint.
 - **Precise database dependency failures**: `dbMutation` and `dbTransaction` now fail with tagged `DatabaseMutationFailed`, `DatabaseTransactionFailed`, or `DatabaseConstraintViolation` values. Common PostgreSQL, MySQL, and SQLite constraint codes are classified at the exception boundary, enabling narrow `Effect.catchTag` recovery without a broad `Error` channel.
 - **Runtime-owned background Effects**: `background(operation, effect)` preserves the request Effect context, uses Cloudflare `waitUntil`, keeps the runtime alive until scheduled work settles, and reports failures to `EffectErrorObserverService` with the operation name. Non-Worker runtimes execute the work inline rather than dropping it.
 - **Application-owned route metadata**: Each Hono app now owns its `RouteRegistry`. The `routes`, `check`, and `generate:openapi` commands load the selected application with `--app <entrypoint>`, removing correctness dependence on process-global registration state.
 
 ### Changed
 
-- **One application setup and error boundary**: `setupHonertia(app, config)` installs the middleware stack, Effect bridge, not-found renderer, and Hono error handler together, and returns `{ app, routes }`. Typed failures, defects, plain Hono exceptions, and 404s now share the same environment detection, redaction, rendering, status, logging, and observation policy.
-- **One owner for each setup concern**: `honertia` owns the renderer, database, schema, and route bindings; top-level `auth` owns auth construction, session parsing, cookies, and public projection; `effect` owns only custom Effect services. This removes silent precedence between duplicate configuration sources while preserving schema and binding overrides on standalone `effectBridge()` and `effectRoutes()` composition seams.
+- **One flat application setup and error boundary**: `setupWeb(app, config)` installs the middleware stack, Effect bridge, not-found renderer, and Hono error handler together, and returns `{ app, routes }`. `version`, `render`, `database`, `schema`, and `bindings` are top-level fields rather than being nested under another framework-named object. Typed failures, defects, plain Hono exceptions, and 404s share the same environment detection, redaction, rendering, status, logging, and observation policy.
+- **One owner for each setup concern**: The setup root owns the renderer, database, schema, and route bindings; `auth` owns auth construction, session parsing, cookies, and public projection; `effect` owns only custom Effect services. This removes silent precedence between duplicate configuration sources while preserving schema and binding overrides on standalone `effectBridge()` and `effectRoutes()` composition seams.
+- **Migration tracking rename without replay risk**: `popweb` writes `.popweb-applied.json` and falls back to reading `.honertia-applied.json`, so existing projects do not rediscover already-applied migrations.
+- **One application-owned Effect runtime**: Effect is now a peer dependency aligned with `@popcomputer/document-graph`, preventing duplicate Context tag and runtime identities when both packages are installed in one application.
 - **Authentication is parsed and safe by default**: `auth.client`, `auth.session`, and `auth.share` make the session boundary and public projection explicit. A null provider result means anonymous, provider exceptions become `SessionLookupUnavailable`, malformed sessions become `InvalidAuthSession`, and the default shared user is limited to `id`, `name`, and `image`.
 
 ### Breaking
 
+- The npm package changes from `honertia` to `@popcomputer/web`; all package and subpath imports must use the new scoped name.
+- The CLI executable changes from `honertia` to `popweb`.
+- The canonical setup shape changes from `setupHonertia({ honertia: { version, render, ... } })` to flat `setupWeb({ version, render, ... })`.
 - Route-model bindings backed by a database require a registered row parser. Nested bindings without provable or explicit scope no longer run unscoped.
-- `honertia.auth`, `effect.schema`, and `effect.bindings` are no longer accepted by `setupHonertia()`. Move them to `auth.client`, `honertia.schema`, and `honertia.bindings` respectively.
+- `effect.schema` and `effect.bindings` are not accepted by `setupWeb()`. Move them to top-level `schema` and `bindings` respectively.
 - CLI route introspection requires `--app <entrypoint>` unless a registry is supplied through the programmatic API.
 - Inertia error pages preserve the structured HTTP status instead of coercing failures to 200.
 
@@ -113,7 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`EffectErrorObserverService` — optional error reporting sink**: Register a single observer in `setupHonertia({ effect: { services } })` and receive every request-time Effect failure or defect, whether handled or not. This is the main integration point for PostHog, Sentry, and similar telemetry systems.
 
   ```typescript
-  import { EffectErrorObserverService, type EffectErrorEvent } from 'honertia/effect'
+  import { EffectErrorObserverService, type EffectErrorEvent } from '@popcomputer/web/effect'
 
   app.use('*', setupHonertia<Env>({
     effect: {
@@ -170,7 +177,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   })
   ```
 
-- **Exported request validation types**: `RequestValidationSource`, `RequestValidationProfile`, `RequestValidationConflict`, `RequestValidationOptions`, and `RequestValidationConfig` are now exported from `honertia/effect` and `honertia`.
+- **Exported request validation types**: `RequestValidationSource`, `RequestValidationProfile`, `RequestValidationConflict`, `RequestValidationOptions`, and `RequestValidationConfig` are now exported from `@popcomputer/web/effect` and `honertia`.
 
 ### Changed
 
@@ -203,7 +210,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   const itemInsert = mergeMutationInput(scoped.createItem, { orderId: created.id })
   ```
 
-- **`MutationInput` type export**: The `MutationInput<Scope, A>` type is now exported from `honertia/effect` for explicit type annotations on scoped mutation objects.
+- **`MutationInput` type export**: The `MutationInput<Scope, A>` type is now exported from `@popcomputer/web/effect` for explicit type annotations on scoped mutation objects.
 
 - **`validateUnknown` function**: New function for validating unknown/untyped data (external JSON, raw payloads). The original `validate` now enforces compile-time typed input (`data: I`), while `validateUnknown` accepts `data: unknown`.
   ```typescript
@@ -216,7 +223,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`createBodyParseValidationError` export**: Constructs a detailed `ValidationError` for malformed request bodies with actionable hints and structured `fieldDetails`.
 
-- **OpenAPI YAML output format**: The `generate:openapi` command now supports `--format yaml`. New `formatOpenApiOutput(spec, format)` function exported from `honertia/cli`.
+- **OpenAPI YAML output format**: The `generate:openapi` command now supports `--format yaml`. New `formatOpenApiOutput(spec, format)` function exported from `@popcomputer/web/cli`.
   ```bash
   honertia generate:openapi --output openapi.yaml --format yaml
   ```
@@ -365,7 +372,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`createGuestLayer` factory function**: Create custom guest layers with predicates to allow certain authenticated users (e.g., anonymous users) to access guest-only pages like login/register for account upgrades.
   ```typescript
-  import { createGuestLayer, effectAuthRoutes } from 'honertia/effect'
+  import { createGuestLayer, effectAuthRoutes } from '@popcomputer/web/effect'
 
   // Allow anonymous users to access login/register to upgrade accounts
   const AllowAnonymousGuestLayer = createGuestLayer(
@@ -403,7 +410,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`HonertiaAuthUserType` augmentable interface**: Allows customizing the `AuthUser` type returned by `authorize()` and other auth functions via module augmentation. This enables typed access to custom user fields (like `isAnonymous`, `isAdmin`, `role`) without casting.
   ```typescript
   // In your types.d.ts
-  declare module 'honertia/effect' {
+  declare module '@popcomputer/web/effect' {
     interface HonertiaAuthUserType {
       type: AuthUser // Your custom auth user type
     }
@@ -445,7 +452,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CacheClientError**: Error class for cache client operations
 - **CacheError**: Tagged error for high-level cache function failures
 - Comprehensive cache documentation in README with setup, usage patterns, custom implementations, and testing examples
-- `honertia/cache` export path for standalone cache imports
+- `@popcomputer/web/cache` export path for standalone cache imports
 - 20 cache-specific tests covering all cache operations, error handling, and integration patterns
 
 ## [0.1.22] - 2026-01-09
@@ -541,7 +548,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Error type imports in README now correctly reference `honertia/effect` instead of `honertia`
+- Error type imports in README now correctly reference `@popcomputer/web/effect` instead of `honertia`
 
 ## [0.1.16] - 2026-01-08
 
@@ -565,7 +572,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `bound('project')` shows: "Cannot infer type for bound('project'). Schema not configured..."
   - `dbTransaction` shows: "Database client does not support transactions..." when transaction method is missing
 - Compile-time type tests for `Validated`/`Trusted` branding and `SafeTx` wrappers
-- Exported `pluralize` function from `honertia/effect`
+- Exported `pluralize` function from `@popcomputer/web/effect`
 
 ### Fixed
 
@@ -598,7 +605,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `bound('project')` accessor to retrieve resolved models in handlers
   - Zero overhead for routes without `{bindings}` syntax
 - Route helpers now accept a `params` schema to validate route parameters and automatically return 404s when the schema fails
-- `BoundModels` service and `bound()` helper exported from `honertia/effect`
+- `BoundModels` service and `bound()` helper exported from `@popcomputer/web/effect`
 - `parseBindings()` and `toHonoPath()` utilities for custom route handling
 - `drizzle-orm` as optional peer dependency for route model binding
 - `schema` property on `HonertiaDatabaseType` for typed route model binding

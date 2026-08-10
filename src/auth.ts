@@ -1,9 +1,4 @@
-/**
- * Honertia Auth
- *
- * Re-exports all authentication and authorization functionality.
- * Import from 'honertia/auth' for auth-related functionality.
- */
+/** Authentication and authorization exports for @popcomputer/web. */
 
 export {
   RequireAuthLayer,

@@ -101,15 +101,14 @@ const fixGenerators = {
     id: 'add-database-config',
     type: 'modify_code',
     confidence: 'high',
-    description: 'Add database configuration to setupHonertia',
+    description: 'Add database configuration to setupWeb',
     automated: true,
     operations: [
       {
         type: 'modify_code',
-        position: { after: 'setupHonertia({' },
+        position: { after: 'setupWeb({' },
         content: `
-  honertia: {
-    database: (c) => drizzle(c.env.DB),`,
+  database: (c) => drizzle(c.env.DB),`,
       },
     ],
     postActions: [
@@ -127,15 +126,15 @@ const fixGenerators = {
     id: 'add-auth-config',
     type: 'modify_code',
     confidence: 'high',
-    description: 'Add auth configuration to setupHonertia',
+    description: 'Add auth configuration to setupWeb',
     automated: true,
     operations: [
       {
         type: 'modify_code',
-        position: { after: 'setupHonertia({' },
+        position: { after: 'setupWeb({' },
         content: `
   auth: {
-    client: (c) => betterAuth({ database: c.var.db }),
+    client: (_c, { db }) => betterAuth({ database: db }),
   },`,
       },
     ],
@@ -164,8 +163,8 @@ const fixGenerators = {
       },
       {
         type: 'modify_code',
-        position: { after: 'honertia: {' },
-        content: '\n      schema,',
+        position: { after: 'setupWeb({' },
+        content: '\n  schema,',
       },
     ],
     postActions: [
@@ -470,8 +469,8 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
     code: ErrorCodes.CFG_303_HONERTIA_NOT_CONFIGURED,
     tag: 'HonertiaConfigurationError',
     category: 'configuration',
-    title: 'Honertia Not Configured',
-    messageTemplate: 'Honertia middleware is not configured. Cannot render Inertia responses.',
+    title: 'Page Middleware Not Configured',
+    messageTemplate: '@popcomputer/web middleware is not configured. Cannot render Inertia responses.',
     httpStatus: 500,
     defaultFixes: [],
     docsPath: '/errors/configuration/honertia-not-configured',
@@ -731,7 +730,7 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
 /**
  * Base URL for error documentation.
  */
-const DOCS_BASE_URL = 'https://honertia.dev'
+const ERROR_GUIDE_URL = 'https://github.com/patrickogilvie/popcomputer-web#responses-and-failures'
 
 /**
  * Create a structured error from an error code and parameters.
@@ -789,7 +788,7 @@ export function createStructuredError(
     context,
     fixes,
     docs: {
-      url: `${DOCS_BASE_URL}${definition.docsPath}`,
+      url: ERROR_GUIDE_URL,
       related: definition.related,
     },
     timestamp: new Date().toISOString(),

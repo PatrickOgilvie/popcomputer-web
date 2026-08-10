@@ -1,17 +1,12 @@
-/**
- * Honertia Setup
- *
- * Provides a single setup function that configures all Honertia middleware.
- * This is the recommended way to set up Honertia in your Hono app.
- */
+/** Application setup for @popcomputer/web. */
 
 import { createMiddleware } from 'hono/factory'
 import { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
 import type { Schema as S } from 'effect'
-import { honertia } from './middleware.js'
+import { web } from './middleware.js'
 import { verifyOrigin, type VerifyOriginConfig } from './security.js'
-import type { HonertiaConfig } from './types.js'
+import type { WebConfig } from './types.js'
 import { loadUser, shareAuthMiddleware } from './effect/auth.js'
 import { openHonertiaContext } from './request-context.js'
 import type {
@@ -32,12 +27,12 @@ import {
   type RouteRegistry,
 } from './effect/route-registry.js'
 
-/** Default Hono environment derived from Honertia's bindings augmentation. */
+/** Default Hono environment derived from the application's bindings augmentation. */
 type HonertiaSetupEnv = {
   Bindings: BindingsType
 }
 
-interface HonertiaCoreConfig extends HonertiaConfig {
+interface HonertiaCoreConfig extends WebConfig {
   /**
    * Drizzle schema for route model binding.
    * Required if using Laravel-style route model binding.
@@ -122,8 +117,13 @@ interface HonertiaSetupOptions<
       : DB extends object
         ? (c: Context<E>, services: { readonly db: DB }) => Auth
         : never
-    /** Parse Better Auth's session response before actions receive it. */
-    session?: S.Schema<AuthUser, unknown, never>
+    /**
+     * Parse Better Auth's session response before actions receive it.
+     * The encoded side is intentionally unconstrained because decodeUnknown
+     * owns the external boundary; the decoded AuthUser and context stay strict.
+     */
+    // oxlint-disable-next-line no-explicit-any -- see the boundary note above
+    session?: S.Schema<AuthUser, any, never>
     /** Explicit public projection placed at `auth.user` in page props. */
     share?: (auth: AuthUser) => unknown
     readonly sessionCookie?: string
@@ -192,6 +192,46 @@ export type HonertiaSetupConfig<
     ? HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
     : never
 
+/** Complete framework configuration when a database factory is present. */
+interface WebSetupWithDatabaseConfig<
+  E extends Env = HonertiaSetupEnv,
+  DB extends object = DatabaseType,
+  Auth = AuthType,
+  CustomServices = never,
+> extends HonertiaSetupOptions<E, CustomServices, DB, Auth>,
+    HonertiaFullConfigWithDatabase<E, DB> {}
+
+/** Complete framework configuration for applications without a database. */
+interface WebSetupWithoutDatabaseConfig<
+  E extends Env = HonertiaSetupEnv,
+  Auth = AuthType,
+  CustomServices = never,
+> extends HonertiaSetupOptions<E, CustomServices, undefined, Auth>,
+    HonertiaFullConfigWithoutDatabase<E> {}
+
+/**
+ * Flat configuration accepted by {@link setupWeb}.
+ *
+ * Database, schema, rendering, auth, and Effect composition are configured at
+ * one application boundary. Types are inferred from the supplied factories.
+ */
+export type WebSetupConfig<
+  E extends Env = HonertiaSetupEnv,
+  DB = undefined,
+  Auth = AuthType,
+  CustomServices = never,
+> = [DB] extends [undefined]
+  ? WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+  : DB extends object
+    ? WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    : never
+
+/** Core rendering and persistence fields accepted by {@link setupWeb}. */
+export type WebFullConfig<
+  E extends Env = HonertiaSetupEnv,
+  DB = undefined,
+> = HonertiaFullConfig<E, DB>
+
 /**
  * Sets up all Honertia middleware in the correct order.
  *
@@ -204,7 +244,7 @@ export type HonertiaSetupConfig<
  *
  * @example
  * ```ts
- * import { setupHonertia, createTemplate } from 'honertia'
+ * import { setupHonertia, createTemplate } from '@popcomputer/web'
  * import * as schema from '~/db/schema'
  *
  * setupHonertia(app, {
@@ -224,9 +264,84 @@ export type HonertiaSetupConfig<
  * })
  * ```
  */
-export interface HonertiaApplication<E extends Env> {
+export interface WebApplication<E extends Env> {
   readonly app: Hono<E>
   readonly routes: RouteRegistry
+}
+
+/** @deprecated Use {@link WebApplication}. */
+export type HonertiaApplication<E extends Env> = WebApplication<E>
+
+/**
+ * Configure an application with one flat, inferred setup object.
+ *
+ * @example
+ * ```ts
+ * const { app, routes } = setupWeb(new Hono<Env>(), {
+ *   version: createVersion(),
+ *   render: createTemplate({ title: 'My App' }),
+ *   database: (c) => createDb(c.env.DATABASE_URL),
+ *   schema,
+ *   bindings: { workspace: Workspace },
+ *   auth: {
+ *     client: (_c, { db }) => createAuth({ db }),
+ *     session: AuthSession,
+ *   },
+ * })
+ * ```
+ */
+export function setupWeb<
+  E extends Env = HonertiaSetupEnv,
+  DB extends object = DatabaseType,
+  Auth = AuthType,
+  CustomServices = never,
+>(
+  app: Hono<E>,
+  config: WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+): WebApplication<E>
+export function setupWeb<
+  E extends Env = HonertiaSetupEnv,
+  Auth = AuthType,
+  CustomServices = never,
+>(
+  app: Hono<E>,
+  config: WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+): WebApplication<E>
+export function setupWeb<
+  E extends Env = HonertiaSetupEnv,
+  DB extends object = DatabaseType,
+  Auth = AuthType,
+  CustomServices = never,
+>(config: WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>): MiddlewareHandler<E>
+export function setupWeb<
+  E extends Env = HonertiaSetupEnv,
+  Auth = AuthType,
+  CustomServices = never,
+>(config: WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>): MiddlewareHandler<E>
+export function setupWeb<
+  E extends Env,
+  DB extends object,
+  Auth,
+  CustomServices,
+>(
+  appOrConfig:
+    | Hono<E>
+    | WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>,
+  maybeConfig?:
+    | WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+): MiddlewareHandler<E> | WebApplication<E> {
+  const config = (maybeConfig ?? appOrConfig) as
+    | WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+  assertWebSetupConfig(config)
+  const legacyConfig = toLegacySetupConfig(config)
+
+  return installSetup(
+    maybeConfig === undefined ? legacyConfig : appOrConfig as Hono<E>,
+    maybeConfig === undefined ? undefined : legacyConfig
+  )
 }
 
 export function setupHonertia<
@@ -275,6 +390,23 @@ export function setupHonertia<
     | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
     | HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>
 ): MiddlewareHandler<E> | HonertiaApplication<E> {
+  return installSetup(appOrConfig, maybeConfig)
+}
+
+function installSetup<
+  E extends Env,
+  DB extends object,
+  Auth,
+  CustomServices,
+>(
+  appOrConfig:
+    | Hono<E>
+    | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>,
+  maybeConfig?:
+    | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+): MiddlewareHandler<E> | WebApplication<E> {
   // SAFETY: overloads guarantee a config-only call or an app/config pair.
   const config = (maybeConfig ?? appOrConfig) as
     | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
@@ -289,6 +421,43 @@ export function setupHonertia<
   app.use('*', middleware)
   registerErrorHandlers(app, config.errors)
   return { app, routes: getAppRouteRegistry(app) }
+}
+
+function toLegacySetupConfig<
+  E extends Env,
+  DB extends object,
+  Auth,
+  CustomServices,
+>(
+  config:
+    | WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+):
+  | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+  | HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices> {
+  const {
+    version,
+    render,
+    database,
+    schema,
+    bindings,
+    ...options
+  } = config
+
+  // SAFETY: this is the complete, lossless mapping from setupWeb's flat
+  // public shape to the legacy internal setup shape.
+  return {
+    ...options,
+    honertia: {
+      version,
+      render,
+      database,
+      schema,
+      bindings,
+    },
+  } as
+    | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>
 }
 
 function createSetupMiddleware<
@@ -306,7 +475,7 @@ function createSetupMiddleware<
   const configured = config.honertia
   const schema = configured.schema
   const bindings = configured.bindings
-  const honertiaConfig: HonertiaConfig = {
+  const webConfig: WebConfig = {
     version: configured.version,
     render: configured.render,
   }
@@ -351,7 +520,7 @@ function createSetupMiddleware<
       ? [verifyOrigin<E>(config.security.verifyOrigin)]
       : []),
     setupServices,
-    honertia(honertiaConfig),
+    web(webConfig),
     loadUser<E>({
       sessionCookie: config.auth?.sessionCookie,
       session: config.auth?.session,
@@ -386,6 +555,31 @@ function createSetupMiddleware<
     // Return the response for proper propagation in forwarding/proxy scenarios
     return c.res
   })
+}
+
+function assertWebSetupConfig(config: {
+  readonly auth?: unknown
+  readonly effect?: object
+}): void {
+  if (typeof config.auth === 'function') {
+    throw new Error(
+      'Invalid setupWeb configuration: pass the auth factory as auth.client.'
+    )
+  }
+
+  if (config.effect === undefined) return
+
+  if (Object.prototype.hasOwnProperty.call(config.effect, 'schema')) {
+    throw new Error(
+      'Invalid setupWeb configuration: move effect.schema to top-level schema.'
+    )
+  }
+
+  if (Object.prototype.hasOwnProperty.call(config.effect, 'bindings')) {
+    throw new Error(
+      'Invalid setupWeb configuration: move effect.bindings to top-level bindings.'
+    )
+  }
 }
 
 function assertCanonicalSetupConfig(config: {
@@ -449,7 +643,7 @@ export function createErrorHandlers<E extends Env>(config: ErrorHandlerConfig = 
  *
  * @example
  * ```ts
- * import { registerErrorHandlers } from 'honertia'
+ * import { registerErrorHandlers } from '@popcomputer/web'
  *
  * registerErrorHandlers(app)
  * ```

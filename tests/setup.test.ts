@@ -10,12 +10,13 @@
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { Effect, Schema as S } from 'effect'
-import { setupHonertia, registerErrorHandlers } from '../src/setup.js'
+import { setupWeb, setupHonertia, registerErrorHandlers } from '../src/setup.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import {
   DatabaseService,
   AuthService,
   AuthUserService,
+  PageService,
   HonertiaService,
 } from '../src/effect/services.js'
 import { bound, routeBinding } from '../src/effect/binding.js'
@@ -32,6 +33,38 @@ type TestEnv = {
     ENVIRONMENT: string
   }
 }
+
+describe('setupWeb', () => {
+  test('composes a flat config and exposes the canonical rendering APIs', async () => {
+    const app = new Hono<TestEnv>()
+    const application = setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => ({ name: 'test-db' }),
+    })
+
+    app.get('/plain', (c) => c.var.web.render('Plain', { source: 'hono' }))
+    effectRoutes(app).get(
+      '/effect',
+      Effect.gen(function* () {
+        const page = yield* PageService
+        return yield* Effect.promise(() => page.render('Effect', { source: 'effect' }))
+      })
+    )
+
+    expect(application.app).toBe(app)
+
+    const plain = await app.request('/plain', {
+      headers: { 'X-Inertia': 'true' },
+    })
+    expect((await plain.json()).component).toBe('Plain')
+
+    const effect = await app.request('/effect', {
+      headers: { 'X-Inertia': 'true' },
+    })
+    expect((await effect.json()).component).toBe('Effect')
+  })
+})
 
 // =============================================================================
 // Basic setupHonertia Configuration Tests
@@ -838,7 +871,7 @@ describe('setupHonertia database configuration errors', () => {
 
     expect(body.component).toBe('Error')
     expect(body.props.message).toContain('DatabaseService is not configured')
-    expect(body.props.message).toContain('setupHonertia')
+    expect(body.props.message).toContain('setupWeb')
     // Hint now comes from fix suggestions
     expect(body.props.hint).toContain('database')
   })
@@ -884,7 +917,7 @@ describe('setupHonertia database configuration errors', () => {
 
     expect(body.component).toBe('Error')
     expect(body.props.message).toContain('AuthService is not configured')
-    expect(body.props.message).toContain('setupHonertia')
+    expect(body.props.message).toContain('setupWeb')
     // Hint now comes from fix suggestions
     expect(body.props.hint).toContain('auth')
   })

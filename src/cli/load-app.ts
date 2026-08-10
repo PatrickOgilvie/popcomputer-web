@@ -48,6 +48,6 @@ export async function loadAppRouteRegistry(appPath: string): Promise<RouteRegist
   }
 
   throw new Error(
-    `Application module "${appPath}" did not export a configured Hono app, Honertia application, or RouteRegistry.`
+    `Application module "${appPath}" did not export a configured Hono app, web application, or RouteRegistry.`
   )
 }

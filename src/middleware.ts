@@ -1,21 +1,16 @@
-/**
- * Honertia Middleware
- */
+/** Inertia protocol middleware. */
 
 import type { Context, MiddlewareHandler } from 'hono'
-import type { HonertiaConfig, HonertiaInstance, PageObject, RenderOptions } from './types.js'
+import type { WebConfig, WebInstance, PageObject, RenderOptions } from './types.js'
 import { HEADERS } from './types.js'
 import { openHonertiaContext } from './request-context.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
-    /**
-     * Honertia's public rendering API for plain Hono handlers:
-     * `c.var.honertia.render('Home', props)`. This key is deliberate public
-     * surface (typed here); framework internals read the same instance from
-     * the request context instead.
-     */
-    honertia: HonertiaInstance
+    /** Page rendering API for plain Hono handlers. */
+    web: WebInstance
+    /** @deprecated Use `c.var.web`. */
+    honertia: WebInstance
   }
 }
 
@@ -60,7 +55,7 @@ function filterPartialProps(
   )
 }
 
-export function honertia(config: HonertiaConfig): MiddlewareHandler {
+export function web(config: WebConfig): MiddlewareHandler {
   return async (c: Context, next) => {
     const sharedProps: Record<string, unknown | (() => unknown | Promise<unknown>)> = {}
     let errors: Record<string, string> = {}
@@ -80,7 +75,7 @@ export function honertia(config: HonertiaConfig): MiddlewareHandler {
       })
     }
 
-    const instance: HonertiaInstance = {
+    const instance: WebInstance = {
       share(key: string, value: unknown | (() => unknown | Promise<unknown>)) {
         sharedProps[key] = value
       },
@@ -167,7 +162,10 @@ export function honertia(config: HonertiaConfig): MiddlewareHandler {
       },
     }
 
-    openHonertiaContext(c).honertia = instance
+    const requestContext = openHonertiaContext(c)
+    requestContext.web = instance
+    requestContext.honertia = instance
+    c.set('web', instance)
     c.set('honertia', instance)
     await next()
 
@@ -192,5 +190,8 @@ export function honertia(config: HonertiaConfig): MiddlewareHandler {
     return c.res
   }
 }
+
+/** @deprecated Use {@link web}. */
+export const honertia: typeof web = web
 
 export { HEADERS }

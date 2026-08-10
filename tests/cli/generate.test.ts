@@ -317,10 +317,10 @@ describe('generateAction', () => {
       expect(result.content).toContain('createTestApp')
       expect(result.content).toContain('effectRoutes(app)')
       expect(result.content).not.toContain('new RouteRegistry()')
-      expect(result.content).toContain('setupHonertia(app, {')
+      expect(result.content).toContain('setupWeb(app, {')
       expect(result.content).toContain('database: () => ({})')
       expect(result.content).toContain('client: () => ({')
-      expect(result.content).not.toContain('honertia: {\n        auth:')
+      expect(result.content).not.toContain('popweb: {')
     })
 
     test('includes auth tests for required auth', () => {
@@ -477,7 +477,7 @@ describe('generateActionHelp', () => {
   test('includes usage information', () => {
     const help = generateActionHelp()
 
-    expect(help).toContain('honertia generate:action')
+    expect(help).toContain('popweb generate:action')
     expect(help).toContain('USAGE')
     expect(help).toContain('OPTIONS')
     expect(help).toContain('EXAMPLES')
@@ -743,7 +743,7 @@ describe('generateCrudHelp', () => {
   test('includes usage information', () => {
     const help = generateCrudHelp()
 
-    expect(help).toContain('honertia generate:crud')
+    expect(help).toContain('popweb generate:crud')
     expect(help).toContain('USAGE')
     expect(help).toContain('OPTIONS')
     expect(help).toContain('EXAMPLES')

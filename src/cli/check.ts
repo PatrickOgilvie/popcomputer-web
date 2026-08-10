@@ -410,7 +410,7 @@ function checkRouteStructure(routes: RouteMetadataJson[]): CheckResult {
         message: `Resource '${resource}' has GET but no POST (create) route`,
         fix: {
           type: 'command',
-          command: `honertia generate:action ${resource}/create --method POST --path /${resource}`,
+          command: `popweb generate:action ${resource}/create --method POST --path /${resource}`,
         },
       })
     }
@@ -542,7 +542,7 @@ function checkRouteRegistration(
  * @example
  * ```typescript
  * import './app' // Register routes
- * import { checkCommand, getGlobalRegistry } from 'honertia/cli'
+ * import { checkCommand, getGlobalRegistry } from '@popcomputer/web/cli'
  *
  * const result = checkCommand(getGlobalRegistry())
  * if (result.status === 'fail') {
@@ -617,7 +617,7 @@ function formatCheckText(result: CheckCommandResult, verbose: boolean): string {
     fail: '[FAIL]',
   }
 
-  lines.push('Honertia Project Check')
+  lines.push('Popcomputer Web Project Check')
   lines.push('='.repeat(50))
   lines.push('')
 
@@ -699,10 +699,10 @@ export function parseCheckArgs(args: string[]): CheckCommandOptions {
  */
 export function checkHelp(): string {
   return `
-honertia check - Validate project structure and configuration
+popweb check - Validate project structure and configuration
 
 USAGE:
-  honertia check --app <entrypoint> [OPTIONS]
+  popweb check --app <entrypoint> [OPTIONS]
 
 OPTIONS:
   --app <path>        Application entrypoint exporting the app or route registry
@@ -720,16 +720,16 @@ CHECKS:
 
 EXAMPLES:
   # Run all checks
-  honertia check --app src/app.ts
+  popweb check --app src/app.ts
 
   # Run with verbose output
-  honertia check --app src/app.ts --verbose
+  popweb check --app src/app.ts --verbose
 
   # Output as JSON for agents
-  honertia check --app src/app.ts --json
+  popweb check --app src/app.ts --json
 
   # Run specific checks
-  honertia check --app src/app.ts --only routes,naming
+  popweb check --app src/app.ts --only routes,naming
 `.trim()
 }
 

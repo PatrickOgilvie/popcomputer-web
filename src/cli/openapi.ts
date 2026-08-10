@@ -422,7 +422,7 @@ function generateRequestBody(route: RouteMetadata): OpenApiOperation['requestBod
  *
  * @example
  * ```typescript
- * import { generateOpenApi, getGlobalRegistry } from 'honertia/cli'
+ * import { generateOpenApi, getGlobalRegistry } from '@popcomputer/web/cli'
  *
  * // After routes are registered
  * const spec = generateOpenApi(getGlobalRegistry(), {
@@ -669,10 +669,10 @@ export function parseGenerateOpenApiArgs(args: string[]): GenerateOpenApiCliOpti
  */
 export function generateOpenApiHelp(): string {
   return `
-honertia generate:openapi - Generate OpenAPI 3.1 specification
+popweb generate:openapi - Generate OpenAPI 3.1 specification
 
 USAGE:
-  honertia generate:openapi --app <entrypoint> [OPTIONS]
+  popweb generate:openapi --app <entrypoint> [OPTIONS]
 
 OPTIONS:
   --app <path>         Application entrypoint exporting the app or route registry
@@ -688,19 +688,19 @@ OPTIONS:
 
 EXAMPLES:
   # Generate OpenAPI spec
-  honertia generate:openapi --app src/app.ts --title "My API" --version "1.0.0"
+  popweb generate:openapi --app src/app.ts --title "My API" --version "1.0.0"
 
   # Output to file
-  honertia generate:openapi --app src/app.ts -o openapi.json
+  popweb generate:openapi --app src/app.ts -o openapi.json
 
   # Include only API routes
-  honertia generate:openapi --app src/app.ts --include /api
+  popweb generate:openapi --app src/app.ts --include /api
 
   # Exclude internal routes
-  honertia generate:openapi --app src/app.ts --exclude /internal,/admin
+  popweb generate:openapi --app src/app.ts --exclude /internal,/admin
 
   # Add server URL
-  honertia generate:openapi --app src/app.ts --server https://api.example.com
+  popweb generate:openapi --app src/app.ts --server https://api.example.com
 `.trim()
 }
 

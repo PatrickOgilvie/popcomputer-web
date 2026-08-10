@@ -424,7 +424,7 @@ export interface ResponseCacheClient {
   purge(input: ResponseCachePurgeInput): Effect.Effect<void, ResponseCachePurgeError>
 }
 
-export class ResponseCacheService extends Context.Tag('honertia/ResponseCache')<
+export class ResponseCacheService extends Context.Tag('@popcomputer/web/ResponseCache')<
   ResponseCacheService,
   ResponseCacheClient
 >() {}

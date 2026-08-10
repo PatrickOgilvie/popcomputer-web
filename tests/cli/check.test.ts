@@ -359,7 +359,7 @@ describe('checkHelp', () => {
   test('includes usage information', () => {
     const help = checkHelp()
 
-    expect(help).toContain('honertia check')
+    expect(help).toContain('popweb check')
     expect(help).toContain('USAGE')
     expect(help).toContain('OPTIONS')
   })

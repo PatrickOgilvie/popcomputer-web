@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Honertia CLI entrypoint.
+ * Popcomputer Web CLI entrypoint.
  *
- * This powers the `honertia` executable distributed with the package.
+ * This powers the `popweb` executable distributed with the package.
  */
 
 import { resolve } from 'node:path'
@@ -17,10 +17,10 @@ import { runGenerateInlineTestsRunner, generateInlineTestsRunnerHelp } from './i
 
 function mainHelp(): string {
   return `
-honertia - Agent-first CLI for Honertia
+popweb - Agent-first CLI for Popcomputer Web
 
 USAGE:
-  honertia <command> [OPTIONS]
+  popweb <command> [OPTIONS]
 
 COMMANDS:
   routes                        List registered routes
@@ -37,14 +37,14 @@ COMMANDS:
   generate:tests-runner         Generate inline tests runner
 
 EXAMPLES:
-  honertia routes --app src/app.ts --json
-  honertia check --app src/app.ts --verbose
-  honertia db status
-  honertia db:migrate --preview
-  honertia generate:action projects/create --method POST --path /projects
-  honertia generate:openapi --app src/app.ts --output openapi.json --format json
+  popweb routes --app src/app.ts --json
+  popweb check --app src/app.ts --verbose
+  popweb db status
+  popweb db:migrate --preview
+  popweb generate:action projects/create --method POST --path /projects
+  popweb generate:openapi --app src/app.ts --output openapi.json --format json
 
-Run "honertia <command> --help" for command-specific options.
+Run "popweb <command> --help" for command-specific options.
 `.trim()
 }
 
@@ -146,7 +146,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<vo
       return
     default:
       console.error(`Unknown command: ${command}`)
-      console.error('Run "honertia --help" for usage')
+      console.error('Run "popweb --help" for usage')
       process.exit(1)
   }
 }

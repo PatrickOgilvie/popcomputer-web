@@ -382,7 +382,7 @@ function createTestFn<E extends Env>(
  *
  * @example
  * ```typescript
- * import { describeRoute, createTestApp } from 'honertia/test'
+ * import { describeRoute, createTestApp } from '@popcomputer/web/test'
  *
  * const app = createTestApp((routes) => {
  *   routes.post('/projects', createProject, { name: 'projects.create' })

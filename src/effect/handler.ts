@@ -163,13 +163,14 @@ export async function renderErrorResponse<E extends Env>(
       return c.json(formatter.json.format(structured), 422)
     }
 
-    const honertiaInstance = openHonertiaContext(c).honertia
-    if (error.component && honertiaInstance) {
-      honertiaInstance.setErrors(error.errors)
-      return await honertiaInstance.render(error.component)
+    const requestContext = openHonertiaContext(c)
+    const page = requestContext.web ?? requestContext.honertia
+    if (error.component && page) {
+      page.setErrors(error.errors)
+      return await page.render(error.component)
     }
 
-    honertiaInstance?.setErrors(error.errors)
+    page?.setErrors(error.errors)
     return c.redirect(c.req.header('Referer') || '/', 303)
   }
 
@@ -197,9 +198,10 @@ export async function renderErrorResponse<E extends Env>(
     return c.json(formatter.json.format(structured), status as any)
   }
 
-  const honertiaInstance = openHonertiaContext(c).honertia
-  if (honertiaInstance) {
-    const response = await honertiaInstance.render(
+  const requestContext = openHonertiaContext(c)
+  const page = requestContext.web ?? requestContext.honertia
+  if (page) {
+    const response = await page.render(
       config.component ?? 'Error',
       formatter.inertia.format(structured) as Record<string, unknown>
     )
@@ -225,12 +227,12 @@ function classifyMissingService(defect: unknown): HonertiaConfigurationError | n
   const prefix = 'Service not found: '
   if (!defect.message.startsWith(prefix)) return null
 
-  // Exact tag id match ('honertia/Auth' must not also match 'honertia/AuthUser')
+  // Exact tag id match ('@popcomputer/web/Auth' must not also match '@popcomputer/web/AuthUser')
   const tagId = defect.message.slice(prefix.length).split(' ')[0]
   switch (tagId) {
-    case 'honertia/Database':
+    case '@popcomputer/web/Database':
       return HonertiaConfigurationError.databaseNotConfigured()
-    case 'honertia/Auth':
+    case '@popcomputer/web/Auth':
       return HonertiaConfigurationError.authNotConfigured()
     default:
       return null

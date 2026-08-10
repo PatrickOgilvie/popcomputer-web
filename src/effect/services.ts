@@ -1,8 +1,4 @@
-/**
- * Effect Services for Honertia
- *
- * Service tags for dependency injection via Effect.
- */
+/** Effect services exposed by @popcomputer/web. */
 
 import { Context, Effect, Option } from 'effect'
 import { UnauthorizedError, ForbiddenError } from './errors.js'
@@ -14,8 +10,8 @@ import { UnauthorizedError, ForbiddenError } from './errors.js'
  * @example
  * ```typescript
  * // In your project's types.d.ts or similar
- * declare module 'honertia/effect' {
- *   interface HonertiaDatabaseType {
+ * declare module '@popcomputer/web/effect' {
+ *   interface WebDatabaseType {
  *     type: Database // Your database type (Drizzle, Prisma, Kysely, etc.)
  *     schema: typeof schema // Your Drizzle schema for route model binding
  *   }
@@ -25,30 +21,42 @@ import { UnauthorizedError, ForbiddenError } from './errors.js'
  * Then use the `DatabaseService` tag to get your typed database.
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface WebDatabaseType {}
+
+/** @deprecated Augment {@link WebDatabaseType} instead. */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface HonertiaDatabaseType {}
 
 /**
- * Error type shown when HonertiaDatabaseType.type is not configured.
+ * Error type shown when WebDatabaseType.type is not configured.
  * This provides a helpful error message in IDE tooltips.
  */
 interface DatabaseNotConfigured {
-  readonly __error: 'DatabaseService type not configured. Add module augmentation: declare module "honertia/effect" { interface HonertiaDatabaseType { type: YourDbType } }'
-  readonly __hint: 'See https://github.com/patrickogilvie/honertia#typescript-setup'
+  readonly __error: 'DatabaseService type not configured. Add module augmentation: declare module "@popcomputer/web/effect" { interface WebDatabaseType { type: YourDbType } }'
+  readonly __hint: 'See https://github.com/patrickogilvie/popcomputer-web#typescript-setup'
 }
 
 /**
- * Error type shown when HonertiaDatabaseType.schema is not configured.
+ * Error type shown when WebDatabaseType.schema is not configured.
  */
 interface SchemaNotConfigured {
-  readonly __error: 'Schema not configured for route model binding. Add module augmentation: declare module "honertia/effect" { interface HonertiaDatabaseType { schema: typeof schema } }'
+  readonly __error: 'Schema not configured for route model binding. Add module augmentation: declare module "@popcomputer/web/effect" { interface WebDatabaseType { schema: typeof schema } }'
   readonly __hint: 'This is optional - only needed if using bound() for route model binding'
 }
 
 /** Extract database type from augmented interface, shows error type if not configured */
-export type DatabaseType = HonertiaDatabaseType extends { type: infer T } ? T : DatabaseNotConfigured
+export type DatabaseType = WebDatabaseType extends { type: infer T }
+  ? T
+  : HonertiaDatabaseType extends { type: infer T }
+    ? T
+    : DatabaseNotConfigured
 
 /** Extract schema type from augmented interface, shows error type if not configured */
-export type SchemaType = HonertiaDatabaseType extends { schema: infer T } ? T : SchemaNotConfigured
+export type SchemaType = WebDatabaseType extends { schema: infer T }
+  ? T
+  : HonertiaDatabaseType extends { schema: infer T }
+    ? T
+    : SchemaNotConfigured
 
 /**
  * Augmentable interface for auth type.
@@ -56,26 +64,34 @@ export type SchemaType = HonertiaDatabaseType extends { schema: infer T } ? T : 
  *
  * @example
  * ```typescript
- * declare module 'honertia/effect' {
- *   interface HonertiaAuthType {
+ * declare module '@popcomputer/web/effect' {
+ *   interface WebAuthType {
  *     type: ReturnType<typeof betterAuth> // Your auth instance type
  *   }
  * }
  * ```
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface WebAuthType {}
+
+/** @deprecated Augment {@link WebAuthType} instead. */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface HonertiaAuthType {}
 
 /**
- * Error type shown when HonertiaAuthType.type is not configured.
+ * Error type shown when WebAuthType.type is not configured.
  */
 interface AuthNotConfigured {
-  readonly __error: 'AuthService type not configured. Add module augmentation: declare module "honertia/effect" { interface HonertiaAuthType { type: YourAuthType } }'
+  readonly __error: 'AuthService type not configured. Add module augmentation: declare module "@popcomputer/web/effect" { interface WebAuthType { type: YourAuthType } }'
   readonly __hint: 'This is optional - only needed if using AuthService'
 }
 
 /** Extract auth type from augmented interface, shows error type if not configured */
-export type AuthType = HonertiaAuthType extends { type: infer T } ? T : AuthNotConfigured
+export type AuthType = WebAuthType extends { type: infer T }
+  ? T
+  : HonertiaAuthType extends { type: infer T }
+    ? T
+    : AuthNotConfigured
 
 /**
  * Augmentable interface for environment bindings type.
@@ -83,8 +99,8 @@ export type AuthType = HonertiaAuthType extends { type: infer T } ? T : AuthNotC
  *
  * @example
  * ```typescript
- * declare module 'honertia/effect' {
- *   interface HonertiaBindingsType {
+ * declare module '@popcomputer/web/effect' {
+ *   interface WebBindingsType {
  *     type: {
  *       DB: D1Database
  *       KV: KVNamespace
@@ -95,29 +111,35 @@ export type AuthType = HonertiaAuthType extends { type: infer T } ? T : AuthNotC
  * ```
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface WebBindingsType {}
+
+/** @deprecated Augment {@link WebBindingsType} instead. */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface HonertiaBindingsType {}
 
 /**
- * Error type shown when HonertiaBindingsType.type is not configured.
+ * Error type shown when WebBindingsType.type is not configured.
  */
 interface BindingsNotConfigured {
-  readonly __error: 'BindingsService type not configured. Add module augmentation: declare module "honertia/effect" { interface HonertiaBindingsType { type: YourBindingsType } }'
+  readonly __error: 'BindingsService type not configured. Add module augmentation: declare module "@popcomputer/web/effect" { interface WebBindingsType { type: YourBindingsType } }'
   readonly __hint: 'This is optional - BindingsService will still work but be typed as Record<string, unknown>'
 }
 
 /** Extract bindings type from augmented interface, defaults to Record<string, unknown> if not configured */
-export type BindingsType = HonertiaBindingsType extends { type: infer T }
+export type BindingsType = WebBindingsType extends { type: infer T }
   ? T
-  : Record<string, unknown>
+  : HonertiaBindingsType extends { type: infer T }
+    ? T
+    : Record<string, unknown>
 
 /**
  * Database Service - Generic database client
  */
 const DatabaseService_base: Context.TagClass<
   DatabaseService,
-  'honertia/Database',
+  '@popcomputer/web/Database',
   DatabaseType
-> = Context.Tag('honertia/Database')<DatabaseService, DatabaseType>()
+> = Context.Tag('@popcomputer/web/Database')<DatabaseService, DatabaseType>()
 
 export class DatabaseService extends DatabaseService_base {}
 
@@ -126,22 +148,22 @@ export class DatabaseService extends DatabaseService_base {}
  */
 const AuthService_base: Context.TagClass<
   AuthService,
-  'honertia/Auth',
+  '@popcomputer/web/Auth',
   AuthType
-> = Context.Tag('honertia/Auth')<AuthService, AuthType>()
+> = Context.Tag('@popcomputer/web/Auth')<AuthService, AuthType>()
 
 export class AuthService extends AuthService_base {}
 
 /**
  * Bindings Service - Environment bindings (Cloudflare D1, KV, R2, etc.)
  *
- * Automatically provided by setupHonertia. Use module augmentation for type safety:
+ * Automatically provided by setupWeb. Use module augmentation for type safety:
  *
  * @example
  * ```typescript
  * // In your types.d.ts
- * declare module 'honertia/effect' {
- *   interface HonertiaBindingsType {
+ * declare module '@popcomputer/web/effect' {
+ *   interface WebBindingsType {
  *     type: { DB: D1Database; KV: KVNamespace }
  *   }
  * }
@@ -152,9 +174,9 @@ export class AuthService extends AuthService_base {}
  */
 const BindingsService_base: Context.TagClass<
   BindingsService,
-  'honertia/Bindings',
+  '@popcomputer/web/Bindings',
   BindingsType
-> = Context.Tag('honertia/Bindings')<BindingsService, BindingsType>()
+> = Context.Tag('@popcomputer/web/Bindings')<BindingsService, BindingsType>()
 
 export class BindingsService extends BindingsService_base {}
 
@@ -168,8 +190,8 @@ export class BindingsService extends BindingsService_base {}
  * // In your project's types.d.ts
  * import type { AuthUser as BetterAuthUser } from './auth' // Your custom auth user type
  *
- * declare module 'honertia/effect' {
- *   interface HonertiaAuthUserType {
+ * declare module '@popcomputer/web/effect' {
+ *   interface WebAuthUserType {
  *     type: BetterAuthUser // Your auth user type with custom fields
  *   }
  * }
@@ -182,10 +204,14 @@ export class BindingsService extends BindingsService_base {}
  * ```
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface WebAuthUserType {}
+
+/** @deprecated Augment {@link WebAuthUserType} instead. */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface HonertiaAuthUserType {}
 
 /**
- * Default auth user structure - used when HonertiaAuthUserType is not configured.
+ * Default auth user structure - used when WebAuthUserType is not configured.
  * Provides the standard Better Auth user and session shape.
  */
 export interface DefaultAuthUser {
@@ -210,18 +236,22 @@ export interface DefaultAuthUser {
 
 /**
  * Authenticated User - Session with user data.
- * Uses custom type if HonertiaAuthUserType is configured, otherwise uses DefaultAuthUser.
+ * Uses a configured application type, otherwise uses DefaultAuthUser.
  */
-export type AuthUser = HonertiaAuthUserType extends { type: infer T } ? T : DefaultAuthUser
+export type AuthUser = WebAuthUserType extends { type: infer T }
+  ? T
+  : HonertiaAuthUserType extends { type: infer T }
+    ? T
+    : DefaultAuthUser
 
 /**
  * Authenticated User Service - Provides the current user session
  */
 const AuthUserService_base: Context.TagClass<
   AuthUserService,
-  'honertia/AuthUser',
+  '@popcomputer/web/AuthUser',
   AuthUser
-> = Context.Tag('honertia/AuthUser')<AuthUserService, AuthUser>()
+> = Context.Tag('@popcomputer/web/AuthUser')<AuthUserService, AuthUser>()
 
 export class AuthUserService extends AuthUserService_base {}
 
@@ -232,15 +262,15 @@ export interface EmailClient {
   send: (to: string, subject: string, body: string) => Effect.Effect<void, Error>
 }
 
-export class EmailService extends Context.Tag('honertia/Email')<
+export class EmailService extends Context.Tag('@popcomputer/web/Email')<
   EmailService,
   EmailClient
 >() {}
 
 /**
- * Honertia Renderer - Inertia-style page rendering
+ * Inertia-compatible page renderer.
  */
-export interface HonertiaRenderer {
+export interface PageRenderer {
   render<T extends Record<string, unknown>>(
     component: string,
     props?: T
@@ -249,10 +279,16 @@ export interface HonertiaRenderer {
   setErrors(errors: Record<string, string>): void
 }
 
-export class HonertiaService extends Context.Tag('honertia/Honertia')<
-  HonertiaService,
-  HonertiaRenderer
+export class PageService extends Context.Tag('@popcomputer/web/Page')<
+  PageService,
+  PageRenderer
 >() {}
+
+/** @deprecated Use {@link PageRenderer}. */
+export type HonertiaRenderer = PageRenderer
+
+/** @deprecated Use {@link PageService}. */
+export { PageService as HonertiaService }
 
 /**
  * Request Context - HTTP request data and environment bindings
@@ -279,7 +315,7 @@ export interface RequestContext<Bindings = Record<string, unknown>> {
   header(name: string): string | undefined
 }
 
-export class RequestService extends Context.Tag('honertia/Request')<
+export class RequestService extends Context.Tag('@popcomputer/web/Request')<
   RequestService,
   RequestContext
 >() {}
@@ -309,7 +345,7 @@ export interface RequestStateClient {
   set(key: string, value: unknown): void
 }
 
-export class RequestStateService extends Context.Tag('honertia/RequestState')<
+export class RequestStateService extends Context.Tag('@popcomputer/web/RequestState')<
   RequestStateService,
   RequestStateClient
 >() {}
@@ -324,7 +360,7 @@ export interface ResponseFactory {
   notFound(): Response | Promise<Response>
 }
 
-export class ResponseFactoryService extends Context.Tag('honertia/ResponseFactory')<
+export class ResponseFactoryService extends Context.Tag('@popcomputer/web/ResponseFactory')<
   ResponseFactoryService,
   ResponseFactory
 >() {}
@@ -364,7 +400,7 @@ export class CacheClientError {
   ) {}
 }
 
-export class CacheService extends Context.Tag('honertia/Cache')<
+export class CacheService extends Context.Tag('@popcomputer/web/Cache')<
   CacheService,
   CacheClient
 >() {}
@@ -445,7 +481,7 @@ export interface ExecutionContextClient {
  * )
  * ```
  */
-export class ExecutionContextService extends Context.Tag('honertia/ExecutionContext')<
+export class ExecutionContextService extends Context.Tag('@popcomputer/web/ExecutionContext')<
   ExecutionContextService,
   ExecutionContextClient
 >() {}

@@ -1,15 +1,4 @@
-/**
- * Honertia Request Context
- *
- * The single owner of framework per-request state. Framework middleware
- * (setupHonertia's service wiring, honertia(), loadUser(), effectBridge())
- * write to one typed holder stored under a private symbol; app code reads it
- * through honertiaContext(). This replaces the string-keyed c.var contract
- * ('db', 'auth', 'authUser', 'honertia') and the symbol trio the bridge used.
- *
- * App-facing request state is a separate concern: use RequestStateService for
- * values your actions and middleware share. This module is framework wiring.
- */
+/** The single owner of framework per-request state. */
 
 import type { Context, Env, MiddlewareHandler } from 'hono'
 import type { Layer, ManagedRuntime } from 'effect'
@@ -18,7 +7,7 @@ import type {
   AuthUser,
   DatabaseType,
 } from './effect/services.js'
-import type { HonertiaInstance } from './types.js'
+import type { WebInstance } from './types.js'
 import type { EffectBridgeConfig } from './effect/bridge.js'
 import type { ErrorBoundaryConfig } from './effect/handler.js'
 import type { RouteBindingsConfig } from './effect/binding.js'
@@ -28,15 +17,17 @@ import type { RouteBindingsConfig } from './effect/binding.js'
  * Populated in middleware order; each field names its writer. Fields are
  * absent until their middleware has run — consumers branch on absence.
  */
-export interface HonertiaRequestContext<E extends Env = Env> {
-  /** honertiaServices() / setupHonertia's `database:` factory */
+export interface WebRequestContext<E extends Env = Env> {
+  /** webServices() / setupWeb's `database` factory. */
   db?: DatabaseType
-  /** honertiaServices() / setupHonertia's `auth:` factory */
+  /** webServices() / setupWeb's `auth.client` factory. */
   auth?: AuthType
   /** loadUser() — present only when the request carries a valid session */
   authUser?: AuthUser
-  /** honertia() middleware — renderer / shared props / errors instance */
-  honertia?: HonertiaInstance
+  /** web() middleware — renderer / shared props / errors instance */
+  web?: WebInstance
+  /** @deprecated Use {@link web}. */
+  honertia?: WebInstance
   /**
    * effectBridge() — per-request Effect runtime.
    * Typed over `any` services: the concrete union depends on per-app bridge
@@ -56,7 +47,7 @@ export interface HonertiaRequestContext<E extends Env = Env> {
   schema?: Record<string, unknown>
   /** effectBridge() / effectRoutes() — registered row parsers and scopes. */
   bindings?: RouteBindingsConfig
-  /** setupHonertia() — response policy shared by every error entrypoint. */
+  /** setupWeb() — response policy shared by every error entrypoint. */
   errorBoundary?: ErrorBoundaryConfig
   /**
    * loadUser() — custom session cookie names registered for this request.
@@ -66,76 +57,85 @@ export interface HonertiaRequestContext<E extends Env = Env> {
   sessionCookies?: readonly string[]
   /**
    * Test-only layer merged into the runtime by effectBridge. Injection
-   * semantics are owned by honertia/test; carried here so the request path
+   * semantics are owned by @popcomputer/web/test; carried here so the request path
    * has a single context surface.
    */
   testLayer?: Layer.Layer<never, never, never>
 }
 
-const HONERTIA_REQUEST_CONTEXT: unique symbol = Symbol('honertia:request-context')
+/** @deprecated Use {@link WebRequestContext}. */
+export type HonertiaRequestContext<E extends Env = Env> = WebRequestContext<E>
+
+const WEB_REQUEST_CONTEXT: unique symbol = Symbol('@popcomputer/web:request-context')
 
 /**
  * Get the mutable per-request context holder, creating it on first call.
  *
- * Framework-internal: honertia's own middleware own specific fields (see
- * {@link HonertiaRequestContext}); mutating the returned holder is their
- * contract. App code should read through {@link honertiaContext} instead.
+ * Framework-internal middleware owns specific fields (see
+ * {@link WebRequestContext}); mutating the returned holder is their contract.
+ * App code should read through {@link webContext} instead.
  */
 export function openHonertiaContext<E extends Env>(
   c: Context<E>
-): HonertiaRequestContext<E> {
+): WebRequestContext<E> {
   // SAFETY: Hono's ContextVariableMap typing does not carry symbol keys
   // through c.set/c.var. This module is the only reader and writer of this
   // symbol, and the holder is created here with the declared type.
   const vars = c.var as Record<symbol, unknown> | undefined
-  const existing = vars?.[HONERTIA_REQUEST_CONTEXT]
+  const existing = vars?.[WEB_REQUEST_CONTEXT]
   if (existing) {
-    return existing as HonertiaRequestContext<E>
+    return existing as WebRequestContext<E>
   }
-  const created: HonertiaRequestContext<E> = {}
-  c.set(HONERTIA_REQUEST_CONTEXT as never, created as never)
+  const created: WebRequestContext<E> = {}
+  c.set(WEB_REQUEST_CONTEXT as never, created as never)
   return created
 }
 
 /**
- * Read Honertia's framework state from plain Hono middleware or handlers.
+ * Read framework state from plain Hono middleware or handlers.
  *
  * @example
  * app.use('/admin/*', async (c, next) => {
- *   const { authUser } = honertiaContext(c)
+ *   const { authUser } = webContext(c)
  *   if (!authUser) return c.redirect('/login')
  *   await next()
  * })
  */
-export function honertiaContext<E extends Env>(
+export function webContext<E extends Env>(
   c: Context<E>
-): Readonly<HonertiaRequestContext<E>> {
+): Readonly<WebRequestContext<E>> {
   return openHonertiaContext(c)
 }
 
+/** @deprecated Use {@link webContext}. */
+export const honertiaContext: typeof webContext = webContext
+
 /**
- * Services returned by a {@link honertiaServices} provide function.
+ * Services returned by a {@link webServices} provide function.
  * Compute the database first and build auth from it in the same call when
  * auth depends on it.
  */
-export interface HonertiaProvidedServices {
+export interface WebProvidedServices {
   db?: DatabaseType
   auth?: AuthType
 }
 
+/** @deprecated Use {@link WebProvidedServices}. */
+export type HonertiaProvidedServices = WebProvidedServices
+
 /**
  * Wire the database and auth clients for apps composing middleware manually
- * (without setupHonertia). This is the only supported way to provide them —
+ * (without setupWeb). This is the only supported way to provide them —
  * effectBridge and route model binding read what this middleware sets.
  *
  * @example
- * app.use('*', honertiaServices((c) => {
+ * app.use('*', webServices((c) => {
  *   const db = drizzle(c.env.DB, { schema })
  *   return { db, auth: createAuth({ db }) }
  * }))
  */
-export function honertiaServices<E extends Env>(
-  provide: (c: Context<E>) => HonertiaProvidedServices
+export function webServices<E extends Env>(
+  provide: (c: Context<E>) => WebProvidedServices
 ): MiddlewareHandler<E> {
   return async (c, next) => {
     const ctx = openHonertiaContext(c)
@@ -149,3 +149,6 @@ export function honertiaServices<E extends Env>(
     await next()
   }
 }
+
+/** @deprecated Use {@link webServices}. */
+export const honertiaServices: typeof webServices = webServices

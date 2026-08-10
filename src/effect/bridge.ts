@@ -17,7 +17,7 @@ import {
   DatabaseService,
   AuthService,
   AuthUserService,
-  HonertiaService,
+  PageService,
   RequestService,
   RequestStateService,
   ResponseFactoryService,
@@ -28,7 +28,7 @@ import {
   type RequestContext,
   type RequestStateClient,
   type ResponseFactory,
-  type HonertiaRenderer,
+  type PageRenderer,
   type CacheClient,
   type ExecutionContextClient,
   type BindingsType,
@@ -305,21 +305,22 @@ function createInlineExecutionContextSupervisor(): BackgroundSupervisor {
 }
 
 /**
- * Create a HonertiaRenderer from Hono context.
+ * Create a PageRenderer from Hono context.
  */
-function createHonertiaRenderer<E extends Env>(c: HonoContext<E>): HonertiaRenderer {
-  const honertia = openHonertiaContext(c).honertia
-  if (!honertia) {
+function createPageRenderer<E extends Env>(c: HonoContext<E>): PageRenderer {
+  const requestContext = openHonertiaContext(c)
+  const page = requestContext.web ?? requestContext.honertia
+  if (!page) {
     return {
-      render: async () => c.text('Honertia not configured', 500),
+      render: async () => c.text('@popcomputer/web is not configured', 500),
       share: () => {},
       setErrors: () => {},
     }
   }
   return {
-    render: (component, props) => Promise.resolve(honertia.render(component, props)),
-    share: (key, value) => honertia.share(key, value),
-    setErrors: (errors) => honertia.setErrors(errors),
+    render: (component, props) => Promise.resolve(page.render(component, props)),
+    share: (key, value) => page.share(key, value),
+    setErrors: (errors) => page.setErrors(errors),
   }
 }
 
@@ -333,7 +334,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   | RequestService
   | RequestStateService
   | ResponseFactoryService
-  | HonertiaService
+  | PageService
   | DatabaseService
   | AuthService
   | AuthUserService
@@ -350,7 +351,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     createRequestStateClient(c)
   )
   const responseLayer = Layer.succeed(ResponseFactoryService, createResponseFactory(c))
-  const honertiaLayer = Layer.succeed(HonertiaService, createHonertiaRenderer(c))
+  const pageLayer = Layer.succeed(PageService, createPageRenderer(c))
 
   // Bindings layer - always available, typed via module augmentation
   const bindingsLayer = Layer.succeed(
@@ -407,7 +408,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     requestLayer,
     requestStateLayer,
     responseLayer,
-    honertiaLayer,
+    pageLayer,
     bindingsLayer,
     cacheLayer,
     executionContextLayer,
@@ -438,7 +439,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     | RequestService
     | RequestStateService
     | ResponseFactoryService
-    | HonertiaService
+    | PageService
     | BindingsService
     | CacheService
     | ExecutionContextService
@@ -487,7 +488,7 @@ export function effectBridge<E extends Env, CustomServices = never>(
   config?: EffectBridgeConfig<E, CustomServices>
 ): MiddlewareHandler<E> {
   return async (c, next) => {
-    // SAFETY: test-layer injection seam used by honertia/test (see
+    // SAFETY: test-layer injection seam used by @popcomputer/web/test (see
     // test-layers.ts). Deliberately untyped and unchanged for now; making it
     // a construction-time config option is tracked as a follow-up.
     const testLayer =

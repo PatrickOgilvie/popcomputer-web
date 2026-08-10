@@ -19,7 +19,7 @@ export interface TestCaptures {
   events: Array<{ name: string; payload: unknown }>
 }
 
-export class TestCaptureService extends Context.Tag('honertia/TestCapture')<
+export class TestCaptureService extends Context.Tag('@popcomputer/web/TestCapture')<
   TestCaptureService,
   {
     capture: <K extends keyof TestCaptures>(

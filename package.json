@@ -1,13 +1,13 @@
 {
-  "name": "honertia",
-  "version": "0.2.1",
-  "description": "Inertia.js-style server-driven SPA adapter for Hono",
+  "name": "@popcomputer/web",
+  "version": "0.3.0",
+  "description": "Effect-native server-driven web applications on Hono",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "honertia": "dist/cli/bin.js"
+    "popweb": "dist/cli/bin.js"
   },
   "exports": {
     ".": {
@@ -52,7 +52,7 @@
     "test:types": "tsc -p tsconfig.type-tests.json",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run test"
   },
   "keywords": [
     "hono",
@@ -64,15 +64,22 @@
   ],
   "author": "Patrick Ogilvie",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/patrickogilvie/honertia.git"
+    "url": "git+https://github.com/patrickogilvie/popcomputer-web.git"
+  },
+  "homepage": "https://github.com/patrickogilvie/popcomputer-web#readme",
+  "bugs": {
+    "url": "https://github.com/patrickogilvie/popcomputer-web/issues"
   },
   "dependencies": {
-    "effect": "^3.12.0",
     "tsx": "^4.23.11"
   },
   "peerDependencies": {
+    "effect": "^3.21.2",
     "hono": ">=4.0.0",
     "better-auth": ">=1.0.0 <2.0.0",
     "drizzle-orm": ">=0.30.0"
@@ -89,6 +96,7 @@
     "@types/bun": "^1.1.0",
     "better-auth": "1.6.25",
     "drizzle-orm": "^0.45.2",
+    "effect": "^3.21.2",
     "hono": "^4.6.0",
     "typescript": "^5.3.0"
   }

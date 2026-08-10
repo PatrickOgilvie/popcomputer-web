@@ -6,7 +6,7 @@
 
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import type { Hono, MiddlewareHandler, Env } from 'hono'
-import { AuthUserService, AuthService, DatabaseService, HonertiaService, RequestService, type AuthType, type AuthUser } from './services.js'
+import { AuthUserService, AuthService, DatabaseService, PageService, RequestService, type AuthType, type AuthUser } from './services.js'
 import {
   InvalidAuthSession,
   HttpError,
@@ -245,18 +245,18 @@ function projectSharedUser(
 }
 
 /**
- * Share auth state with Honertia.
+ * Share auth state with the page renderer.
  *
  * The safe default shares only `id`, `name`, and `image`. Pass `project` when
  * the application needs a different public contract.
  */
 export function shareAuth(
   config: ShareAuthUserConfig = {}
-): Effect.Effect<void, never, HonertiaService> {
+): Effect.Effect<void, never, PageService> {
   return Effect.gen(function* () {
-    const honertia = yield* HonertiaService
+    const page = yield* PageService
     const user = yield* currentUser
-    honertia.share('auth', {
+    page.share('auth', {
       user: projectSharedUser(user, config),
     })
   })
@@ -274,10 +274,11 @@ export function shareAuthMiddleware<E extends Env>(
   config: ShareAuthUserConfig = {}
 ): MiddlewareHandler<E> {
   return async (c, next) => {
-    const { honertia, authUser } = openHonertiaContext(c)
-    if (honertia) {
-      honertia.share('auth', {
-        user: projectSharedUser(authUser, config),
+    const requestContext = openHonertiaContext(c)
+    const page = requestContext.web ?? requestContext.honertia
+    if (page) {
+      page.share('auth', {
+        user: projectSharedUser(requestContext.authUser, config),
       })
     }
     await next()

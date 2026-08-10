@@ -8,12 +8,12 @@ import { Context, type Effect } from 'effect'
 import type { Validated } from './validation.js'
 export { ValidatedBrand } from './validation.js'
 
-export class ValidatedBodyService extends Context.Tag('honertia/ValidatedBody')<
+export class ValidatedBodyService extends Context.Tag('@popcomputer/web/ValidatedBody')<
   ValidatedBodyService,
   unknown
 >() {}
 
-export class ValidatedQueryService extends Context.Tag('honertia/ValidatedQuery')<
+export class ValidatedQueryService extends Context.Tag('@popcomputer/web/ValidatedQuery')<
   ValidatedQueryService,
   unknown
 >() {}

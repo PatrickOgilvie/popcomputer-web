@@ -495,7 +495,7 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
   static schemaNotConfigured(binding: string): RouteConfigurationError {
     return new RouteConfigurationError({
       message: `Route model binding requires schema configuration. Cannot resolve bound('${binding}') without schema.`,
-      hint: 'Pass your schema to setupHonertia: setupHonertia(app, { honertia: { schema } })',
+      hint: 'Pass your schema to setupWeb: setupWeb(app, { schema, version, render })',
       binding,
       code: ErrorCodes.CFG_302_SCHEMA_NOT_CONFIGURED,
     })
@@ -516,7 +516,7 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
   static bindingParserNotConfigured(binding: string): RouteConfigurationError {
     return new RouteConfigurationError({
       message: `No row parser is configured for route binding "${binding}".`,
-      hint: `Register it once in setupHonertia(app, { honertia: { bindings: { ${binding}: YourSchema } } }).`,
+      hint: `Register it once in setupWeb(app, { bindings: { ${binding}: YourSchema }, version, render }).`,
       binding,
       code: ErrorCodes.RTE_600_BINDING_NOT_FOUND,
     })
@@ -597,8 +597,8 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
       message: this.message,
       configuration: {
         missingService: this.service ?? 'unknown',
-        configPath: this.hint?.match(/honertia\.(\w+)/)?.[1] ?? 'unknown',
-        setupFunction: 'setupHonertia',
+        configPath: configurationPathFor(this.service),
+        setupFunction: 'setupWeb',
       },
     } as HonertiaStructuredError & { configuration: { missingService: string; configPath: string; setupFunction: string } }
   }
@@ -608,7 +608,7 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
    */
   static databaseNotConfigured(): HonertiaConfigurationError {
     return new HonertiaConfigurationError({
-      message: 'DatabaseService is not configured. Add it to setupHonertia.',
+      message: 'DatabaseService is not configured. Add it to setupWeb.',
       hint: 'database: (c) => drizzle(c.env.DB)',
       service: 'DatabaseService',
       code: ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED,
@@ -620,7 +620,7 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
    */
   static authNotConfigured(): HonertiaConfigurationError {
     return new HonertiaConfigurationError({
-      message: 'AuthService is not configured. Add it to setupHonertia.',
+      message: 'AuthService is not configured. Add it to setupWeb.',
       hint: 'auth: { client: (c, { db }) => betterAuth({ database: db }) }',
       service: 'AuthService',
       code: ErrorCodes.CFG_301_AUTH_NOT_CONFIGURED,
@@ -637,6 +637,19 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
       service: 'Schema',
       code: ErrorCodes.CFG_302_SCHEMA_NOT_CONFIGURED,
     })
+  }
+}
+
+function configurationPathFor(service: string | undefined): string {
+  switch (service) {
+    case 'DatabaseService':
+      return 'database'
+    case 'AuthService':
+      return 'auth.client'
+    case 'Schema':
+      return 'schema'
+    default:
+      return 'unknown'
   }
 }
 
