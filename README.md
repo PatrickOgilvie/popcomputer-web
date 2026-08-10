@@ -8,8 +8,8 @@ Honertia brings the Laravel/Inertia productivity loop to Hono and Cloudflare Wor
 
 - **Server-driven SPA pages on Hono**: Render Inertia-style pages from Hono routes while keeping React/Vite on the client and Worker-friendly request handling on the server.
 - **Effect-native route handlers**: Write actions as typed Effect programs with explicit services, structured failures, redirects, validation errors, and testable dependency layers.
-- **One setup path for real apps**: `setupHonertia()` wires the Inertia middleware, database, auth, shared page props, user loading, and per-request Effect runtime in the right order.
-- **Laravel-style route model binding**: Use paths like `/projects/{project}` or `/users/{user}/posts/{post}` and access resolved models with `yield* bound('project')`, backed by your Drizzle schema.
+- **One setup path for real apps**: `setupHonertia(app, config)` wires middleware, services, session parsing, the Effect runtime, and the shared error boundary.
+- **Declarative route model binding**: Register a row schema once, use paths like `/projects/{project}`, and access parsed, parent-scoped models with `yield* bound('project')`.
 - **Safe mutation boundaries**: `validateRequest`, scoped `dbMutation`, and `dbTransaction` make writes explicit and keep unvalidated request data out of database mutations.
 - **Auth built in, not bolted on**: Better Auth helpers cover authenticated routes, guest-only routes, form actions, typed `authorize()`, session loading, and shared auth props.
 - **Effect-aware cache wrapper**: Cache expensive reads with schema-checked serialization, TTLs, stale-while-revalidate, and Worker `waitUntil` background refreshes.
@@ -52,7 +52,7 @@ export const showProject = action(
 
 ```typescript
 import { Effect, Schema as S, Duration } from 'effect'
-import { action, authorize, DatabaseService, render } from 'honertia/effect'
+import { action, authorize, DatabaseService, HttpError, render } from 'honertia/effect'
 import { cache } from 'honertia/cache'
 import { eq } from 'drizzle-orm'
 import { projects } from '~/db/schema'
@@ -79,6 +79,12 @@ export const indexProjects = action(
       ),
       S.Array(ProjectSummary),
       { ttl: Duration.minutes(5), swr: Duration.minutes(1), version: true }
+    ).pipe(
+      Effect.mapError((cause) => new HttpError({
+        status: 503,
+        message: 'Projects are temporarily unavailable.',
+        cause,
+      }))
     )
 
     return yield* render('Projects/Index', { projects: userProjects })
@@ -147,6 +153,11 @@ bunx honertia <command>
 # or
 npx honertia <command>
 ```
+
+Commands that inspect routes import the entrypoint passed with `--app` and read
+that Hono app's registry. The module may export the Hono app, the
+`{ app, routes }` value returned by `setupHonertia`, or a `RouteRegistry`.
+There is no need to populate a process-global registry.
 
 ### Generate Action
 
@@ -218,40 +229,50 @@ honertia generate:feature users/profile \
   --fields "name:string:required, bio:string:nullable"
 ```
 
+### Generate Inline Test Runner
+
+```bash
+honertia generate:tests-runner
+honertia generate:tests-runner --scan src/actions,src/features
+honertia generate:tests-runner --output tests/inline-actions.test.ts
+honertia generate:tests-runner --preview
+```
+
 ### List Routes
 
 ```bash
-honertia routes              # Table format
-honertia routes --json       # JSON for agents
-honertia routes --minimal    # METHOD PATH only
-honertia routes --method get # Filter by method
-honertia routes --prefix /api
-honertia routes --pattern '/projects/*'
+honertia routes --app src/index.ts              # Table format
+honertia routes --app src/index.ts --json       # JSON for agents
+honertia routes --app src/index.ts --minimal    # METHOD PATH only
+honertia routes --app src/index.ts --method get # Filter by method
+honertia routes --app src/index.ts --prefix /api
+honertia routes --app src/index.ts --pattern '/projects/*'
 ```
 
 ### Project Check
 
 ```bash
-honertia check           # Run all checks
-honertia check --json    # JSON output with fix suggestions
-honertia check --verbose # Detailed output
-honertia check --only routes,naming
+honertia check --app src/index.ts           # Run all checks
+honertia check --app src/index.ts --json    # JSON output with fix suggestions
+honertia check --app src/index.ts --verbose # Detailed output
+honertia check --app src/index.ts --only routes,naming
 ```
 
 ### OpenAPI Generation
 
 ```bash
 honertia generate:openapi \
+  --app src/index.ts \
   --title "My API" \
   --version "1.0.0" \
   --server https://api.example.com \
   --output openapi.json
 
 # Only API routes
-honertia generate:openapi --include /api
+honertia generate:openapi --app src/index.ts --include /api
 
 # Exclude internal routes
-honertia generate:openapi --exclude /internal,/admin
+honertia generate:openapi --app src/index.ts --exclude /internal,/admin
 ```
 
 ### Database Migrations
@@ -271,19 +292,28 @@ honertia db generate add_email  # Generate new migration
 ## Installation
 
 ```bash
-bun add honertia hono effect better-auth drizzle-orm
-bun add -d @types/bun typescript vite @vitejs/plugin-react @inertiajs/react react react-dom
+bun add honertia hono effect
+
+# Add these only when your app uses Better Auth and Drizzle
+bun add better-auth drizzle-orm
+
+# React/Inertia client and TypeScript tooling
+bun add -d @types/bun @cloudflare/workers-types typescript vite @vitejs/plugin-react @inertiajs/react react react-dom
 ```
 
 ---
 
-## Required Files
+## Full-Stack Starter (D1 + Better Auth)
 
-These files MUST exist for the framework to function. Create them in this order.
+Honertia does not require a database or authentication. The starter below shows
+the most common full-stack shape: Cloudflare D1, Drizzle, Better Auth, React,
+and Inertia. For a public or stateless app, omit the database, auth, and route
+binding pieces; the supported setup shapes are listed after the example.
 
-### 1. src/types.ts (REQUIRED FIRST)
+### 1. src/types.ts
 
-Type definitions and module augmentation. Without this, TypeScript errors will occur and services won't be typed.
+Use module augmentation for the services your actions consume. Database and
+auth augmentations are optional when those services are not used.
 
 ```typescript
 // src/types.ts
@@ -296,7 +326,7 @@ export type Database = DrizzleD1Database<typeof schema>
 
 // Cloudflare bindings
 export type Bindings = {
-  DATABASE_URL: string
+  DB: D1Database
   BETTER_AUTH_SECRET: string
   ENVIRONMENT?: string
   // Add KV, R2, Queue bindings as needed:
@@ -304,23 +334,15 @@ export type Bindings = {
   // R2: R2Bucket
 }
 
-// Hono context variables
-export type Variables = {
-  db: Database
-  auth: Auth
-}
-
 // Full environment type for Hono
 export type Env = {
   Bindings: Bindings
-  Variables: Variables
 }
 
 // CRITICAL: Module augmentation for type-safe services
 declare module 'honertia/effect' {
   interface HonertiaDatabaseType {
     type: Database
-    schema: typeof schema
   }
   interface HonertiaAuthType {
     type: Auth
@@ -331,9 +353,15 @@ declare module 'honertia/effect' {
 }
 ```
 
-### 2. src/db/schema.ts (REQUIRED)
+Route binding output types are derived from the parser map passed to
+`honertia.bindings`, not from the Drizzle database augmentation. The starter
+declares that map next to app setup below; larger apps can export it from a
+dedicated module.
 
-Drizzle schema. Required for route model binding and database queries.
+### 2. src/db/schema.ts
+
+Required by this starter's database and route model bindings, but not by
+Honertia itself.
 
 ```typescript
 // src/db/schema.ts
@@ -407,7 +435,7 @@ export const projectsRelations = relations(projects, ({ one }) => ({
 }))
 ```
 
-### 3. src/db/db.ts (REQUIRED)
+### 3. src/db/db.ts
 
 Database client factory.
 
@@ -430,7 +458,7 @@ export function createDb(d1: D1Database): Database {
 // }
 ```
 
-### 4. src/lib/auth.ts (REQUIRED)
+### 4. src/lib/auth.ts
 
 Better-auth configuration.
 
@@ -464,14 +492,15 @@ export function createAuth(options: {
 export type Auth = ReturnType<typeof createAuth>
 ```
 
-### 5. src/index.ts (REQUIRED)
+### 5. src/index.ts
 
 Main app entry point.
 
 ```typescript
 // src/index.ts
 import { Hono } from 'hono'
-import { setupHonertia, createTemplate, createVersion, registerErrorHandlers } from 'honertia'
+import { setupHonertia, createTemplate, createVersion } from 'honertia'
+import { Schema as S } from 'effect'
 import * as schema from './db/schema'
 import { createDb } from './db/db'
 import { createAuth } from './lib/auth'
@@ -484,7 +513,41 @@ import manifest from '../dist/manifest.json'
 
 const app = new Hono<Env>()
 
-app.use('*', setupHonertia<Env>({
+const Project = S.Struct({
+  id: S.String,
+  name: S.String,
+  userId: S.String,
+})
+
+const routeBindings = { project: Project }
+
+declare module 'honertia/effect' {
+  interface HonertiaRouteBindingsType {
+    type: typeof routeBindings
+  }
+}
+
+const AuthSession = S.Struct({
+  user: S.Struct({
+    id: S.String,
+    email: S.String,
+    name: S.NullOr(S.String),
+    emailVerified: S.Boolean,
+    image: S.NullOr(S.String),
+    createdAt: S.DateFromSelf,
+    updatedAt: S.DateFromSelf,
+  }),
+  session: S.Struct({
+    id: S.String,
+    userId: S.String,
+    expiresAt: S.DateFromSelf,
+    token: S.String,
+    createdAt: S.DateFromSelf,
+    updatedAt: S.DateFromSelf,
+  }),
+})
+
+setupHonertia(app, {
   honertia: {
     version: createVersion(manifest),
     render: createTemplate((ctx) => ({
@@ -493,20 +556,83 @@ app.use('*', setupHonertia<Env>({
       styles: manifest['src/main.tsx']?.css ?? [],
     })),
     database: (c) => createDb(c.env.DB),
-    auth: (c, { db }) => createAuth({
+    schema,
+    bindings: routeBindings,
+  },
+  auth: {
+    client: (c, { db }) => createAuth({
       db,
       secret: c.env.BETTER_AUTH_SECRET,
       baseURL: new URL(c.req.url).origin,
     }),
-    schema,
+    session: AuthSession,
+    share: ({ user }) => ({ id: user.id, name: user.name, image: user.image }),
   },
-}))
+  errors: { component: 'Error' },
+})
 
 registerRoutes(app)
-registerErrorHandlers(app)
 
 export default app
 ```
+
+Configuration has one owner at this application boundary: `honertia` owns the
+renderer, database, schema, and route bindings; top-level `auth` owns the auth
+client, session parser, cookie, and public projection; `effect` contains only
+custom Effect services. Standalone `effectBridge()` and `effectRoutes()` calls
+still accept schema and binding overrides because they compose outside
+`setupHonertia()`.
+
+### Supported Setup Shapes
+
+Let TypeScript infer setup types from the configured factories; placeholder
+generics are no longer needed.
+
+| App shape | Configuration |
+|---|---|
+| Database-backed auth | `honertia.database` plus `auth.client: (c, { db }) => ...` |
+| Stateless auth | `auth.client: (c) => ...`, with no database |
+| Database without auth | `honertia.database`, with no `auth` block |
+| No database or auth | Only `honertia.version` and `honertia.render` |
+
+```typescript
+// Minimal public/stateless setup
+setupHonertia(app, {
+  honertia: { version, render },
+})
+```
+
+The preferred app form installs the middleware and shared not-found/error
+boundary together and returns `{ app, routes }`. The returned registry is the
+same app-owned registry populated by later `effectRoutes(app)` calls.
+
+```typescript
+const application = setupHonertia(app, {
+  honertia: { version, render },
+})
+
+registerRoutes(app)
+export { application }
+export default app
+```
+
+### Migrating from 0.2.0
+
+- Prefer `setupHonertia(app, config)` over wrapping the middleware form in
+  `app.use('*', ...)`; the app form also installs the shared error boundary.
+- Move `honertia.auth` to `auth.client`, `effect.schema` to
+  `honertia.schema`, and `effect.bindings` to `honertia.bindings`.
+- Configure `auth.session` to parse the server session and `auth.share` when
+  the client needs more than the safe default `{ id, name, image }` user.
+- Register an Effect Schema for every route binding and augment
+  `HonertiaRouteBindingsType` with that parser map. Nested bindings now require
+  an inferred Drizzle relationship or an explicit `routeBinding(..., { scope })`.
+- Pass `--app <entrypoint>` to `routes`, `check`, and `generate:openapi`; route
+  metadata belongs to the selected Hono app rather than process-global state.
+- Remove explicit placeholder setup generics. Database presence and factory
+  return types are inferred from configuration.
+- Expect structured error pages to preserve their real HTTP status; they are
+  no longer coerced to `200` for Inertia responses.
 
 `createTemplate()` emits Inertia's script-element initial page payload:
 
@@ -517,7 +643,7 @@ export default app
 
 If you provide a custom template renderer, use `serializePage(page)` from `honertia` for the JSON script body so `</script>` sequences inside props cannot close the element early.
 
-### 6. src/routes.ts (REQUIRED)
+### 6. src/routes.ts
 
 Route definitions.
 
@@ -562,7 +688,7 @@ export function registerRoutes(app: Hono<Env>) {
 }
 ```
 
-### 7. src/main.tsx (REQUIRED)
+### 7. src/main.tsx
 
 Client-side entry point.
 
@@ -588,7 +714,7 @@ createInertiaApp({
 })
 ```
 
-### 8. wrangler.toml (REQUIRED for Cloudflare)
+### 8. wrangler.toml (Cloudflare)
 
 ```toml
 name = "my-app"
@@ -607,7 +733,7 @@ database_id = "your-database-id"
 bucket = "./dist"
 ```
 
-### 9. vite.config.ts (REQUIRED)
+### 9. vite.config.ts
 
 ```typescript
 // vite.config.ts
@@ -632,7 +758,7 @@ export default defineConfig({
 })
 ```
 
-### 10. tsconfig.json (REQUIRED)
+### 10. tsconfig.json
 
 ```json
 {
@@ -661,16 +787,16 @@ export default defineConfig({
 
 ```
 src/
-  index.ts          # App entry, setupHonertia() - REQUIRED
-  routes.ts         # Route definitions - REQUIRED
-  types.ts          # Type definitions - REQUIRED
-  main.tsx          # Client entry - REQUIRED
+  index.ts          # App entry and setupHonertia()
+  routes.ts         # Route definitions
+  types.ts          # Service module augmentations
+  main.tsx          # React/Inertia client entry
   styles.css        # Global styles
   db/
-    db.ts           # Database factory - REQUIRED
-    schema.ts       # Drizzle schema - REQUIRED
+    db.ts           # Database factory (database apps)
+    schema.ts       # Drizzle schema (database apps)
   lib/
-    auth.ts         # Auth config - REQUIRED
+    auth.ts         # Better Auth config (authenticated apps)
   actions/
     auth/
       login.ts
@@ -689,16 +815,23 @@ src/
       Show.tsx
       Create.tsx
     Error.tsx         # Error page component
-wrangler.toml       # Cloudflare config - REQUIRED
-vite.config.ts      # Vite config - REQUIRED
-tsconfig.json       # TypeScript config - REQUIRED
+wrangler.toml       # Cloudflare config
+vite.config.ts      # Vite config
+tsconfig.json       # TypeScript config
 ```
 
 ---
 
-## Auth Actions (REQUIRED)
+## Better Auth Form Actions
 
-These three actions are required for `effectAuthRoutes` to work.
+These actions are needed only when you enable the corresponding login,
+registration, and logout routes. `effectAuthRoutes` can render guest pages
+without form actions, and provides a default logout handler when
+`logoutAction` is omitted.
+
+`betterAuthFormAction` normalizes both thrown Better Auth `APIError` values and
+resolved HTTP error responses. Form error mappers receive the same typed
+`status`, `code`, and `message` fields in either mode.
 
 ### src/actions/auth/login.ts
 
@@ -755,6 +888,7 @@ export const registerUser = betterAuthFormAction({
   errorMapper: (error) => {
     switch (error.code) {
       case 'USER_ALREADY_EXISTS':
+      case 'USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL':
         return { email: 'An account with this email already exists' }
       default:
         return { email: 'Registration failed' }
@@ -789,7 +923,7 @@ export { logoutUser } from './logout'
 
 ---
 
-## Minimum Page Components (REQUIRED)
+## Starter Page Components
 
 ### src/pages/Auth/Login.tsx
 
@@ -912,21 +1046,16 @@ export default function Error({ status, title, message }: ErrorProps) {
 
 ---
 
-## Setup Checklist
+## Full-Stack Starter Checklist
 
-1. Run `bun add honertia hono effect better-auth drizzle-orm`
-2. Create `src/types.ts` with module augmentation
-3. Create `src/db/schema.ts` with your tables
-4. Create `src/db/db.ts` with database factory
-5. Create `src/lib/auth.ts` with auth config
-6. Create `src/index.ts` with app setup
-7. Create `src/routes.ts` with route definitions
-8. Create `src/actions/auth/*.ts` with auth actions
-9. Create `src/main.tsx` with client entry
-10. Create `src/pages/Auth/Login.tsx` and `Register.tsx`
-11. Create `src/pages/Error.tsx`
-12. Create `wrangler.toml`, `vite.config.ts`, `tsconfig.json`
-13. Run `bun run build` then `wrangler dev`
+1. Install Honertia, Hono, Effect, and the optional database/auth packages used by this starter.
+2. Add module augmentations for the services and route bindings your actions use.
+3. Create the Drizzle schema, database factory, and Better Auth client.
+4. Call `setupHonertia(app, config)` once, then register routes on that app.
+5. Add only the auth actions and pages enabled in `effectAuthRoutes`.
+6. Add the React/Inertia entry point and Error page.
+7. Configure Wrangler, Vite, and TypeScript.
+8. Run the app's build and type checks, then start `wrangler dev`.
 
 ---
 
@@ -949,7 +1078,14 @@ export const showAbout = action(
 
 ```typescript
 import { Effect, Schema as S, Duration } from 'effect'
-import { action, authorize, render, DatabaseService, cache } from 'honertia/effect'
+import {
+  action,
+  authorize,
+  render,
+  DatabaseService,
+  HttpError,
+  cache,
+} from 'honertia/effect'
 import { eq } from 'drizzle-orm'
 import { projects } from '~/db/schema'
 
@@ -978,6 +1114,12 @@ export const listProjects = action(
       ),
       S.Array(ProjectSchema),
       { ttl: Duration.minutes(5) }
+    ).pipe(
+      Effect.mapError((cause) => new HttpError({
+        status: 503,
+        message: 'Projects are temporarily unavailable.',
+        cause,
+      }))
     )
 
     return yield* render('Projects/Index', { projects: userProjects })
@@ -1223,7 +1365,7 @@ export const checkout = action(
 
 ```typescript
 import { Effect, Schema as S } from 'effect'
-import { action, validateRequest, DatabaseService, json } from 'honertia/effect'
+import { action, validateRequest, DatabaseService, HttpError, json } from 'honertia/effect'
 import { like } from 'drizzle-orm'
 import { projects } from '~/db/schema'
 
@@ -1237,12 +1379,17 @@ export const searchProjects = action(
     const { q, limit } = yield* validateRequest(SearchSchema)
     const db = yield* DatabaseService
 
-    const results = yield* Effect.tryPromise(() =>
-      db.query.projects.findMany({
+    const results = yield* Effect.tryPromise({
+      try: () => db.query.projects.findMany({
         where: like(projects.name, `%${q}%`),
         limit,
-      })
-    )
+      }),
+      catch: (cause) => new HttpError({
+        status: 503,
+        message: 'Project search is temporarily unavailable.',
+        cause,
+      }),
+    })
 
     return yield* json({ results, count: results.length })
   })
@@ -1253,7 +1400,7 @@ export const searchProjects = action(
 
 ```typescript
 import { Effect } from 'effect'
-import { action, authorize, DatabaseService, render } from 'honertia/effect'
+import { action, authorize, DatabaseService, HttpError, render } from 'honertia/effect'
 
 export const adminDashboard = action(
   Effect.gen(function* () {
@@ -1261,9 +1408,14 @@ export const adminDashboard = action(
     const auth = yield* authorize((a) => a.user.role === 'admin')
     const db = yield* DatabaseService
 
-    const stats = yield* Effect.tryPromise(() =>
-      db.query.users.findMany({ limit: 100 })
-    )
+    const stats = yield* Effect.tryPromise({
+      try: () => db.query.users.findMany({ limit: 100 }),
+      catch: (cause) => new HttpError({
+        status: 503,
+        message: 'Admin statistics are temporarily unavailable.',
+        cause,
+      }),
+    })
 
     return yield* render('Admin/Dashboard', { stats })
   })
@@ -1278,6 +1430,8 @@ import {
   action,
   authorize,
   DatabaseService,
+  RequestService,
+  HttpError,
   render,
   notFound,
   httpError,
@@ -1292,11 +1446,16 @@ export const showProject = action(
     const request = yield* RequestService
     const projectId = request.param('id')
 
-    const project = yield* Effect.tryPromise(() =>
-      db.query.projects.findFirst({
+    const project = yield* Effect.tryPromise({
+      try: () => db.query.projects.findFirst({
         where: eq(projects.id, projectId),
-      })
-    )
+      }),
+      catch: (cause) => new HttpError({
+        status: 503,
+        message: 'Project lookup is temporarily unavailable.',
+        cause,
+      }),
+    })
 
     if (!project) {
       return yield* notFound('Project', projectId)
@@ -1310,6 +1469,57 @@ export const showProject = action(
   })
 )
 ```
+
+---
+
+## Route-Level Validation and Metadata
+
+Put body and query schemas on the route when the schema should be visible to
+the route registry, project checks, and OpenAPI generation. Honertia validates
+them before the action runs and provides the decoded values through
+`validatedBody()` and `validatedQuery()`.
+
+```typescript
+import { Effect, Schema as S } from 'effect'
+import {
+  action,
+  effectRoutes,
+  json,
+  validatedBody,
+  validatedQuery,
+} from 'honertia/effect'
+
+const CreateProject = S.Struct({
+  name: S.String,
+})
+
+const ProjectQuery = S.Struct({
+  includeArchived: S.optional(S.String),
+})
+
+type CreateProjectInput = S.Schema.Type<typeof CreateProject>
+type ProjectQueryInput = S.Schema.Type<typeof ProjectQuery>
+
+const createProject = action(
+  Effect.gen(function* () {
+    const input = yield* validatedBody<CreateProjectInput>()
+    const query = yield* validatedQuery<ProjectQueryInput>()
+    return yield* json({ input, query }, 201)
+  })
+)
+
+effectRoutes(app).post('/projects', createProject, {
+  name: 'projects.create',
+  body: CreateProject,
+  query: ProjectQuery,
+  parseOptions: { onExcessProperty: 'error' },
+})
+```
+
+Use `validateRequest()` inside an action when you intentionally need its
+configurable params/query/body merge profiles or an Inertia form component on
+validation failure. Use route options when validation is part of the route's
+declarative contract.
 
 ---
 
@@ -1389,10 +1599,11 @@ const EventSchema = S.Struct({
 ### Password Validator
 
 ```typescript
+import { Schema as S } from 'effect'
 import { password } from 'honertia/effect'
 
 const RegisterSchema = S.Struct({
-  email: email,
+  email: S.String,
   password: password({
     min: 8,
     letters: true,
@@ -1468,6 +1679,35 @@ If both `profile` and `order` are provided, `order` takes precedence.
 
 ## Route Model Binding Examples
 
+Bindings are registered at setup with an Effect Schema. Honertia compiles the
+lookup plan once, parses both the URL value and loaded row, and refuses to run a
+nested route unless its parent scope can be proven.
+
+```typescript
+import { Schema as S } from 'effect'
+import { routeBinding } from 'honertia/effect'
+
+const User = S.Struct({ id: S.String, name: S.String })
+const Post = S.Struct({ id: S.String, userId: S.String, title: S.String })
+const routeBindings = { user: User, post: Post }
+
+declare module 'honertia/effect' {
+  interface HonertiaRouteBindingsType {
+    type: typeof routeBindings
+  }
+}
+
+setupHonertia(app, {
+  honertia: {
+    version,
+    render,
+    database: (c) => createDb(c.env.DB),
+    schema,
+    bindings: routeBindings,
+  },
+})
+```
+
 ### Basic Binding (by ID)
 
 ```typescript
@@ -1514,12 +1754,25 @@ const showUserPost = action(
 
 The child's foreign key is discovered from the Drizzle schema: first from an
 inline `.references(() => users.id)` on the child table, then from a
-`postsRelations = relations(posts, ...)` definition. Works with the idiomatic
-camelCase-property / snake_case-column shape (`userId: text('user_id')`).
+`postsRelations = relations(posts, ...)` definition. This works with the
+idiomatic camelCase-property / snake_case-column shape
+(`userId: text('user_id')`).
 
-If neither is declared, the child **cannot be scoped** and resolves by its own
-key alone — Honertia warns in development when this happens. Binding is
-resolution, not authorization: for tenant boundaries, still authorize in the
+If Drizzle cannot expose the relationship, declare it where the binding parser
+is registered:
+
+```typescript
+bindings: {
+  user: User,
+  post: routeBinding(Post, {
+    scope: { user: { foreignKey: 'userId' } },
+  }),
+}
+```
+
+If neither inferred nor explicit scope exists, the route fails closed with a
+configuration error; Honertia never falls back to an unscoped child lookup.
+Binding is resolution, not authorization, so policy checks still belong in the
 handler.
 
 ### Mixed Notation
@@ -1552,6 +1805,29 @@ effectRoutes(app).get(
 ---
 
 ## Auth Examples
+
+### Parsed Sessions and Public User Data
+
+`setupHonertia` treats authentication as a boundary: `null` means anonymous, a
+provider exception becomes `SessionLookupUnavailable`, and a response that
+does not satisfy `auth.session` becomes `InvalidAuthSession`. Server session
+data is never shared wholesale. The default public user contains only `id`,
+`name`, and `image`; use `auth.share` for an explicit application projection.
+
+```typescript
+setupHonertia(app, {
+  honertia: { version, render },
+  auth: {
+    client: (c) => createAuth(c.env),
+    session: AuthSession,
+    share: ({ user }) => ({
+      id: user.id,
+      displayName: user.name,
+      avatar: user.image,
+    }),
+  },
+})
+```
 
 ### Auth Routes Setup
 
@@ -1595,7 +1871,7 @@ effectAuthRoutes(app, {
 ### Login Action
 
 ```typescript
-import { betterAuthFormAction } from 'honertia/auth'
+import { betterAuthFormAction, type BetterAuthActionError } from 'honertia/auth'
 import { Schema as S } from 'effect'
 import { email, requiredString } from 'honertia/effect'
 
@@ -1604,7 +1880,7 @@ const LoginSchema = S.Struct({
   password: requiredString,
 })
 
-const mapLoginError = (error: { code?: string }) => {
+const mapLoginError = (error: BetterAuthActionError) => {
   switch (error.code) {
     case 'INVALID_EMAIL_OR_PASSWORD':
       return { email: 'Invalid email or password' }
@@ -1629,10 +1905,37 @@ export const loginUser = betterAuthFormAction({
 })
 ```
 
+Auth rate limits fail with `AuthRateLimitError`, which renders as a protocol
+429 JSON response (with `Retry-After`) rather than a form error. If you would
+rather show the rate limit inside the login form, recover it into a
+`ValidationError` before the handler sees it:
+
+Only verified Better Auth HTTP rejections are passed to `errorMapper`.
+Unexpected database, network, provider, or malformed thrown values remain
+safe dependency failures and are not reused as client-visible form messages.
+
+```typescript
+import { Effect } from 'effect'
+import { ValidationError } from 'honertia/effect'
+
+export const loginUser = betterAuthFormAction({
+  // ... as above
+}).pipe(
+  Effect.catchTag('AuthRateLimitError', (error) =>
+    Effect.fail(
+      new ValidationError({
+        errors: { form: error.message },
+        component: 'Auth/Login',
+      })
+    )
+  )
+)
+```
+
 ### Register Action
 
 ```typescript
-import { betterAuthFormAction } from 'honertia/auth'
+import { betterAuthFormAction, type BetterAuthActionError } from 'honertia/auth'
 import { Schema as S } from 'effect'
 import { email, requiredString, password } from 'honertia/effect'
 
@@ -1642,9 +1945,10 @@ const RegisterSchema = S.Struct({
   password: password({ min: 8, letters: true, numbers: true }),
 })
 
-const mapRegisterError = (error: { code?: string }) => {
+const mapRegisterError = (error: BetterAuthActionError) => {
   switch (error.code) {
     case 'USER_ALREADY_EXISTS':
+    case 'USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL':
       return { email: 'An account with this email already exists' }
     default:
       return { email: 'Registration failed' }
@@ -1756,8 +2060,21 @@ effectRoutes(app)
   })
 ```
 
+Use `.prefixMiddleware()` after `.prefix()` when middleware must wrap the
+whole prefix, including unmatched paths and 404 responses:
+
+```typescript
+effectRoutes(app)
+  .prefix('/api')
+  .prefixMiddleware(redactErrorDetails)
+  .group((route) => {
+    route.get('/status', showStatus)
+  })
+```
+
 **Key differences:**
 - `.middleware()` adds Hono middleware that runs *before* the Effect handler (can redirect/short-circuit)
+- `.prefixMiddleware()` wraps all requests under the builder prefix, including misses
 - `.provide()` adds Effect layers that run *within* the Effect computation (dependency injection)
 
 ### `provide()` Layer Patterns
@@ -1770,13 +2087,21 @@ effectRoutes(app)
    ```
 2. **Context-aware layer** (consumes route context services like `DatabaseService`, `HonertiaService`, or previously provided services)
    ```typescript
+   import { Effect, Layer } from 'effect'
+   import { DatabaseService, HonertiaService, HttpError } from 'honertia/effect'
+
    const SharePropsLayer = Layer.effectDiscard(
      Effect.gen(function* () {
        const db = yield* DatabaseService
        const honertia = yield* HonertiaService
-       const organizations = yield* Effect.tryPromise(() =>
-         db.query.organizations.findMany()
-       )
+       const organizations = yield* Effect.tryPromise({
+         try: () => db.query.organizations.findMany(),
+         catch: (cause) => new HttpError({
+           status: 503,
+           message: 'Organizations are temporarily unavailable.',
+           cause,
+         }),
+       })
        honertia.share('organizations', organizations)
        honertia.share('authUserAvatarSeed', 'seed-123')
      })
@@ -1791,8 +2116,9 @@ effectRoutes(app)
 | Level | Method | Scope |
 |-------|--------|-------|
 | `app.use('*', ...)` | Global | All routes |
-| `setupHonertia({ middleware: [...] })` | Global | All routes via config |
+| `setupHonertia(app, { middleware: [...] })` | Global | All routes via config |
 | `effectRoutes(app).middleware(...)` | Builder | Routes in that chain only |
+| `effectRoutes(app).prefix(...).prefixMiddleware(...)` | Prefix | Matching routes and 404s under the prefix |
 
 ### Manual Auth Check in Action
 
@@ -1814,7 +2140,36 @@ const user = yield* currentUser            // AuthUser | null
 
 ## Error Handling Examples
 
-### Throwing Errors
+### Effect-First Error Model
+
+Honertia application actions should express expected failures through Effect's
+typed error channel. Use `Effect.fail(...)` (or Honertia's response helpers)
+for validation, authorization, not-found, dependency, and other failures that
+can occur during normal operation. Reserve `throw new Error(...)` for defects:
+unexpected programmer errors or violated invariants.
+
+| Location | Failure style | `EffectErrorObserverService` | Production response |
+|---|---|---:|---|
+| `effectHandler` / `effectRoutes` | `Effect.fail(typedError)` | Observed if it reaches the request boundary | Typed Honertia response |
+| `effectHandler` / `effectRoutes` | `throw new Error(...)` | Observed as a defect | Safe 500 response |
+| Plain Hono handler or middleware | `throw new Error(...)` | Not observed | Safe error response; external reporting is application-owned |
+
+Direct Hono middleware remains appropriate for framework concerns such as CORS,
+static assets, and third-party integrations. Putting application actions or
+business logic in plain Hono handlers bypasses Honertia's typed Effect error and
+observability guarantees and is therefore an anti-pattern in an Effect-first
+Honertia application.
+
+When Honertia's Hono error handlers catch an exception outside Effect, they
+still return a client-safe response. Detailed console diagnostics are emitted
+only in explicitly configured development environments. In production, the
+default handlers write one redacted structured line per error to the console
+(code, tag, category, HTTP status, request id — never raw exception text), so
+platform logs such as `wrangler tail` retain a correlation signal. For full
+detail, use a Hono-compatible telemetry integration if code outside Effect
+needs reporting.
+
+### Typed Effect Failures
 
 ```typescript
 import {
@@ -1847,27 +2202,56 @@ yield* Effect.fail(new UnauthorizedError({
 }))
 ```
 
+Database helpers keep dependency failures precise: `dbMutation` fails with
+`DatabaseMutationFailed | DatabaseConstraintViolation`, while `dbTransaction`
+fails with `DatabaseTransactionFailed | DatabaseConstraintViolation`. This
+makes recovery composable without catching every JavaScript `Error`:
+
+```typescript
+yield* dbMutation(db, input, saveProject).pipe(
+  Effect.catchTag('DatabaseConstraintViolation', () =>
+    Effect.fail(new ValidationError({
+      errors: { name: 'A project with this name already exists' },
+      component: 'Projects/Create',
+    }))
+  )
+)
+```
+
 ### Error Handler Setup
 
 ```typescript
-import { registerErrorHandlers } from 'honertia'
+import { setupHonertia } from 'honertia'
 
-registerErrorHandlers(app, {
-  component: 'Error',           // Error page component
-  showDevErrors: true,          // Show details in dev
-  envKey: 'ENVIRONMENT',
-  devValue: 'development',
+setupHonertia(app, {
+  honertia: { version, render },
+  errors: {
+    component: 'Error',
+    showDevErrors: true,
+    envKey: 'ENVIRONMENT',
+    devValue: 'development',
+  },
 })
 ```
 
+This one boundary handles typed Effect failures, defects, Hono exceptions, and
+not-found responses with the same redaction, rendering, and logging policy.
+
 ### External Error Reporting
 
-Honertia can report request-time Effect failures to one optional observer service. You define that observer once in `setupHonertia({ effect: { services } })`, and the same observer receives:
+Honertia can report request-time failures and defects from `effectHandler` and
+`effectRoutes` to one optional observer service. You define that observer once
+in `setupHonertia(app, { effect: { services } })`, and the same observer receives:
 
-- framework-reported unhandled request failures and defects
+- unhandled Effect request failures and defects
 - user-reported handled/recovered failures via `reportEffectError(...)`
 
-This is the main integration point for PostHog, Sentry, or any other external reporting system. The observer is best-effort: if it is not installed, nothing happens; if it fails, request behavior does not change.
+This is the main integration point for PostHog, Sentry, or any other external reporting system. The observer is best-effort: if it is not installed, nothing happens; if it fails, request behavior does not change. Honertia's default console diagnostics are full terminal output when development is explicitly configured, and a single redacted structured line in production — raw `Error` objects are never written to the console by the default handlers.
+
+`EffectErrorObserverService` does not observe exceptions thrown by plain Hono
+handlers or middleware because those errors never enter an Effect runtime.
+If you deliberately keep application code on that boundary, configure reporting
+through Hono or your telemetry provider's Hono integration.
 
 ```typescript
 import { Effect, Layer } from 'effect'
@@ -1896,13 +2280,11 @@ function makeErrorObserver(apiKey?: string) {
               properties: {
                 handling: event.handling,
                 kind: event.kind,
-                message:
-                  event.error instanceof Error
-                    ? event.error.message
-                    : String(event.error),
                 honertiaCode: event.structured?.code ?? null,
+                honertiaTag: event.structured?.tag ?? null,
+                category: event.structured?.category ?? null,
                 httpStatus: event.structured?.httpStatus ?? null,
-                metadata: event.metadata ?? null,
+                requestId: event.structured?.requestId ?? null,
               },
             }),
           }),
@@ -1912,25 +2294,27 @@ function makeErrorObserver(apiKey?: string) {
   })
 }
 
-app.use('*', setupHonertia<Env>({
+setupHonertia(app, {
   honertia: {
     version,
     render,
     database: (c) => createDb(c.env.DB),
-    auth: (c, { db }) => createAuth({
+    schema,
+  },
+  auth: {
+    client: (c, { db }) => createAuth({
       db,
       secret: c.env.BETTER_AUTH_SECRET,
       baseURL: new URL(c.req.url).origin,
     }),
-    schema,
   },
   effect: {
     services: (c) => makeErrorObserver(c.env.POSTHOG_API_KEY),
   },
-}))
+})
 ```
 
-Replace the `fetch(...)` block with `Sentry.captureException(...)` or any other telemetry client if you prefer. The important part is that the reporting sink is configured once, at app setup, instead of inside every action.
+Replace the `fetch(...)` block with `Sentry.captureException(...)` or any other telemetry client if you prefer. The important part is that the reporting sink is configured once, at app setup, instead of inside every action. Build telemetry from structured fields or your own explicitly safe metadata; do not serialize `event.error`, whose message or cause may contain credentials, database output, or request values.
 
 The observer receives events with this shape:
 
@@ -2021,7 +2405,15 @@ export default function Error({ status, title, message, hint, fixes }: ErrorProp
 ## Response Helpers
 
 ```typescript
-import { render, redirect, json, notFound, forbidden, httpError } from 'honertia/effect'
+import {
+  render,
+  renderWithErrors,
+  redirect,
+  json,
+  notFound,
+  forbidden,
+  httpError,
+} from 'honertia/effect'
 
 // Render page with props
 return yield* render('Projects/Index', { projects })
@@ -2077,13 +2469,14 @@ Honertia owns the correctness rules so you don't have to:
 - responses that set cookies are never publicly cached;
 - private requests are never publicly cached: an `Authorization` header, a
   loaded `authUser`, or a session cookie (better-auth's cookies, plus any
-  custom name configured via `loadUser({ sessionCookie })`) all disable
+  custom name configured via `auth.sessionCookie`) all disable
   caching for that request, with a once-per-route dev warning. Unrelated
   cookies (analytics, consent, `__cf_bm`) do **not** disable caching, so
   real browser traffic still gets cache hits.
 
 If you authenticate with custom cookies outside Honertia's auth, register
-the cookie name via `loadUser({ sessionCookie: 'your_cookie' })` or don't
+the cookie name via `auth: { sessionCookie: 'your_cookie' }` in
+`setupHonertia()` or don't
 mark those routes cacheable — Workers Cache serves hits without running
 your Worker, so no in-handler auth check can protect a cached response.
 
@@ -2134,7 +2527,7 @@ Update your bindings type in `src/types.ts`:
 
 ```typescript
 export type Bindings = {
-  DATABASE_URL: string
+  DB: D1Database
   BETTER_AUTH_SECRET: string
   KV: KVNamespace  // Add this
 }
@@ -2146,7 +2539,14 @@ No additional registration needed - `CacheService` is automatically available in
 
 ```typescript
 import { Effect, Schema as S, Duration } from 'effect'
-import { action, authorize, render, DatabaseService, cache } from 'honertia/effect'
+import {
+  action,
+  authorize,
+  render,
+  DatabaseService,
+  HttpError,
+  cache,
+} from 'honertia/effect'
 import { eq } from 'drizzle-orm'
 import { projects } from '~/db/schema'
 
@@ -2173,10 +2573,16 @@ export const listProjects = action(
             where: eq(projects.userId, auth.user.id),
             orderBy: (p, { desc }) => [desc(p.createdAt)],
           }),
-        catch: (error) => new Error(String(error)),
+        catch: (cause) => cause,
       }),
       S.Array(ProjectSchema),
       { ttl: Duration.minutes(5) }
+    ).pipe(
+      Effect.mapError((cause) => new HttpError({
+        status: 503,
+        message: 'Projects are temporarily unavailable.',
+        cause,
+      }))
     )
 
     return yield* render('Projects/Index', { projects: userProjects })
@@ -2189,9 +2595,9 @@ export const listProjects = action(
 | Function | Description |
 |----------|-------------|
 | `cache(key, compute, schema, options)` | Get from cache or compute and store |
-| `cacheGet(key, schema)` | Get value from cache (returns `Option`) |
+| `cacheGet(key, schema, options?)` | Get value from cache (returns `Option`) |
 | `cacheSet(key, value, schema, options)` | Store value in cache |
-| `cacheInvalidate(key)` | Delete a single cache key |
+| `cacheInvalidate(key, options?)` | Delete a single cache key |
 | `cacheInvalidatePrefix(prefix)` | Delete all keys with prefix |
 
 The `options` parameter is an object with the following properties:
@@ -2200,6 +2606,7 @@ The `options` parameter is an object with the following properties:
 |----------|------|-------------|
 | `ttl` | `Duration.DurationInput` | Time-to-live for cached values (required) |
 | `swr` | `Duration.DurationInput` | Stale-while-revalidate window (optional) |
+| `version` | `string \| boolean` | Explicit key prefix, or `true` for a schema hash (optional) |
 
 ### Cache Invalidation
 
@@ -2543,7 +2950,7 @@ const user = yield* cache(
 
 ```typescript
 import { Effect, Duration, Schema as S } from 'effect'
-import { action, authorize, cache, render, DatabaseService } from 'honertia/effect'
+import { action, authorize, cache, render, DatabaseService, HttpError } from 'honertia/effect'
 import { eq } from 'drizzle-orm'
 import { projects } from '~/db/schema'
 
@@ -2576,6 +2983,12 @@ export const indexProjects = action(
         ttl: Duration.minutes(5),
         swr: Duration.minutes(1),
       }
+    ).pipe(
+      Effect.mapError((cause) => new HttpError({
+        status: 503,
+        message: 'Projects are temporarily unavailable.',
+        cause,
+      }))
     )
 
     return yield* render('Projects/Index', { projects: userProjects })
@@ -2583,21 +2996,24 @@ export const indexProjects = action(
 )
 ```
 
-### Background Tasks with ExecutionContextService
+### Runtime-Owned Background Tasks
 
-The `ExecutionContextService` provides access to Cloudflare Workers' `waitUntil` API, allowing you to run tasks after the response is sent. This is automatically used by the cache's SWR feature for background refresh.
+`background(operation, effect)` owns the whole lifecycle: it preserves the
+current Effect context, extends Cloudflare's request lifetime with `waitUntil`,
+and sends failures to `EffectErrorObserverService` with the operation name. In
+non-Worker runtimes it runs safely before request completion instead of being
+silently dropped.
 
 ```typescript
 import { Effect } from 'effect'
-import { action, ExecutionContextService, authorize, render } from 'honertia/effect'
+import { action, authorize, background, render } from 'honertia/effect'
 
 export const dashboard = action(
   Effect.gen(function* () {
     const auth = yield* authorize()
-    const ctx = yield* ExecutionContextService
 
-    // Send analytics in background - doesn't block response
-    yield* ctx.runInBackground(
+    yield* background(
+      'analytics.page-view',
       Effect.tryPromise(() =>
         fetch('https://analytics.example.com/events', {
           method: 'POST',
@@ -2616,20 +3032,18 @@ export const dashboard = action(
 )
 ```
 
-**ExecutionContextService API:**
+**Background API:**
 
-| Method | Description |
+| Function | Description |
 |--------|-------------|
-| `isAvailable` | `boolean` - Whether background execution is available |
-| `runInBackground(effect)` | Run an Effect after the response is sent |
-| `waitUntil(promise)` | Raw `waitUntil` for external promises |
+| `background(operation, effect)` | Schedule named, observed, runtime-owned work |
 
 **Common use cases:**
 
 ```typescript
 import { Effect } from 'effect'
 import {
-  ExecutionContextService,
+  background,
   authorize,
   DatabaseService,
   dbMutation,
@@ -2640,11 +3054,11 @@ import {
 // Audit logging
 const auditLog = (action: string, details: Record<string, unknown>) =>
   Effect.gen(function* () {
-    const ctx = yield* ExecutionContextService
     const user = yield* authorize()
     const db = yield* DatabaseService
 
-    yield* ctx.runInBackground(
+    yield* background(
+      'audit-log.persist',
       dbMutation(db, async (tx) => {
         await tx.insert(auditLogs).values(asTrusted({
           userId: user.user.id,
@@ -2659,9 +3073,8 @@ const auditLog = (action: string, details: Record<string, unknown>) =>
 // Webhook delivery with retries
 const deliverWebhook = (url: string, payload: unknown) =>
   Effect.gen(function* () {
-    const ctx = yield* ExecutionContextService
-
-    yield* ctx.runInBackground(
+    yield* background(
+      'webhook.deliver',
       Effect.tryPromise(() =>
         fetch(url, {
           method: 'POST',
@@ -2680,12 +3093,11 @@ const deliverWebhook = (url: string, payload: unknown) =>
 // Conditional background work
 const maybeNotifySlack = (message: string) =>
   Effect.gen(function* () {
-    const ctx = yield* ExecutionContextService
     const bindings = yield* BindingsService
 
-    // Only run if Slack is configured and background is available
-    if (bindings.SLACK_WEBHOOK_URL && ctx.isAvailable) {
-      yield* ctx.runInBackground(
+    if (bindings.SLACK_WEBHOOK_URL) {
+      yield* background(
+        'slack.notify',
         Effect.tryPromise(() =>
           fetch(bindings.SLACK_WEBHOOK_URL, {
             method: 'POST',
@@ -2698,10 +3110,10 @@ const maybeNotifySlack = (message: string) =>
 ```
 
 **Important notes:**
-- Background tasks run after the response is sent to the user
-- Errors in background tasks are logged but don't crash the worker
-- In non-Worker environments (tests, local dev), `isAvailable` is `false` and stale entries are recomputed synchronously
-- Use `catchAll` to handle errors gracefully in background tasks
+- Cloudflare tasks extend the request lifetime without blocking the response.
+- Failures are observed and do not change an already-produced response.
+- Local development and tests execute the Effect before the request completes.
+- Recover with `catchTag` inside the task only when the application has a real fallback.
 
 ### Cache Key Versioning
 
@@ -2795,6 +3207,7 @@ import {
   render,
   redirect,
   DatabaseService,
+  HttpError,
   validateRequest,
   dbMutation,
 } from 'honertia/effect'
@@ -2830,6 +3243,12 @@ export const showProfile = action(
         swr: Duration.minutes(5),
         version: true,  // Auto-invalidates when UserProfileSchema changes
       }
+    ).pipe(
+      Effect.mapError((cause) => new HttpError({
+        status: 503,
+        message: 'Profile is temporarily unavailable.',
+        cause,
+      }))
     )
 
     return yield* render('Profile/Show', { profile })
@@ -2917,20 +3336,21 @@ This means:
 | `AuthUserService` | Current user session | `const user = yield* AuthUserService` |
 | `BindingsService` | Cloudflare bindings | `const { KV } = yield* BindingsService` |
 | `CacheService` | KV-backed cache client | `const cache = yield* CacheService` |
-| `ExecutionContextService` | Background task execution | `const ctx = yield* ExecutionContextService` |
+| `ExecutionContextService` | Low-level runtime lifetime access | Prefer `yield* background(name, effect)` |
 | `RequestService` | Request context | `const req = yield* RequestService` |
 
 ### Using BindingsService
 
 ```typescript
-import { BindingsService } from 'honertia/effect'
+import { Effect } from 'effect'
+import { action, BindingsService, json } from 'honertia/effect'
 
 const handler = action(
   Effect.gen(function* () {
     const { KV, R2, QUEUE } = yield* BindingsService
 
-    const cached = yield* Effect.tryPromise(() => KV.get('key'))
-    yield* Effect.tryPromise(() => QUEUE.send({ type: 'event' }))
+    const cached = yield* Effect.tryPromise(() => KV.get('key')).pipe(Effect.orDie)
+    yield* Effect.tryPromise(() => QUEUE.send({ type: 'event' })).pipe(Effect.orDie)
 
     return yield* json({ cached })
   })
@@ -2949,7 +3369,6 @@ ENVIRONMENT = "production"
 
 ```bash
 # Secrets (not in source control)
-wrangler secret put DATABASE_URL
 wrangler secret put BETTER_AUTH_SECRET
 ```
 
@@ -2957,17 +3376,42 @@ wrangler secret put BETTER_AUTH_SECRET
 
 ## Testing
 
-Actions generated with CLI include inline tests:
+Generated actions include colocated inline tests. Generate one runner when you
+want Bun to discover all action and feature tests:
 
 ```bash
-# Test single action
+honertia generate:tests-runner
+bun test
+```
+
+For named-route integration tests, `describeRoute` reads metadata from the
+specific app instead of a global registry:
+
+```typescript
+import { describeRoute } from 'honertia/effect'
+import app from '../src/index'
+
+describeRoute('projects.index', app, (test) => {
+  test('renders the project list', {
+    expect: {
+      status: 200,
+      component: 'Projects/Index',
+    },
+  })
+})
+```
+
+Useful commands:
+
+```bash
+# Test one generated action
 bun test src/actions/projects/create.ts
 
-# Test all actions in a resource
+# Test a resource
 bun test src/actions/projects/
 
-# Run project checks
-honertia check --verbose
+# Validate routes, names, bindings, and registration
+honertia check --app src/index.ts --verbose
 ```
 
 ---

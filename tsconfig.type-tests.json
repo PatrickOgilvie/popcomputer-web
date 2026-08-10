@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "paths": {
+      "honertia": ["./src/index.ts"],
+      "honertia/effect": ["./src/effect/index.ts"]
+    },
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "tests/setup-types.ts"],
+  "exclude": ["node_modules", "dist"]
+}

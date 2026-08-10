@@ -6,34 +6,61 @@
  */
 
 import { createMiddleware } from 'hono/factory'
+import { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
+import type { Schema as S } from 'effect'
 import { honertia } from './middleware.js'
 import { verifyOrigin, type VerifyOriginConfig } from './security.js'
 import type { HonertiaConfig } from './types.js'
 import { loadUser, shareAuthMiddleware } from './effect/auth.js'
 import { openHonertiaContext } from './request-context.js'
-import type { DatabaseType, AuthType } from './effect/services.js'
+import type {
+  DatabaseType,
+  AuthType,
+  BindingsType,
+  AuthUser,
+} from './effect/services.js'
 import { effectBridge, type EffectBridgeConfig } from './effect/bridge.js'
-import { getStructuredFromThrown } from './effect/handler.js'
-import { toStructuredError } from './effect/errors.js'
-import { captureErrorContext } from './effect/error-context.js'
 import {
-  detectOutputFormat,
-  JsonErrorFormatter,
-  TerminalErrorFormatter,
-  InertiaErrorFormatter,
-} from './effect/error-formatter.js'
-import { createStructuredError, ErrorCodes } from './effect/error-catalog.js'
+  renderErrorResponse,
+  type ErrorBoundaryConfig,
+} from './effect/handler.js'
+import { NotFoundError } from './effect/errors.js'
+import type { RouteBindingsConfig } from './effect/binding.js'
+import {
+  getAppRouteRegistry,
+  type RouteRegistry,
+} from './effect/route-registry.js'
 
-/**
- * Extended Honertia configuration with database, auth, and schema.
- *
- * @typeParam E - Hono environment type
- * @typeParam DB - Database client type (inferred from database factory return type)
- * @typeParam Auth - Auth client type (inferred from auth factory return type)
- */
-export interface HonertiaFullConfig<E extends Env = Env, DB = unknown, Auth = unknown>
-  extends HonertiaConfig {
+/** Default Hono environment derived from Honertia's bindings augmentation. */
+type HonertiaSetupEnv = {
+  Bindings: BindingsType
+}
+
+interface HonertiaCoreConfig extends HonertiaConfig {
+  /**
+   * Drizzle schema for route model binding.
+   * Required if using Laravel-style route model binding.
+   *
+   * @example
+   * ```typescript
+   * import * as schema from '~/db/schema'
+   *
+   * setupHonertia(app, {
+   *   honertia: { version, render, schema }
+   * })
+   * ```
+   */
+  schema?: Record<string, unknown>
+  /** Row parsers and optional scope metadata for route-model bindings. */
+  bindings?: RouteBindingsConfig
+}
+
+/** Honertia core configuration when a database factory is present. */
+interface HonertiaFullConfigWithDatabase<
+  E extends Env = HonertiaSetupEnv,
+  DB extends object = DatabaseType,
+> extends HonertiaCoreConfig {
   /**
    * Database factory function.
    * Creates the database client for each request.
@@ -43,85 +70,63 @@ export interface HonertiaFullConfig<E extends Env = Env, DB = unknown, Auth = un
    * database: (c) => createDb(c.env.DATABASE_URL)
    * ```
    */
-  database?: (c: Context<E>) => DB
+  database: (c: Context<E>) => DB
+}
 
+/** Honertia core configuration when no database factory is present. */
+interface HonertiaFullConfigWithoutDatabase<
+  E extends Env = HonertiaSetupEnv,
+> extends HonertiaCoreConfig {
   /**
-   * Auth factory function.
-   * Creates the auth client for each request. The database created by the
-   * `database` factory (if configured) is passed as the second argument.
-   *
-   * @example
-   * ```typescript
-   * auth: (c, { db }) => createAuth({
-   *   db,
-   *   secret: c.env.BETTER_AUTH_SECRET,
-   *   baseURL: new URL(c.req.url).origin,
-   * })
-   * ```
+   * A database factory is intentionally absent. This supports applications
+   * without persistence and deliberately stateless authentication.
    */
-  auth?: (c: Context<E>, services: { db?: DB }) => Auth
-
-  /**
-   * Drizzle schema for route model binding.
-   * Required if using Laravel-style route model binding.
-   *
-   * @example
-   * ```typescript
-   * import * as schema from '~/db/schema'
-   *
-   * setupHonertia({
-   *   honertia: { version, render, schema }
-   * })
-   * ```
-   */
-  schema?: Record<string, unknown>
+  database?: undefined
 }
 
 /**
- * Configuration for Honertia setup.
+ * Core Honertia configuration with database, schema, and route bindings.
  *
  * @typeParam E - Hono environment type
- * @typeParam DB - Database client type (inferred from database factory)
- * @typeParam Auth - Auth client type (inferred from auth factory)
- * @typeParam CustomServices - Custom Effect services
+ * @typeParam DB - Database client type, or `undefined` when not configured
  */
-export interface HonertiaSetupConfig<
-  E extends Env = Env,
-  DB = unknown,
-  Auth = unknown,
-  CustomServices = never,
-> {
-  /**
-   * Honertia core configuration including database, auth, and schema.
-   */
-  honertia: HonertiaFullConfig<E, DB, Auth>
+export type HonertiaFullConfig<
+  E extends Env = HonertiaSetupEnv,
+  DB = undefined,
+> = [DB] extends [undefined]
+  ? HonertiaFullConfigWithoutDatabase<E>
+  : DB extends object
+    ? HonertiaFullConfigWithDatabase<E, DB>
+    : never
 
+interface HonertiaSetupOptions<
+  E extends Env,
+  CustomServices,
+  DB = undefined,
+  Auth = AuthType,
+> {
   /**
    * Effect bridge configuration (optional).
    * Only needed for custom Effect services.
    */
-  effect?: EffectBridgeConfig<E, CustomServices>
+  effect?: Pick<EffectBridgeConfig<E, CustomServices>, 'services'>
 
   /**
-   * Auth loading configuration (optional).
-   * Controls how the authenticated user is loaded from the session.
+   * Authentication configuration (optional).
+   * Owns client construction, session parsing, and public projection.
    */
   auth?: {
-    sessionCookie?: string
-    /**
-     * Whitelist of user fields shared with the client as `auth.user`.
-     * Without this, the entire user record (email, admin flags, …) is
-     * serialized into every page payload. Ignored when `mapSharedUser` is set.
-     *
-     * @example shareFields: ['id', 'name', 'image']
-     */
-    shareFields?: string[]
-    /**
-     * Project the user before sharing with the client. Overrides `shareFields`.
-     *
-     * @example mapSharedUser: (u) => ({ id: u.id, name: u.name })
-     */
-    mapSharedUser?: (user: Record<string, unknown>) => unknown
+    /** Build the Better Auth server client at the request composition seam. */
+    client?: [DB] extends [undefined]
+      ? (c: Context<E>) => Auth
+      : DB extends object
+        ? (c: Context<E>, services: { readonly db: DB }) => Auth
+        : never
+    /** Parse Better Auth's session response before actions receive it. */
+    session?: S.Schema<AuthUser, unknown, never>
+    /** Explicit public projection placed at `auth.user` in page props. */
+    share?: (auth: AuthUser) => unknown
+    readonly sessionCookie?: string
   }
 
   /**
@@ -130,9 +135,7 @@ export interface HonertiaSetupConfig<
    */
   middleware?: MiddlewareHandler<E>[]
 
-  /**
-   * Optional security hardening.
-   */
+  /** Optional security hardening. */
   security?: {
     /**
      * Enable CSRF defense-in-depth by verifying the `Origin`/`Referer` of
@@ -142,7 +145,52 @@ export interface HonertiaSetupConfig<
      */
     verifyOrigin?: VerifyOriginConfig
   }
+
+  /** Error component and environment policy for the shared error boundary. */
+  errors?: ErrorHandlerConfig
 }
+
+/** Setup configuration whose auth factory receives a required database. */
+interface HonertiaSetupWithDatabaseConfig<
+  E extends Env = HonertiaSetupEnv,
+  DB extends object = DatabaseType,
+  Auth = AuthType,
+  CustomServices = never,
+> extends HonertiaSetupOptions<E, CustomServices, DB, Auth> {
+  honertia: HonertiaFullConfigWithDatabase<E, DB>
+}
+
+/** Setup configuration whose auth factory receives no database. */
+interface HonertiaSetupWithoutDatabaseConfig<
+  E extends Env = HonertiaSetupEnv,
+  Auth = AuthType,
+  CustomServices = never,
+> extends HonertiaSetupOptions<E, CustomServices, undefined, Auth> {
+  honertia: HonertiaFullConfigWithoutDatabase<E>
+}
+
+/**
+ * Configuration for Honertia setup.
+ *
+ * Prefer calling `setupHonertia(app, {...})` without explicit generics. Module
+ * augmentation supplies the binding environment while database, auth, and
+ * custom Effect service types are inferred from their factories.
+ *
+ * @typeParam E - Hono environment type
+ * @typeParam DB - Database client type, or `undefined` when not configured
+ * @typeParam Auth - Auth client type
+ * @typeParam CustomServices - Custom Effect services
+ */
+export type HonertiaSetupConfig<
+  E extends Env = HonertiaSetupEnv,
+  DB = undefined,
+  Auth = AuthType,
+  CustomServices = never,
+> = [DB] extends [undefined]
+  ? HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+  : DB extends object
+    ? HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    : never
 
 /**
  * Sets up all Honertia middleware in the correct order.
@@ -159,44 +207,131 @@ export interface HonertiaSetupConfig<
  * import { setupHonertia, createTemplate } from 'honertia'
  * import * as schema from '~/db/schema'
  *
- * app.use('*', setupHonertia({
+ * setupHonertia(app, {
  *   honertia: {
  *     version: '1.0.0',
  *     render: createTemplate({ title: 'My App', scripts: [...] }),
  *     database: (c) => createDb(c.env.DATABASE_URL),
- *     auth: (c, { db }) => createAuth({
- *       db,
- *       secret: c.env.BETTER_AUTH_SECRET,
- *       baseURL: new URL(c.req.url).origin,
- *     }),
  *     schema,
+ *     bindings: { workspace: Workspace },
  *   },
- * }))
+ *   auth: {
+ *     client: (c, { db }) => createAuth({ db }),
+ *     session: AuthSession,
+ *     share: ({ user }) => ({ id: user.id, name: user.name }),
+ *   },
+ *   errors: { component: 'Error' },
+ * })
  * ```
  */
+export interface HonertiaApplication<E extends Env> {
+  readonly app: Hono<E>
+  readonly routes: RouteRegistry
+}
+
+export function setupHonertia<
+  E extends Env = HonertiaSetupEnv,
+  DB extends object = DatabaseType,
+  Auth = AuthType,
+  CustomServices = never,
+>(
+  app: Hono<E>,
+  config: HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+): HonertiaApplication<E>
+export function setupHonertia<
+  E extends Env = HonertiaSetupEnv,
+  Auth = AuthType,
+  CustomServices = never,
+>(
+  app: Hono<E>,
+  config: HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+): HonertiaApplication<E>
+export function setupHonertia<
+  E extends Env = HonertiaSetupEnv,
+  DB extends object = DatabaseType,
+  Auth = AuthType,
+  CustomServices = never,
+>(
+  config: HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+): MiddlewareHandler<E>
+export function setupHonertia<
+  E extends Env = HonertiaSetupEnv,
+  Auth = AuthType,
+  CustomServices = never,
+>(
+  config: HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+): MiddlewareHandler<E>
 export function setupHonertia<
   E extends Env,
-  DB = unknown,
-  Auth = unknown,
-  CustomServices = never,
->(config: HonertiaSetupConfig<E, DB, Auth, CustomServices>): MiddlewareHandler<E> {
-  const { database, auth, schema, ...honertiaConfig } = config.honertia
+  DB extends object,
+  Auth,
+  CustomServices,
+>(
+  appOrConfig:
+    | Hono<E>
+    | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>,
+  maybeConfig?:
+    | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+): MiddlewareHandler<E> | HonertiaApplication<E> {
+  // SAFETY: overloads guarantee a config-only call or an app/config pair.
+  const config = (maybeConfig ?? appOrConfig) as
+    | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+  const middleware = createSetupMiddleware(config)
+
+  if (maybeConfig === undefined) {
+    return middleware
+  }
+
+  const app = appOrConfig as Hono<E>
+  app.use('*', middleware)
+  registerErrorHandlers(app, config.errors)
+  return { app, routes: getAppRouteRegistry(app) }
+}
+
+function createSetupMiddleware<
+  E extends Env,
+  DB extends object,
+  Auth,
+  CustomServices,
+>(
+  config:
+    | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    | HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+): MiddlewareHandler<E> {
+  assertCanonicalSetupConfig(config)
+
+  const configured = config.honertia
+  const schema = configured.schema
+  const bindings = configured.bindings
+  const honertiaConfig: HonertiaConfig = {
+    version: configured.version,
+    render: configured.render,
+  }
 
   // Middleware to wire db and auth into the typed request context
   const setupServices: MiddlewareHandler<E> = createMiddleware<E>(async (c, next) => {
     const requestCtx = openHonertiaContext(c)
+    requestCtx.errorBoundary = config.errors
 
     // Set up database first (auth may depend on it)
     // SAFETY: DB/Auth generics are the app's declared client types; the
     // HonertiaDatabaseType/HonertiaAuthType module augmentations make these
     // the same types DatabaseService/AuthService hand back to handlers.
-    const db = database ? database(c) : undefined
-    if (db !== undefined) {
+    if (configured.database !== undefined) {
+      const db = configured.database(c)
       requestCtx.db = db as DatabaseType
-    }
 
-    if (auth) {
-      requestCtx.auth = auth(c, { db }) as AuthType
+      if (config.auth?.client !== undefined) {
+        requestCtx.auth = config.auth.client(c, { db }) as AuthType
+      }
+    } else if (config.auth?.client !== undefined) {
+      // SAFETY: the no-database setup overload only accepts a one-argument
+      // client factory; the implementation union cannot retain that branch.
+      const createStatelessAuth = config.auth.client as (context: Context<E>) => Auth
+      requestCtx.auth = createStatelessAuth(c) as AuthType
     }
 
     await next()
@@ -204,8 +339,9 @@ export function setupHonertia<
 
   // Build effect bridge config, passing schema from honertia config
   const effectConfig: EffectBridgeConfig<E, CustomServices> = {
-    ...config.effect,
-    schema: schema ?? config.effect?.schema,
+    services: config.effect?.services,
+    schema,
+    bindings,
   }
 
   const middlewares: MiddlewareHandler<E>[] = [
@@ -216,10 +352,12 @@ export function setupHonertia<
       : []),
     setupServices,
     honertia(honertiaConfig),
-    loadUser<E>(config.auth),
+    loadUser<E>({
+      sessionCookie: config.auth?.sessionCookie,
+      session: config.auth?.session,
+    }),
     shareAuthMiddleware<E>({
-      fields: config.auth?.shareFields,
-      mapUser: config.auth?.mapSharedUser,
+      project: config.auth?.share,
     }),
     effectBridge<E, CustomServices>(effectConfig),
     ...(config.middleware ?? []),
@@ -250,34 +388,35 @@ export function setupHonertia<
   })
 }
 
+function assertCanonicalSetupConfig(config: {
+  readonly honertia: HonertiaCoreConfig
+  readonly effect?: object
+}): void {
+  if (Object.prototype.hasOwnProperty.call(config.honertia, 'auth')) {
+    throw new Error(
+      'Invalid setupHonertia configuration: move honertia.auth to top-level auth.client.'
+    )
+  }
+
+  if (config.effect === undefined) return
+
+  if (Object.prototype.hasOwnProperty.call(config.effect, 'schema')) {
+    throw new Error(
+      'Invalid setupHonertia configuration: move effect.schema to honertia.schema.'
+    )
+  }
+
+  if (Object.prototype.hasOwnProperty.call(config.effect, 'bindings')) {
+    throw new Error(
+      'Invalid setupHonertia configuration: move effect.bindings to honertia.bindings.'
+    )
+  }
+}
+
 /**
  * Error handler configuration.
  */
-export interface ErrorHandlerConfig {
-  /**
-   * Component to render for errors.
-   * @default 'Error'
-   */
-  component?: string
-
-  /**
-   * Whether to show detailed error messages in development.
-   * @default true
-   */
-  showDevErrors?: boolean
-
-  /**
-   * Environment variable key to check for development mode.
-   * @default 'ENVIRONMENT'
-   */
-  envKey?: string
-
-  /**
-   * Value that indicates development mode.
-   * @default 'development'
-   */
-  devValue?: string
-}
+export type ErrorHandlerConfig = ErrorBoundaryConfig
 
 /**
  * Creates error handlers for Hono apps using Honertia.
@@ -293,124 +432,14 @@ export interface ErrorHandlerConfig {
  * ```
  */
 export function createErrorHandlers<E extends Env>(config: ErrorHandlerConfig = {}) {
-  const {
-    component = 'Error',
-    showDevErrors = true,
-    envKey = 'ENVIRONMENT',
-    devValue = 'development',
-  } = config
+  const notFound = (c: Context<E>) =>
+    renderErrorResponse(new NotFoundError({ resource: 'page' }), c, {
+      ...config,
+      log: false,
+    })
 
-  // Memoized formatter instances for dev and production modes
-  const formatters = {
-    dev: {
-      json: new JsonErrorFormatter({
-        pretty: true,
-        includeSource: true,
-        includeContext: true,
-        includeFixes: true,
-      }),
-      terminal: new TerminalErrorFormatter({
-        useColors: true,
-        showSnippet: true,
-        showFixes: true,
-      }),
-      inertia: new InertiaErrorFormatter({ isDev: true, includeFixes: true }),
-    },
-    prod: {
-      json: new JsonErrorFormatter({
-        pretty: false,
-        includeSource: false,
-        includeContext: false,
-        includeFixes: true,
-        safeMessages: true,
-      }),
-      inertia: new InertiaErrorFormatter({ isDev: false, includeFixes: false }),
-    },
-  }
-
-  const getFormatters = (isDev: boolean) => (isDev ? formatters.dev : formatters.prod)
-
-  const notFound = (c: Context<E>) => {
-    const isDev = showDevErrors && (c.env as any)?.[envKey] === devValue
-    const context = captureErrorContext(c)
-    const format = detectOutputFormat(
-      {
-        header: (name: string) => c.req.header(name),
-        method: c.req.method,
-        url: c.req.url,
-      },
-      (c.env ?? {}) as Record<string, unknown>
-    )
-
-    // Create structured not found error
-    const structured = createStructuredError(
-      ErrorCodes.RES_200_NOT_FOUND,
-      { resource: 'page' },
-      context
-    )
-
-    const fmt = getFormatters(isDev)
-
-    // JSON response for API/AI requests
-    if (format === 'json') {
-      return c.json(fmt.json.format(structured), 404)
-    }
-
-    // Render Inertia error component (if honertia middleware has run)
-    const honertiaInstance = openHonertiaContext(c).honertia
-    if (honertiaInstance) {
-      return honertiaInstance.render(component, fmt.inertia.format(structured) as Record<string, unknown>)
-    }
-
-    // Fallback: return JSON if honertia isn't available
-    return c.json(fmt.json.format(structured), 404)
-  }
-
-  const onError = (err: Error, c: Context<E>) => {
-    const isDev = showDevErrors && (c.env as any)?.[envKey] === devValue
-    const context = captureErrorContext(c)
-    const format = detectOutputFormat(
-      {
-        header: (name: string) => c.req.header(name),
-        method: c.req.method,
-        url: c.req.url,
-      },
-      (c.env ?? {}) as Record<string, unknown>
-    )
-
-    // Get structured error (may have been attached by handler.ts)
-    let structured = getStructuredFromThrown(err)
-    if (!structured) {
-      // Convert the error to structured format
-      structured = toStructuredError(err, context)
-    }
-
-    const fmt = getFormatters(isDev)
-
-    // Log in terminal format for development (suppress during tests)
-    const isTest = (typeof Bun !== 'undefined' && Bun.env?.NODE_ENV === 'test')
-    if (!isTest) {
-      if (isDev) {
-        console.error(formatters.dev.terminal.format(structured))
-      } else {
-        console.error(err)
-      }
-    }
-
-    // JSON response for API/AI requests
-    if (format === 'json') {
-      return c.json(fmt.json.format(structured), structured.httpStatus as any)
-    }
-
-    // Render Inertia error component (if honertia middleware has run)
-    const honertiaInstance = openHonertiaContext(c).honertia
-    if (honertiaInstance) {
-      return honertiaInstance.render(component, fmt.inertia.format(structured) as Record<string, unknown>)
-    }
-
-    // Fallback: return JSON if honertia isn't available
-    return c.json(fmt.json.format(structured), structured.httpStatus as any)
-  }
+  const onError = (error: Error, c: Context<E>) =>
+    renderErrorResponse(error, c, config)
 
   return { notFound, onError }
 }

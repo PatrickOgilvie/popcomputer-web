@@ -236,6 +236,9 @@ describe('routesCommand', () => {
 })
 
 describe('parseRoutesArgs', () => {
+  test('parses --app option', () => {
+    expect(parseRoutesArgs(['--app', 'src/app.ts']).app).toBe('src/app.ts')
+  })
   test('parses --json flag', () => {
     const options = parseRoutesArgs(['--json'])
     expect(options.format).toBe('json')

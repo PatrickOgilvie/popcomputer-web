@@ -16,9 +16,12 @@ import {
   bound,
   BoundModels,
   BoundModelNotFound,
+  compileBindingPlan,
+  decodeBoundRow,
   columnTypeToSchema,
   inferParamsSchema,
 } from '../../src/effect/binding.js'
+import { RouteConfigurationError } from '../../src/effect/errors.js'
 import { registerErrorHandlers } from '../../src/setup.js'
 
 describe('parseBindings', () => {
@@ -171,6 +174,77 @@ describe('parseBindings', () => {
       expect(parseBindings('/users/{user:user_id}')).toEqual([{ param: 'user', column: 'user_id' }])
       expect(parseBindings('/users/{user:ID}')).toEqual([{ param: 'user', column: 'ID' }])
     })
+  })
+})
+
+describe('compiled route binding contract', () => {
+  const projects = {
+    id: { name: 'id', columnType: 'SQLiteText', dataType: 'string' },
+    name: { name: 'name', columnType: 'SQLiteText', dataType: 'string' },
+  }
+
+  test('fails closed when a bound parameter has no row parser', async () => {
+    await expect(
+      compileBindingPlan(
+        [{ param: 'project', column: 'id' }],
+        { projects },
+        {}
+      )
+    ).rejects.toBeInstanceOf(RouteConfigurationError)
+  })
+
+  test('fails closed when nested scope cannot be proven', async () => {
+    const tasks = {
+      id: { name: 'id', columnType: 'SQLiteText', dataType: 'string' },
+    }
+
+    await expect(
+      compileBindingPlan(
+        [
+          { param: 'project', column: 'id' },
+          { param: 'task', column: 'id' },
+        ],
+        { projects, tasks },
+        {
+          project: S.Struct({ id: S.String, name: S.String }),
+          task: S.Struct({ id: S.String }),
+        }
+      )
+    ).rejects.toMatchObject({
+      _tag: 'RouteConfigurationError',
+      parent: 'projects',
+      child: 'tasks',
+    })
+  })
+
+  test('parses loaded rows before exposing them through bound()', async () => {
+    const [binding] = await compileBindingPlan(
+      [{ param: 'project', column: 'id' }],
+      { projects },
+      { project: S.Struct({ id: S.String, name: S.String }) }
+    )
+
+    await expect(
+      decodeBoundRow(binding, { id: 'project-1', name: 42 })
+    ).rejects.toMatchObject({
+      _tag: 'RouteConfigurationError',
+      binding: 'project',
+    })
+  })
+
+  test('returns the parser output instead of the raw persisted row', async () => {
+    const [binding] = await compileBindingPlan(
+      [{ param: 'project', column: 'id' }],
+      { projects },
+      { project: S.Struct({ id: S.String }) }
+    )
+
+    await expect(
+      decodeBoundRow(binding, {
+        id: 'project-1',
+        name: 'Internal name',
+      })
+    ).resolves.toEqual({ id: 'project-1' })
   })
 })
 
@@ -694,7 +768,7 @@ describe('Route Model Binding Integration', () => {
       )
 
       const res = await app.request('/projects/123')
-      expect(res.status).toBe(200) // Inertia renders with 200
+      expect(res.status).toBe(500)
 
       const body = await res.json()
       // Error is rendered via Honertia's error component (not raw JSON)

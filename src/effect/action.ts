@@ -6,7 +6,12 @@
  */
 
 import { Effect } from 'effect'
-import { Redirect } from './errors.js'
+import {
+  DatabaseConstraintViolation,
+  DatabaseMutationFailed,
+  DatabaseTransactionFailed,
+  Redirect,
+} from './errors.js'
 import { type Validated, type Trusted } from './validation.js'
 
 declare const MutationScopeBrand: unique symbol
@@ -66,7 +71,7 @@ export function action<R, E>(
 export function dbMutation<DB, T>(
   db: DB,
   operation: (db: SafeTx<DB>) => Promise<T>
-): Effect.Effect<T, Error>
+): Effect.Effect<T, DatabaseMutationFailed | DatabaseConstraintViolation>
 
 export function dbMutation<DB, I, T>(
   db: DB,
@@ -75,7 +80,7 @@ export function dbMutation<DB, I, T>(
     db: ScopedSafeTx<DB, Scope>,
     input: MutationInput<Scope, I>
   ) => Promise<T>
-): Effect.Effect<T, Error>
+): Effect.Effect<T, DatabaseMutationFailed | DatabaseConstraintViolation>
 
 export function dbMutation<DB, I, T>(
   db: DB,
@@ -84,17 +89,17 @@ export function dbMutation<DB, I, T>(
     db: ScopedSafeTx<DB, Scope>,
     input: MutationInput<Scope, I>
   ) => Promise<T>
-): Effect.Effect<T, Error> {
+): Effect.Effect<T, DatabaseMutationFailed | DatabaseConstraintViolation> {
   if (typeof inputOrOperation === 'function') {
     const operation = inputOrOperation as (db: SafeTx<DB>) => Promise<T>
     return Effect.tryPromise({
       try: (): Promise<T> => operation(db as SafeTx<DB>),
-      catch: (error) => error instanceof Error ? error : new Error(String(error)),
+      catch: (cause) => classifyDatabaseFailure(cause, 'mutation'),
     })
   }
 
   if (!maybeOperation) {
-    return Effect.fail(
+    return Effect.die(
       new Error('dbMutation scoped mode requires an operation callback')
     )
   }
@@ -105,7 +110,7 @@ export function dbMutation<DB, I, T>(
         db as ScopedSafeTx<DB, symbol>,
         inputOrOperation as MutationInput<symbol, I>
       ),
-    catch: (error) => error instanceof Error ? error : new Error(String(error)),
+    catch: (cause) => classifyDatabaseFailure(cause, 'mutation'),
   })
 }
 
@@ -331,7 +336,7 @@ export function dbTransaction<
 >(
   db: DB,
   operations: (tx: SafeTx<TransactionClient<DB>>) => Promise<T>
-): Effect.Effect<T, Error>
+): Effect.Effect<T, DatabaseTransactionFailed | DatabaseConstraintViolation>
 
 export function dbTransaction<
   DB extends { transaction: (fn: (tx: any) => Promise<any>) => Promise<any> },
@@ -344,7 +349,7 @@ export function dbTransaction<
     tx: ScopedSafeTx<TransactionClient<DB>, Scope>,
     input: MutationInput<Scope, I>
   ) => Promise<T>
-): Effect.Effect<T, Error>
+): Effect.Effect<T, DatabaseTransactionFailed | DatabaseConstraintViolation>
 
 export function dbTransaction<
   DB extends { transaction: (fn: (tx: any) => Promise<any>) => Promise<any> },
@@ -359,19 +364,19 @@ export function dbTransaction<
     tx: ScopedSafeTx<TransactionClient<DB>, Scope>,
     input: MutationInput<Scope, I>
   ) => Promise<T>
-): Effect.Effect<T, Error> {
+): Effect.Effect<T, DatabaseTransactionFailed | DatabaseConstraintViolation> {
   if (typeof inputOrOperations === 'function') {
     const operations = inputOrOperations as (tx: SafeTx<TransactionClient<DB>>) => Promise<T>
     return Effect.tryPromise({
       try: (): Promise<T> => db.transaction((tx) =>
         operations(tx as SafeTx<TransactionClient<DB>>)
       ),
-      catch: (error) => error instanceof Error ? error : new Error(String(error)),
+      catch: (cause) => classifyDatabaseFailure(cause, 'transaction'),
     })
   }
 
   if (!maybeOperations) {
-    return Effect.fail(
+    return Effect.die(
       new Error('dbTransaction scoped mode requires an operations callback')
     )
   }
@@ -383,6 +388,65 @@ export function dbTransaction<
         inputOrOperations as MutationInput<symbol, I>
       )
     ),
-    catch: (error) => error instanceof Error ? error : new Error(String(error)),
+    catch: (cause) => classifyDatabaseFailure(cause, 'transaction'),
   })
+}
+
+type DatabaseOperation = 'mutation' | 'transaction'
+
+function readDatabaseCode(cause: unknown): string | number | undefined {
+  if (typeof cause !== 'object' || cause === null) return undefined
+  if ('code' in cause) {
+    const code = cause.code
+    if (typeof code === 'string' || typeof code === 'number') return code
+  }
+  if ('errno' in cause && typeof cause.errno === 'number') return cause.errno
+  return undefined
+}
+
+function classifyConstraint(code: string | number | undefined):
+  | DatabaseConstraintViolation['constraint']
+  | undefined {
+  if (code === undefined) return undefined
+  const normalized = String(code).toUpperCase()
+
+  if (normalized === '23505' || normalized === '1062' || normalized === 'ER_DUP_ENTRY') {
+    return 'unique'
+  }
+  if (
+    normalized === '23503' ||
+    normalized === '1451' ||
+    normalized === '1452' ||
+    normalized === 'ER_NO_REFERENCED_ROW_2' ||
+    normalized === 'ER_ROW_IS_REFERENCED_2'
+  ) {
+    return 'foreign-key'
+  }
+  if (normalized === '23502') return 'not-null'
+  if (normalized === '23514') return 'check'
+  if (normalized.startsWith('SQLITE_CONSTRAINT')) return 'unknown'
+  return undefined
+}
+
+/** Classify an exception-style database dependency failure into a typed value. */
+export function classifyDatabaseFailure(
+  cause: unknown,
+  operation: 'mutation'
+): DatabaseMutationFailed | DatabaseConstraintViolation
+export function classifyDatabaseFailure(
+  cause: unknown,
+  operation: 'transaction'
+): DatabaseTransactionFailed | DatabaseConstraintViolation
+export function classifyDatabaseFailure(
+  cause: unknown,
+  operation: DatabaseOperation
+): DatabaseMutationFailed | DatabaseTransactionFailed | DatabaseConstraintViolation {
+  const constraint = classifyConstraint(readDatabaseCode(cause))
+  if (constraint) {
+    return new DatabaseConstraintViolation({ operation, constraint, cause })
+  }
+
+  return operation === 'transaction'
+    ? new DatabaseTransactionFailed({ operation, cause })
+    : new DatabaseMutationFailed({ operation, cause })
 }

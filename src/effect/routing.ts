@@ -4,12 +4,16 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
 import type { ParseOptions } from 'effect/SchemaAST'
 import type { Context as HonoContext, Hono, MiddlewareHandler, Env } from 'hono'
-import { effectHandler, errorToResponse } from './handler.js'
+import { errorToResponse, runEffectWithRuntime } from './handler.js'
 import {
   buildContextLayer,
+  disposeRequestRuntime,
+  getEffectBridgeConfig,
+  getEffectBindings,
+  getEffectRuntime,
   getEffectSchema,
   setEffectBridgeConfig,
   type EffectBridgeConfig,
@@ -18,6 +22,7 @@ import {
   type AppError,
   HonertiaConfigurationError,
   Redirect,
+  RouteConfigurationError,
   ValidationError,
 } from './errors.js'
 import { openHonertiaContext } from '../request-context.js'
@@ -47,24 +52,26 @@ import { createBodyParseValidationError, validateUnknown } from './validation.js
 import {
   parseBindings,
   toHonoPath,
-  pluralize,
-  findRelation,
   BoundModels,
+  compileBindingPlan,
+  decodeBindingParam,
+  decodeBoundRow,
   inferParamsSchema,
+  type CompiledRouteBinding,
   type ParsedBinding,
 } from './binding.js'
 import {
   RouteRegistry,
-  getGlobalRegistry,
+  getAppRouteRegistry,
   type HttpMethod,
   type RouteMetadata,
 } from './route-registry.js'
 
 /**
  * Type for Effect-based route handlers.
- * Error type includes Error for compatibility with Effect.tryPromise.
+ * Expected failures must be one of Honertia's typed application errors.
  */
-export type EffectHandler<R = never, E extends AppError | Error = AppError | Error> = Effect.Effect<
+export type EffectHandler<R = never, E extends AppError = AppError> = Effect.Effect<
   Response | Redirect,
   E,
   R
@@ -230,7 +237,7 @@ export class EffectRouteBuilder<
     private readonly layers: Layer.Layer<any, never, never>[] = [],
     private readonly pathPrefix: string = '',
     private readonly bridgeConfig?: EffectBridgeConfig<E, CustomServices>,
-    private readonly registry: RouteRegistry = getGlobalRegistry(),
+    private readonly registry: RouteRegistry = getAppRouteRegistry(app),
     private readonly middlewares: MiddlewareHandler<E>[] = []
   ) {}
 
@@ -379,11 +386,10 @@ export class EffectRouteBuilder<
    */
   private async resolveBindings(
     c: HonoContext<E>,
-    bindings: ParsedBinding[],
+    plan: readonly CompiledRouteBinding[],
     db: unknown,
-    schema: Record<string, unknown>
   ): Promise<Map<string, unknown> | Response> {
-    if (bindings.length === 0) {
+    if (plan.length === 0) {
       return new Map()
     }
 
@@ -391,24 +397,16 @@ export class EffectRouteBuilder<
     const { eq, and } = await import('drizzle-orm')
 
     const models = new Map<string, unknown>()
-    let parent: { tableName: string; model: Record<string, unknown> } | null = null
+    const rows = new Map<string, Record<string, unknown>>()
 
-    for (const binding of bindings) {
-      const tableName = pluralize(binding.param)
-      const table = schema[tableName] as Record<string, unknown> | undefined
-
-      if (!table) {
+    for (const binding of plan) {
+      const rawParam = c.req.param(binding.param)
+      if (!rawParam) {
         return c.notFound() as Response
       }
 
-      const paramValue = c.req.param(binding.param)
-      if (!paramValue) {
-        return c.notFound() as Response
-      }
-
-      // Build query with primary lookup
-      const column = table[binding.column]
-      if (!column) {
+      const paramValue = await decodeBindingParam(binding, rawParam)
+      if (paramValue === undefined) {
         return c.notFound() as Response
       }
 
@@ -417,63 +415,46 @@ export class EffectRouteBuilder<
         where: (c: unknown) => QueryBuilder
         limit: (n: number) => PromiseLike<unknown[]>
       }
-      let whereCondition: unknown = eq(column as Parameters<typeof eq>[0], paramValue)
+      let whereCondition: unknown = eq(
+        binding.table[binding.column] as Parameters<typeof eq>[0],
+        paramValue
+      )
 
-      // If we have a parent, try to scope the query
-      if (parent) {
-        const relation = await findRelation(schema, tableName, parent.tableName)
-        let scoped = false
-        if (relation) {
-          const conditions: Parameters<typeof and> = [
-            whereCondition as Parameters<typeof and>[number],
-          ]
-          let completeRelation = true
+      if (binding.parent) {
+        const parentRow = rows.get(binding.parent.param)
+        if (!parentRow) {
+          throw RouteConfigurationError.relationNotFound(
+            binding.parent.param,
+            binding.tableName,
+            binding.param
+          )
+        }
 
-          for (const pair of relation.columnPairs) {
-            const foreignKeyColumn = table[pair.foreignKey]
-            const parentReferenceValue = parent.model[pair.references]
-            if (
-              !foreignKeyColumn ||
-              parentReferenceValue === undefined ||
-              parentReferenceValue === null
-            ) {
-              completeRelation = false
-              break
-            }
-
-            conditions.push(
-              eq(
-                foreignKeyColumn as Parameters<typeof eq>[0],
-                parentReferenceValue
-              ) as Parameters<typeof and>[number]
+        const conditions: Parameters<typeof and> = [
+          whereCondition as Parameters<typeof and>[number],
+        ]
+        for (const pair of binding.parent.relation.columnPairs) {
+          const parentReferenceValue = parentRow[pair.references]
+          if (parentReferenceValue === undefined || parentReferenceValue === null) {
+            throw RouteConfigurationError.relationNotFound(
+              binding.parent.param,
+              binding.tableName,
+              binding.param
             )
           }
 
-          if (completeRelation) {
-            whereCondition = and(...conditions)
-            scoped = true
-          }
-        }
-
-        // The nested binding could not be scoped to its parent, so it resolves
-        // by primary key alone — a different parent's child can be loaded by
-        // guessing its id. Binding is resolution, not authorization, but this
-        // silent widening is an easy IDOR footgun. Warn in development so the
-        // handler author adds an explicit ownership check (or a relation).
-        if (!scoped && isDevEnv(c)) {
-          console.warn(
-            `[honertia] Route model binding '{${binding.param}}' is nested under ` +
-              `parent table '${parent.tableName}' but could not be scoped to it ` +
-              `(no usable relation found between '${tableName}' and '${parent.tableName}'). ` +
-              `The child is being resolved by '${binding.column}' alone and is NOT ` +
-              `restricted to the parent. Add an explicit authorization check in the ` +
-              `handler, or define a Drizzle relation so the binding can be scoped.`
+          conditions.push(
+            eq(
+              binding.table[pair.foreignKey] as Parameters<typeof eq>[0],
+              parentReferenceValue
+            ) as Parameters<typeof and>[number]
           )
         }
+        whereCondition = and(...conditions)
       }
 
       const dbClient = db as { select: () => { from: (t: unknown) => QueryBuilder } }
-      const query: QueryBuilder = dbClient.select().from(table).where(whereCondition)
+      const query: QueryBuilder = dbClient.select().from(binding.table).where(whereCondition)
 
       // Execute the query - use .limit(1) for cross-database compatibility
       // (PostgreSQL/MySQL don't have .get(), only SQLite does)
@@ -484,20 +465,21 @@ export class EffectRouteBuilder<
         return c.notFound() as Response
       }
 
-      models.set(binding.param, result)
-      parent = { tableName, model: result as Record<string, unknown> }
+      rows.set(binding.param, result as Record<string, unknown>)
+      models.set(binding.param, await decodeBoundRow(binding, result))
     }
 
     return models
   }
 
   private createHandler<R extends BaseServices | ProvidedServices | CustomServices>(
-    effect: EffectHandler<R, AppError | Error>,
+    effect: EffectHandler<R, AppError>,
     bindings: ParsedBinding[],
     options?: EffectRouteOptions
   ): MiddlewareHandler<E> {
     const layers = this.layers
     const bridgeConfig = this.bridgeConfig
+    let bindingPlanPromise: Promise<readonly CompiledRouteBinding[]> | undefined
     // Dev-only observability for an ineffective `cache` option:
     // once per route (this handler closure), not once per request.
     let warnedIneffectiveCache = false
@@ -507,6 +489,7 @@ export class EffectRouteBuilder<
 
       // Get schema from bridgeConfig or from context (set by setupHonertia/effectBridge)
       const schema = bridgeConfig?.schema ?? getEffectSchema(c)
+      const configuredBindings = bridgeConfig?.bindings ?? getEffectBindings(c)
 
       // Use provided params schema, or infer from database schema if available
       const paramsSchema = options?.params ?? (
@@ -555,13 +538,19 @@ export class EffectRouteBuilder<
       }
 
       // Build context layer from Hono context
-      const contextLayer = buildContextLayer(c, bridgeConfig)
+      const requestRuntime = getEffectRuntime(c)
+      let contextLayer = requestRuntime
+        ? Layer.succeedContext((await requestRuntime.runtime()).context)
+        : buildContextLayer(c, bridgeConfig ?? getEffectBridgeConfig(c))
+      if (requestRuntime && bridgeConfig?.services) {
+        contextLayer = Layer.merge(contextLayer, bridgeConfig.services(c))
+      }
 
       // Resolve route model bindings if we have any and schema is configured
       let boundModelsLayer: Layer.Layer<BoundModels, never, never>
       let boundModels: ReadonlyMap<string, unknown> = new Map()
 
-      if (bindings.length > 0 && schema) {
+      if (bindings.length > 0 && schema && configuredBindings) {
         const db = openHonertiaContext(c).db
         if (!db) {
           // A binding cannot be resolved without a database; this is
@@ -570,7 +559,9 @@ export class EffectRouteBuilder<
           throw HonertiaConfigurationError.databaseNotConfigured()
         }
 
-        const result = await this.resolveBindings(c, bindings, db, schema)
+        bindingPlanPromise ??= compileBindingPlan(bindings, schema, configuredBindings)
+        const plan = await bindingPlanPromise
+        const result = await this.resolveBindings(c, plan, db)
         if (result instanceof Response) {
           return result
         }
@@ -582,6 +573,8 @@ export class EffectRouteBuilder<
         const unconfiguredMap = new Map<string, unknown>()
         unconfiguredMap.set('__schema_not_configured__', true)
         boundModelsLayer = Layer.succeed(BoundModels, unconfiguredMap as ReadonlyMap<string, unknown>)
+      } else if (bindings.length > 0) {
+        throw RouteConfigurationError.bindingParserNotConfigured(bindings[0].param)
       } else {
         // No bindings - empty bound models
         boundModelsLayer = Layer.succeed(BoundModels, new Map() as ReadonlyMap<string, unknown>)
@@ -643,14 +636,15 @@ export class EffectRouteBuilder<
         )
       }
 
-      // Run the effect with the combined layer
-      const program = handlerEffect.pipe(Effect.provide(fullLayer as Layer.Layer<any, never, never>))
-
-      // Use the handler
-      const response = await effectHandler<E, never, AppError>(program as any)(
-        c,
-        async () => {}
-      )
+      // The route runtime owns every provided Layer until background work has
+      // settled, including scoped services added with route.provide().
+      const routeRuntime = ManagedRuntime.make(fullLayer)
+      let response: Response
+      try {
+        response = await runEffectWithRuntime(handlerEffect, c, routeRuntime)
+      } finally {
+        await disposeRequestRuntime(c, routeRuntime)
+      }
 
       if (!options?.cache || !(response instanceof Response)) {
         return response
@@ -688,7 +682,7 @@ export class EffectRouteBuilder<
   private registerRoute<R extends BaseServices | ProvidedServices | CustomServices>(
     method: HttpMethod,
     path: string,
-    effect: EffectHandler<R, AppError | Error>,
+    effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
   ): void {
     const bindings = parseBindings(path)
@@ -728,7 +722,7 @@ export class EffectRouteBuilder<
   /** Register a GET route. Supports Laravel-style route model binding: /projects/{project} */
   get<R extends BaseServices | ProvidedServices | CustomServices>(
     path: string,
-    effect: EffectHandler<R, AppError | Error>,
+    effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
   ): void {
     this.registerRoute('get', path, effect, options)
@@ -737,7 +731,7 @@ export class EffectRouteBuilder<
   /** Register a POST route. Supports Laravel-style route model binding: /projects/{project} */
   post<R extends BaseServices | ProvidedServices | CustomServices>(
     path: string,
-    effect: EffectHandler<R, AppError | Error>,
+    effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
   ): void {
     this.registerRoute('post', path, effect, options)
@@ -746,7 +740,7 @@ export class EffectRouteBuilder<
   /** Register a PUT route. Supports Laravel-style route model binding: /projects/{project} */
   put<R extends BaseServices | ProvidedServices | CustomServices>(
     path: string,
-    effect: EffectHandler<R, AppError | Error>,
+    effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
   ): void {
     this.registerRoute('put', path, effect, options)
@@ -755,7 +749,7 @@ export class EffectRouteBuilder<
   /** Register a PATCH route. Supports Laravel-style route model binding: /projects/{project} */
   patch<R extends BaseServices | ProvidedServices | CustomServices>(
     path: string,
-    effect: EffectHandler<R, AppError | Error>,
+    effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
   ): void {
     this.registerRoute('patch', path, effect, options)
@@ -764,7 +758,7 @@ export class EffectRouteBuilder<
   /** Register a DELETE route. Supports Laravel-style route model binding: /projects/{project} */
   delete<R extends BaseServices | ProvidedServices | CustomServices>(
     path: string,
-    effect: EffectHandler<R, AppError | Error>,
+    effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
   ): void {
     this.registerRoute('delete', path, effect, options)
@@ -773,7 +767,7 @@ export class EffectRouteBuilder<
   /** Register a route for all HTTP methods. Supports Laravel-style route model binding: /projects/{project} */
   all<R extends BaseServices | ProvidedServices | CustomServices>(
     path: string,
-    effect: EffectHandler<R, AppError | Error>,
+    effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
   ): void {
     this.registerRoute('all', path, effect, options)
@@ -795,7 +789,7 @@ export interface EffectRoutesConfig<E extends Env, CustomServices = never>
   extends EffectBridgeConfig<E, CustomServices> {
   /**
    * Route registry for storing route metadata.
-   * Defaults to the global registry.
+   * Defaults to the registry owned by this Hono app.
    *
    * @example
    * ```typescript
@@ -823,6 +817,6 @@ export function effectRoutes<E extends Env, CustomServices = never>(
   app: Hono<E>,
   config?: EffectRoutesConfig<E, CustomServices>
 ): EffectRouteBuilder<E, never, CustomServices> {
-  const registry = config?.registry ?? getGlobalRegistry()
+  const registry = config?.registry ?? getAppRouteRegistry(app)
   return new EffectRouteBuilder(app, [], '', config, registry)
 }

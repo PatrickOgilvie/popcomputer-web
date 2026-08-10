@@ -408,6 +408,9 @@ describe('generateOpenApi', () => {
 })
 
 describe('parseGenerateOpenApiArgs', () => {
+  test('parses --app option', () => {
+    expect(parseGenerateOpenApiArgs(['--app', 'src/app.ts']).app).toBe('src/app.ts')
+  })
   test('parses --title option', () => {
     const options = parseGenerateOpenApiArgs(['--title', 'My API'])
     expect(options.title).toBe('My API')

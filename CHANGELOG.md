@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Declarative, fail-closed route model binding**: Every binding now registers an Effect Schema in `honertia.bindings`. Lookup parameters and database rows are parsed before `bound()` can expose them. Nested bindings must have a relationship discoverable from Drizzle metadata or an explicit `routeBinding(schema, { scope })`; an ambiguous child route now fails with a configuration error instead of silently querying without its parent constraint.
+- **Precise database dependency failures**: `dbMutation` and `dbTransaction` now fail with tagged `DatabaseMutationFailed`, `DatabaseTransactionFailed`, or `DatabaseConstraintViolation` values. Common PostgreSQL, MySQL, and SQLite constraint codes are classified at the exception boundary, enabling narrow `Effect.catchTag` recovery without a broad `Error` channel.
+- **Runtime-owned background Effects**: `background(operation, effect)` preserves the request Effect context, uses Cloudflare `waitUntil`, keeps the runtime alive until scheduled work settles, and reports failures to `EffectErrorObserverService` with the operation name. Non-Worker runtimes execute the work inline rather than dropping it.
+- **Application-owned route metadata**: Each Hono app now owns its `RouteRegistry`. The `routes`, `check`, and `generate:openapi` commands load the selected application with `--app <entrypoint>`, removing correctness dependence on process-global registration state.
+
+### Changed
+
+- **One application setup and error boundary**: `setupHonertia(app, config)` installs the middleware stack, Effect bridge, not-found renderer, and Hono error handler together, and returns `{ app, routes }`. Typed failures, defects, plain Hono exceptions, and 404s now share the same environment detection, redaction, rendering, status, logging, and observation policy.
+- **One owner for each setup concern**: `honertia` owns the renderer, database, schema, and route bindings; top-level `auth` owns auth construction, session parsing, cookies, and public projection; `effect` owns only custom Effect services. This removes silent precedence between duplicate configuration sources while preserving schema and binding overrides on standalone `effectBridge()` and `effectRoutes()` composition seams.
+- **Authentication is parsed and safe by default**: `auth.client`, `auth.session`, and `auth.share` make the session boundary and public projection explicit. A null provider result means anonymous, provider exceptions become `SessionLookupUnavailable`, malformed sessions become `InvalidAuthSession`, and the default shared user is limited to `id`, `name`, and `image`.
+
+### Breaking
+
+- Route-model bindings backed by a database require a registered row parser. Nested bindings without provable or explicit scope no longer run unscoped.
+- `honertia.auth`, `effect.schema`, and `effect.bindings` are no longer accepted by `setupHonertia()`. Move them to `auth.client`, `honertia.schema`, and `honertia.bindings` respectively.
+- CLI route introspection requires `--app <entrypoint>` unless a registry is supplied through the programmatic API.
+- Inertia error pages preserve the structured HTTP status instead of coercing failures to 200.
+
+## [0.2.1] - 2026-08-02
+
+### Changed
+
+- **`setupHonertia()` now models database presence in its configuration type**: With the standard Honertia module augmentations, bindings, database, auth, and custom Effect services are inferred from `setupHonertia({...})` without explicit generics. The supported use cases are explicit:
+  - **Database-backed auth**: Configure `database` and `auth`; the auth factory receives a required, inferred `db`. This is the normal Better Auth setup for persistent users, accounts, sessions, verification records, and database-dependent plugins. Application-side non-null assertions and impossible `db === undefined` guards are no longer needed.
+  - **Stateless auth**: Configure `auth` without `database`; the auth factory receives only the request context. This supports Better Auth's intentional signed/encrypted-cookie mode without presenting a meaningless `db: undefined` service.
+  - **Database without auth**: Configure `database` alone for applications that need persistence but no authentication.
+  - **Neither database nor auth**: Configure only Honertia's core renderer and version for public or otherwise stateless applications.
+  - **Migration from the 0.2.0 demo API**: Remove placeholder generic arguments such as `setupHonertia<Env, unknown, unknown, Services>(...)` and call `setupHonertia({...})`; the configured factories and service layer now supply those types. Explicit `unknown` no longer stands in for an absent database because database presence is represented deliberately rather than ambiguously.
+- **Default console error output never contains raw `Error` objects**: `createErrorHandlers()` no longer writes raw `Error` objects to `console.error` in production. Explicit development environments retain structured terminal diagnostics; production emits a single-line, client-safe structured projection (code, tag, category, HTTP status, request id — with sensitive messages replaced) so platform logs such as `wrangler tail` keep a correlation signal. Full-detail production reporting belongs in `EffectErrorObserverService` or another configured telemetry sink.
+- **Better Auth compatibility is tested against 1.6.25 and capped below 2.0**: Honertia's development dependency is pinned for reproducible integration tests, Drizzle test and demo dependencies are aligned with Better Auth's `^0.45.2` peer, and the optional Better Auth peer range continues to support 1.x without silently accepting a future breaking major.
+- **The Effect-first error and observability contract is now explicit**: Expected application failures belong in Effect's typed error channel; defects thrown inside `effectHandler` or `effectRoutes` are observed by `EffectErrorObserverService`; exceptions from plain Hono handlers or middleware are rendered safely but remain outside that observer's reporting guarantee. Direct plain-Hono business handlers are documented as an anti-pattern, while framework middleware remains a supported boundary.
+
+### Fixed
+
+- **`betterAuthFormAction()` now handles resolved Better Auth error responses**: Better Auth 1.6 returns `Response` objects for server API calls that include a `Request`, including expected 401/422 login and registration failures. Honertia now normalizes thrown API errors, resolved HTTP error responses, and status envelopes before deciding whether to redirect. Verified Better Auth 4xx request rejections enter the existing `ValidationError` form-rendering path with typed `status`, `code`, and `message`; auth rate limits become `AuthRateLimitError` with a real 429 response and `Retry-After` guidance; 5xx and unknown dependency failures become safe `HttpError` values. Auth and error mapper callbacks also use the configured `AuthType` and exported `BetterAuthActionError`, removing application-side casts.
+
+### Security
+
+- **The external-error-reporting example no longer serializes raw errors**: Documentation now demonstrates an allowlisted structured telemetry projection instead of forwarding `event.error.message` and arbitrary metadata.
+- **Unknown Better Auth dependency failures can no longer become client-visible validation messages**: Only resolved Better Auth error results or thrown `APIError` instances carrying a valid HTTP status are eligible for form error mapping. Arbitrary thrown objects with `message`, `code`, or `status` fields are classified as authentication-service failures, so database, network, and provider diagnostics cannot be rendered into production form errors.
+
 ## [0.2.0] - 2026-08-01
 
 ### Security
@@ -28,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`shareAuth` is now a factory** (`shareAuth()` instead of `shareAuth`). Calling it with no arguments preserves the previous full-user behavior. **Breaking** for code that referenced `shareAuth` as an `Effect` value directly.
 - **`findRelation` is now async and returns complete JS-property column pairs**: It dynamically imports `drizzle-orm` and resolves `{ columnPairs: [{ foreignKey, references }, ...] }` as JS property keys (`workspaceId`) rather than SQL column names (`workspace_id`). Composite relations include every pair. **Breaking** for code that called `findRelation` directly.
 - **Nested bindings that can now be scoped return 404 for cross-parent children**: Requests that previously (incorrectly) resolved a child belonging to a different parent now return 404. This is the security fix above viewed as a behavior change — apps that relied on the unscoped behavior for legitimate lookups should bind the child at the top level instead of nesting it.
-- **`c.var.db` / `c.var.auth` / `c.var.authUser` are no longer set** (**Breaking**): Framework state moved to the typed request context — read it with `honertiaContext(c)`. The `setupHonertia` auth factory signature changed from `auth: (c) => ...` (reading `c.var.db`) to `auth: (c, { db }) => ...`. Apps wiring services manually must switch from `c.set('db', ...)` to the `honertiaServices()` middleware; providing `DatabaseService` through a custom Effect services layer is no longer supported for route model binding.
+- **`c.var.db` / `c.var.auth` / `c.var.authUser` are no longer set** (**Breaking**): Framework state moved to the typed request context — read it with `honertiaContext(c)`. Authentication construction moved from `honertia.auth: (c) => ...` (reading `c.var.db`) to top-level `auth.client: (c, { db }) => ...`. Apps wiring services manually must switch from `c.set('db', ...)` to the `honertiaServices()` middleware; providing `DatabaseService` through a custom Effect services layer is no longer supported for route model binding.
 - **`userKey` / `authUserKey` options removed** (**Breaking**): `loadUser`, `shareAuthMiddleware`, `setupHonertia({ auth })`, and `effectBridge` no longer accept a configurable context key for the authenticated user; the user is published on the request context as `authUser`.
 - **Unconfigured services fail at `yield*`, not at property access** (**Breaking**): `DatabaseService`/`AuthService` are provided to the Effect layer only when configured; the throwing proxy placeholders are gone. Yielding an unconfigured service is now itself a configuration error (previously, yielding without touching a property succeeded silently), rendered as the same structured `CFG_300`/`CFG_301` response with a setup hint. Routes that never yield the service are unaffected. Route model binding without a configured database now renders that configuration error instead of a misleading 404.
 

@@ -4,7 +4,7 @@
  * Middleware that connects Hono's request handling to Effect's runtime.
  */
 
-import { Effect, Layer, ManagedRuntime, Option } from 'effect'
+import { Cause, Effect, Layer, ManagedRuntime, Option } from 'effect'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import { openHonertiaContext } from '../request-context.js'
 import {
@@ -34,6 +34,8 @@ import {
   type BindingsType,
 } from './services.js'
 import { TestCaptureService } from './test-layers.js'
+import type { RouteBindingsConfig } from './binding.js'
+import { observeEffectErrorEvent } from './error-observer.js'
 
 /**
  * Configuration for the Effect bridge.
@@ -64,10 +66,12 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
   services?: (c: HonoContext<E>) => Layer.Layer<CustomServices, never, never>
   /**
    * Drizzle schema for route model binding.
-   * Usually configured via `setupHonertia({ honertia: { schema } })`.
+   * Usually configured via `setupHonertia(app, { honertia: { schema } })`.
    * Can also be passed here for standalone effectBridge usage.
    */
   schema?: Record<string, unknown>
+  /** Row parsers and optional scope metadata for route-model bindings. */
+  bindings?: RouteBindingsConfig
 }
 
 // Unconfigured services are simply not provided to the Effect layer. When a
@@ -194,39 +198,109 @@ interface CloudflareExecutionContext {
 /**
  * Create an ExecutionContextClient from Cloudflare's ExecutionContext.
  */
-function createExecutionContextClient(ctx: CloudflareExecutionContext): ExecutionContextClient {
-  return {
+function makeObservedBackground<A, E, R>(
+  operation: string,
+  effect: Effect.Effect<A, E, R>
+): Effect.Effect<void, never, R> {
+  return effect.pipe(
+    Effect.asVoid,
+    Effect.catchAllCause((cause) =>
+      observeEffectErrorEvent({
+        source: 'framework',
+        handling: 'unhandled',
+        kind: Option.isSome(Cause.failureOption(cause)) ? 'failure' : 'defect',
+        error: Cause.squash(cause),
+        metadata: { operation },
+      })
+    )
+  )
+}
+
+interface BackgroundSupervisor {
+  readonly client: ExecutionContextClient
+  readonly hasPending: () => boolean
+  readonly drain: () => Promise<void>
+}
+
+/**
+ * Dispose a request runtime only after its owned background work settles.
+ *
+ * Worker runtimes hand the drain and disposal promise to `waitUntil`; inline
+ * runtimes await completion before releasing scoped services.
+ */
+export async function disposeRequestRuntime<E extends Env, R>(
+  c: HonoContext<E>,
+  runtime: ManagedRuntime.ManagedRuntime<R, never>
+): Promise<void> {
+  const supervisor = openHonertiaContext(c).backgroundSupervisor
+  if (supervisor?.hasPending() && supervisor.client.isAvailable) {
+    supervisor.client.waitUntil(
+      supervisor.drain().then(() => runtime.dispose())
+    )
+    return
+  }
+
+  await supervisor?.drain()
+  await runtime.dispose()
+}
+
+function createExecutionContextSupervisor(
+  ctx: CloudflareExecutionContext
+): BackgroundSupervisor {
+  const pending = new Set<Promise<void>>()
+
+  const schedule = <A, E, R>(
+    operation: string,
+    effect: Effect.Effect<A, E, R>
+  ): Effect.Effect<void, never, R> =>
+    Effect.flatMap(Effect.context<R>(), (context) =>
+      Effect.sync(() => {
+        const running = Effect.runPromise(
+          makeObservedBackground(operation, effect).pipe(Effect.provide(context))
+        )
+        let tracked: Promise<void>
+        tracked = running.then(() => {
+          pending.delete(tracked)
+        })
+        pending.add(tracked)
+        ctx.waitUntil(tracked)
+      })
+    )
+
+  const client: ExecutionContextClient = {
     isAvailable: true,
     waitUntil: (promise) => ctx.waitUntil(promise),
-    runInBackground: (effect) =>
-      Effect.flatMap(Effect.context<any>(), (context) =>
-        Effect.sync(() => {
-          const promise = Effect.runPromise(
-            effect.pipe(
-              Effect.provide(context),
-              Effect.catchAllCause((cause) => {
-                // Log errors but don't crash - this is background work
-                console.error('[Background Task Error]', cause)
-                return Effect.void
-              })
-            )
-          )
-          ctx.waitUntil(promise)
-        })
-      ),
+    runInBackground: (effect) => schedule('background', effect),
+    schedule,
+  }
+
+  return {
+    client,
+    hasPending: () => pending.size > 0,
+    drain: async () => {
+      while (pending.size > 0) {
+        await Promise.allSettled([...pending])
+      }
+    },
   }
 }
 
 /**
  * Create a no-op ExecutionContextClient for environments without ExecutionContext.
  */
-function createNoopExecutionContextClient(): ExecutionContextClient {
-  return {
+function createInlineExecutionContextSupervisor(): BackgroundSupervisor {
+  const client: ExecutionContextClient = {
     isAvailable: false,
     waitUntil: () => {
       // No-op - silently ignore in non-Worker environments
     },
-    runInBackground: () => Effect.void,
+    runInBackground: (effect) => makeObservedBackground('background', effect),
+    schedule: (operation, effect) => makeObservedBackground(operation, effect),
+  }
+  return {
+    client,
+    hasPending: () => false,
+    drain: async () => {},
   }
 }
 
@@ -305,11 +379,15 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   } catch {
     executionCtx = undefined
   }
+  const backgroundSupervisor = requestCtx.backgroundSupervisor ?? (
+    executionCtx
+      ? createExecutionContextSupervisor(executionCtx)
+      : createInlineExecutionContextSupervisor()
+  )
+  requestCtx.backgroundSupervisor = backgroundSupervisor
   const executionContextLayer = Layer.succeed(
     ExecutionContextService,
-    executionCtx
-      ? createExecutionContextClient(executionCtx)
-      : createNoopExecutionContextClient()
+    backgroundSupervisor.client
   )
 
   // Workers Cache purge API: probes ctx.cache, then the cloudflare:workers
@@ -428,6 +506,9 @@ export function effectBridge<E extends Env, CustomServices = never>(
     if (config?.schema) {
       requestCtx.schema = config.schema
     }
+    if (config?.bindings) {
+      requestCtx.bindings = config.bindings
+    }
 
     try {
       await next()
@@ -448,8 +529,7 @@ export function effectBridge<E extends Env, CustomServices = never>(
           // Ignore capture errors during tests
         }
       }
-      // Cleanup runtime after request
-      await runtime.dispose()
+      await disposeRequestRuntime(c, runtime)
     }
 
     // Return response for proper propagation in forwarding/proxy scenarios
@@ -464,4 +544,11 @@ export function getEffectSchema<E extends Env>(
   c: HonoContext<E>
 ): Record<string, unknown> | undefined {
   return openHonertiaContext(c).schema
+}
+
+/** Get the route-model binding configuration from the request context. */
+export function getEffectBindings<E extends Env>(
+  c: HonoContext<E>
+): RouteBindingsConfig | undefined {
+  return openHonertiaContext(c).bindings
 }

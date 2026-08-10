@@ -19,6 +19,7 @@ export {
   type HonertiaSetupConfig,
   type HonertiaFullConfig,
   type ErrorHandlerConfig,
+  type HonertiaApplication,
 } from './setup.js'
 
 // Core middleware (for manual setup)

@@ -59,8 +59,15 @@ const categories = sqliteTable('categories', {
 
 const schema = { projects, categories }
 
+const routeBindings = {
+  project: S.Struct({ id: S.String, name: S.String }),
+  category: S.Struct({ id: S.String, title: S.String }),
+  publicProject: S.Struct({ id: S.String }),
+}
+
 type Project = typeof projects.$inferSelect
 type Category = typeof categories.$inferSelect
+type PublicProject = S.Schema.Type<typeof routeBindings.publicProject>
 
 // Custom auth user type for testing HonertiaAuthUserType augmentation
 interface CustomAuthUser {
@@ -92,6 +99,9 @@ declare module '../src/effect/index.js' {
     type: { query: (sql: string) => Promise<unknown[]> }
     schema: typeof schema
   }
+  interface HonertiaRouteBindingsType {
+    type: typeof routeBindings
+  }
   interface HonertiaAuthType {
     type: { getSession: () => Promise<unknown> }
   }
@@ -109,6 +119,12 @@ const _pluralProject: AssertEqual<BoundModel<'project'>, Project> = true
 
 // Test: category → categories (y → ies)
 const _pluralCategory: AssertEqual<BoundModel<'category'>, Category> = true
+
+// Parser output, rather than the raw table row, owns the bound-model contract.
+const _parsedPublicProject: AssertEqual<
+  BoundModel<'publicProject'>,
+  PublicProject
+> = true
 
 // ============================================================================
 // Module Augmentation Tests
@@ -230,6 +246,14 @@ const _testBoundCategory = Effect.gen(function* () {
   const _id: string = category.id
   const _title: string = category.title
   return category
+})
+
+const _testParsedBound = Effect.gen(function* () {
+  const project = yield* bound('publicProject')
+  const _id: string = project.id
+  // @ts-expect-error The registered parser strips fields it does not declare.
+  void project.name
+  return project
 })
 
 // ============================================================================

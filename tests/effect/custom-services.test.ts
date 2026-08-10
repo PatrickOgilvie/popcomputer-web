@@ -257,7 +257,7 @@ describe('Custom Services via setupHonertia', () => {
 
     app.use(
       '*',
-      setupHonertia<TestEnv, BindingsService>({
+      setupHonertia<TestEnv, unknown, BindingsService>({
         honertia: {
           version: '1.0.0',
           render: (page) => JSON.stringify(page),

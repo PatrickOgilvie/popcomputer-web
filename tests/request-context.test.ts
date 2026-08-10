@@ -116,8 +116,23 @@ describe('honertiaServices + honertiaContext', () => {
     const fakeAuth = {
       api: {
         getSession: async () => ({
-          user: { id: 'user-1', name: 'Ada' },
-          session: { id: 'session-1' },
+          user: {
+            id: 'user-1',
+            email: 'ada@example.com',
+            name: 'Ada',
+            emailVerified: true,
+            image: null,
+            createdAt: new Date('2026-01-01T00:00:00Z'),
+            updatedAt: new Date('2026-01-01T00:00:00Z'),
+          },
+          session: {
+            id: 'session-1',
+            userId: 'user-1',
+            expiresAt: new Date('2027-01-01T00:00:00Z'),
+            token: 'redacted-test-token',
+            createdAt: new Date('2026-01-01T00:00:00Z'),
+            updatedAt: new Date('2026-01-01T00:00:00Z'),
+          },
         }),
       },
     }

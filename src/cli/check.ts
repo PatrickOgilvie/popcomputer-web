@@ -7,9 +7,9 @@
 
 import {
   RouteRegistry,
-  getGlobalRegistry,
   type RouteMetadataJson,
 } from '../effect/route-registry.js'
+import { loadAppRouteRegistry } from './load-app.js'
 import { readFileSync, readdirSync } from 'node:fs'
 import { extname, join, relative, resolve } from 'node:path'
 
@@ -115,6 +115,8 @@ export interface CheckCommandResult {
  * Options for check command.
  */
 export interface CheckCommandOptions {
+  /** Application entrypoint loaded by the CLI. */
+  app?: string
   /**
    * Only run specific checks.
    */
@@ -550,7 +552,7 @@ function checkRouteRegistration(
  * ```
  */
 export function checkCommand(
-  registry: RouteRegistry = getGlobalRegistry(),
+  registry: RouteRegistry,
   options: CheckCommandOptions = {}
 ): CheckCommandResult {
   const routes = registry.toJson()
@@ -666,6 +668,9 @@ export function parseCheckArgs(args: string[]): CheckCommandOptions {
     const arg = args[i]
 
     switch (arg) {
+      case '--app':
+        options.app = args[++i]
+        break
       case '--json':
         options.format = 'json'
         break
@@ -697,9 +702,10 @@ export function checkHelp(): string {
 honertia check - Validate project structure and configuration
 
 USAGE:
-  honertia check [OPTIONS]
+  honertia check --app <entrypoint> [OPTIONS]
 
 OPTIONS:
+  --app <path>        Application entrypoint exporting the app or route registry
   --json              Output as JSON (machine-readable)
   -v, --verbose       Show detailed output with fix suggestions
   --only <checks>     Run specific checks (comma-separated)
@@ -714,33 +720,39 @@ CHECKS:
 
 EXAMPLES:
   # Run all checks
-  honertia check
+  honertia check --app src/app.ts
 
   # Run with verbose output
-  honertia check --verbose
+  honertia check --app src/app.ts --verbose
 
   # Output as JSON for agents
-  honertia check --json
+  honertia check --app src/app.ts --json
 
   # Run specific checks
-  honertia check --only routes,naming
+  honertia check --app src/app.ts --only routes,naming
 `.trim()
 }
 
 /**
  * Run the check command from CLI arguments.
  */
-export function runCheck(
+export async function runCheck(
   args: string[] = [],
-  registry: RouteRegistry = getGlobalRegistry()
-): void {
+  registry?: RouteRegistry
+): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(checkHelp())
     return
   }
 
   const options = parseCheckArgs(args)
-  const result = checkCommand(registry, options)
+  const resolvedRegistry = registry ?? (
+    options.app ? await loadAppRouteRegistry(options.app) : undefined
+  )
+  if (!resolvedRegistry) {
+    throw new Error('Missing application entrypoint. Pass --app src/app.ts.')
+  }
+  const result = checkCommand(resolvedRegistry, options)
 
   if (options.format === 'json') {
     console.log(JSON.stringify(result, null, 2))

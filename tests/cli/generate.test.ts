@@ -3,6 +3,8 @@
  */
 
 import { describe, test, expect } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   generateAction,
   parseSchemaString,
@@ -313,8 +315,12 @@ describe('generateAction', () => {
 
       expect(result.content).toContain("describe(`Route: ${route.name}")
       expect(result.content).toContain('createTestApp')
-      expect(result.content).toContain('effectRoutes(app, { registry })')
-      expect(result.content).toContain('setupHonertia')
+      expect(result.content).toContain('effectRoutes(app)')
+      expect(result.content).not.toContain('new RouteRegistry()')
+      expect(result.content).toContain('setupHonertia(app, {')
+      expect(result.content).toContain('database: () => ({})')
+      expect(result.content).toContain('client: () => ({')
+      expect(result.content).not.toContain('honertia: {\n        auth:')
     })
 
     test('includes auth tests for required auth', () => {
@@ -327,6 +333,39 @@ describe('generateAction', () => {
 
       expect(result.content).toContain('redirects unauthenticated users to login')
       expect(result.content).toContain("toContain('/login')")
+      expect(result.content).toContain("expiresAt: new Date('2099-01-01T00:00:00.000Z')")
+    })
+
+    test('generated authenticated mutation tests execute successfully', async () => {
+      const result = generateAction({
+        name: 'generated/create',
+        method: 'POST',
+        path: '/generated',
+        auth: 'required',
+        schema: 'name:string:required',
+      })
+      const directory = mkdtempSync(join(import.meta.dir, '.generated-action-'))
+      const file = join(directory, 'create.ts')
+
+      try {
+        writeFileSync(file, result.content)
+        const child = Bun.spawn(['bun', 'test', file], {
+          cwd: join(import.meta.dir, '../..'),
+          env: { ...process.env, NODE_ENV: 'test' },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        })
+        const [exitCode, stdout, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ])
+
+        expect(`${stdout}\n${stderr}`).toContain('3 pass')
+        expect(exitCode).toBe(0)
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
     })
 
     test('includes validation tests for schema', () => {

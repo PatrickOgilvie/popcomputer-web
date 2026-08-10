@@ -133,6 +133,15 @@ describe('createRouteTester', () => {
     expect(typeof testRoute).toBe('function')
   })
 
+  test('defaults to the registry owned by the app', () => {
+    const app = new Hono()
+    effectRoutes(app).get('/owned', Effect.succeed(new Response('ok')), {
+      name: 'owned.show',
+    })
+
+    expect(typeof createRouteTester('owned.show', app)).toBe('function')
+  })
+
   test('throws for unknown route', () => {
     const { app, registry } = createTestApp()
 
@@ -157,30 +166,40 @@ describe('generateTestCases', () => {
   })
 
   test('generates basic accessibility test', () => {
-    const { registry } = createTestApp()
+    const { app, registry } = createTestApp()
 
-    const cases = generateTestCases('projects.index', registry)
+    const cases = generateTestCases('projects.index', app, registry)
     expect(cases.some((c) => c.name === 'route is accessible')).toBe(true)
   })
 
-  test('generates 404 test for routes with bindings', () => {
-    const { registry } = createTestApp()
+  test('defaults to the registry owned by the app', () => {
+    const app = new Hono()
+    effectRoutes(app).get('/owned', Effect.succeed(new Response('ok')), {
+      name: 'owned.show',
+    })
 
-    const cases = generateTestCases('projects.show', registry)
+    const cases = generateTestCases('owned.show', app)
+    expect(cases.some((testCase) => testCase.name === 'route is accessible')).toBe(true)
+  })
+
+  test('generates 404 test for routes with bindings', () => {
+    const { app, registry } = createTestApp()
+
+    const cases = generateTestCases('projects.show', app, registry)
     expect(cases.some((c) => c.name === 'returns 404 for non-existent resource')).toBe(true)
   })
 
   test('generates validation test for non-GET routes', () => {
-    const { registry } = createTestApp()
+    const { app, registry } = createTestApp()
 
-    const cases = generateTestCases('projects.create', registry)
+    const cases = generateTestCases('projects.create', app, registry)
     expect(cases.some((c) => c.name === 'validates request body')).toBe(true)
   })
 
   test('returns empty array for unknown route', () => {
-    const { registry } = createTestApp()
+    const { app, registry } = createTestApp()
 
-    const cases = generateTestCases('unknown', registry)
+    const cases = generateTestCases('unknown', app, registry)
     expect(cases).toEqual([])
   })
 })

@@ -404,12 +404,18 @@ export interface ExecutionContextClient {
 
   /**
    * Run an Effect in the background after the response is sent.
-   * Errors are caught and logged - they won't crash the worker.
+   * Errors are observed and won't crash the worker.
    *
    * The Effect's requirements (R) must be satisfied by the current context.
    * Returns immediately - the actual work happens asynchronously.
    */
   runInBackground: <A, E, R>(
+    effect: Effect.Effect<A, E, R>
+  ) => Effect.Effect<void, never, R>
+
+  /** Schedule named detached work for safe observation and correlation. */
+  schedule: <A, E, R>(
+    operation: string,
     effect: Effect.Effect<A, E, R>
   ) => Effect.Effect<void, never, R>
 

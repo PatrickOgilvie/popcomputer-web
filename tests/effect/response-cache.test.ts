@@ -155,8 +155,23 @@ describe('cache route option', () => {
           auth: {
             api: {
               getSession: async () => ({
-                user: { id: 'user-1' },
-                session: { id: 'session-1' },
+                user: {
+                  id: 'user-1',
+                  email: 'user@example.com',
+                  name: 'User',
+                  emailVerified: true,
+                  image: null,
+                  createdAt: new Date('2026-01-01T00:00:00Z'),
+                  updatedAt: new Date('2026-01-01T00:00:00Z'),
+                },
+                session: {
+                  id: 'session-1',
+                  userId: 'user-1',
+                  expiresAt: new Date('2027-01-01T00:00:00Z'),
+                  token: 'redacted-test-token',
+                  createdAt: new Date('2026-01-01T00:00:00Z'),
+                  updatedAt: new Date('2026-01-01T00:00:00Z'),
+                },
               }),
             },
           } as never,
@@ -341,6 +356,9 @@ describe('cache route option', () => {
       slug: text('slug').notNull(),
     })
     const schema = { workspaces }
+    const bindings = {
+      workspace: S.Struct({ id: S.String, slug: S.String }),
+    }
 
     const sqlite = new Database(':memory:')
     sqlite.run(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, slug TEXT NOT NULL)`)
@@ -350,9 +368,9 @@ describe('cache route option', () => {
     const app = new Hono()
     app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     app.use('*', honertiaServices(() => ({ db: db as never })))
-    app.use('*', effectBridge({ schema }))
+    app.use('*', effectBridge({ schema, bindings }))
 
-    effectRoutes(app).get(
+    effectRoutes(app, { schema, bindings }).get(
       '/workspaces/{workspace}',
       Effect.gen(function* () {
         const workspace = yield* bound('workspace')
@@ -426,6 +444,9 @@ describe('purges route option', () => {
       slug: text('slug').notNull(),
     })
     const schema = { workspaces }
+    const bindings = {
+      workspace: S.Struct({ id: S.String, slug: S.String }),
+    }
 
     const sqlite = new Database(':memory:')
     sqlite.run(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, slug TEXT NOT NULL)`)
@@ -437,9 +458,9 @@ describe('purges route option', () => {
     const app = new Hono()
     app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     app.use('*', honertiaServices(() => ({ db: db as never })))
-    app.use('*', effectBridge({ schema }))
+    app.use('*', effectBridge({ schema, bindings }))
 
-    effectRoutes(app, { schema, services: () => layer }).put(
+    effectRoutes(app, { schema, bindings, services: () => layer }).put(
       '/workspaces/{workspace}',
       Effect.succeed(new Redirect({ url: '/workspaces', status: 303 })),
       { purges: true }

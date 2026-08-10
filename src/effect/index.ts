@@ -54,7 +54,13 @@ export {
   UnauthorizedError,
   NotFoundError,
   ForbiddenError,
+  AuthRateLimitError,
   HttpError,
+  DatabaseMutationFailed,
+  DatabaseTransactionFailed,
+  DatabaseConstraintViolation,
+  SessionLookupUnavailable,
+  InvalidAuthSession,
   RouteConfigurationError,
   HonertiaConfigurationError,
   Redirect,
@@ -176,6 +182,7 @@ export {
   buildContextLayer,
   getEffectRuntime,
   getEffectSchema,
+  getEffectBindings,
   type EffectBridgeConfig,
 } from './bridge.js'
 
@@ -193,10 +200,14 @@ export {
   action,
   dbMutation,
   dbTransaction,
+  classifyDatabaseFailure,
   mergeMutationInput,
   type SafeTx,
   type MutationInput,
 } from './action.js'
+
+// Runtime-owned background work
+export { background } from './background.js'
 
 // Response Helpers
 export {
@@ -226,6 +237,8 @@ export {
 // Route Registry
 export {
   RouteRegistry,
+  getAppRouteRegistry,
+  findAppRouteRegistry,
   getGlobalRegistry,
   resetGlobalRegistry,
   type HttpMethod,
@@ -261,11 +274,18 @@ export {
   BoundModels,
   BoundModelNotFound,
   bound,
+  routeBinding,
   pluralize,
   parseBindings,
   toHonoPath,
   type ParsedBinding,
   type BoundModel,
+  type RouteBindingScope,
+  type RouteBindingOptions,
+  type RouteBindingDefinition,
+  type RouteBindingConfig,
+  type RouteBindingsConfig,
+  type HonertiaRouteBindingsType,
 } from './binding.js'
 
 // Cache
@@ -300,4 +320,5 @@ export {
   type BetterAuthFormActionConfig,
   type BetterAuthLogoutConfig,
   type BetterAuthActionResult,
+  type BetterAuthActionError,
 } from './auth.js'

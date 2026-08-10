@@ -20,6 +20,8 @@ import type {
 } from './effect/services.js'
 import type { HonertiaInstance } from './types.js'
 import type { EffectBridgeConfig } from './effect/bridge.js'
+import type { ErrorBoundaryConfig } from './effect/handler.js'
+import type { RouteBindingsConfig } from './effect/binding.js'
 
 /**
  * Framework composition state for one request.
@@ -42,10 +44,20 @@ export interface HonertiaRequestContext<E extends Env = Env> {
    */
   // oxlint-disable-next-line no-explicit-any -- SAFETY: see doc comment above
   runtime?: ManagedRuntime.ManagedRuntime<any, never>
+  /** effectBridge() — owns detached Effects and request-runtime disposal. */
+  backgroundSupervisor?: {
+    readonly client: import('./effect/services.js').ExecutionContextClient
+    readonly hasPending: () => boolean
+    readonly drain: () => Promise<void>
+  }
   /** effectBridge() — bridge config for downstream route handlers */
   bridgeConfig?: EffectBridgeConfig<E, unknown>
   /** effectBridge() / effectRoutes() — Drizzle schema for route model binding */
   schema?: Record<string, unknown>
+  /** effectBridge() / effectRoutes() — registered row parsers and scopes. */
+  bindings?: RouteBindingsConfig
+  /** setupHonertia() — response policy shared by every error entrypoint. */
+  errorBoundary?: ErrorBoundaryConfig
   /**
    * loadUser() — custom session cookie names registered for this request.
    * The response-cache policy treats these (and better-auth's default

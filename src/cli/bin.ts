@@ -37,12 +37,12 @@ COMMANDS:
   generate:tests-runner         Generate inline tests runner
 
 EXAMPLES:
-  honertia routes --json
-  honertia check --verbose
+  honertia routes --app src/app.ts --json
+  honertia check --app src/app.ts --verbose
   honertia db status
   honertia db:migrate --preview
   honertia generate:action projects/create --method POST --path /projects
-  honertia generate:openapi --output openapi.json --format json
+  honertia generate:openapi --app src/app.ts --output openapi.json --format json
 
 Run "honertia <command> --help" for command-specific options.
 `.trim()
@@ -109,10 +109,10 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<vo
 
   switch (command) {
     case 'routes':
-      runRoutes(rest)
+      await runRoutes(rest)
       return
     case 'check':
-      runCheck(rest)
+      await runCheck(rest)
       return
     case 'db':
       await runDb(rest)
@@ -161,4 +161,3 @@ if (isMain) {
     process.exit(1)
   })
 }
-

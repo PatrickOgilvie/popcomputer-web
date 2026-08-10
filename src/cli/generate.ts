@@ -432,7 +432,7 @@ function generateInlineTests(
 if (typeof Bun !== 'undefined' && Bun.env?.NODE_ENV === 'test') {
   const { describe, test, expect } = await import('bun:test')
   const { Hono } = await import('hono')
-  const { effectRoutes, RouteRegistry } = await import('honertia/effect')
+  const { effectRoutes } = await import('honertia/effect')
   const { setupHonertia } = await import('honertia')
 
   const sessionCookie = 'better-auth.session_token'
@@ -449,13 +449,15 @@ if (typeof Bun !== 'undefined' && Bun.env?.NODE_ENV === 'test') {
   // Create test app with this route
   const createTestApp = () => {
     const app = new Hono()
-    const registry = new RouteRegistry()
 
-    app.use('*', setupHonertia({
+    setupHonertia(app, {
       honertia: {
         version: '1.0.0',
         render: (page) => JSON.stringify(page),
-        auth: () => ({
+${method !== 'GET' ? `        database: () => ({}),
+` : ''}      },
+      auth: {
+        client: () => ({
           api: {
             getSession: async ({ headers }: { headers: Headers }) => {
               const cookie = headers.get('cookie') ?? ''
@@ -467,25 +469,32 @@ if (typeof Bun !== 'undefined' && Bun.env?.NODE_ENV === 'test') {
                 user: {
                   id: 'test-user',
                   email: 'test@example.com',
+                  name: 'Test User',
+                  emailVerified: true,
+                  image: null,
+                  createdAt: new Date('2024-01-01T00:00:00.000Z'),
+                  updatedAt: new Date('2024-01-01T00:00:00.000Z'),
                 },
                 session: {
                   id: 'test-session',
                   userId: 'test-user',
+                  expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+                  token: sessionToken,
+                  createdAt: new Date('2024-01-01T00:00:00.000Z'),
+                  updatedAt: new Date('2024-01-01T00:00:00.000Z'),
                 },
               }
             },
           },
         }),
-      },
-      auth: {
         sessionCookie,
       },
-    }))
+    })
 
-    effectRoutes(app, { registry })
+    effectRoutes(app)
       .${method.toLowerCase()}(route.path, ${names.camelCase}, { name: route.name })
 
-    return { app, registry }
+    return { app }
   }
 
   describe(\`Route: \${route.name} [\${route.method.toUpperCase()} \${route.path}]\`, () => {
@@ -495,14 +504,13 @@ if (typeof Bun !== 'undefined' && Bun.env?.NODE_ENV === 'test') {
   // Add authentication tests
   if (needsAuth) {
     content += `
-    test('redirects unauthenticated users to login', async () => {
+    test('${needsValidation && method !== 'GET' ? 'rejects unauthenticated JSON requests' : 'redirects unauthenticated users to login'}', async () => {
       const res = await app.request('${options.path.replace(/\{[^}]+\}/g, 'test-id')}', {
         method: '${method}',
 ${needsValidation && method !== 'GET' ? `        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ ${fields.map((f) => `${f.name}: 'test'`).join(', ')} }),\n` : ''}      })
 
-      expect(res.status).toBe(302)
-      expect(res.headers.get('location')).toContain('/login')
-    })
+      expect(res.status).toBe(${needsValidation && method !== 'GET' ? '401' : '302'})
+${needsValidation && method !== 'GET' ? '' : "      expect(res.headers.get('location')).toContain('/login')\n"}    })
 `
   }
 

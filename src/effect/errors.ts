@@ -214,6 +214,50 @@ export class ForbiddenError extends Data.TaggedError('ForbiddenError')<{
 }
 
 /**
+ * Authentication rate limit returned by an auth provider.
+ *
+ * The original cause is retained for server-side observation but is never
+ * included in the client projection. When the provider supplies a retry
+ * delay, the HTTP adapter emits it as `Retry-After` and in the structured
+ * response body.
+ */
+export class AuthRateLimitError extends Data.TaggedError('AuthRateLimitError')<{
+  readonly retryAfterSeconds: number | undefined
+  readonly cause: unknown
+}> implements StructuredErrorCapable {
+  get httpStatus(): number {
+    return 429
+  }
+
+  get message(): string {
+    if (this.retryAfterSeconds === undefined) {
+      return 'Too many authentication attempts. Please try again later.'
+    }
+
+    return `Too many authentication attempts. Please try again in ${this.retryAfterSeconds} seconds.`
+  }
+
+  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+    const result = structured(
+      ErrorCodes.AUTH_104_RATE_LIMITED,
+      {},
+      context,
+      { message: this.message }
+    )
+
+    if (this.retryAfterSeconds !== undefined) {
+      return Object.assign(result, {
+        body: {
+          retryAfter: this.retryAfterSeconds,
+        },
+      })
+    }
+
+    return result
+  }
+}
+
+/**
  * HTTP Error - Generic HTTP error with custom status
  *
  * @example
@@ -230,6 +274,7 @@ export class HttpError extends Data.TaggedError('HttpError')<{
   readonly message: string
   readonly body?: unknown
   readonly code?: ErrorCode
+  readonly cause?: unknown
 }> implements StructuredErrorCapable {
   get httpStatus(): number {
     return this.status
@@ -287,6 +332,122 @@ export class HttpError extends Data.TaggedError('HttpError')<{
   }
 }
 
+/** A database write failed outside a transaction. */
+export class DatabaseMutationFailed extends Data.TaggedError('DatabaseMutationFailed')<{
+  readonly operation: 'mutation'
+  readonly cause: unknown
+}> implements StructuredErrorCapable {
+  get message(): string {
+    return 'Database mutation failed.'
+  }
+
+  get httpStatus(): number {
+    return 500
+  }
+
+  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+    return structured(
+      ErrorCodes.DB_501_QUERY_FAILED,
+      { reason: 'mutation failed' },
+      context,
+      { message: this.message }
+    )
+  }
+}
+
+/** A database transaction failed and was rolled back. */
+export class DatabaseTransactionFailed extends Data.TaggedError('DatabaseTransactionFailed')<{
+  readonly operation: 'transaction'
+  readonly cause: unknown
+}> implements StructuredErrorCapable {
+  get message(): string {
+    return 'Database transaction failed and was rolled back.'
+  }
+
+  get httpStatus(): number {
+    return 500
+  }
+
+  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+    return structured(
+      ErrorCodes.DB_503_TRANSACTION_FAILED,
+      { reason: 'transaction failed' },
+      context,
+      { message: this.message }
+    )
+  }
+}
+
+/** A database constraint rejected a mutation or transaction. */
+export class DatabaseConstraintViolation extends Data.TaggedError('DatabaseConstraintViolation')<{
+  readonly operation: 'mutation' | 'transaction'
+  readonly constraint: 'unique' | 'foreign-key' | 'not-null' | 'check' | 'unknown'
+  readonly cause: unknown
+}> implements StructuredErrorCapable {
+  get message(): string {
+    return 'Database constraint violation.'
+  }
+
+  get httpStatus(): number {
+    return 409
+  }
+
+  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+    return structured(
+      ErrorCodes.DB_502_CONSTRAINT_VIOLATION,
+      { constraint: this.constraint },
+      context,
+      { message: this.message }
+    )
+  }
+}
+
+/** Better Auth could not determine the current session. */
+export class SessionLookupUnavailable extends Data.TaggedError('SessionLookupUnavailable')<{
+  readonly operation: 'getSession'
+  readonly cause: unknown
+}> implements StructuredErrorCapable {
+  get message(): string {
+    return 'Authentication service is unavailable.'
+  }
+
+  get httpStatus(): number {
+    return 503
+  }
+
+  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+    return structured(
+      ErrorCodes.SVC_700_SERVICE_UNAVAILABLE,
+      { service: 'authentication' },
+      context,
+      { message: this.message, httpStatus: this.httpStatus }
+    )
+  }
+}
+
+/** Better Auth returned a session that did not satisfy the configured parser. */
+export class InvalidAuthSession extends Data.TaggedError('InvalidAuthSession')<{
+  readonly operation: 'parseSession'
+  readonly cause: unknown
+}> implements StructuredErrorCapable {
+  get message(): string {
+    return 'Authentication provider returned an invalid session.'
+  }
+
+  get httpStatus(): number {
+    return 500
+  }
+
+  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+    return structured(
+      ErrorCodes.SVC_701_SERVICE_ERROR,
+      { service: 'authentication', reason: 'invalid session response' },
+      context,
+      { message: this.message }
+    )
+  }
+}
+
 /**
  * Route Configuration Error - Developer error in route setup
  *
@@ -334,7 +495,7 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
   static schemaNotConfigured(binding: string): RouteConfigurationError {
     return new RouteConfigurationError({
       message: `Route model binding requires schema configuration. Cannot resolve bound('${binding}') without schema.`,
-      hint: 'Pass your schema to setupHonertia: setupHonertia({ honertia: { schema } })',
+      hint: 'Pass your schema to setupHonertia: setupHonertia(app, { honertia: { schema } })',
       binding,
       code: ErrorCodes.CFG_302_SCHEMA_NOT_CONFIGURED,
     })
@@ -348,6 +509,57 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
       message: `No table "${table}" found in schema for route model binding.`,
       table,
       code: ErrorCodes.RTE_601_TABLE_NOT_FOUND,
+    })
+  }
+
+  /** Create an error for a route binding without a registered row parser. */
+  static bindingParserNotConfigured(binding: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `No row parser is configured for route binding "${binding}".`,
+      hint: `Register it once in setupHonertia(app, { honertia: { bindings: { ${binding}: YourSchema } } }).`,
+      binding,
+      code: ErrorCodes.RTE_600_BINDING_NOT_FOUND,
+    })
+  }
+
+  /** Create an error for a lookup column missing from its Drizzle table. */
+  static bindingColumnNotFound(
+    binding: string,
+    table: string,
+    column: string
+  ): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Column "${column}" for route binding "${binding}" does not exist on table "${table}".`,
+      binding,
+      table,
+      code: ErrorCodes.RTE_601_TABLE_NOT_FOUND,
+    })
+  }
+
+  /** Create an error when a nested binding cannot be scoped to its parent. */
+  static relationNotFound(
+    parent: string,
+    child: string,
+    binding?: string
+  ): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Nested route binding "${binding ?? child}" cannot be scoped because no usable relation exists between "${child}" and parent "${parent}".`,
+      hint: 'Define the Drizzle relation or register an explicit parent scope with routeBinding(...).',
+      binding,
+      parent,
+      child,
+      code: ErrorCodes.RTE_603_RELATION_NOT_FOUND,
+    })
+  }
+
+  /** Create an error when a persisted row fails its registered parser. */
+  static invalidBoundRow(binding: string, table: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `A row loaded for route binding "${binding}" did not satisfy its registered schema.`,
+      hint: `Align the "${binding}" parser with persisted rows from "${table}" or repair the invalid data.`,
+      binding,
+      table,
+      code: ErrorCodes.RTE_604_BOUND_ROW_INVALID,
     })
   }
 }
@@ -409,7 +621,7 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
   static authNotConfigured(): HonertiaConfigurationError {
     return new HonertiaConfigurationError({
       message: 'AuthService is not configured. Add it to setupHonertia.',
-      hint: 'auth: (c, { db }) => betterAuth({ database: db })',
+      hint: 'auth: { client: (c, { db }) => betterAuth({ database: db }) }',
       service: 'AuthService',
       code: ErrorCodes.CFG_301_AUTH_NOT_CONFIGURED,
     })
@@ -458,7 +670,13 @@ export type AppError =
   | UnauthorizedError
   | NotFoundError
   | ForbiddenError
+  | AuthRateLimitError
   | HttpError
+  | DatabaseMutationFailed
+  | DatabaseTransactionFailed
+  | DatabaseConstraintViolation
+  | SessionLookupUnavailable
+  | InvalidAuthSession
   | RouteConfigurationError
   | HonertiaConfigurationError
 

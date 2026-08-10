@@ -7,6 +7,7 @@ import { Hono } from 'hono'
 import { Effect } from 'effect'
 import {
   RouteRegistry,
+  getAppRouteRegistry,
   getGlobalRegistry,
   resetGlobalRegistry,
   effectRoutes,
@@ -338,13 +339,13 @@ describe('effectRoutes Integration', () => {
     resetGlobalRegistry()
   })
 
-  test('routes are registered with global registry by default', () => {
+  test('routes are registered with the app-owned registry by default', () => {
     const app = createApp()
 
     effectRoutes(app).get('/hello', Effect.succeed(new Response('Hello')))
     effectRoutes(app).post('/submit', Effect.succeed(new Response('OK')))
 
-    const registry = getGlobalRegistry()
+    const registry = getAppRouteRegistry(app)
     expect(registry.count()).toBe(2)
     expect(registry.has('/hello', 'get')).toBe(true)
     expect(registry.has('/submit', 'post')).toBe(true)
@@ -360,6 +361,7 @@ describe('effectRoutes Integration', () => {
     )
 
     expect(customRegistry.count()).toBe(1)
+    expect(getAppRouteRegistry(app).count()).toBe(0)
     expect(getGlobalRegistry().count()).toBe(0)
   })
 
@@ -378,7 +380,7 @@ describe('effectRoutes Integration', () => {
       .prefix('/api')
       .get('/projects', Effect.succeed(new Response('Projects')))
 
-    const registry = getGlobalRegistry()
+    const registry = getAppRouteRegistry(app)
     const route = registry.all()[0]
     expect(route.prefix).toBe('/api')
     expect(route.fullPath).toBe('/api/projects')
@@ -392,7 +394,7 @@ describe('effectRoutes Integration', () => {
       Effect.succeed(new Response('OK'))
     )
 
-    const registry = getGlobalRegistry()
+    const registry = getAppRouteRegistry(app)
     const route = registry.all()[0]
     expect(route.bindings).toEqual([
       { param: 'project', column: 'id' },
@@ -407,7 +409,7 @@ describe('effectRoutes Integration', () => {
       name: 'projects.index',
     })
 
-    const registry = getGlobalRegistry()
+    const registry = getAppRouteRegistry(app)
     const route = registry.findByName('projects.index')
     expect(route).toBeDefined()
     expect(route!.path).toBe('/projects')

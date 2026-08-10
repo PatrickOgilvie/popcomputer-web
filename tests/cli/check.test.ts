@@ -318,6 +318,9 @@ export const route = {
 })
 
 describe('parseCheckArgs', () => {
+  test('parses --app option', () => {
+    expect(parseCheckArgs(['--app', 'src/app.ts']).app).toBe('src/app.ts')
+  })
   test('parses --json flag', () => {
     const options = parseCheckArgs(['--json'])
     expect(options.format).toBe('json')
