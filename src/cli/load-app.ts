@@ -5,9 +5,13 @@ import {
   RouteRegistry,
 } from '../effect/route-registry.js'
 
-function registryFromExport(value: unknown): RouteRegistry | undefined {
+function isObjectLike<Value>(value: Value): value is Value & object {
+  return value !== null && Object(value) === value
+}
+
+function registryFromExport<Value>(value: Value): RouteRegistry | undefined {
   if (value instanceof RouteRegistry) return value
-  if (typeof value !== 'object' || value === null) return undefined
+  if (!isObjectLike(value)) return undefined
 
   const direct = findAppRouteRegistry(value)
   if (direct) return direct
@@ -15,7 +19,7 @@ function registryFromExport(value: unknown): RouteRegistry | undefined {
   if ('routes' in value && value.routes instanceof RouteRegistry) {
     return value.routes
   }
-  if ('app' in value && typeof value.app === 'object' && value.app !== null) {
+  if ('app' in value && isObjectLike(value.app)) {
     return findAppRouteRegistry(value.app)
   }
   return undefined
@@ -26,7 +30,7 @@ export async function loadAppRouteRegistry(appPath: string): Promise<RouteRegist
   const absolutePath = resolve(appPath)
   let unregisterTypeScriptLoader: (() => Promise<void>) | undefined
 
-  if (typeof Bun === 'undefined') {
+  if (!('Bun' in globalThis)) {
     const { register } = await import('tsx/esm/api')
     unregisterTypeScriptLoader = register()
   }
@@ -38,7 +42,7 @@ export async function loadAppRouteRegistry(appPath: string): Promise<RouteRegist
     await unregisterTypeScriptLoader?.()
   }
 
-  if (typeof applicationModule !== 'object' || applicationModule === null) {
+  if (!isObjectLike(applicationModule)) {
     throw new Error(`Application module "${appPath}" has no exports.`)
   }
 

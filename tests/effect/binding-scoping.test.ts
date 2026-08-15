@@ -149,6 +149,7 @@ function createApp() {
   const app = new Hono()
 
   app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   app.use('*', honertiaServices(() => ({ db: db as never })))
   app.use('*', effectBridge({ schema, bindings }))
 

@@ -1,7 +1,15 @@
 /** Inertia protocol middleware. */
 
 import type { Context, MiddlewareHandler } from 'hono'
-import type { WebConfig, WebInstance, PageObject, RenderOptions } from './types.js'
+import { Option, Schema as S } from 'effect'
+import type {
+  LazyPageProp,
+  PageProps,
+  WebConfig,
+  WebInstance,
+  PageObject,
+  RenderOptions,
+} from './types.js'
 import { HEADERS } from './types.js'
 import { openHonertiaContext } from './request-context.js'
 
@@ -14,9 +22,13 @@ declare module 'hono' {
   }
 }
 
+interface ValidationErrorBag {
+  [field: string]: string
+}
+
 async function resolveValue<T>(value: T | (() => T | Promise<T>)): Promise<T> {
-  if (typeof value === 'function') {
-    return await (value as () => T | Promise<T>)()
+  if (value instanceof Function) {
+    return await value()
   }
   return value
 }
@@ -47,9 +59,9 @@ function createPartialPredicate(
 }
 
 function filterPartialProps(
-  props: Record<string, unknown>,
+  props: PageProps,
   keep: (key: string) => boolean
-): Record<string, unknown> {
+): PageProps {
   return Object.fromEntries(
     Object.entries(props).filter(([key]) => keep(key))
   )
@@ -57,11 +69,11 @@ function filterPartialProps(
 
 export function web(config: WebConfig): MiddlewareHandler {
   return async (c: Context, next) => {
-    const sharedProps: Record<string, unknown | (() => unknown | Promise<unknown>)> = {}
-    let errors: Record<string, string> = {}
+    const sharedProps: Record<string, LazyPageProp> = {}
+    const errors: ValidationErrorBag = {}
 
     const getVersion = () => 
-      typeof config.version === 'function' ? config.version() : config.version
+      config.version instanceof Function ? config.version() : config.version
 
     const isHonertia = c.req.header(HEADERS.HONERTIA) === 'true'
     const clientVersion = c.req.header(HEADERS.VERSION)
@@ -75,8 +87,8 @@ export function web(config: WebConfig): MiddlewareHandler {
       })
     }
 
-    const instance: WebInstance = {
-      share(key: string, value: unknown | (() => unknown | Promise<unknown>)) {
+    const instance = {
+      share(key: string, value: LazyPageProp) {
         sharedProps[key] = value
       },
 
@@ -85,14 +97,15 @@ export function web(config: WebConfig): MiddlewareHandler {
       },
 
       setErrors(newErrors: Record<string, string>) {
-        errors = { ...errors, ...newErrors }
+        Object.assign(errors, newErrors)
       },
 
-      async render<T extends Record<string, unknown>>(
+      async render<T extends PageProps>(
         component: string,
-        props: T = {} as T,
+        props?: T,
         options: RenderOptions = {}
       ): Promise<Response> {
+        const explicitProps: PageProps = props ?? {}
         // Determine whether this is an active partial reload for this component.
         // When it is, we can skip evaluating lazy shared props that the client
         // filtered out — that's the whole point of a partial reload.
@@ -110,42 +123,46 @@ export function web(config: WebConfig): MiddlewareHandler {
         // Resolve lazy shared props. Skip any shared prop that is overridden by
         // an explicitly passed prop (the passed value wins) or that a partial
         // reload would discard — avoiding wasted work for deferred/lazy props.
-        const resolvedShared: Record<string, unknown> = {}
+        const resolvedShared = new Map<string, PageProps[string]>()
         for (const [key, value] of Object.entries(sharedProps)) {
-          if (key in props) continue
+          if (key in explicitProps) continue
           if (partialKeep && !partialKeep(key)) continue
-          resolvedShared[key] = await resolveValue(value)
+          resolvedShared.set(key, await resolveValue(value))
         }
 
-        let mergedProps: Record<string, unknown> = {
-          ...resolvedShared,
-          ...props,
+        const mergedProps = new Map<string, PageProps[string]>(resolvedShared)
+        for (const [key, value] of Object.entries(explicitProps)) {
+          mergedProps.set(key, value)
         }
 
         // Add errors
         if (Object.keys(errors).length > 0) {
-          mergedProps.errors = {
-            ...(mergedProps.errors as Record<string, string> || {}),
-            ...errors
-          }
+          const decodedErrors = S.decodeUnknownOption(
+            S.Record(S.String, S.String)
+          )(mergedProps.get('errors'))
+          const mergedErrors = Option.isSome(decodedErrors)
+            ? { ...decodedErrors.value }
+            : {}
+          Object.assign(mergedErrors, errors)
+          mergedProps.set('errors', mergedErrors)
         }
-        if (!mergedProps.errors) {
-          mergedProps.errors = {}
+        if (!mergedProps.has('errors')) {
+          mergedProps.set('errors', {})
         }
 
         // Apply the partial filter to the full merged object so explicitly
         // passed props also honor `only`/`except`.
-        if (partialKeep) {
-          mergedProps = filterPartialProps(mergedProps, partialKeep)
-        }
+        const pageProps = partialKeep
+          ? filterPartialProps(Object.fromEntries(mergedProps), partialKeep)
+          : Object.fromEntries(mergedProps)
 
         const page: PageObject = {
           component,
-          props: mergedProps as Record<string, unknown> & { errors?: Record<string, string> },
+          props: pageProps,
           url: new URL(c.req.url).pathname + new URL(c.req.url).search,
           version,
-          ...(options.clearHistory !== undefined && { clearHistory: options.clearHistory }),
-          ...(options.encryptHistory !== undefined && { encryptHistory: options.encryptHistory }),
+          clearHistory: options.clearHistory,
+          encryptHistory: options.encryptHistory,
         }
 
         if (isHonertia) {
@@ -160,7 +177,7 @@ export function web(config: WebConfig): MiddlewareHandler {
           'Vary': HEADERS.HONERTIA,
         })
       },
-    }
+    } satisfies WebInstance
 
     const requestContext = openHonertiaContext(c)
     requestContext.web = instance

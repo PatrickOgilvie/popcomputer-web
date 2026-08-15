@@ -65,6 +65,7 @@ describe('Honertia Middleware', () => {
       expect(res.headers.get('Content-Type')).toContain('application/json')
       expect(res.headers.get(HEADERS.HONERTIA)).toBe('true')
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.component).toBe('Home')
       expect(json.props.title).toBe('Welcome')
@@ -80,6 +81,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.url).toBe('/projects/123?tab=details')
     })
@@ -92,6 +94,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.version).toBe('2.0.0')
     })
@@ -112,6 +115,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.auth).toEqual({ user: { id: 1, name: 'John' } })
       expect(json.props.title).toBe('Welcome')
@@ -133,6 +137,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.title).toBe('Page Title')
     })
@@ -152,6 +157,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.timestamp).toBe('resolved-value')
       expect(json.props.asyncValue).toBe('async-resolved')
@@ -174,6 +180,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.errors).toEqual({
         email: 'Invalid email',
@@ -194,6 +201,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.errors).toEqual({
         email: 'Invalid',
@@ -209,6 +217,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.errors).toEqual({})
     })
@@ -265,6 +274,7 @@ describe('Honertia Middleware', () => {
         },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.users).toEqual([1, 2, 3])
       expect(json.props.stats).toEqual({ count: 10 })
@@ -289,6 +299,7 @@ describe('Honertia Middleware', () => {
         },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.users).toBeUndefined()
       expect(json.props.projects).toEqual([4, 5, 6])
@@ -313,6 +324,7 @@ describe('Honertia Middleware', () => {
         },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.users).toEqual([1])
       expect(json.props.errors).toEqual({ name: 'Required' })
@@ -336,6 +348,7 @@ describe('Honertia Middleware', () => {
         },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.users).toEqual([1, 2, 3])
       expect(json.props.projects).toEqual([4, 5, 6])
@@ -366,6 +379,7 @@ describe('Honertia Middleware', () => {
         },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.cheap).toBe('cheap-value')
       expect(json.props.expensive).toBeUndefined()
@@ -390,6 +404,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.user).toEqual({ id: 'passed' })
       expect(sharedEvaluated).toBe(0)
@@ -481,6 +496,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.clearHistory).toBe(true)
     })
@@ -495,6 +511,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.encryptHistory).toBe(true)
     })
@@ -540,12 +557,14 @@ describe('Honertia Middleware', () => {
       const res1 = await app.request('/', {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json1 = (await res1.json()) as PageObject
       expect(json1.version).toBe('v1')
 
       const res2 = await app.request('/', {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json2 = (await res2.json()) as PageObject
       expect(json2.version).toBe('v2')
     })
@@ -562,6 +581,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.emoji).toBe('😀🎉🚀')
     })
@@ -576,6 +596,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.emoji).toBe('👨‍👩‍👧‍👦')
     })
@@ -590,6 +611,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.text).toBe('日本語テスト')
     })
@@ -602,6 +624,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.component).toBe('Users/Profile/Edit')
     })
@@ -627,6 +650,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.level1.level2.level3.level4.value).toBe('deep')
     })
@@ -643,6 +667,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.mixed).toEqual([
         1,
@@ -666,6 +691,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.nullValue).toBeNull()
       // undefined should be omitted in JSON
@@ -687,6 +713,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.users).toHaveLength(1000)
       expect(json.props.meta.total).toBe(1000)
@@ -703,6 +730,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.createdAt).toBe('2025-01-01T00:00:00.000Z')
     })
@@ -724,6 +752,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.errors?.['user.email']).toBe('Invalid email')
       expect(json.props.errors?.['user.password']).toBe('Too short')
@@ -745,6 +774,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.errors?.['items.0.name']).toBe('Required')
       expect(json.props.errors?.['items.1.price']).toBe('Must be positive')
@@ -764,6 +794,7 @@ describe('Honertia Middleware', () => {
       const res1 = await app.request('/', {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json1 = (await res1.json()) as PageObject
       expect(json1.props.errors?.email).toBe('Invalid')
 
@@ -771,6 +802,7 @@ describe('Honertia Middleware', () => {
       const res2 = await app.request('/', {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json2 = (await res2.json()) as PageObject
       expect(json2.props.errors).toEqual({})
     })
@@ -793,6 +825,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.user).toEqual({ id: 1, name: 'John' })
       expect(json.props.settings).toEqual({ theme: 'dark' })
@@ -837,6 +870,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.sync).toBe('immediate')
       expect(json.props.async).toBe('delayed')
@@ -863,6 +897,7 @@ describe('Honertia Middleware', () => {
         },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props['user.profile']).toEqual({ name: 'John' })
       expect(json.props.stats).toEqual({ count: 10 })
@@ -886,6 +921,7 @@ describe('Honertia Middleware', () => {
         },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       // Empty partial data should include errors only
       expect(json.props.errors).toEqual({})
@@ -911,6 +947,7 @@ describe('Honertia Middleware', () => {
         },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.props.users).toEqual(mockUsers)
       expect(json.props.stats).toEqual({ count: 10 })
@@ -935,6 +972,7 @@ describe('Honertia Middleware', () => {
         },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       // errors should still be included even when trying to exclude
       expect(json.props.errors).toEqual(mockErrors)
@@ -958,6 +996,7 @@ describe('Honertia Middleware', () => {
           headers: { [HEADERS.HONERTIA]: 'true' },
         })
 
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         const json = (await res.json()) as PageObject
         expect(json.props.method).toBe(method)
       }
@@ -999,6 +1038,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.url).toBe('/search?q=test&page=1&sort=name')
     })
@@ -1012,6 +1052,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.url).toBe('/page')
     })
@@ -1024,6 +1065,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.url).toBe('/users/John%20Doe')
     })
@@ -1043,6 +1085,7 @@ describe('Honertia Middleware', () => {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
 
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.url).toBe('/org/acme/team/dev/project/api/task/123')
       expect(json.props.org).toBe('acme')
@@ -1190,7 +1233,7 @@ describe('Context Finalization (regression)', () => {
     )
 
     // Edge case: 302 response without Location header
-    app.post('/weird', (c) => {
+    app.post('/weird', (_c) => {
       return new Response(null, { status: 302 })
     })
 

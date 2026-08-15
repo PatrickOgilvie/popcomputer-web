@@ -4,7 +4,7 @@
  * Wraps Effect computations into Hono handlers.
  */
 
-import { Effect, Exit, Cause, ManagedRuntime, Runtime } from 'effect'
+import { Effect, Exit, Cause, ManagedRuntime, Result } from 'effect'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import {
   getEffectBridgeConfig,
@@ -18,8 +18,10 @@ import {
   ForbiddenError,
   HttpError,
   AuthRateLimitError,
+  AuthRedirect,
   HonertiaConfigurationError,
   Redirect,
+  isStructuredError,
   toStructuredError,
   type AppError,
 } from './errors.js'
@@ -37,6 +39,8 @@ import {
   type EffectErrorEvent,
 } from './error-observer.js'
 import { openHonertiaContext } from '../request-context.js'
+
+const structuredErrorsByCause = new WeakMap<Error, HonertiaStructuredError>()
 
 /**
  * Memoized formatter instances to avoid recreation on every error.
@@ -77,7 +81,7 @@ function logStructuredError(
   isDev: boolean
 ): void {
   // Suppress logging during tests
-  if (typeof Bun !== 'undefined' && Bun.env?.NODE_ENV === 'test') return
+  if ('Bun' in globalThis && globalThis.Bun.env?.NODE_ENV === 'test') return
   console.error(
     isDev
       ? memoizedFormatters.dev.terminal.format(structured)
@@ -115,10 +119,12 @@ function isDevelopment<E extends Env>(
     envKey = 'ENVIRONMENT',
     devValue = 'development',
   } = config
-  const env = c.env as Record<string, unknown> | undefined
+  const env = c.env ?? {}
+  const configuredEnvironment = Object.getOwnPropertyDescriptor(env, envKey)?.value
+  const nodeEnvironment = Object.getOwnPropertyDescriptor(env, 'NODE_ENV')?.value
   return showDevErrors && (
-    env?.[envKey] === devValue ||
-    (envKey === 'ENVIRONMENT' && env?.NODE_ENV === devValue)
+    configuredEnvironment === devValue ||
+    (envKey === 'ENVIRONMENT' && nodeEnvironment === devValue)
   )
 }
 
@@ -135,20 +141,30 @@ export interface ErrorBoundaryConfig {
  * Render any request failure through Honertia's single error boundary.
  */
 export async function renderErrorResponse<E extends Env>(
-  error: unknown,
+  cause: unknown,
   c: HonoContext<E>,
   config: ErrorBoundaryConfig = {}
 ): Promise<Response> {
+  const error = cause
+  if (error instanceof AuthRedirect) {
+    return new Response(null, {
+      status: error.status,
+      headers: error.headers,
+    })
+  }
+
   const context = captureErrorContext(c)
   const isDev = isDevelopment(c, config)
   const format = detectOutputFormat(
     createFormatDetectionContext(c),
-    (c.env ?? {}) as Record<string, unknown>
+    c.env
   )
   const structured = error instanceof Error
     ? getStructuredFromThrown(error) ?? toStructuredError(error, context)
     : toStructuredError(error, context)
   const formatter = isDev ? memoizedFormatters.dev : memoizedFormatters.prod
+  const finalize = (response: Response): Response =>
+    appendVerifiedErrorHeaders(response, error)
 
   if (config.log ?? true) {
     logStructuredError(structured, isDev)
@@ -160,28 +176,28 @@ export async function renderErrorResponse<E extends Env>(
       c.req.header('Accept')?.includes('application/json') ||
       c.req.header('Content-Type')?.includes('application/json')
     if ((prefersJson && !isInertia) || format === 'json') {
-      return c.json(formatter.json.format(structured), 422)
+      return finalize(c.json(formatter.json.format(structured), 422))
     }
 
     const requestContext = openHonertiaContext(c)
     const page = requestContext.web ?? requestContext.honertia
     if (error.component && page) {
       page.setErrors(error.errors)
-      return await page.render(error.component)
+      return finalize(await page.render(error.component))
     }
 
     page?.setErrors(error.errors)
-    return c.redirect(c.req.header('Referer') || '/', 303)
+    return finalize(c.redirect(c.req.header('Referer') || '/', 303))
   }
 
   if (error instanceof UnauthorizedError) {
     if (format === 'json') {
-      return c.json(formatter.json.format(structured), 401)
+      return finalize(c.json(formatter.json.format(structured), 401))
     }
-    return c.redirect(
+    return finalize(c.redirect(
       error.redirectTo ?? '/login',
       c.req.header('X-Inertia') === 'true' ? 303 : 302
-    )
+    ))
   }
 
   if (error instanceof AuthRateLimitError && error.retryAfterSeconds !== undefined) {
@@ -195,7 +211,8 @@ export async function renderErrorResponse<E extends Env>(
     error instanceof HttpError ||
     error instanceof AuthRateLimitError
   ) {
-    return c.json(formatter.json.format(structured), status as any)
+    // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
+    return finalize(c.json(formatter.json.format(structured), status as any))
   }
 
   const requestContext = openHonertiaContext(c)
@@ -203,17 +220,62 @@ export async function renderErrorResponse<E extends Env>(
   if (page) {
     const response = await page.render(
       config.component ?? 'Error',
-      formatter.inertia.format(structured) as Record<string, unknown>
+      formatter.inertia.format(structured)
     )
-    if (response.status === status) return response
-    return new Response(response.body, {
+    if (response.status === status) return finalize(response)
+    return finalize(new Response(response.body, {
       status,
       statusText: response.statusText,
       headers: response.headers,
-    })
+    }))
   }
 
-  return c.json(formatter.json.format(structured), status as any)
+  // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
+  return finalize(c.json(formatter.json.format(structured), status as any))
+}
+
+function appendVerifiedErrorHeaders(
+  response: Response,
+  cause: unknown
+): Response {
+  const error = cause
+  if (
+    !(error instanceof ValidationError) &&
+    !(error instanceof AuthRateLimitError) &&
+    !(error instanceof HttpError)
+  ) {
+    return response
+  }
+
+  if (!error.headers) return response
+
+  const headers = new Headers(error.headers)
+  response.headers.forEach((value, name) => {
+    if (name.toLowerCase() !== 'set-cookie') headers.set(name, value)
+  })
+  const responseCookies = readResponseSetCookies(response.headers)
+  for (const cookie of responseCookies) {
+    headers.append('set-cookie', cookie)
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
+function readResponseSetCookies(headers: Headers): readonly string[] {
+  // SAFETY: Bun's Headers implements the standard getSetCookie extension; the optional contract also supports runtimes without it.
+  const headersWithCookies = headers as Headers & {
+    getSetCookie?: () => string[]
+  }
+  if (headersWithCookies.getSetCookie instanceof Function) {
+    return headersWithCookies.getSetCookie()
+  }
+
+  const combined = headers.get('set-cookie')
+  return combined ? [combined] : []
 }
 
 /**
@@ -222,7 +284,8 @@ export async function renderErrorResponse<E extends Env>(
  * the layer, so the first `yield*` of their tag dies here with
  * "Service not found: <tagId> (...)". Returns null for any other defect.
  */
-function classifyMissingService(defect: unknown): HonertiaConfigurationError | null {
+function classifyMissingService(cause: unknown): HonertiaConfigurationError | null {
+  const defect = cause
   if (!(defect instanceof Error)) return null
   const prefix = 'Service not found: '
   if (!defect.message.startsWith(prefix)) return null
@@ -250,14 +313,9 @@ async function observeEffectError<E extends Env>(
   const activeRuntime = runtime ?? getEffectRuntime(c)
   if (!activeRuntime) return
 
-  try {
-    await activeRuntime.runPromise(observeEffectErrorEvent(event))
-  } catch (error) {
-    // A route Layer can itself be the source of the failure. In that case its
-    // runtime cannot also host the observer; preserve the original typed error
-    // response instead of replacing it with the runtime's FiberFailure.
-    if (!Runtime.isFiberFailure(error)) throw error
-  }
+  // An unavailable route Layer is represented in the returned Exit in v4.
+  // Observation must never replace the original request failure.
+  await activeRuntime.runPromiseExit(observeEffectErrorEvent(event))
 }
 
 /**
@@ -271,6 +329,10 @@ export async function errorToResponse<E extends Env>(
   c: HonoContext<E>,
   runtime?: ManagedRuntime.ManagedRuntime<any, never>
 ): Promise<Response> {
+  if (error instanceof AuthRedirect) {
+    return renderErrorResponse(error, c, openHonertiaContext(c).errorBoundary)
+  }
+
   const structured = toStructuredError(error, captureErrorContext(c))
 
   await observeEffectError(
@@ -298,7 +360,7 @@ function handleRedirect<E extends Env>(redirect: Redirect, c: HonoContext<E>): R
 /**
  * Check if a value is a Redirect.
  */
-function isRedirect(value: unknown): value is Redirect {
+function isRedirect<Value>(value: Value): value is Value & Redirect {
   return value instanceof Redirect
 }
 
@@ -337,18 +399,10 @@ export async function runEffectWithRuntime<
   c: HonoContext<E>,
   runtime: ManagedRuntime.ManagedRuntime<R, never>
 ): Promise<Response> {
-  let exit: Exit.Exit<Response | Redirect, unknown>
-
-  try {
-    exit = await runtime.runPromiseExit(effect)
-  } catch (error) {
-    // ManagedRuntime initializes its Layer before it can fork the requested
-    // Effect. A typed Layer failure is therefore surfaced as FiberFailure
-    // rather than returned by runPromiseExit; restore it to the normal exit
-    // path so route-layer errors retain Honertia's typed handling.
-    if (!Runtime.isFiberFailure(error)) throw error
-    exit = Exit.failCause(error[Runtime.FiberFailureCauseId])
-  }
+  // ManagedRuntime includes both Layer acquisition failures and handler
+  // failures in the Exit returned by its v4 runner.
+  const exit: Exit.Exit<Response | Redirect, unknown> =
+    await runtime.runPromiseExit(effect)
 
   return handleExit(exit, c, runtime)
 }
@@ -377,9 +431,10 @@ async function handleExit<E extends Env>(
   // Handle typed failures
   const cause = exit.cause
 
-  if (Cause.isFailure(cause)) {
-    const error = Cause.failureOption(cause)
+  if (Cause.hasFails(cause)) {
+    const error = Cause.findErrorOption(cause)
     if (error._tag === 'Some') {
+      // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
       return await errorToResponse(error.value as AppError, c, runtime)
     }
   }
@@ -387,19 +442,19 @@ async function handleExit<E extends Env>(
   // Handle defects (unexpected errors) - attach structured error for Hono's onError
   const context = captureErrorContext(c)
 
-  if (Cause.isDie(cause)) {
-    const defect = Cause.dieOption(cause)
-    if (defect._tag === 'Some') {
+  if (Cause.hasDies(cause)) {
+    const defect = Cause.findDefect(cause)
+    if (Result.isSuccess(defect)) {
       // A missing Honertia service is a configuration defect; translate it to
       // the structured configuration error before the generic defect paths.
-      const err = classifyMissingService(defect.value) ?? defect.value
+      const err = classifyMissingService(defect.success) ?? defect.success
 
       // If the defect is already a structured error (like HonertiaConfigurationError),
       // convert it using its own toStructured method.
       // This branch always throws after observing, so the generic defect path below
       // only runs for defects that do not implement toStructured.
-      if (err && typeof err === 'object' && 'toStructured' in err && typeof (err as any).toStructured === 'function') {
-        const structured = (err as any).toStructured(context)
+      if (isStructuredError(err)) {
+        const structured = err.toStructured(context)
         await observeEffectError(
           c,
           {
@@ -411,9 +466,8 @@ async function handleExit<E extends Env>(
           },
           runtime
         )
-        const wrapped = new Error((err as any).message ?? String(err))
-        ;(wrapped as any).__honertiaStructured = structured
-        ;(wrapped as any).hint = (err as any).hint
+        const wrapped = new Error(err instanceof Error ? err.message : String(err))
+        structuredErrorsByCause.set(wrapped, structured)
         return renderErrorResponse(wrapped, c, boundaryConfig)
       }
 
@@ -437,12 +491,12 @@ async function handleExit<E extends Env>(
       )
 
       if (err instanceof Error) {
-        ;(err as any).__honertiaStructured = structured
+        structuredErrorsByCause.set(err, structured)
         return renderErrorResponse(err, c, boundaryConfig)
       }
 
       const wrapped = new Error(String(err))
-      ;(wrapped as any).__honertiaStructured = structured
+      structuredErrorsByCause.set(wrapped, structured)
       return renderErrorResponse(wrapped, c, boundaryConfig)
     }
   }
@@ -465,7 +519,7 @@ async function handleExit<E extends Env>(
     runtime
   )
   const fallbackError = new Error('Unknown effect failure')
-  ;(fallbackError as any).__honertiaStructured = structured
+  structuredErrorsByCause.set(fallbackError, structured)
   return renderErrorResponse(fallbackError, c, boundaryConfig)
 }
 
@@ -488,5 +542,5 @@ export const handle = effectHandler
  * Used by Hono's onError handler.
  */
 export function getStructuredFromThrown(error: Error): HonertiaStructuredError | undefined {
-  return (error as any).__honertiaStructured
+  return structuredErrorsByCause.get(error)
 }

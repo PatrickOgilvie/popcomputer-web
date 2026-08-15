@@ -4,14 +4,22 @@
  * Utilities for validating request data using Effect Schema.
  */
 
-import { Effect, Schema as S, ParseResult } from 'effect'
+import { Effect, Schema as S, SchemaIssue } from 'effect'
 import type { ParseOptions } from 'effect/SchemaAST'
 import { RequestService } from './services.js'
 import { ValidationError } from './errors.js'
 import type { FieldError } from './error-types.js'
 import { ErrorCodes, type ErrorCode } from './error-catalog.js'
+import type { PagePropValue } from '../types.js'
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
+const RequestValidationProfileSchema = S.Literals(['legacy', 'laravel'])
+const formatSchemaIssue = SchemaIssue.makeFormatterStandardSchemaV1()
+
+type FormattedSchemaIssue = ReturnType<typeof formatSchemaIssue>['issues'][number]
+
+export type RequestDataValue = PagePropValue | File
+export type RequestData = Record<string, RequestDataValue>
 
 /**
  * Request data source for validateRequest input extraction.
@@ -82,7 +90,7 @@ function normalizeRequestValidationOptions(
   config?: RequestValidationConfig
 ): ResolvedRequestValidationOptions {
   const objectConfig =
-    typeof config === 'string'
+    S.is(RequestValidationProfileSchema)(config)
       ? { profile: config }
       : (config ?? {})
 
@@ -140,12 +148,12 @@ function createSourceConflictValidationError(
 function mergeRequestSources(
   orderedSources: ReadonlyArray<{
     source: RequestValidationSource
-    data: Record<string, unknown>
+    data: RequestData
   }>,
   onConflict: RequestValidationConflict,
   component?: string
-): Effect.Effect<Record<string, unknown>, ValidationError, never> {
-  const merged: Record<string, unknown> = {}
+): Effect.Effect<RequestData, ValidationError, never> {
+  const merged: RequestData = {}
   const sourceOfKey = new Map<string, RequestValidationSource>()
   const conflicts: SourceConflict[] = []
 
@@ -192,7 +200,7 @@ function mergeRequestSources(
 function getValidationDataWithOptions(
   config?: RequestValidationConfig,
   errorComponent?: string
-): Effect.Effect<Record<string, unknown>, ValidationError, RequestService> {
+): Effect.Effect<RequestData, ValidationError, RequestService> {
   return Effect.gen(function* () {
     const request = yield* RequestService
     const { order, onConflict } = normalizeRequestValidationOptions(config)
@@ -200,7 +208,7 @@ function getValidationDataWithOptions(
     const routeParams = order.includes('params') ? request.params() : {}
     const queryParams = order.includes('query') ? request.query() : {}
 
-    let body: Record<string, unknown> = {}
+    let body: RequestData = {}
     if (
       order.includes('body') &&
       !BODYLESS_METHODS.has(request.method.toUpperCase())
@@ -209,7 +217,7 @@ function getValidationDataWithOptions(
       const isJson = isJsonContentType(contentType)
 
       body = yield* Effect.tryPromise(() =>
-        isJson ? request.json<Record<string, unknown>>() : request.parseBody()
+        isJson ? request.json<RequestData>() : request.parseBody()
       ).pipe(
         Effect.mapError((error) =>
           createBodyParseValidationError(error, contentType)
@@ -217,11 +225,11 @@ function getValidationDataWithOptions(
       )
     }
 
-    const sourceData: Record<RequestValidationSource, Record<string, unknown>> = {
+    const sourceData = {
       params: routeParams,
       query: queryParams,
       body,
-    }
+    } satisfies Record<RequestValidationSource, RequestData>
 
     return yield* mergeRequestSources(
       order.map((source) => ({ source, data: sourceData[source] })),
@@ -236,7 +244,7 @@ function getValidationDataWithOptions(
  * Merges route params, query params, and body (body takes precedence).
  */
 export const getValidationData: Effect.Effect<
-  Record<string, unknown>,
+  RequestData,
   ValidationError,
   RequestService
 > = getValidationDataWithOptions('legacy')
@@ -251,25 +259,31 @@ export interface FormattedSchemaErrors {
   details: Record<string, FieldError>
 }
 
+function getFormattedIssuePath(
+  issue: FormattedSchemaIssue
+): ReadonlyArray<PropertyKey> {
+  return (issue.path ?? []).map((segment) =>
+    typeof segment === 'object' ? segment.key : segment
+  )
+}
+
 /**
  * Format Effect Schema parse errors into field-level validation errors.
  * Returns both simple errors and detailed field information.
  */
-export function formatSchemaErrorsWithDetails(
-  error: ParseResult.ParseError,
-  data: unknown,
+export function formatSchemaErrorsWithDetails<Input>(
+  error: S.SchemaError,
+  data: Input,
   messages: Record<string, string> = {},
   attributes: Record<string, string> = {}
 ): FormattedSchemaErrors {
   const errors: Record<string, string> = {}
   const details: Record<string, FieldError> = {}
-  const issues = ParseResult.ArrayFormatter.formatErrorSync(error)
-
-  // Get the input data for extracting actual values
-  const inputData = (typeof data === 'object' && data !== null) ? data as Record<string, unknown> : {}
+  const issues = formatSchemaIssue(error.issue).issues
 
   for (const issue of issues) {
-    const field = issue.path.length > 0 ? issue.path.map(String).join('.') : 'form'
+    const path = getFormattedIssuePath(issue)
+    const field = path.length > 0 ? path.map(String).join('.') : 'form'
 
     if (errors[field]) continue // First error wins
 
@@ -278,15 +292,13 @@ export function formatSchemaErrorsWithDetails(
 
     errors[field] = message.replace(/:attribute/g, attribute)
 
-    // Extract the actual value from the input data
-    let value: unknown = inputData
-    for (const segment of issue.path) {
-      if (typeof value === 'object' && value !== null) {
-        value = (value as Record<string | number, unknown>)[segment as string | number]
-      } else {
+    let value: unknown = data
+    for (const segment of path) {
+      if (!(value instanceof Object)) {
         value = undefined
         break
       }
+      value = Object.getOwnPropertyDescriptor(value, segment)?.value
     }
 
     // Create detailed field error
@@ -294,8 +306,8 @@ export function formatSchemaErrorsWithDetails(
       value,
       expected: issue.message,
       message: errors[field],
-      path: issue.path.map(String),
-      schemaType: extractSchemaType(issue),
+      path: path.map(String),
+      schemaType: extractSchemaType(issue.message),
     }
   }
 
@@ -305,10 +317,8 @@ export function formatSchemaErrorsWithDetails(
 /**
  * Extract the schema type from an issue for debugging.
  */
-function extractSchemaType(issue: ParseResult.ArrayFormatterIssue): string | undefined {
+function extractSchemaType(message: string): string | undefined {
   // Try to extract type information from the issue
-  const message = issue.message
-
   // Common patterns in Effect Schema messages
   if (message.includes('Expected')) {
     const match = message.match(/Expected\s+([^,]+)/)
@@ -322,16 +332,21 @@ function extractSchemaType(issue: ParseResult.ArrayFormatterIssue): string | und
  * Format Effect Schema parse errors into field-level validation errors.
  * Simple version that returns only the error messages.
  */
+export interface ValidationMessages {
+  [field: string]: string
+}
+
 export function formatSchemaErrors(
-  error: ParseResult.ParseError,
+  error: S.SchemaError,
   messages: Record<string, string> = {},
   attributes: Record<string, string> = {}
-): Record<string, string> {
-  const errors: Record<string, string> = {}
-  const issues = ParseResult.ArrayFormatter.formatErrorSync(error)
+): ValidationMessages {
+  const errors: ValidationMessages = {}
+  const issues = formatSchemaIssue(error.issue).issues
 
   for (const issue of issues) {
-    const field = issue.path.length > 0 ? issue.path.map(String).join('.') : 'form'
+    const path = getFormattedIssuePath(issue)
+    const field = path.length > 0 ? path.map(String).join('.') : 'form'
 
     if (errors[field]) continue // First error wins
 
@@ -355,8 +370,10 @@ export type Validated<A> = A & { readonly [ValidatedBrand]: true }
 /**
  * Mark data as validated (type-level only).
  */
-export const asValidated = <A>(input: A): Validated<A> =>
-  input as Validated<A>
+export const asValidated = <A>(input: A): Validated<A> => {
+  // SAFETY: Validated is a type-only brand applied immediately after schema validation.
+  return input as Validated<A>
+}
 
 /**
  * Nominal brand marker for trusted (server-derived) data.
@@ -369,8 +386,10 @@ export type Trusted<A> = A & { readonly [TrustedBrand]: true }
 /**
  * Mark data as trusted (type-level only).
  */
-export const asTrusted = <A>(input: A): Trusted<A> =>
-  input as Trusted<A>
+export const asTrusted = <A>(input: A): Trusted<A> => {
+  // SAFETY: Trusted is a type-only brand applied only by server-side trusted-data helpers.
+  return input as Trusted<A>
+}
 
 /**
  * Options for validation functions.
@@ -428,11 +447,11 @@ export interface ValidateOptions {
  * Build a parse error with concrete guidance for malformed request bodies.
  */
 export function createBodyParseValidationError(
-  error: unknown,
+  cause: unknown,
   contentType: string
 ): ValidationError {
   const isJson = isJsonContentType(contentType)
-  const reason = error instanceof Error ? error.message : String(error)
+  const reason = cause instanceof Error ? cause.message : String(cause)
   const base = isJson ? 'Invalid JSON body' : 'Could not parse request body'
   const hint = isJson
     ? 'Ensure Content-Type is application/json and the body is valid JSON.'
@@ -471,12 +490,12 @@ function determineValidationCode(
     : ErrorCodes.VAL_004_SCHEMA_MISMATCH
 }
 
-function runValidation<A, I>(
-  schema: S.Schema<A, I>,
-  data: unknown,
+function runValidation<A, I, Input>(
+  schema: S.Codec<A, I>,
+  data: Input,
   options: ValidateOptions
 ): Effect.Effect<Validated<A>, ValidationError, never> {
-  return S.decodeUnknown(schema, options.parseOptions)(data).pipe(
+  return S.decodeUnknownEffect(schema, options.parseOptions)(data).pipe(
     Effect.mapError((error) => {
       const { errors, details } = formatSchemaErrorsWithDetails(
         error,
@@ -492,7 +511,7 @@ function runValidation<A, I>(
         code: determineValidationCode(details),
       })
     }),
-    Effect.map(asValidated)
+    Effect.map((value) => asValidated(value))
   )
 }
 
@@ -501,7 +520,7 @@ function runValidation<A, I>(
  * Returns validated data or fails with ValidationError.
  */
 export function validate<A, I>(
-  schema: S.Schema<A, I>,
+  schema: S.Codec<A, I>,
   data: I,
   options: ValidateOptions = {}
 ): Effect.Effect<Validated<A>, ValidationError, never> {
@@ -512,9 +531,9 @@ export function validate<A, I>(
  * Validate unknown data against a schema.
  * Use this for raw payloads (e.g. parsed request body, external JSON).
  */
-export function validateUnknown<A, I>(
-  schema: S.Schema<A, I>,
-  data: unknown,
+export function validateUnknown<A, I, Input>(
+  schema: S.Codec<A, I>,
+  data: Input,
   options: ValidateOptions = {}
 ): Effect.Effect<Validated<A>, ValidationError, never> {
   return runValidation(schema, data, options)
@@ -525,7 +544,7 @@ export function validateUnknown<A, I>(
  * Extracts data from request and validates in one step.
  */
 export function validateRequest<A, I>(
-  schema: S.Schema<A, I>,
+  schema: S.Codec<A, I>,
   options: ValidateOptions = {}
 ): Effect.Effect<Validated<A>, ValidationError, RequestService> {
   return Effect.gen(function* () {

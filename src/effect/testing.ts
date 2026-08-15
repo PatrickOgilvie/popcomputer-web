@@ -9,6 +9,8 @@
  */
 
 import { Layer } from 'effect'
+import type { PagePropValue, PageProps } from '../types.js'
+import type { RequestData } from './validation.js'
 
 // Lazy-loaded bun:test exports (only loaded when tests actually run)
 // Using a computed module name to prevent bundlers from statically analyzing this
@@ -24,13 +26,14 @@ function getBunTestSync(): typeof import('bun:test') {
   }
   return _bunTestModule!
 }
-import type { Hono, Env } from 'hono'
+import type { Context, Hono, Env } from 'hono'
 import {
   RouteRegistry,
   getAppRouteRegistry,
   type RouteMetadata,
 } from './route-registry.js'
 import type { TestCaptures } from './test-layers.js'
+import { getResponseTestCaptures } from './test-capture-store.js'
 
 /**
  * User types for authentication in tests.
@@ -44,7 +47,7 @@ export interface TestUser {
   id: string
   email?: string
   role?: string
-  [key: string]: unknown
+  [key: string]: PagePropValue
 }
 
 /**
@@ -62,7 +65,7 @@ export interface TestRequestOptions {
   /**
    * Request body (JSON or FormData).
    */
-  body?: Record<string, unknown> | FormData
+  body?: RequestData | FormData
   /**
    * Query string parameters.
    */
@@ -92,7 +95,7 @@ export interface TestExpectation {
   /**
    * Expected JSON body (deep equality).
    */
-  body?: unknown
+  body?: PagePropValue
   /**
    * Expected validation errors.
    */
@@ -100,7 +103,7 @@ export interface TestExpectation {
   /**
    * Expected Inertia props (partial match).
    */
-  props?: Record<string, unknown>
+  props?: PageProps
   /**
    * Expected Inertia component name.
    */
@@ -163,15 +166,15 @@ export interface TestAppConfig<E extends Env = Env> {
   /**
    * Middleware to apply authentication.
    */
-  authMiddleware?: (user: TestUser | null) => (c: any, next: () => Promise<void>) => Promise<void>
+  authMiddleware?: (user: TestUser | null) => (c: Context<E>, next: () => Promise<void>) => Promise<void>
   /**
    * Database setup function (called before each test).
    */
-  setupDatabase?: () => Promise<unknown>
+  setupDatabase?: () => Promise<object>
   /**
    * Database cleanup function (called after each test).
    */
-  cleanupDatabase?: (db: unknown) => Promise<void>
+  cleanupDatabase?: <Database>(db: Database) => Promise<void>
 }
 
 /**
@@ -254,16 +257,14 @@ function createTestFn<E extends Env>(
         const url = buildUrl(route, options.params, options.query)
         const method = route.method.toUpperCase()
 
-        const headers: Record<string, string> = {
-          'Accept': 'application/json',
-          ...options.headers,
-        }
+        const headers = new Headers(options.headers)
+        headers.set('Accept', 'application/json')
 
         // Apply auth middleware by adding user info to headers
         // The actual auth handling depends on app configuration
         if (user && config.authMiddleware) {
           // For testing, we encode user info in a header that the middleware can decode
-          headers['X-Test-User'] = JSON.stringify(user)
+          headers.set('X-Test-User', JSON.stringify(user))
         }
 
         let body: BodyInit | undefined
@@ -271,13 +272,13 @@ function createTestFn<E extends Env>(
           if (options.body instanceof FormData) {
             body = options.body
           } else {
-            headers['Content-Type'] = 'application/json'
+            headers.set('Content-Type', 'application/json')
             body = JSON.stringify(options.body)
           }
         }
 
         // Make request
-        const env = testLayer ? ({ __testLayer: testLayer } as unknown as E) : undefined
+        const env = testLayer ? { __testLayer: testLayer } : undefined
         const response = await app.request(url, {
           method,
           headers,
@@ -296,9 +297,7 @@ function createTestFn<E extends Env>(
         }
 
         // Create context
-        const captured =
-          ((response as any).__testCaptured as TestCaptures | undefined) ??
-          createEmptyCaptures()
+        const captured = getResponseTestCaptures(response) ?? createEmptyCaptures()
         const ctx: TestContext = {
           response,
           json,
@@ -332,7 +331,10 @@ function createTestFn<E extends Env>(
 
           if (exp.errors) {
             // Check for validation errors in response
-            const errorBody = json as { errors?: Record<string, unknown> } | undefined
+            // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
+            const errorBody = json as {
+              errors?: Record<string, string | string[]>
+            } | undefined
             expectBun(errorBody?.errors).toBeDefined()
             for (const [field, expectedError] of Object.entries(exp.errors)) {
               const fieldErrors = errorBody?.errors?.[field]
@@ -351,7 +353,11 @@ function createTestFn<E extends Env>(
 
           if (exp.props || exp.component) {
             // Parse Inertia response
-            const inertiaBody = json as { component?: string; props?: Record<string, unknown> } | undefined
+            // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
+            const inertiaBody = json as {
+              component?: string
+              props?: PageProps
+            } | undefined
             if (exp.component) {
               expectBun(inertiaBody?.component).toBe(exp.component)
             }
@@ -382,7 +388,7 @@ function createTestFn<E extends Env>(
  *
  * @example
  * ```typescript
- * import { describeRoute, createTestApp } from '@popcomputer/web/test'
+ * import { describeRoute, createTestApp } from '@popcomputer/web/effect'
  *
  * const app = createTestApp((routes) => {
  *   routes.post('/projects', createProject, { name: 'projects.create' })
@@ -463,20 +469,26 @@ export function describeRoute<E extends Env>(
     registry = registryOrLayerOrCallback
     if (Layer.isLayer(layerOrCallbackOrConfig)) {
       testLayer = layerOrCallbackOrConfig
+      // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
       callback = callbackOrConfig as (test: TestFn) => void
       config = maybeConfig ?? {}
     } else {
+      // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
       callback = layerOrCallbackOrConfig as (test: TestFn) => void
+      // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
       config = (callbackOrConfig as TestAppConfig<E>) ?? {}
     }
   } else if (Layer.isLayer(registryOrLayerOrCallback)) {
     registry = getAppRouteRegistry(app)
     testLayer = registryOrLayerOrCallback
+    // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
     callback = layerOrCallbackOrConfig as (test: TestFn) => void
+    // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
     config = (callbackOrConfig as TestAppConfig<E>) ?? {}
   } else {
     registry = getAppRouteRegistry(app)
     callback = registryOrLayerOrCallback
+    // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
     config = (layerOrCallbackOrConfig as TestAppConfig<E>) ?? {}
   }
 

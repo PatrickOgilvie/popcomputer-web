@@ -9,20 +9,21 @@ import type { Hono, MiddlewareHandler, Env } from 'hono'
 import { AuthUserService, AuthService, DatabaseService, PageService, RequestService, type AuthType, type AuthUser } from './services.js'
 import {
   InvalidAuthSession,
+  AuthRedirect,
   HttpError,
   SessionLookupUnavailable,
   UnauthorizedError,
 } from './errors.js'
 import type { AppError, AuthRateLimitError, ValidationError } from './errors.js'
 import {
-  classifyBetterAuthFailure,
-  inspectBetterAuthActionResult,
+  runBetterAuthApiCall,
   toHonertiaAuthError,
   type BetterAuthActionError,
   type BetterAuthActionResult,
 } from './better-auth-boundary.js'
 import { effectRoutes, type EffectHandler } from './routing.js'
 import { openHonertiaContext } from '../request-context.js'
+import type { PagePropValue, PageProps } from '../types.js'
 import { render } from './responses.js'
 import { validateRequest } from './validation.js'
 
@@ -201,7 +202,7 @@ export const requireGuest = (
  */
 export interface ShareAuthUserConfig {
   /** Project the parsed server-side auth session into public page data. */
-  readonly project?: (auth: AuthUser) => unknown
+  readonly project?: (auth: AuthUser) => PagePropValue
   /**
    * Whitelist of user fields to include in the shared `auth.user`.
    * Ignored when `mapUser` is provided.
@@ -215,7 +216,7 @@ export interface ShareAuthUserConfig {
    *
    * @example { mapUser: (u) => ({ id: u.id, name: u.name }) }
    */
-  mapUser?: (user: Record<string, unknown>) => unknown
+  mapUser?: (user: AuthUser['user']) => PagePropValue
 }
 
 /**
@@ -224,23 +225,29 @@ export interface ShareAuthUserConfig {
 function projectSharedUser(
   authUser: AuthUser | null | undefined,
   config: ShareAuthUserConfig
-): unknown {
+): PagePropValue {
   if (!authUser) return null
   if (config.project) return config.project(authUser)
 
-  const user = authUser.user as Record<string, unknown>
+  const user = authUser.user
   if (config.mapUser) return config.mapUser(user)
   if (config.fields) {
-    const picked: Record<string, unknown> = {}
+    const picked: PageProps = {}
     for (const key of config.fields) {
-      if (key in user) picked[key] = user[key]
+      if (key in user) {
+        picked[key] = JSON.parse(JSON.stringify(
+          Object.getOwnPropertyDescriptor(user, key)?.value
+        ))
+      }
     }
     return picked
   }
   return {
-    id: user.id,
-    name: user.name ?? null,
-    image: user.image ?? null,
+    id: String(user.id),
+    name: user.name === undefined || user.name === null ? null : String(user.name),
+    image: user.image === undefined || user.image === null
+      ? null
+      : String(user.image),
   }
 }
 
@@ -304,7 +311,7 @@ export type AuthActionEffect<
 /**
  * Configuration for auth routes.
  */
-export interface AuthRoutesConfig<E extends Env> {
+export interface AuthRoutesConfig {
   loginPath?: string
   registerPath?: string
   logoutPath?: string
@@ -387,7 +394,7 @@ export interface AuthRoutesConfig<E extends Env> {
  */
 export function effectAuthRoutes<E extends Env>(
   app: Hono<E>,
-  config: AuthRoutesConfig<E> = {}
+  config: AuthRoutesConfig = {}
 ): void {
   const {
     loginPath = '/login',
@@ -435,18 +442,19 @@ export function effectAuthRoutes<E extends Env>(
         const request = yield* RequestService
 
         // Revoke session server-side
-        yield* Effect.tryPromise({
-          try: () =>
-            (auth as any).api.signOut({
-              headers: request.headers,
-            }),
-          catch: (cause) =>
+        yield* runBetterAuthApiCall(() =>
+          callBetterAuthSignOut(auth, {
+            headers: request.headers,
+          })
+        ).pipe(
+          Effect.mapError((cause) =>
             new HttpError({
               status: 502,
               message: 'Authentication service failed.',
               cause,
-            }),
-        })
+            })
+          )
+        )
 
         // Clear cookie(s) and redirect. Clear both the plain and the
         // `__Secure-` prefixed variant so HTTPS sessions are also revoked.
@@ -474,7 +482,7 @@ export function effectAuthRoutes<E extends Env>(
 
       // Determine allowed origin
       let allowedOrigin: string | null = null
-      if (typeof corsConfig.origin === 'function') {
+      if (corsConfig.origin instanceof Function) {
         allowedOrigin = origin ? corsConfig.origin(origin) ?? null : null
       } else if (Array.isArray(corsConfig.origin)) {
         allowedOrigin = origin && corsConfig.origin.includes(origin) ? origin : null
@@ -502,6 +510,7 @@ export function effectAuthRoutes<E extends Env>(
   }
 
   app.all(`${apiPath}/*`, async (c) => {
+    // SAFETY: The Better Auth boundary validated this representation before exposing the narrower adapter contract.
     const auth = openHonertiaContext(c).auth as { handler?: (req: Request) => Response | Promise<Response> } | undefined
     if (!auth?.handler) {
       return c.json({ error: 'Auth not configured' }, 500)
@@ -517,7 +526,7 @@ export function effectAuthRoutes<E extends Env>(
 export function loadUser<E extends Env>(
   config: {
     readonly sessionCookie?: string
-    readonly session?: S.Schema<AuthUser, unknown, never>
+    readonly session?: S.Codec<AuthUser, unknown, never, never>
   } = {}
 ): MiddlewareHandler<E> {
   const { sessionCookie, session: sessionSchema = DefaultAuthSessionSchema } = config
@@ -532,6 +541,7 @@ export function loadUser<E extends Env>(
       requestCtx.sessionCookies = [...(requestCtx.sessionCookies ?? []), sessionCookie]
     }
 
+    // SAFETY: The Better Auth boundary validated this representation before exposing the narrower adapter contract.
     const auth = requestCtx.auth as
       | {
           api?: {
@@ -566,7 +576,7 @@ export function loadUser<E extends Env>(
     }
 
     if (session) {
-      const exit = await Effect.runPromiseExit(S.decodeUnknown(sessionSchema)(session))
+      const exit = await Effect.runPromiseExit(S.decodeUnknownEffect(sessionSchema)(session))
       if (Exit.isFailure(exit)) {
         throw new InvalidAuthSession({
           operation: 'parseSession',
@@ -583,36 +593,42 @@ export function loadUser<E extends Env>(
   }
 }
 
-// SAFETY: AuthUser is the augmentable public contract. Applications that
-// augment it with additional fields provide `auth.session`; this default
-// establishes exactly DefaultAuthUser's runtime shape.
-const DefaultAuthSessionSchema: S.Schema<AuthUser, unknown, never> = S.Struct({
+// AuthUser is the augmentable public contract. Applications that add fields
+// provide `auth.session`; this default establishes DefaultAuthUser's shape.
+const DefaultAuthSessionSchema = S.Struct({
   user: S.Struct({
     id: S.String,
     email: S.String,
     name: S.NullOr(S.String),
     emailVerified: S.Boolean,
     image: S.NullOr(S.String),
-    createdAt: S.DateFromSelf,
-    updatedAt: S.DateFromSelf,
+    createdAt: S.Date,
+    updatedAt: S.Date,
   }),
   session: S.Struct({
     id: S.String,
     userId: S.String,
-    expiresAt: S.DateFromSelf,
+    expiresAt: S.Date,
     token: S.String,
-    createdAt: S.DateFromSelf,
-    updatedAt: S.DateFromSelf,
+    createdAt: S.Date,
+    updatedAt: S.Date,
   }),
-}) as S.Schema<AuthUser, unknown, never>
+})
 
-export type { BetterAuthActionError, BetterAuthActionResult } from './better-auth-boundary.js'
+export {
+  effectifyBetterAuth,
+  type BetterAuthActionError,
+  type BetterAuthActionResult,
+  type BetterAuthBoundaryFailure,
+  type BetterAuthEffectApi,
+  type BetterAuthEffectClient,
+} from './better-auth-boundary.js'
 
 /**
  * Config for better-auth form actions (login/register).
  */
 export interface BetterAuthFormActionConfig<A, I, AuthClient = AuthType> {
-  readonly schema: S.Schema<A, I>
+  readonly schema: S.Codec<A, I, never, never>
   readonly errorComponent: string
   readonly call: (auth: AuthClient, input: A, request: Request) => Promise<BetterAuthActionResult>
   readonly errorMapper?: (error: BetterAuthActionError) => Record<string, string>
@@ -630,7 +646,7 @@ export function betterAuthFormAction<A, I, AuthClient = AuthType>(
   config: BetterAuthFormActionConfig<A, I, AuthClient>
 ): Effect.Effect<
   Response,
-  ValidationError | AuthRateLimitError | HttpError,
+  AuthRedirect | ValidationError | AuthRateLimitError | HttpError,
   RequestService | AuthService
 > {
   return Effect.gen(function* () {
@@ -640,11 +656,10 @@ export function betterAuthFormAction<A, I, AuthClient = AuthType>(
       errorComponent: config.errorComponent,
     })
 
-    const result = yield* Effect.tryPromise({
-      try: () => config.call(auth as AuthClient, input, buildAuthRequest(request)),
-      catch: (cause) => classifyBetterAuthFailure(cause),
-    }).pipe(
-      Effect.flatMap(inspectBetterAuthActionResult),
+    // SAFETY: The Better Auth boundary validated this representation before exposing the narrower adapter contract.
+    const result = yield* runBetterAuthApiCall(() =>
+      config.call(auth as AuthClient, input, buildAuthRequest(request))
+    ).pipe(
       Effect.mapError((failure) =>
         toHonertiaAuthError(failure, config.errorComponent, config.errorMapper)
       )
@@ -683,15 +698,13 @@ export function betterAuthLogoutAction(
     const auth = yield* AuthService
     const request = yield* RequestService
 
-    const result = yield* Effect.tryPromise({
-      try: () =>
-        (auth as any).api.signOut({
-          headers: request.headers,
-          request: buildAuthRequest(request),
-          returnHeaders: true,
-        }) as Promise<BetterAuthActionResult>,
-      catch: () => undefined,
-    }).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
+    const result = yield* runBetterAuthApiCall(() =>
+      callBetterAuthSignOut(auth, {
+        headers: request.headers,
+        request: buildAuthRequest(request),
+        returnHeaders: true,
+      })
+    ).pipe(Effect.catch(() => Effect.succeed(undefined)))
 
     const responseHeaders = new Headers({
       Location: config.redirectTo ?? '/login',
@@ -724,12 +737,37 @@ function buildAuthRequest(request: {
   })
 }
 
+function callBetterAuthSignOut<Auth>(
+  auth: Auth,
+  input: {
+    readonly headers: Headers
+    readonly request?: Request
+    readonly returnHeaders?: boolean
+  }
+): Promise<BetterAuthActionResult> {
+  if (!(auth instanceof Object)) {
+    return Promise.reject(new Error('Better Auth client is not configured'))
+  }
+
+  const api = Object.getOwnPropertyDescriptor(auth, 'api')?.value
+  if (!(api instanceof Object)) {
+    return Promise.reject(new Error('Better Auth API is not configured'))
+  }
+
+  const signOut = Object.getOwnPropertyDescriptor(api, 'signOut')?.value
+  if (!(signOut instanceof Function)) {
+    return Promise.reject(new Error('Better Auth signOut endpoint is not configured'))
+  }
+
+  return Promise.resolve(signOut.apply(api, [input]))
+}
+
 function resolveRedirect<A>(
-  target: BetterAuthFormActionConfig<A, any>['redirectTo'],
+  target: string | ((input: A, result: BetterAuthActionResult) => string) | undefined,
   input: A,
   result: BetterAuthActionResult
 ): string {
-  if (typeof target === 'function') {
+  if (target instanceof Function) {
     return target(input, result)
   }
   return target ?? '/'
@@ -739,7 +777,7 @@ function getHeaders(result: BetterAuthActionResult | undefined): Headers | undef
   if (!result) return undefined
   if (result instanceof Headers) return result
   if (result instanceof Response) return result.headers
-  if (typeof result === 'object' && 'headers' in result && result.headers) {
+  if (result instanceof Object && 'headers' in result && result.headers) {
     return coerceHeaders(result.headers)
   }
   return undefined
@@ -750,8 +788,9 @@ function coerceHeaders(value: Headers | HeadersInit): Headers {
 }
 
 function appendSetCookies(target: Headers, source: Headers): void {
+  // SAFETY: The Better Auth boundary validated this representation before exposing the narrower adapter contract.
   const sourceWithSetCookie = source as Headers & { getSetCookie?: () => string[] }
-  if (typeof sourceWithSetCookie.getSetCookie === 'function') {
+  if (sourceWithSetCookie.getSetCookie instanceof Function) {
     for (const cookie of sourceWithSetCookie.getSetCookie()) {
       target.append('set-cookie', cookie)
     }

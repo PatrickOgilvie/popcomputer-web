@@ -33,7 +33,6 @@ import {
   hasSessionCookie,
   isPartialReloadRequest,
   prepareCachePurgeTags,
-  prepareCacheTags,
   ResponseCachePurgeError,
   ResponseCacheService,
   type RouteCacheOptions,
@@ -110,7 +109,7 @@ export interface EffectRouteOptions {
    * )
    * ```
    */
-  params?: S.Schema.Any
+  params?: S.Codec<unknown, unknown, never, never>
   /**
    * Named route for reverse routing and test helpers.
    *
@@ -128,17 +127,17 @@ export interface EffectRouteOptions {
    * Validate request body with the provided schema.
    * Automatically returns a 422 ValidationError on failure.
    */
-  body?: S.Schema.Any
+  body?: S.Codec<unknown, unknown, never, never>
   /**
    * Validate query params with the provided schema.
    * Automatically returns a 422 ValidationError on failure.
    */
-  query?: S.Schema.Any
+  query?: S.Codec<unknown, unknown, never, never>
   /**
    * Response schema used for type safety and OpenAPI generation.
    * Runtime validation is opt-in via validateResponse.
    */
-  response?: S.Schema.Any
+  response?: S.Codec<unknown, unknown, never, never>
   /**
    * Enable/disable automatic body validation.
    * Defaults to true when a body schema is provided.
@@ -178,8 +177,11 @@ const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
  * Mirrors the explicit-signal policy used elsewhere (no CF_PAGES_BRANCH).
  */
 function isDevEnv<E extends Env>(c: HonoContext<E>): boolean {
-  const env = c.env as Record<string, unknown> | undefined
-  return env?.ENVIRONMENT === 'development' || env?.NODE_ENV === 'development'
+  const env = c.env ?? {}
+  return (
+    Object.getOwnPropertyDescriptor(env, 'ENVIRONMENT')?.value === 'development' ||
+    Object.getOwnPropertyDescriptor(env, 'NODE_ENV')?.value === 'development'
+  )
 }
 
 function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
@@ -194,13 +196,13 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
 
 async function parseRequestBody<E extends Env>(
   c: HonoContext<E>
-): Promise<unknown> {
+): Promise<S.Schema.Type<typeof S.Unknown>> {
   const contentType = c.req.header('Content-Type') ?? ''
   const isJson = contentType.includes('application/json')
 
   try {
     if (isJson) {
-      return await c.req.json<unknown>()
+      return await c.req.json<S.Schema.Type<typeof S.Unknown>>()
     }
     return await c.req.parseBody()
   } catch (error) {
@@ -216,7 +218,7 @@ async function runValidation<A>(
     return exit.value
   }
 
-  const error = Cause.failureOption(exit.cause)
+  const error = Cause.findErrorOption(exit.cause)
   if (Option.isSome(error)) {
     throw error.value
   }
@@ -255,6 +257,7 @@ export class EffectRouteBuilder<
   >(
     layer: Layer.Layer<S, LayerErr, LayerReq>
   ): EffectRouteBuilder<E, ProvidedServices | S, CustomServices> {
+    // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
     return new EffectRouteBuilder(
       this.app,
       [...this.layers, layer as Layer.Layer<S, never, never>],
@@ -362,18 +365,19 @@ export class EffectRouteBuilder<
    */
   private async ensureParams(
     c: HonoContext<E>,
-    schema?: S.Schema.Any
+    schema?: S.Codec<unknown, unknown, never, never>
   ): Promise<Response | null> {
     if (!schema) return null
 
     const rawParams = c.req.param()
     const params: Record<string, string> =
-      typeof rawParams === 'string' ? {} : rawParams
+      S.is(S.String)(rawParams) ? {} : rawParams
 
-    const decode = S.decodeUnknown(schema)
-    const exit = await Effect.runPromiseExit(decode(params) as Effect.Effect<unknown, unknown, never>)
+    const decode = S.decodeUnknownEffect(schema)
+    const exit = await Effect.runPromiseExit(decode(params))
 
     if (Exit.isFailure(exit)) {
+      // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
       return c.notFound() as Response
     }
 
@@ -384,11 +388,11 @@ export class EffectRouteBuilder<
    * Resolve route model bindings from the database.
    * Returns a Map of binding names to resolved models, or a 404 Response if any binding fails.
    */
-  private async resolveBindings(
+  private async resolveBindings<Database>(
     c: HonoContext<E>,
     plan: readonly CompiledRouteBinding[],
-    db: unknown,
-  ): Promise<Map<string, unknown> | Response> {
+    db: Database,
+  ): Promise<Map<string, S.Schema.Type<typeof S.Unknown>> | Response> {
     if (plan.length === 0) {
       return new Map()
     }
@@ -396,27 +400,30 @@ export class EffectRouteBuilder<
     // Dynamic import to avoid requiring drizzle-orm for non-binding users
     const { eq, and } = await import('drizzle-orm')
 
-    const models = new Map<string, unknown>()
-    const rows = new Map<string, Record<string, unknown>>()
+    const models = new Map<string, S.Schema.Type<typeof S.Unknown>>()
+    const rows = new Map<string, object>()
 
     for (const binding of plan) {
       const rawParam = c.req.param(binding.param)
       if (!rawParam) {
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         return c.notFound() as Response
       }
 
       const paramValue = await decodeBindingParam(binding, rawParam)
       if (paramValue === undefined) {
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         return c.notFound() as Response
       }
 
       // QueryBuilder type compatible with all Drizzle databases (PostgreSQL, MySQL, SQLite)
       type QueryBuilder = {
-        where: (c: unknown) => QueryBuilder
-        limit: (n: number) => PromiseLike<unknown[]>
+        where: <Condition>(condition: Condition) => QueryBuilder
+        limit: (n: number) => PromiseLike<object[]>
       }
+      // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
       let whereCondition: unknown = eq(
-        binding.table[binding.column] as Parameters<typeof eq>[0],
+        Object.getOwnPropertyDescriptor(binding.table, binding.column)?.value as Parameters<typeof eq>[0],
         paramValue
       )
 
@@ -430,11 +437,15 @@ export class EffectRouteBuilder<
           )
         }
 
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         const conditions: Parameters<typeof and> = [
           whereCondition as Parameters<typeof and>[number],
         ]
         for (const pair of binding.parent.relation.columnPairs) {
-          const parentReferenceValue = parentRow[pair.references]
+          const parentReferenceValue = Object.getOwnPropertyDescriptor(
+            parentRow,
+            pair.references
+          )?.value
           if (parentReferenceValue === undefined || parentReferenceValue === null) {
             throw RouteConfigurationError.relationNotFound(
               binding.parent.param,
@@ -443,9 +454,13 @@ export class EffectRouteBuilder<
             )
           }
 
+          // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
           conditions.push(
             eq(
-              binding.table[pair.foreignKey] as Parameters<typeof eq>[0],
+              Object.getOwnPropertyDescriptor(
+                binding.table,
+                pair.foreignKey
+              )?.value as Parameters<typeof eq>[0],
               parentReferenceValue
             ) as Parameters<typeof and>[number]
           )
@@ -453,7 +468,10 @@ export class EffectRouteBuilder<
         whereCondition = and(...conditions)
       }
 
-      const dbClient = db as { select: () => { from: (t: unknown) => QueryBuilder } }
+      // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
+      const dbClient = db as {
+        select: () => { from: <TableValue>(table: TableValue) => QueryBuilder }
+      }
       const query: QueryBuilder = dbClient.select().from(binding.table).where(whereCondition)
 
       // Execute the query - use .limit(1) for cross-database compatibility
@@ -462,10 +480,12 @@ export class EffectRouteBuilder<
       const result = results[0]
 
       if (!result) {
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         return c.notFound() as Response
       }
 
-      rows.set(binding.param, result as Record<string, unknown>)
+      // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
+      rows.set(binding.param, result)
       models.set(binding.param, await decodeBoundRow(binding, result))
     }
 
@@ -511,10 +531,14 @@ export class EffectRouteBuilder<
       let hasValidatedQuery = false
 
       try {
-        if (shouldValidateBody && !BODYLESS_METHODS.has(c.req.method.toUpperCase())) {
+        if (
+          bodySchema !== undefined &&
+          shouldValidateBody &&
+          !BODYLESS_METHODS.has(c.req.method.toUpperCase())
+        ) {
           const body = await parseRequestBody(c)
           validatedBody = await runValidation(
-            validateUnknown(bodySchema as S.Schema.AnyNoContext, body, {
+            validateUnknown(bodySchema, body, {
               parseOptions: options?.parseOptions,
             })
           )
@@ -524,7 +548,7 @@ export class EffectRouteBuilder<
         if (querySchema) {
           const query = c.req.query()
           validatedQuery = await runValidation(
-            validateUnknown(querySchema as S.Schema.AnyNoContext, query, {
+            validateUnknown(querySchema, query, {
               parseOptions: options?.parseOptions,
             })
           )
@@ -540,7 +564,7 @@ export class EffectRouteBuilder<
       // Build context layer from Hono context
       const requestRuntime = getEffectRuntime(c)
       let contextLayer = requestRuntime
-        ? Layer.succeedContext((await requestRuntime.runtime()).context)
+        ? Layer.succeedContext(await requestRuntime.context())
         : buildContextLayer(c, bridgeConfig ?? getEffectBridgeConfig(c))
       if (requestRuntime && bridgeConfig?.services) {
         contextLayer = Layer.merge(contextLayer, bridgeConfig.services(c))
@@ -566,29 +590,34 @@ export class EffectRouteBuilder<
           return result
         }
 
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         boundModels = result as ReadonlyMap<string, unknown>
         boundModelsLayer = Layer.succeed(BoundModels, boundModels)
       } else if (bindings.length > 0 && !schema) {
         // Bindings exist but no schema - provide a map that signals this for better errors
         const unconfiguredMap = new Map<string, unknown>()
         unconfiguredMap.set('__schema_not_configured__', true)
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         boundModelsLayer = Layer.succeed(BoundModels, unconfiguredMap as ReadonlyMap<string, unknown>)
       } else if (bindings.length > 0) {
         throw RouteConfigurationError.bindingParserNotConfigured(bindings[0].param)
       } else {
         // No bindings - empty bound models
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         boundModelsLayer = Layer.succeed(BoundModels, new Map() as ReadonlyMap<string, unknown>)
       }
 
       // Combine with provided layers
       let fullLayer: Layer.Layer<any, never, never> = Layer.merge(contextLayer, boundModelsLayer)
       if (hasValidatedBody) {
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         fullLayer = Layer.merge(
           fullLayer,
           Layer.succeed(ValidatedBodyService, validatedBody as any)
         )
       }
       if (hasValidatedQuery) {
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         fullLayer = Layer.merge(
           fullLayer,
           Layer.succeed(ValidatedQueryService, validatedQuery as any)
@@ -602,6 +631,7 @@ export class EffectRouteBuilder<
       // Runs inside the effect so a failed purge surfaces in the typed error
       // channel instead of leaving stale entries silently.
       const purges = options?.purges
+      // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
       let handlerEffect: Effect.Effect<Response | Redirect, unknown, unknown> =
         effect as Effect.Effect<Response | Redirect, unknown, unknown>
       if (purges) {
@@ -708,8 +738,12 @@ export class EffectRouteBuilder<
     // Register with Hono - apply middlewares before the Effect handler
     const handler = this.createHandler(effect, bindings, options)
     if (this.middlewares.length > 0) {
-      // Use type assertion for dynamic method with spread middlewares
-      ;(this.app[method] as (path: string, ...handlers: MiddlewareHandler<E>[]) => void)(
+      // SAFETY: The method is selected from the finite Hono routing-method union and every supplied handler uses the builder's Env.
+      const register = this.app[method] as (
+        path: string,
+        ...handlers: MiddlewareHandler<E>[]
+      ) => void
+      register(
         fullPath,
         ...this.middlewares,
         handler

@@ -12,8 +12,16 @@ import {
   type RouteMetadata,
 } from '../effect/route-registry.js'
 import { loadAppRouteRegistry } from './load-app.js'
-import type { Schema as S } from 'effect'
-import * as JSONSchema from 'effect/JSONSchema'
+import { Schema as S } from 'effect'
+import * as JsonSchema from 'effect/JsonSchema'
+
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue }
 
 /**
  * OpenAPI info object.
@@ -97,7 +105,12 @@ export interface OpenApiSecurityScheme {
   in?: 'query' | 'header' | 'cookie'
   scheme?: string
   bearerFormat?: string
-  flows?: Record<string, unknown>
+  flows?: Record<string, {
+    authorizationUrl?: string
+    tokenUrl?: string
+    refreshUrl?: string
+    scopes?: Record<string, string>
+  }>
   openIdConnectUrl?: string
 }
 
@@ -115,7 +128,7 @@ export interface OpenApiParameter {
 /**
  * OpenAPI schema object (simplified).
  */
-export type OpenApiSchema = JSONSchema.JsonSchema7
+export type OpenApiSchema = JsonSchema.JsonSchema
 
 /**
  * OpenAPI response object.
@@ -123,6 +136,10 @@ export type OpenApiSchema = JSONSchema.JsonSchema7
 export interface OpenApiResponse {
   description: string
   content?: Record<string, { schema: OpenApiSchema }>
+}
+
+interface OpenApiResponses {
+  [status: string]: OpenApiResponse
 }
 
 /**
@@ -173,10 +190,16 @@ function toOpenApiPath(path: string): string {
   return path.replace(/:([^/]+)/g, '{$1}')
 }
 
-function toOpenApiSchema(schema: S.Schema.Any): OpenApiSchema {
-  const jsonSchema = JSONSchema.make(schema, { target: 'openApi3.1' })
-  const { $schema, ...rest } = jsonSchema
-  return rest as OpenApiSchema
+function toOpenApiSchema(schema: S.Constraint): OpenApiSchema {
+  const document = S.toJsonSchemaDocument(schema)
+  if (Object.keys(document.definitions).length === 0) {
+    return document.schema
+  }
+
+  return {
+    ...document.schema,
+    $defs: document.definitions,
+  }
 }
 
 function stringSchema(format?: string): OpenApiSchema {
@@ -193,7 +216,7 @@ function objectSchema(
     type: 'object',
     properties,
     required,
-    ...(description ? { description } : {}),
+    description,
   }
   return schema
 }
@@ -270,12 +293,13 @@ function generateQueryParameters(route: RouteMetadata): OpenApiParameter[] {
   const schema = toOpenApiSchema(route.querySchema)
   if (
     schema &&
-    typeof schema === 'object' &&
+    schema instanceof Object &&
     'properties' in schema &&
     schema.properties &&
-    typeof schema.properties === 'object'
+    schema.properties instanceof Object
   ) {
     const required = Array.isArray(schema.required) ? new Set(schema.required) : new Set<string>()
+    // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
     return Object.entries(schema.properties).map(([name, propertySchema]) => ({
       name,
       in: 'query' as const,
@@ -308,8 +332,8 @@ function generateParameters(route: RouteMetadata): OpenApiParameter[] {
 /**
  * Generate default responses for an operation.
  */
-function generateResponses(route: RouteMetadata): Record<string, OpenApiResponse> {
-  const responses: Record<string, OpenApiResponse> = {}
+function generateResponses(route: RouteMetadata): OpenApiResponses {
+  const responses: OpenApiResponses = {}
   const responseSchema = route.responseSchema
     ? toOpenApiSchema(route.responseSchema)
     : objectSchema()
@@ -516,13 +540,10 @@ export function generateOpenApi(
   return spec
 }
 
-function formatYamlScalar(value: unknown): string {
+function formatYamlScalar(value: string | number | boolean | null): string {
   if (value === null) return 'null'
-  if (typeof value === 'number' || typeof value === 'boolean') {
+  if (S.is(S.Number)(value) || S.is(S.Boolean)(value)) {
     return String(value)
-  }
-  if (typeof value !== 'string') {
-    return JSON.stringify(value)
   }
 
   if (value.length === 0) {
@@ -537,7 +558,7 @@ function formatYamlScalar(value: unknown): string {
   return needsQuotes ? JSON.stringify(value) : value
 }
 
-function toYaml(value: unknown, indent = 0): string {
+function toYaml(value: JsonValue, indent = 0): string {
   const padding = '  '.repeat(indent)
 
   if (Array.isArray(value)) {
@@ -547,7 +568,7 @@ function toYaml(value: unknown, indent = 0): string {
 
     return value
       .map((item) => {
-        if (item !== null && typeof item === 'object') {
+        if (item instanceof Object) {
           const nested = toYaml(item, indent + 1)
           return `${padding}-\n${nested}`
         }
@@ -557,8 +578,8 @@ function toYaml(value: unknown, indent = 0): string {
       .join('\n')
   }
 
-  if (value !== null && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
+  if (value instanceof Object) {
+    const entries = Object.entries(value)
     if (entries.length === 0) {
       return `${padding}{}`
     }
@@ -567,7 +588,7 @@ function toYaml(value: unknown, indent = 0): string {
       .map(([key, item]) => {
         const safeKey = /^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key)
 
-        if (item !== null && typeof item === 'object') {
+        if (item instanceof Object) {
           const nested = toYaml(item, indent + 1)
           return `${padding}${safeKey}:\n${nested}`
         }
@@ -585,7 +606,8 @@ export function formatOpenApiOutput(
   format: 'json' | 'yaml' = 'json'
 ): string {
   if (format === 'yaml') {
-    return `${toYaml(spec)}\n`
+    const serializedSpec: JsonValue = JSON.parse(JSON.stringify(spec))
+    return `${toYaml(serializedSpec)}\n`
   }
 
   return `${JSON.stringify(spec, null, 2)}\n`
@@ -643,6 +665,7 @@ export function parseGenerateOpenApiArgs(args: string[]): GenerateOpenApiCliOpti
         break
       case '--format':
       case '-f':
+        // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
         options.format = args[++i] as 'json' | 'yaml'
         break
       case '--server':

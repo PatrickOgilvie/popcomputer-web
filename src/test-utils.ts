@@ -93,25 +93,23 @@ export function makeInertiaRequest(
     partialExcept,
   } = options
 
-  const inertiaHeaders: Record<string, string> = {
-    [HEADERS.HONERTIA]: 'true',
-    ...headers,
-  }
+  const inertiaHeaders = new Headers(headers)
+  inertiaHeaders.set(HEADERS.HONERTIA, 'true')
 
   if (version) {
-    inertiaHeaders[HEADERS.VERSION] = version
+    inertiaHeaders.set(HEADERS.VERSION, version)
   }
 
   if (partialComponent) {
-    inertiaHeaders[HEADERS.PARTIAL_COMPONENT] = partialComponent
+    inertiaHeaders.set(HEADERS.PARTIAL_COMPONENT, partialComponent)
   }
 
   if (partialData) {
-    inertiaHeaders[HEADERS.PARTIAL_DATA] = partialData
+    inertiaHeaders.set(HEADERS.PARTIAL_DATA, partialData)
   }
 
   if (partialExcept) {
-    inertiaHeaders[HEADERS.PARTIAL_EXCEPT] = partialExcept
+    inertiaHeaders.set(HEADERS.PARTIAL_EXCEPT, partialExcept)
   }
 
   return app.request(path, {
@@ -130,6 +128,7 @@ export function makeInertiaRequest(
  */
 export async function parseInertiaResponse(res: Response): Promise<PageObject> {
   const json = await res.json()
+  // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
   return json as PageObject
 }
 
@@ -143,6 +142,7 @@ export async function parseHtmlResponse(res: Response): Promise<PageObject | nul
   )
 
   if (scriptMatch) {
+    // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
     return JSON.parse(scriptMatch[1]) as PageObject
   }
 

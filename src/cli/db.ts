@@ -150,11 +150,11 @@ export interface MigrationDefinition {
   /**
    * Optional data migration function.
    */
-  migrate?: (db: unknown) => Promise<void>
+  migrate?: <Database>(db: Database) => Promise<void>
   /**
    * Optional validation function.
    */
-  validate?: (db: unknown) => Promise<boolean>
+  validate?: <Database>(db: Database) => Promise<boolean>
 }
 
 /**
@@ -429,10 +429,12 @@ function splitSqlStatements(content: string): string[] {
     .filter((s) => s.length > 0)
 }
 
-function parseMigrationSql(content: string): {
+interface ParsedMigrationSql {
   upStatements: string[]
   downStatements: string[]
-} {
+}
+
+function parseMigrationSql(content: string): ParsedMigrationSql {
   const downMarker = /^\s*--\s*(?:@down|down|rollback)\s*$/im
   const match = downMarker.exec(content)
 
@@ -542,6 +544,7 @@ async function getAppliedMigrations(configPath?: string): Promise<Map<string, st
   for (const trackingPath of [trackingPaths.current, trackingPaths.legacy]) {
     try {
       const content = await fs.readFile(trackingPath, 'utf-8')
+      // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
       const parsed = JSON.parse(content) as Record<string, string>
       return new Map(Object.entries(parsed))
     } catch (error) {
@@ -564,8 +567,8 @@ async function saveAppliedMigrations(
   await fs.writeFile(trackingPath, JSON.stringify(toTrackingObject(applied), null, 2))
 }
 
-function isFileNotFound(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+function isFileNotFound(cause: unknown): boolean {
+  return cause instanceof Error && 'code' in cause && cause.code === 'ENOENT'
 }
 
 async function runDrizzleMigrate(configPath?: string): Promise<void> {

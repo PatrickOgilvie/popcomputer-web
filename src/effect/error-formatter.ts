@@ -7,7 +7,11 @@
  * - Inertia for browser rendering
  */
 
-import type { HonertiaStructuredError } from './error-types.js'
+import type {
+  HonertiaStructuredError,
+  ValidationErrorData,
+} from './error-types.js'
+import type { PagePropValue, PageProps } from '../types.js'
 
 /**
  * Interface for error formatters.
@@ -32,6 +36,23 @@ const SENSITIVE_MESSAGE_CATEGORIES = new Set<HonertiaStructuredError['category']
  * Generic, client-safe message used in place of sensitive error messages.
  */
 const SAFE_GENERIC_MESSAGE = 'An error occurred. Please try again later.'
+
+interface FormattedError {
+  code: string
+  tag: string
+  category: HonertiaStructuredError['category']
+  title: string
+  message: string
+  httpStatus: number
+  timestamp: string
+  requestId?: string
+  source?: HonertiaStructuredError['source']
+  context?: HonertiaStructuredError['context']
+  fixes?: HonertiaStructuredError['fixes']
+  docs?: HonertiaStructuredError['docs']
+  validation?: object
+  body?: unknown
+}
 
 /**
  * Return a client-safe message for an error.
@@ -58,47 +79,33 @@ export function getClientSafeMessage(
   return error.message
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
 /**
  * Project validation details onto the client protocol without echoing the
  * rejected values. Those values can contain passwords, tokens, or other
  * request data even though the validation messages themselves are safe.
  */
-function projectValidationExtension(value: unknown): object | undefined {
-  if (!isRecord(value) || !isRecord(value.fields)) {
-    return undefined
-  }
+function projectValidationExtension(value: ValidationErrorData | undefined): object | undefined {
+  if (!value) return undefined
 
-  const fields: Record<string, Record<string, unknown>> = {}
+  const fields: Record<string, {
+    expected: string
+    message: string
+    path: string[]
+    schemaType?: string
+  }> = {}
 
   for (const [name, field] of Object.entries(value.fields)) {
-    if (!isRecord(field)) continue
-
-    const projected: Record<string, unknown> = {}
-    if (typeof field.expected === 'string') projected.expected = field.expected
-    if (typeof field.message === 'string') projected.message = field.message
-    if (
-      Array.isArray(field.path) &&
-      field.path.every((segment) => typeof segment === 'string')
-    ) {
-      projected.path = field.path
+    fields[name] = {
+      expected: field.expected,
+      message: field.message,
+      path: field.path,
+      schemaType: field.schemaType,
     }
-    if (typeof field.schemaType === 'string') {
-      projected.schemaType = field.schemaType
-    }
-
-    fields[name] = projected
   }
 
-  return {
-    fields,
-    ...(typeof value.component === 'string'
-      ? { component: value.component }
-      : {}),
-  }
+  return value.component === undefined
+    ? { fields }
+    : { fields, component: value.component }
 }
 
 /**
@@ -142,10 +149,8 @@ export class JsonErrorFormatter implements ErrorFormatter {
     }
   }
 
-  format(error: HonertiaStructuredError): object {
-    // Cast to allow accessing extended properties
-    const errorObj = error as HonertiaStructuredError & Record<string, unknown>
-    const output: Record<string, unknown> = {
+  format(error: HonertiaStructuredError): FormattedError {
+    const output: FormattedError = {
       code: error.code,
       tag: error.tag,
       category: error.category,
@@ -172,7 +177,7 @@ export class JsonErrorFormatter implements ErrorFormatter {
     }
 
     if (this.options.safeMessages) {
-      const validation = projectValidationExtension(errorObj.validation)
+      const validation = projectValidationExtension(error.validation)
       if (validation) {
         output.validation = validation
       }
@@ -180,20 +185,12 @@ export class JsonErrorFormatter implements ErrorFormatter {
       // HttpError.body is an intentional client payload for 4xx responses.
       // Never forward it for 5xx responses, where arbitrary internals may have
       // been attached by a caller.
-      if (error.httpStatus < 500 && errorObj.body !== undefined) {
-        output.body = errorObj.body
+      if (error.httpStatus < 500 && error.body !== undefined) {
+        output.body = error.body
       }
     } else {
-      // Development formatters retain every extension for diagnosis.
-      const baseKeys = new Set([
-        'code', 'tag', 'category', 'title', 'message', 'httpStatus',
-        'timestamp', 'requestId', 'source', 'context', 'fixes', 'docs'
-      ])
-      for (const key of Object.keys(errorObj)) {
-        if (!baseKeys.has(key)) {
-          output[key] = errorObj[key]
-        }
-      }
+      output.validation = projectValidationExtension(error.validation)
+      output.body = error.body
     }
 
     if (this.options.includeDocs && error.docs) {
@@ -261,6 +258,7 @@ export class TerminalErrorFormatter implements ErrorFormatter {
     }
 
     // Use colors or empty strings
+    // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
     this.c = this.options.useColors
       ? colors
       : Object.fromEntries(Object.keys(colors).map((k) => [k, ''])) as Record<
@@ -413,41 +411,41 @@ export class InertiaErrorFormatter implements ErrorFormatter {
     }
   }
 
-  format(error: HonertiaStructuredError): object {
-    const props: Record<string, unknown> = {
-      status: error.httpStatus,
-      code: error.code,
-      title: error.title,
-      message: getClientSafeMessage(error, this.options.isDev ?? false),
-    }
+  format(error: HonertiaStructuredError): PageProps {
+    const props = new Map<string, PagePropValue>([
+      ['status', error.httpStatus],
+      ['code', error.code],
+      ['title', error.title],
+      ['message', getClientSafeMessage(error, this.options.isDev ?? false)],
+    ])
 
     if (this.options.includeFixes && error.fixes.length > 0) {
-      props.fixes = error.fixes.map((f) => ({
+      props.set('fixes', error.fixes.map((f) => ({
         description: f.description,
         confidence: f.confidence,
         automated: f.automated,
-      }))
+      })))
 
       // Include first high-confidence fix as a hint
       const highConfidenceFix = error.fixes.find((f) => f.confidence === 'high')
       if (highConfidenceFix) {
-        props.hint = highConfidenceFix.description
+        props.set('hint', highConfidenceFix.description)
       }
     }
 
     if (this.options.includeSource && this.options.isDev && error.source) {
-      props.source = {
+      props.set('source', {
         file: error.source.file,
         line: error.source.line,
         column: error.source.column,
-      }
+      })
     }
 
     if (error.docs?.url) {
-      props.docsUrl = error.docs.url
+      props.set('docsUrl', error.docs.url)
     }
 
-    return props
+    return Object.fromEntries(props)
   }
 }
 
@@ -489,9 +487,9 @@ export interface FormatDetectionContext {
  * const formatter = createFormatter(format, isDev)
  * ```
  */
-export function detectOutputFormat(
+export function detectOutputFormat<Environment>(
   request: FormatDetectionContext,
-  env: Record<string, unknown> = {}
+  env?: Environment
 ): OutputFormat {
   // Check for AI/CLI User-Agent
   const userAgent = request.header('User-Agent') ?? ''
@@ -525,9 +523,10 @@ export function detectOutputFormat(
   // Development mode defaults to terminal-style logging.
   // Must be explicitly signalled — CF_PAGES_BRANCH is intentionally excluded
   // because it is present on production Pages deployments too.
+  const environment = env instanceof Object ? env : {}
   const isDev =
-    env.ENVIRONMENT === 'development' ||
-    env.NODE_ENV === 'development'
+    Object.getOwnPropertyDescriptor(environment, 'ENVIRONMENT')?.value === 'development' ||
+    Object.getOwnPropertyDescriptor(environment, 'NODE_ENV')?.value === 'development'
 
   if (isDev) {
     return 'terminal'

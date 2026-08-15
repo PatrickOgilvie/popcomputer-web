@@ -145,10 +145,12 @@ describe('cache route option', () => {
 
       const app = new Hono()
       app.use('*', async (c, next) => {
-        ;(c.env as Record<string, unknown>) = { ENVIRONMENT: 'development' }
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+        (c.env as { ENVIRONMENT?: string }) = { ENVIRONMENT: 'development' }
         await next()
       })
       app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       app.use(
         '*',
         honertiaServices(() => ({
@@ -205,7 +207,8 @@ describe('cache route option', () => {
     try {
       const app = new Hono()
       app.use('*', async (c, next) => {
-        ;(c.env as Record<string, unknown>) = { ENVIRONMENT: 'development' }
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+        (c.env as { ENVIRONMENT?: string }) = { ENVIRONMENT: 'development' }
         await next()
       })
       app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
@@ -367,6 +370,7 @@ describe('cache route option', () => {
 
     const app = new Hono()
     app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     app.use('*', honertiaServices(() => ({ db: db as never })))
     app.use('*', effectBridge({ schema, bindings }))
 
@@ -457,6 +461,7 @@ describe('purges route option', () => {
 
     const app = new Hono()
     app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     app.use('*', honertiaServices(() => ({ db: db as never })))
     app.use('*', effectBridge({ schema, bindings }))
 

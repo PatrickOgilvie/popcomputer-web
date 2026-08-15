@@ -12,6 +12,7 @@ export {
   effectAuthRoutes,
   betterAuthFormAction,
   betterAuthLogoutAction,
+  effectifyBetterAuth,
   loadUser,
   type AuthRoutesConfig,
   type AuthActionEffect,
@@ -19,6 +20,9 @@ export {
   type BetterAuthLogoutConfig,
   type BetterAuthActionResult,
   type BetterAuthActionError,
+  type BetterAuthBoundaryFailure,
+  type BetterAuthEffectApi,
+  type BetterAuthEffectClient,
 } from './effect/auth.js'
 
 // Re-export auth-related services
@@ -33,4 +37,5 @@ export {
   UnauthorizedError,
   ForbiddenError,
   AuthRateLimitError,
+  AuthRedirect,
 } from './effect/errors.js'

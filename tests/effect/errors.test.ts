@@ -46,8 +46,8 @@ describe('Error Types', () => {
       const exit = Effect.runSyncExit(program)
       expect(Exit.isFailure(exit)).toBe(true)
 
-      if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-        const option = Cause.failureOption(exit.cause)
+      if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+        const option = Cause.findErrorOption(exit.cause)
         if (option._tag === 'Some') {
           expect(option.value._tag).toBe('ValidationError')
         }

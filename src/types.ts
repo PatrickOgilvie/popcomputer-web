@@ -2,7 +2,24 @@
 
 import type { Context } from 'hono'
 
-export interface PageObject<TProps = Record<string, unknown>> {
+export type PagePropValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Date
+  | readonly PagePropValue[]
+  | PageProps
+
+export interface PageProps {
+  [key: string]: PagePropValue
+}
+
+export type LazyPageProp = PagePropValue | (() => PagePropValue | Promise<PagePropValue>)
+export type SharedPageProps = Record<string, LazyPageProp>
+
+export interface PageObject<TProps extends object = PageProps> {
   component: string
   props: TProps & { errors?: Record<string, string> }
   url: string
@@ -22,14 +39,14 @@ export interface RenderOptions {
 }
 
 export interface WebInstance {
-  render<T extends Record<string, unknown>>(
+  render<T extends PageProps>(
     component: string,
     props?: T,
     options?: RenderOptions
   ): Response | Promise<Response>
   
-  share(key: string, value: unknown | (() => unknown | Promise<unknown>)): void
-  getShared(): Record<string, unknown>
+  share(key: string, value: LazyPageProp): void
+  getShared(): SharedPageProps
   setErrors(errors: Record<string, string>): void
 }
 

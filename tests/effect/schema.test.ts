@@ -57,9 +57,7 @@ import {
   nullableUrl,
   uuid,
   nullableUuid,
-  ip,
   ipv4,
-  ipv6,
   macAddress,
   jsonString,
   // Confirmation
@@ -76,11 +74,11 @@ import {
   excludeIf,
 } from '../../src/effect/schema.js'
 
-const decode = <A, I>(schema: S.Schema<A, I>, value: unknown) =>
-  Effect.runSync(S.decodeUnknown(schema)(value))
+const decode = <A, I, Input>(schema: S.Schema<A, I>, value: Input) =>
+  Effect.runSync(S.decodeUnknownEffect(schema)(value))
 
-const decodeEither = <A, I>(schema: S.Schema<A, I>, value: unknown) =>
-  Effect.runSyncExit(S.decodeUnknown(schema)(value))
+const decodeEither = <A, I, Input>(schema: S.Schema<A, I>, value: Input) =>
+  Effect.runSyncExit(S.decodeUnknownEffect(schema)(value))
 
 // =============================================================================
 // String Types

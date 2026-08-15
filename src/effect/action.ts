@@ -5,7 +5,7 @@
  * Actions are fully opt-in - yield* only what you need.
  */
 
-import { Effect } from 'effect'
+import { Effect, Schema as S } from 'effect'
 import {
   DatabaseConstraintViolation,
   DatabaseMutationFailed,
@@ -90,8 +90,9 @@ export function dbMutation<DB, I, T>(
     input: MutationInput<Scope, I>
   ) => Promise<T>
 ): Effect.Effect<T, DatabaseMutationFailed | DatabaseConstraintViolation> {
-  if (typeof inputOrOperation === 'function') {
-    const operation = inputOrOperation as (db: SafeTx<DB>) => Promise<T>
+  if (inputOrOperation instanceof Function) {
+    const operation = inputOrOperation
+    // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
     return Effect.tryPromise({
       try: (): Promise<T> => operation(db as SafeTx<DB>),
       catch: (cause) => classifyDatabaseFailure(cause, 'mutation'),
@@ -104,6 +105,7 @@ export function dbMutation<DB, I, T>(
     )
   }
 
+  // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
   return Effect.tryPromise({
     try: (): Promise<T> =>
       maybeOperation(
@@ -128,7 +130,7 @@ type SafeParam<P> =
     ? SafeValues<P>
     : P extends Array<any>
       ? SafeValues<P>
-      : P extends Record<string, unknown>
+      : P extends object
         ? SafeInput<P>
         : P
 
@@ -182,7 +184,7 @@ export type MutationInput<Scope extends symbol, A> =
     ? Array<MutationInput<Scope, E>> & ScopedMarker<Scope>
     : A extends ReadonlyArray<infer E>
       ? ReadonlyArray<MutationInput<Scope, E>> & ScopedMarker<Scope>
-      : A extends Record<string, unknown>
+      : A extends object
         ? { [K in keyof A]: MutationInput<Scope, A[K]> } & ScopedMarker<Scope>
         : A
 
@@ -191,7 +193,7 @@ type UnscopedMutationInput<A> =
     ? ReadonlyArray<UnscopedMutationInput<E>>
     : A extends Array<infer E>
       ? Array<UnscopedMutationInput<E>>
-      : A extends Record<string, unknown>
+      : A extends object
         ? {
           [K in keyof A as K extends typeof MutationScopeBrand ? never : K]:
             UnscopedMutationInput<A[K]>
@@ -202,7 +204,7 @@ type NoExtraKeys<Actual, Allowed> =
   Actual & Record<Exclude<keyof Actual, keyof Allowed>, never>
 
 type MergedMutationInput<
-  Scoped extends MutationInput<symbol, Record<string, unknown>>,
+  Scoped extends MutationInput<symbol, object>,
   Patch extends Partial<UnscopedMutationInput<Scoped>>
 > = Omit<Scoped, keyof Patch> & {
   [K in keyof Patch]-?: NonNullable<Patch[K]>
@@ -217,15 +219,16 @@ type MergedMutationInput<
  * narrowed to required, non-nullable values in the returned type.
  */
 export function mergeMutationInput<
-  Scoped extends MutationInput<symbol, Record<string, unknown>>,
+  Scoped extends MutationInput<symbol, object>,
   Patch extends Partial<UnscopedMutationInput<Scoped>>
 >(
   base: Scoped,
   patch: NoExtraKeys<Patch, Partial<UnscopedMutationInput<Scoped>>>
 ): MergedMutationInput<Scoped, Patch> {
+  // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
   return {
-    ...(base as Record<string, unknown>),
-    ...(patch as Record<string, unknown>),
+    ...base,
+    ...patch,
   } as MergedMutationInput<Scoped, Patch>
 }
 
@@ -241,7 +244,7 @@ type ScopedSafeParam<Scope extends symbol, P> =
     ? ScopedSafeValues<Scope, P>
     : P extends Array<any>
       ? ScopedSafeValues<Scope, P>
-      : P extends Record<string, unknown>
+      : P extends object
         ? MutationInput<Scope, P>
         : P
 
@@ -365,8 +368,9 @@ export function dbTransaction<
     input: MutationInput<Scope, I>
   ) => Promise<T>
 ): Effect.Effect<T, DatabaseTransactionFailed | DatabaseConstraintViolation> {
-  if (typeof inputOrOperations === 'function') {
-    const operations = inputOrOperations as (tx: SafeTx<TransactionClient<DB>>) => Promise<T>
+  if (inputOrOperations instanceof Function) {
+    const operations = inputOrOperations
+    // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
     return Effect.tryPromise({
       try: (): Promise<T> => db.transaction((tx) =>
         operations(tx as SafeTx<TransactionClient<DB>>)
@@ -381,6 +385,7 @@ export function dbTransaction<
     )
   }
 
+  // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
   return Effect.tryPromise({
     try: (): Promise<T> => db.transaction((tx) =>
       maybeOperations(
@@ -395,12 +400,12 @@ export function dbTransaction<
 type DatabaseOperation = 'mutation' | 'transaction'
 
 function readDatabaseCode(cause: unknown): string | number | undefined {
-  if (typeof cause !== 'object' || cause === null) return undefined
+  if (!(cause instanceof Object)) return undefined
   if ('code' in cause) {
     const code = cause.code
-    if (typeof code === 'string' || typeof code === 'number') return code
+    if (S.is(S.String)(code) || S.is(S.Number)(code)) return code
   }
-  if ('errno' in cause && typeof cause.errno === 'number') return cause.errno
+  if ('errno' in cause && S.is(S.Number)(cause.errno)) return cause.errno
   return undefined
 }
 

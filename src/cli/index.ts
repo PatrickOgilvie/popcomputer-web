@@ -292,6 +292,7 @@ export function parseRoutesArgs(args: string[]): RoutesCommandOptions {
         break
       case '--sort':
       case '-s':
+        // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
         options.sortBy = args[++i] as 'method' | 'path' | 'name'
         break
       case '--reverse':

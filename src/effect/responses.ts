@@ -11,6 +11,7 @@ import {
   RequestService,
 } from './services.js'
 import { Redirect, NotFoundError, ForbiddenError, HttpError } from './errors.js'
+import type { PageProps, PagePropValue } from '../types.js'
 
 /**
  * Create a redirect response.
@@ -28,13 +29,13 @@ export const redirect = (url: string, status: 302 | 303 = 303): Effect.Effect<Re
  * @example
  * return yield* render('Dashboard/Index', { projects })
  */
-export const render = <T extends object>(
+export const render = <T extends PageProps>(
   component: string,
   props?: T
 ): Effect.Effect<Response, never, PageService> =>
   Effect.gen(function* () {
     const page = yield* PageService
-    return yield* Effect.promise(() => page.render(component, props as Record<string, unknown>))
+    return yield* Effect.promise(() => page.render(component, props))
   })
 
 /**
@@ -43,7 +44,7 @@ export const render = <T extends object>(
  * @example
  * return yield* renderWithErrors('Auth/Login', { email: 'Invalid' })
  */
-export const renderWithErrors = <T extends object>(
+export const renderWithErrors = <T extends PageProps>(
   component: string,
   errors: Record<string, string>,
   props?: T
@@ -51,7 +52,7 @@ export const renderWithErrors = <T extends object>(
   Effect.gen(function* () {
     const page = yield* PageService
     page.setErrors(errors)
-    return yield* Effect.promise(() => page.render(component, props as Record<string, unknown>))
+    return yield* Effect.promise(() => page.render(component, props))
   })
 
 /**
@@ -100,7 +101,7 @@ export const forbidden = (message = 'Forbidden'): Effect.Effect<never, Forbidden
 export const httpError = (
   status: number,
   message: string,
-  body?: unknown
+  body?: PagePropValue
 ): Effect.Effect<never, HttpError, never> =>
   Effect.fail(new HttpError({ status, message, body }))
 
@@ -123,7 +124,7 @@ export const prefersJson: Effect.Effect<boolean, never, RequestService> =
 /**
  * Return JSON if the client prefers it, otherwise render a page component.
  */
-export const jsonOrRender = <T extends object>(
+export const jsonOrRender = <T extends PageProps>(
   component: string,
   data: T
 ): Effect.Effect<Response, never, RequestService | PageService | ResponseFactoryService> =>
@@ -138,7 +139,7 @@ export const jsonOrRender = <T extends object>(
 /**
  * Share data with all page responses.
  */
-export const share = (key: string, value: unknown): Effect.Effect<void, never, PageService> =>
+export const share = (key: string, value: PagePropValue): Effect.Effect<void, never, PageService> =>
   Effect.gen(function* () {
     const page = yield* PageService
     page.share(key, value)

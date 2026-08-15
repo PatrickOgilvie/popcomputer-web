@@ -8,7 +8,7 @@
  * Supports stale-while-revalidate (SWR) pattern for improved latency and resilience.
  */
 
-import { Effect, Option, Schema, ParseResult, Duration } from 'effect'
+import { Duration, Effect, Option, Schema } from 'effect'
 import { CacheService, CacheClientError, ExecutionContextService } from './effect/services.js'
 
 // ============================================================================
@@ -17,13 +17,13 @@ import { CacheService, CacheClientError, ExecutionContextService } from './effec
 
 export type CacheOptions = {
   /** Time-to-live for cached values */
-  ttl: Duration.DurationInput
+  ttl: Duration.Input
   /**
    * Stale-while-revalidate window. When set, stale values within this window
    * are returned immediately while a background refresh is triggered.
    * Without ExecutionContext, stale entries are recomputed synchronously.
    */
-  swr?: Duration.DurationInput
+  swr?: Duration.Input
   /**
    * Cache key versioning for safe schema migrations.
    * - `string`: Explicit version prefix (e.g., 'v2')
@@ -56,7 +56,7 @@ export class CacheError extends Schema.TaggedError<CacheError>()('CacheError', {
 // ============================================================================
 
 /** Internal schema for storing value with metadata */
-const CacheEntrySchema = <V>(valueSchema: Schema.Schema<V>) =>
+const CacheEntrySchema = <V>(valueSchema: Schema.Codec<V>) =>
   Schema.Struct({
     v: valueSchema,
     t: Schema.Number, // cachedAt timestamp
@@ -81,7 +81,7 @@ const hashString = (str: string): string => {
  * Generate a version string from a schema's AST.
  * The hash changes when the schema structure changes.
  */
-const hashSchema = <V>(schema: Schema.Schema<V>): string => {
+const hashSchema = <V>(schema: Schema.Codec<V>): string => {
   // Stringify the AST - this captures the schema structure
   const astString = JSON.stringify(schema.ast)
   return hashString(astString)
@@ -92,13 +92,13 @@ const hashSchema = <V>(schema: Schema.Schema<V>): string => {
  */
 const resolveKey = <V>(
   key: string,
-  schema: Schema.Schema<V>,
+  schema: Schema.Codec<V>,
   version: string | boolean | undefined
 ): string => {
   if (version === true) {
     return `${hashSchema(schema)}:${key}`
   }
-  if (typeof version === 'string') {
+  if (Schema.is(Schema.String)(version)) {
     return `${version}:${key}`
   }
   return key
@@ -150,25 +150,27 @@ const resolveKey = <V>(
 export const cache = <V, E, R>(
   key: string,
   compute: Effect.Effect<V, E, R>,
-  schema: Schema.Schema<V>,
+  schema: Schema.Codec<V>,
   options: CacheOptions
-): Effect.Effect<V, E | CacheError | CacheClientError | ParseResult.ParseError, R | CacheService | ExecutionContextService> =>
+): Effect.Effect<V, E | CacheError | CacheClientError | Schema.SchemaError, R | CacheService | ExecutionContextService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
     const executionContext = yield* ExecutionContextService
     const entrySchema = CacheEntrySchema(schema)
-    const jsonSchema = Schema.parseJson(entrySchema)
+    const jsonSchema = Schema.fromJsonString(entrySchema)
 
     const effectiveKey = resolveKey(key, schema, options.version)
-    const ttlMs = Duration.toMillis(Duration.decode(options.ttl))
-    const swrMs = options.swr ? Duration.toMillis(Duration.decode(options.swr)) : 0
+    const ttlMs = Duration.toMillis(Duration.fromInputUnsafe(options.ttl))
+    const swrMs = options.swr
+      ? Duration.toMillis(Duration.fromInputUnsafe(options.swr))
+      : 0
     const totalTtlSeconds = Math.ceil((ttlMs + swrMs) / 1000)
 
     // Helper to store a value in cache
     const storeInCache = (value: V) =>
       Effect.gen(function* () {
         const newEntry: CacheEntry<V> = { v: value, t: Date.now() }
-        const serialized = yield* Schema.encode(jsonSchema)(newEntry)
+        const serialized = yield* Schema.encodeEffect(jsonSchema)(newEntry)
         yield* cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
       })
 
@@ -176,7 +178,7 @@ export const cache = <V, E, R>(
     const cached = yield* cacheService.get(effectiveKey)
 
     if (cached !== null) {
-      const entry = yield* Schema.decodeUnknown(jsonSchema)(cached)
+      const entry = yield* Schema.decodeUnknownEffect(jsonSchema)(cached)
       const age = Date.now() - entry.t
 
       if (age < ttlMs) {
@@ -230,13 +232,13 @@ export const cache = <V, E, R>(
  */
 export const cacheGet = <V>(
   key: string,
-  schema: Schema.Schema<V>,
+  schema: Schema.Codec<V>,
   options?: CacheGetOptions
-): Effect.Effect<Option.Option<V>, CacheError | CacheClientError | ParseResult.ParseError, CacheService> =>
+): Effect.Effect<Option.Option<V>, CacheError | CacheClientError | Schema.SchemaError, CacheService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
     const entrySchema = CacheEntrySchema(schema)
-    const jsonSchema = Schema.parseJson(entrySchema)
+    const jsonSchema = Schema.fromJsonString(entrySchema)
 
     const effectiveKey = resolveKey(key, schema, options?.version)
     const cached = yield* cacheService.get(effectiveKey)
@@ -245,7 +247,7 @@ export const cacheGet = <V>(
       return Option.none<V>()
     }
 
-    const entry = yield* Schema.decodeUnknown(jsonSchema)(cached)
+    const entry = yield* Schema.decodeUnknownEffect(jsonSchema)(cached)
     return Option.some(entry.v)
   })
 
@@ -263,28 +265,30 @@ export const cacheGet = <V>(
 export const cacheSet = <V>(
   key: string,
   value: V,
-  schema: Schema.Schema<V>,
+  schema: Schema.Codec<V>,
   options: CacheOptions
-): Effect.Effect<void, CacheError | CacheClientError | ParseResult.ParseError, CacheService> =>
+): Effect.Effect<void, CacheError | CacheClientError | Schema.SchemaError, CacheService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
     const entrySchema = CacheEntrySchema(schema)
-    const jsonSchema = Schema.parseJson(entrySchema)
+    const jsonSchema = Schema.fromJsonString(entrySchema)
 
     const effectiveKey = resolveKey(key, schema, options.version)
-    const ttlMs = Duration.toMillis(Duration.decode(options.ttl))
-    const swrMs = options.swr ? Duration.toMillis(Duration.decode(options.swr)) : 0
+    const ttlMs = Duration.toMillis(Duration.fromInputUnsafe(options.ttl))
+    const swrMs = options.swr
+      ? Duration.toMillis(Duration.fromInputUnsafe(options.swr))
+      : 0
     const totalTtlSeconds = Math.ceil((ttlMs + swrMs) / 1000)
 
     const entry: CacheEntry<V> = { v: value, t: Date.now() }
-    const serialized = yield* Schema.encode(jsonSchema)(entry)
+    const serialized = yield* Schema.encodeEffect(jsonSchema)(entry)
 
     yield* cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
   })
 
 export type CacheInvalidateOptions<V> = {
   /** Schema used when caching (required if version is set) */
-  schema: Schema.Schema<V>
+  schema: Schema.Codec<V>
   /** Version option (must match what was used when caching) */
   version: string | boolean
 }

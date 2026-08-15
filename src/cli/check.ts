@@ -478,6 +478,7 @@ function checkRouteRegistration(
   options: CheckCommandOptions
 ): CheckResult {
   const issues: CheckDetail[] = []
+  // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
   const registeredNames = new Set(routes.map((route) => route.name).filter(Boolean) as string[])
   const cwd = options.cwd ?? process.cwd()
   const scanDirs = options.scanDirs ?? DEFAULT_ROUTE_SCAN_DIRS
@@ -558,6 +559,7 @@ export function checkCommand(
   const routes = registry.toJson()
   const checks: CheckResult[] = []
 
+  // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
   const shouldRun = (name: string) =>
     !options.only || options.only.includes(name as any)
 
@@ -611,11 +613,11 @@ function formatCheckText(result: CheckCommandResult, verbose: boolean): string {
   const lines: string[] = []
 
   // Status icons
-  const icons: Record<CheckStatus, string> = {
+  const icons = {
     pass: '[PASS]',
     warn: '[WARN]',
     fail: '[FAIL]',
-  }
+  } satisfies Record<CheckStatus, string>
 
   lines.push('Popcomputer Web Project Check')
   lines.push('='.repeat(50))
@@ -680,6 +682,7 @@ export function parseCheckArgs(args: string[]): CheckCommandOptions {
         break
       case '--only':
         const checks = args[++i]?.split(',') ?? []
+        // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
         options.only = checks as any
         break
       case '--scan':

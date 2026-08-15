@@ -15,7 +15,6 @@ import {
   pluralize,
   bound,
   BoundModels,
-  BoundModelNotFound,
   compileBindingPlan,
   decodeBoundRow,
   columnTypeToSchema,
@@ -674,7 +673,7 @@ describe('Route Model Binding Integration', () => {
 
       // Both valid
       const bothValid = await app.request(
-        '/users/123e4567-e89b-12d3-a456-426614174000/posts/987fcdeb-51a2-3bc4-d567-890123456789'
+        '/users/123e4567-e89b-12d3-a456-426614174000/posts/987fcdeb-51a2-3bc4-a567-890123456789'
       )
       expect(bothValid.status).toBe(200)
       expect(await bothValid.text()).toBe('Both valid')
@@ -691,7 +690,10 @@ describe('Route Model Binding Integration', () => {
         Effect.succeed(new Response('Slug validated')),
         {
           params: S.Struct({
-            project: S.String.pipe(S.minLength(3), S.maxLength(50)),
+            project: S.String.check(
+              S.isMinLength(3),
+              S.isMaxLength(50)
+            ),
           }),
         }
       )
@@ -713,7 +715,7 @@ describe('Route Model Binding Integration', () => {
         Effect.succeed(new Response('Mixed validated')),
         {
           params: S.Struct({
-            version: S.Literal('v1', 'v2'),
+            version: S.Literals(['v1', 'v2']),
             project: uuid,
           }),
         }
@@ -782,8 +784,7 @@ describe('Route Model Binding Integration', () => {
 
 describe('columnTypeToSchema', () => {
   // Helper to decode with the dynamically returned schema
-  const decodeWith = (schema: S.Schema.Any) =>
-    S.decodeUnknownSync(schema as S.Schema<unknown, unknown, never>)
+  const decodeWith = (schema: S.Constraint) => S.decodeUnknownSync(schema)
 
   describe('UUID types', () => {
     test('PgUUID returns UUID schema', async () => {
@@ -895,8 +896,7 @@ describe('columnTypeToSchema', () => {
 
 describe('inferParamsSchema', () => {
   // Helper to decode with the dynamically returned schema
-  const decodeWith = (schema: S.Schema.Any) =>
-    S.decodeUnknownSync(schema as S.Schema<unknown, unknown, never>)
+  const decodeWith = (schema: S.Constraint) => S.decodeUnknownSync(schema)
 
   // Mock Drizzle-like schema for testing
   const mockSchema = {

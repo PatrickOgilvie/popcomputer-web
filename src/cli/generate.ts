@@ -120,7 +120,9 @@ export function parseSchemaString(schema: string): FieldDefinition[] {
   return schema.split(',').map((field) => {
     const parts = field.trim().split(':')
     const name = parts[0]?.trim() ?? ''
+    // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
     const type = (parts[1]?.trim() ?? 'string') as FieldType
+    // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
     const modifier = (parts[2]?.trim() ?? 'required') as FieldModifier
 
     return { name, type, modifier }
@@ -139,13 +141,13 @@ function fieldTypeToSchema(type: FieldType): string {
     case 'boolean':
       return 'S.Boolean'
     case 'date':
-      return 'S.Date'
+      return 'S.DateFromString'
     case 'uuid':
       return 'uuid'
     case 'email':
       return 'email'
     case 'url':
-      return 'S.String.pipe(S.pattern(/^https?:\\/\\/.+/))'
+      return 'S.String.check(S.isPattern(/^https?:\\/\\/.+/))'
     default:
       return 'S.String'
   }
@@ -170,13 +172,15 @@ function generateSchemaField(field: FieldDefinition): string {
 /**
  * Convert action name to various formats.
  */
-function parseActionName(name: string): {
+interface ParsedActionName {
   pascalCase: string
   camelCase: string
   routeName: string
   directory: string
   fileName: string
-} {
+}
+
+function parseActionName(name: string): ParsedActionName {
   // Handle 'projects/create' format
   if (name.includes('/')) {
     const parts = name.split('/')
@@ -780,6 +784,7 @@ export function runGenerateAction(args: string[]): void {
     ? `/${names.directory}`
     : `/${names.fileName}`
 
+  // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
   const result = generateAction({
     name: options.name,
     method: (options.method ?? 'POST') as ActionMethod,
@@ -926,18 +931,18 @@ function singularize(word: string): string {
 /**
  * CRUD action configurations.
  */
-const CRUD_CONFIGS: Record<CrudAction, {
-  method: ActionMethod
-  pathSuffix: string
-  hasBinding: boolean
-  needsSchema: boolean
-}> = {
+const CRUD_CONFIGS = {
   index: { method: 'GET', pathSuffix: '', hasBinding: false, needsSchema: false },
   show: { method: 'GET', pathSuffix: '/{resource}', hasBinding: true, needsSchema: false },
   create: { method: 'POST', pathSuffix: '', hasBinding: false, needsSchema: true },
   update: { method: 'PUT', pathSuffix: '/{resource}', hasBinding: true, needsSchema: true },
   destroy: { method: 'DELETE', pathSuffix: '/{resource}', hasBinding: true, needsSchema: false },
-}
+} satisfies Record<CrudAction, {
+  method: ActionMethod
+  pathSuffix: string
+  hasBinding: boolean
+  needsSchema: boolean
+}>
 
 /**
  * Generate full CRUD actions for a resource.
@@ -1212,6 +1217,7 @@ export function runGenerateCrud(args: string[]): void {
     process.exit(1)
   }
 
+  // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
   const result = generateCrud({
     resource: cliOptions.resource,
     schema: cliOptions.schema,

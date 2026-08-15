@@ -224,7 +224,7 @@ describe('routesCommand', () => {
       const result = routesCommand(registry)
 
       expect(result.output).toBeDefined()
-      expect(typeof result.output).toBe('string')
+      expect(result.output).toEqual(expect.any(String))
     })
 
     test('includes count', () => {

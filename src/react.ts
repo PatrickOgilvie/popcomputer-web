@@ -2,7 +2,8 @@
 
 import type { PageProps } from './helpers.js'
 
-type ComponentType<P = unknown> = (props: P) => unknown
+type ReactRenderable = string | number | boolean | null | undefined | object
+type ComponentType<P = Record<never, never>> = (props: P) => ReactRenderable
 
 export type WebPage<TProps = Record<string, never>> = ComponentType<TProps & PageProps>
 

@@ -4,6 +4,7 @@
 
 import { describe, test, expect } from 'bun:test'
 import { Effect, Layer, Exit, Cause } from 'effect'
+import type { PageProps } from '../../src/types.js'
 import {
   redirect,
   render,
@@ -29,12 +30,12 @@ import { Redirect, NotFoundError, ForbiddenError, HttpError } from '../../src/ef
 
 // Mock HonertiaRenderer
 const createMockHonertia = (): HonertiaRenderer & {
-  renders: Array<{ component: string; props?: Record<string, unknown> }>
-  shared: Record<string, unknown>
+  renders: Array<{ component: string; props?: PageProps }>
+  shared: PageProps
   errors: Record<string, string>
 } => {
-  const renders: Array<{ component: string; props?: Record<string, unknown> }> = []
-  const shared: Record<string, unknown> = {}
+  const renders: Array<{ component: string; props?: PageProps }> = []
+  const shared: PageProps = {}
   let errors: Record<string, string> = {}
 
   return {
@@ -53,7 +54,7 @@ const createMockHonertia = (): HonertiaRenderer & {
       shared[key] = value
     },
     setErrors: (newErrors) => {
-      errors = { ...errors, ...newErrors }
+      Object.assign(errors, newErrors)
     },
   }
 }
@@ -225,9 +226,10 @@ describe('notFound', () => {
     const exit = Effect.runSyncExit(notFound('Project'))
 
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         const error = option.value as NotFoundError
         expect(error._tag).toBe('NotFoundError')
         expect(error.resource).toBe('Project')
@@ -238,9 +240,10 @@ describe('notFound', () => {
   test('includes resource ID', () => {
     const exit = Effect.runSyncExit(notFound('User', 42))
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         const error = option.value as NotFoundError
         expect(error.id).toBe(42)
       }
@@ -250,9 +253,10 @@ describe('notFound', () => {
   test('supports string ID', () => {
     const exit = Effect.runSyncExit(notFound('Post', 'abc-123'))
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         const error = option.value as NotFoundError
         expect(error.id).toBe('abc-123')
       }
@@ -264,9 +268,10 @@ describe('forbidden', () => {
   test('fails with ForbiddenError with default message', () => {
     const exit = Effect.runSyncExit(forbidden())
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         const error = option.value as ForbiddenError
         expect(error._tag).toBe('ForbiddenError')
         expect(error.message).toBe('Forbidden')
@@ -277,9 +282,10 @@ describe('forbidden', () => {
   test('fails with ForbiddenError with custom message', () => {
     const exit = Effect.runSyncExit(forbidden('You cannot edit this resource'))
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         const error = option.value as ForbiddenError
         expect(error.message).toBe('You cannot edit this resource')
       }
@@ -291,9 +297,10 @@ describe('httpError', () => {
   test('fails with HttpError', () => {
     const exit = Effect.runSyncExit(httpError(429, 'Too many requests'))
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         const error = option.value as HttpError
         expect(error._tag).toBe('HttpError')
         expect(error.status).toBe(429)
@@ -307,9 +314,10 @@ describe('httpError', () => {
       httpError(400, 'Bad request', { field: 'Invalid' })
     )
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         const error = option.value as HttpError
         expect(error.body).toEqual({ field: 'Invalid' })
       }

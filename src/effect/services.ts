@@ -2,6 +2,7 @@
 
 import { Context, Effect, Option } from 'effect'
 import { UnauthorizedError, ForbiddenError } from './errors.js'
+import type { PageProps, PagePropValue } from '../types.js'
 
 /**
  * Augmentable interface for database type.
@@ -130,27 +131,27 @@ export type BindingsType = WebBindingsType extends { type: infer T }
   ? T
   : HonertiaBindingsType extends { type: infer T }
     ? T
-    : Record<string, unknown>
+    : BindingsNotConfigured
 
 /**
  * Database Service - Generic database client
  */
-const DatabaseService_base: Context.TagClass<
+const DatabaseService_base: Context.ServiceClass<
   DatabaseService,
   '@popcomputer/web/Database',
   DatabaseType
-> = Context.Tag('@popcomputer/web/Database')<DatabaseService, DatabaseType>()
+> = Context.Service<DatabaseService, DatabaseType>()('@popcomputer/web/Database')
 
 export class DatabaseService extends DatabaseService_base {}
 
 /**
  * Auth Service - Better-auth instance
  */
-const AuthService_base: Context.TagClass<
+const AuthService_base: Context.ServiceClass<
   AuthService,
   '@popcomputer/web/Auth',
   AuthType
-> = Context.Tag('@popcomputer/web/Auth')<AuthService, AuthType>()
+> = Context.Service<AuthService, AuthType>()('@popcomputer/web/Auth')
 
 export class AuthService extends AuthService_base {}
 
@@ -172,11 +173,11 @@ export class AuthService extends AuthService_base {}
  * const { KV, DB } = yield* BindingsService
  * ```
  */
-const BindingsService_base: Context.TagClass<
+const BindingsService_base: Context.ServiceClass<
   BindingsService,
   '@popcomputer/web/Bindings',
   BindingsType
-> = Context.Tag('@popcomputer/web/Bindings')<BindingsService, BindingsType>()
+> = Context.Service<BindingsService, BindingsType>()('@popcomputer/web/Bindings')
 
 export class BindingsService extends BindingsService_base {}
 
@@ -247,11 +248,11 @@ export type AuthUser = WebAuthUserType extends { type: infer T }
 /**
  * Authenticated User Service - Provides the current user session
  */
-const AuthUserService_base: Context.TagClass<
+const AuthUserService_base: Context.ServiceClass<
   AuthUserService,
   '@popcomputer/web/AuthUser',
   AuthUser
-> = Context.Tag('@popcomputer/web/AuthUser')<AuthUserService, AuthUser>()
+> = Context.Service<AuthUserService, AuthUser>()('@popcomputer/web/AuthUser')
 
 export class AuthUserService extends AuthUserService_base {}
 
@@ -262,27 +263,27 @@ export interface EmailClient {
   send: (to: string, subject: string, body: string) => Effect.Effect<void, Error>
 }
 
-export class EmailService extends Context.Tag('@popcomputer/web/Email')<
+export class EmailService extends Context.Service<
   EmailService,
   EmailClient
->() {}
+>()('@popcomputer/web/Email') {}
 
 /**
  * Inertia-compatible page renderer.
  */
 export interface PageRenderer {
-  render<T extends Record<string, unknown>>(
+  render<T extends PageProps>(
     component: string,
     props?: T
   ): Promise<Response>
-  share(key: string, value: unknown): void
+  share(key: string, value: PagePropValue): void
   setErrors(errors: Record<string, string>): void
 }
 
-export class PageService extends Context.Tag('@popcomputer/web/Page')<
+export class PageService extends Context.Service<
   PageService,
   PageRenderer
->() {}
+>()('@popcomputer/web/Page') {}
 
 /** @deprecated Use {@link PageRenderer}. */
 export type HonertiaRenderer = PageRenderer
@@ -293,7 +294,7 @@ export { PageService as HonertiaService }
 /**
  * Request Context - HTTP request data and environment bindings
  */
-export interface RequestContext<Bindings = Record<string, unknown>> {
+export interface RequestContext<Bindings extends object = object> {
   readonly method: string
   readonly url: string
   readonly headers: Headers
@@ -310,15 +311,15 @@ export interface RequestContext<Bindings = Record<string, unknown>> {
   param(name: string): string | undefined
   params(): Record<string, string>
   query(): Record<string, string>
-  json<T = unknown>(): Promise<T>
-  parseBody(): Promise<Record<string, unknown>>
+  json<T>(): Promise<T>
+  parseBody(): Promise<Record<string, string | File>>
   header(name: string): string | undefined
 }
 
-export class RequestService extends Context.Tag('@popcomputer/web/Request')<
+export class RequestService extends Context.Service<
   RequestService,
   RequestContext
->() {}
+>()('@popcomputer/web/Request') {}
 
 /**
  * Request State - request-scoped variables shared with Hono middleware
@@ -340,15 +341,15 @@ export class RequestService extends Context.Tag('@popcomputer/web/Request')<
  */
 export interface RequestStateClient {
   /** Read a request-scoped variable. Returns undefined when unset. */
-  get<T = unknown>(key: string): T | undefined
+  get<T>(key: string): T | undefined
   /** Write a request-scoped variable, visible via c.var to middleware. */
-  set(key: string, value: unknown): void
+  set<T>(key: string, value: T): void
 }
 
-export class RequestStateService extends Context.Tag('@popcomputer/web/RequestState')<
+export class RequestStateService extends Context.Service<
   RequestStateService,
   RequestStateClient
->() {}
+>()('@popcomputer/web/RequestState') {}
 
 /**
  * Response Factory - Create HTTP responses
@@ -360,10 +361,10 @@ export interface ResponseFactory {
   notFound(): Response | Promise<Response>
 }
 
-export class ResponseFactoryService extends Context.Tag('@popcomputer/web/ResponseFactory')<
+export class ResponseFactoryService extends Context.Service<
   ResponseFactoryService,
   ResponseFactory
->() {}
+>()('@popcomputer/web/ResponseFactory') {}
 
 /**
  * Cache Service - KV-backed caching for expensive operations
@@ -400,10 +401,10 @@ export class CacheClientError {
   ) {}
 }
 
-export class CacheService extends Context.Tag('@popcomputer/web/Cache')<
+export class CacheService extends Context.Service<
   CacheService,
   CacheClient
->() {}
+>()('@popcomputer/web/Cache') {}
 
 // ============================================================================
 // Execution Context Service
@@ -458,7 +459,7 @@ export interface ExecutionContextClient {
   /**
    * Raw waitUntil - extends worker lifetime for a Promise.
    * Use this for promises from external libraries.
-   * No-op if background execution is unavailable.
+   * Non-Worker runtimes await the promise before request teardown.
    */
   waitUntil: (promise: Promise<unknown>) => void
 }
@@ -481,10 +482,10 @@ export interface ExecutionContextClient {
  * )
  * ```
  */
-export class ExecutionContextService extends Context.Tag('@popcomputer/web/ExecutionContext')<
+export class ExecutionContextService extends Context.Service<
   ExecutionContextService,
   ExecutionContextClient
->() {}
+>()('@popcomputer/web/ExecutionContext') {}
 
 /**
  * Authorization helper - opt-in to auth check.

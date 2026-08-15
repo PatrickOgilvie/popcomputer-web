@@ -7,6 +7,7 @@ import { Effect, Schema as S, Layer, Exit, Cause } from 'effect'
 import {
   getValidationData,
   formatSchemaErrors,
+  asValidated,
   validate,
   validateUnknown,
   validateRequest,
@@ -14,6 +15,7 @@ import {
 import { RequestService, type RequestContext } from '../../src/effect/services.js'
 import { ValidationError } from '../../src/effect/errors.js'
 import { ErrorCodes } from '../../src/effect/error-catalog.js'
+import type { RequestData } from '../../src/effect/validation.js'
 
 // Helper to create a mock request context
 const createMockRequest = (options: {
@@ -21,7 +23,7 @@ const createMockRequest = (options: {
   url?: string
   params?: Record<string, string>
   query?: Record<string, string>
-  body?: Record<string, unknown>
+  body?: RequestData
   headers?: Record<string, string>
   contentType?: string
 }): RequestContext => {
@@ -35,26 +37,29 @@ const createMockRequest = (options: {
     contentType = 'application/json',
   } = options
 
+  const parseBody = async (): Promise<Record<string, string | File>> => {
+    const parsed: Record<string, string | File> = {}
+    for (const [key, value] of Object.entries(body)) {
+      if (typeof value !== 'string' && !(value instanceof File)) {
+        throw new TypeError(`Form body field "${key}" must be a string or File`)
+      }
+      parsed[key] = value
+    }
+    return parsed
+  }
+
   return {
     method,
     url,
     headers: new Headers({ 'Content-Type': contentType, ...headers }),
+    env: {},
     param: (name: string) => params[name],
     params: () => params,
     query: () => query,
-    json: async <T>() => body as T,
-    parseBody: async () => body,
+    json: () => new Response(JSON.stringify(body)).json(),
+    parseBody,
     header: (name: string) => headers[name] || (name.toLowerCase() === 'content-type' ? contentType : undefined),
   }
-}
-
-// Helper to run effect with request service
-const runWithRequest = <A, E>(
-  effect: Effect.Effect<A, E, RequestService>,
-  request: RequestContext
-) => {
-  const layer = Layer.succeed(RequestService, request)
-  return Effect.runSyncExit(Effect.provide(effect, layer))
 }
 
 const runWithRequestAsync = <A, E>(
@@ -157,11 +162,11 @@ describe('getValidationData', () => {
 describe('formatSchemaErrors', () => {
   test('formats single field error', async () => {
     const schema = S.Struct({
-      name: S.String.pipe(S.minLength(1)),
+      name: S.String.check(S.isMinLength(1)),
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknown(schema)({ name: '' })
+      S.decodeUnknownEffect(schema)({ name: '' })
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
@@ -169,17 +174,17 @@ describe('formatSchemaErrors', () => {
 
   test('formats errors with custom messages', async () => {
     const schema = S.Struct({
-      name: S.String.pipe(S.minLength(1)),
+      name: S.String.check(S.isMinLength(1)),
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknown(schema)({ name: '' })
+      S.decodeUnknownEffect(schema)({ name: '' })
     )
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const errors = formatSchemaErrors(option.value as any, {
+        const errors = formatSchemaErrors(option.value, {
           name: 'Name is required',
         })
         expect(errors.name).toBe('Name is required')
@@ -189,18 +194,18 @@ describe('formatSchemaErrors', () => {
 
   test('formats errors with attribute substitution', async () => {
     const schema = S.Struct({
-      email: S.String.pipe(S.minLength(1)),
+      email: S.String.check(S.isMinLength(1)),
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknown(schema)({ email: '' })
+      S.decodeUnknownEffect(schema)({ email: '' })
     )
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
         const errors = formatSchemaErrors(
-          option.value as any,
+          option.value,
           { email: 'The :attribute field is required' },
           { email: 'email address' }
         )
@@ -212,39 +217,39 @@ describe('formatSchemaErrors', () => {
   test('handles nested field errors', async () => {
     const schema = S.Struct({
       user: S.Struct({
-        name: S.String.pipe(S.minLength(1)),
+        name: S.String.check(S.isMinLength(1)),
       }),
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknown(schema)({ user: { name: '' } })
+      S.decodeUnknownEffect(schema)({ user: { name: '' } })
     )
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const errors = formatSchemaErrors(option.value as any)
+        const errors = formatSchemaErrors(option.value)
         expect(errors['user.name']).toBeDefined()
-        expect(errors['user.name']).toContain('at least 1 character')
+        expect(errors['user.name']).toContain('length of at least 1')
       }
     }
   })
 
   test('handles array index in field path', async () => {
     const schema = S.Struct({
-      tags: S.Array(S.String.pipe(S.minLength(1))),
+      tags: S.Array(S.String.check(S.isMinLength(1))),
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknown(schema)({ tags: ['valid', ''] })
+      S.decodeUnknownEffect(schema)({ tags: ['valid', ''] })
     )
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const errors = formatSchemaErrors(option.value as any)
+        const errors = formatSchemaErrors(option.value)
         expect(errors['tags.1']).toBeDefined()
-        expect(errors['tags.1']).toContain('at least 1 character')
+        expect(errors['tags.1']).toContain('length of at least 1')
       }
     }
   })
@@ -253,19 +258,19 @@ describe('formatSchemaErrors', () => {
     const schema = S.Struct({
       company: S.Struct({
         address: S.Struct({
-          zip: S.String.pipe(S.minLength(5)),
+          zip: S.String.check(S.isMinLength(5)),
         }),
       }),
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknown(schema)({ company: { address: { zip: '123' } } })
+      S.decodeUnknownEffect(schema)({ company: { address: { zip: '123' } } })
     )
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const errors = formatSchemaErrors(option.value as any)
+        const errors = formatSchemaErrors(option.value)
         expect(errors['company.address.zip']).toBeDefined()
       }
     }
@@ -283,21 +288,21 @@ describe('validate', () => {
       validate(schema, { name: 'John', age: 30 })
     )
 
-    expect(result).toEqual({ name: 'John', age: 30 })
+    expect(result).toEqual(asValidated({ name: 'John', age: 30 }))
   })
 
   test('fails with ValidationError on invalid data', () => {
     const schema = S.Struct({
-      name: S.String.pipe(S.minLength(3)),
+      name: S.String.check(S.isMinLength(3)),
     })
 
     const exit = Effect.runSyncExit(validate(schema, { name: 'Jo' }))
 
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error._tag).toBe('ValidationError')
         expect(error.errors).toBeDefined()
       }
@@ -306,7 +311,7 @@ describe('validate', () => {
 
   test('uses custom error messages', () => {
     const schema = S.Struct({
-      email: S.String.pipe(S.minLength(1)),
+      email: S.String.check(S.isMinLength(1)),
     })
 
     const exit = Effect.runSyncExit(
@@ -315,10 +320,10 @@ describe('validate', () => {
       })
     )
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error.errors.email).toBe('Please enter your email')
       }
     }
@@ -326,7 +331,7 @@ describe('validate', () => {
 
   test('includes error component', () => {
     const schema = S.Struct({
-      name: S.String.pipe(S.minLength(1)),
+      name: S.String.check(S.isMinLength(1)),
     })
 
     const exit = Effect.runSyncExit(
@@ -335,10 +340,10 @@ describe('validate', () => {
       })
     )
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error.component).toBe('Users/Create')
       }
     }
@@ -352,10 +357,10 @@ describe('validate', () => {
     const exit = Effect.runSyncExit(validateUnknown(schema, {}))
 
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error.code).toBe(ErrorCodes.VAL_001_FIELD_REQUIRED)
       }
     }
@@ -368,10 +373,10 @@ describe('validateUnknown', () => {
       id: S.String,
       count: S.NumberFromString,
     })
-    const raw: unknown = { id: 'x', count: '3' }
+    const raw = { id: 'x', count: '3' }
 
     const result = Effect.runSync(validateUnknown(schema, raw))
-    expect(result).toEqual({ id: 'x', count: 3 })
+    expect(result).toEqual(asValidated({ id: 'x', count: 3 }))
   })
 })
 
@@ -384,7 +389,7 @@ describe('parseOptions', () => {
     const result = Effect.runSync(
       validateUnknown(schema, { name: 'Test', extra: 'field' })
     )
-    expect(result).toEqual({ name: 'Test' })
+    expect(result).toEqual(asValidated({ name: 'Test' }))
   })
 
   test('validateUnknown rejects excess properties with onExcessProperty error', () => {
@@ -398,10 +403,10 @@ describe('parseOptions', () => {
 
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) {
-      const option = Cause.failureOption(exit.cause)
+      const option = Cause.findErrorOption(exit.cause)
       expect(option._tag).toBe('Some')
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error).toBeInstanceOf(ValidationError)
         expect(error.errors.extra).toBeDefined()
         expect(error.code).toBe(ErrorCodes.VAL_004_SCHEMA_MISMATCH)
@@ -425,10 +430,10 @@ describe('parseOptions', () => {
 
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) {
-      const option = Cause.failureOption(exit.cause)
+      const option = Cause.findErrorOption(exit.cause)
       expect(option._tag).toBe('Some')
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error).toBeInstanceOf(ValidationError)
         expect(error.errors.workspaceId).toBeDefined()
       }
@@ -436,10 +441,11 @@ describe('parseOptions', () => {
   })
 
   test('validate rejects excess properties with onExcessProperty error', () => {
+    const inputWithExtraField = { name: 'Test', extra: 'field' }
     const exit = Effect.runSyncExit(
       validate(
         schema,
-        { name: 'Test', extra: 'field' } as unknown as { name: string },
+        inputWithExtraField,
         { parseOptions: { onExcessProperty: 'error' } }
       )
     )
@@ -465,13 +471,13 @@ describe('validateRequest', () => {
 
     expect(Exit.isSuccess(exit)).toBe(true)
     if (Exit.isSuccess(exit)) {
-      expect(exit.value).toEqual({ id: '123', name: 'Test' })
+      expect(exit.value).toEqual(asValidated({ id: '123', name: 'Test' }))
     }
   })
 
   test('fails with ValidationError on invalid request', async () => {
     const schema = S.Struct({
-      name: S.String.pipe(S.minLength(3)),
+      name: S.String.check(S.isMinLength(3)),
     })
 
     const request = createMockRequest({
@@ -482,17 +488,17 @@ describe('validateRequest', () => {
     const exit = await runWithRequestAsync(validateRequest(schema), request)
 
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        expect((option.value as ValidationError)._tag).toBe('ValidationError')
+        expect(option.value._tag).toBe('ValidationError')
       }
     }
   })
 
   test('passes options to validate', async () => {
     const schema = S.Struct({
-      email: S.String.pipe(S.minLength(1)),
+      email: S.String.check(S.isMinLength(1)),
     })
 
     const request = createMockRequest({
@@ -508,10 +514,10 @@ describe('validateRequest', () => {
       request
     )
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error.errors.email).toBe('Email required')
         expect(error.component).toBe('Auth/Register')
       }
@@ -520,7 +526,7 @@ describe('validateRequest', () => {
 
   test('uses attributes option for :attribute placeholder', async () => {
     const schema = S.Struct({
-      email: S.String.pipe(S.minLength(1, { message: () => 'The :attribute field is required' })),
+      email: S.String.check(S.isMinLength(1, { message: 'The :attribute field is required' })),
     })
 
     const request = createMockRequest({
@@ -535,10 +541,10 @@ describe('validateRequest', () => {
       request
     )
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error.errors.email).toBe('The email address field is required')
       }
     }
@@ -552,6 +558,7 @@ describe('validateRequest', () => {
       method: 'POST',
       url: 'http://localhost/',
       headers: new Headers({ 'Content-Type': 'application/json' }),
+      env: {},
       param: () => undefined,
       params: () => ({}),
       query: () => ({}),
@@ -563,10 +570,10 @@ describe('validateRequest', () => {
     const exit = await runWithRequestAsync(validateRequest(schema), request)
 
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error._tag).toBe('ValidationError')
         expect(error.errors.form).toContain('Invalid JSON body.')
         expect(error.errors.form).toContain('Ensure Content-Type is application/json')
@@ -579,12 +586,12 @@ describe('validateRequest', () => {
     const AddressSchema = S.Struct({
       street: S.String,
       city: S.String,
-      zip: S.String.pipe(S.pattern(/^\d{5}$/)),
+      zip: S.String.check(S.isPattern(/^\d{5}$/)),
     })
 
     const UserSchema = S.Struct({
-      name: S.String.pipe(S.minLength(2)),
-      email: S.String.pipe(S.pattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)),
+      name: S.String.check(S.isMinLength(2)),
+      email: S.String.check(S.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)),
       address: AddressSchema,
     })
 
@@ -667,10 +674,10 @@ describe('validateRequest', () => {
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error.errors.id).toBeDefined()
       }
     }
@@ -780,10 +787,10 @@ describe('validateRequest', () => {
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error.errors.name).toContain('Conflicting values')
         expect(error.code).toBe(ErrorCodes.VAL_006_SOURCE_CONFLICT)
       }
@@ -797,6 +804,7 @@ describe('validateRequest', () => {
       method: 'POST',
       url: 'http://localhost/',
       headers: new Headers({ 'Content-Type': 'application/vnd.api+json' }),
+      env: {},
       param: () => undefined,
       params: () => ({}),
       query: () => ({}),
@@ -808,10 +816,10 @@ describe('validateRequest', () => {
     const exit = await runWithRequestAsync(validateRequest(schema), request)
 
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as ValidationError
+        const error = option.value
         expect(error.errors.form).toContain('Invalid JSON body.')
         expect(error.code).toBe(ErrorCodes.VAL_003_BODY_PARSE_FAILED)
       }
@@ -827,6 +835,7 @@ describe('validateRequest', () => {
       method: 'POST',
       url: 'http://localhost/',
       headers: new Headers({ 'Content-Type': 'application/json-seq' }),
+      env: {},
       param: () => undefined,
       params: () => ({}),
       query: () => ({}),

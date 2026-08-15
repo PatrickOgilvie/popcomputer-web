@@ -6,7 +6,7 @@ import type { MiddlewareHandler, Env, Context } from 'hono'
 import type { Schema as S } from 'effect'
 import { web } from './middleware.js'
 import { verifyOrigin, type VerifyOriginConfig } from './security.js'
-import type { WebConfig } from './types.js'
+import type { PagePropValue, WebConfig } from './types.js'
 import { loadUser, shareAuthMiddleware } from './effect/auth.js'
 import { openHonertiaContext } from './request-context.js'
 import type {
@@ -15,7 +15,12 @@ import type {
   BindingsType,
   AuthUser,
 } from './effect/services.js'
-import { effectBridge, type EffectBridgeConfig } from './effect/bridge.js'
+import {
+  drainRequestBackground,
+  effectBridge,
+  getRequestExecutionContextClient,
+  type EffectBridgeConfig,
+} from './effect/bridge.js'
 import {
   renderErrorResponse,
   type ErrorBoundaryConfig,
@@ -46,9 +51,14 @@ interface HonertiaCoreConfig extends WebConfig {
    * })
    * ```
    */
-  schema?: Record<string, unknown>
+  schema?: object
   /** Row parsers and optional scope metadata for route-model bindings. */
   bindings?: RouteBindingsConfig
+}
+
+/** Better Auth-compatible owner for deferred promise work. */
+export interface AuthBackgroundTasks {
+  readonly handler: (promise: Promise<unknown>) => void
 }
 
 /** Honertia core configuration when a database factory is present. */
@@ -69,9 +79,7 @@ interface HonertiaFullConfigWithDatabase<
 }
 
 /** Honertia core configuration when no database factory is present. */
-interface HonertiaFullConfigWithoutDatabase<
-  E extends Env = HonertiaSetupEnv,
-> extends HonertiaCoreConfig {
+interface HonertiaFullConfigWithoutDatabase extends HonertiaCoreConfig {
   /**
    * A database factory is intentionally absent. This supports applications
    * without persistence and deliberately stateless authentication.
@@ -89,7 +97,7 @@ export type HonertiaFullConfig<
   E extends Env = HonertiaSetupEnv,
   DB = undefined,
 > = [DB] extends [undefined]
-  ? HonertiaFullConfigWithoutDatabase<E>
+  ? HonertiaFullConfigWithoutDatabase
   : DB extends object
     ? HonertiaFullConfigWithDatabase<E, DB>
     : never
@@ -113,19 +121,27 @@ interface HonertiaSetupOptions<
   auth?: {
     /** Build the Better Auth server client at the request composition seam. */
     client?: [DB] extends [undefined]
-      ? (c: Context<E>) => Auth
+      ? (
+          c: Context<E>,
+          services: { readonly backgroundTasks: AuthBackgroundTasks }
+        ) => Auth
       : DB extends object
-        ? (c: Context<E>, services: { readonly db: DB }) => Auth
+        ? (
+            c: Context<E>,
+            services: {
+              readonly db: DB
+              readonly backgroundTasks: AuthBackgroundTasks
+            }
+          ) => Auth
         : never
     /**
      * Parse Better Auth's session response before actions receive it.
      * The encoded side is intentionally unconstrained because decodeUnknown
      * owns the external boundary; the decoded AuthUser and context stay strict.
      */
-    // oxlint-disable-next-line no-explicit-any -- see the boundary note above
-    session?: S.Schema<AuthUser, any, never>
+    session?: S.Codec<AuthUser, unknown, never, never>
     /** Explicit public projection placed at `auth.user` in page props. */
-    share?: (auth: AuthUser) => unknown
+    share?: (auth: AuthUser) => PagePropValue
     readonly sessionCookie?: string
   }
 
@@ -166,7 +182,7 @@ interface HonertiaSetupWithoutDatabaseConfig<
   Auth = AuthType,
   CustomServices = never,
 > extends HonertiaSetupOptions<E, CustomServices, undefined, Auth> {
-  honertia: HonertiaFullConfigWithoutDatabase<E>
+  honertia: HonertiaFullConfigWithoutDatabase
 }
 
 /**
@@ -207,7 +223,7 @@ interface WebSetupWithoutDatabaseConfig<
   Auth = AuthType,
   CustomServices = never,
 > extends HonertiaSetupOptions<E, CustomServices, undefined, Auth>,
-    HonertiaFullConfigWithoutDatabase<E> {}
+    HonertiaFullConfigWithoutDatabase {}
 
 /**
  * Flat configuration accepted by {@link setupWeb}.
@@ -332,12 +348,14 @@ export function setupWeb<
     | WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
     | WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
 ): MiddlewareHandler<E> | WebApplication<E> {
+  // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
   const config = (maybeConfig ?? appOrConfig) as
     | WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
     | WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
   assertWebSetupConfig(config)
   const legacyConfig = toLegacySetupConfig(config)
 
+  // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
   return installSetup(
     maybeConfig === undefined ? legacyConfig : appOrConfig as Hono<E>,
     maybeConfig === undefined ? undefined : legacyConfig
@@ -417,6 +435,7 @@ function installSetup<
     return middleware
   }
 
+  // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
   const app = appOrConfig as Hono<E>
   app.use('*', middleware)
   registerErrorHandlers(app, config.errors)
@@ -484,26 +503,43 @@ function createSetupMiddleware<
   const setupServices: MiddlewareHandler<E> = createMiddleware<E>(async (c, next) => {
     const requestCtx = openHonertiaContext(c)
     requestCtx.errorBoundary = config.errors
-
-    // Set up database first (auth may depend on it)
-    // SAFETY: DB/Auth generics are the app's declared client types; the
-    // HonertiaDatabaseType/HonertiaAuthType module augmentations make these
-    // the same types DatabaseService/AuthService hand back to handlers.
-    if (configured.database !== undefined) {
-      const db = configured.database(c)
-      requestCtx.db = db as DatabaseType
-
-      if (config.auth?.client !== undefined) {
-        requestCtx.auth = config.auth.client(c, { db }) as AuthType
-      }
-    } else if (config.auth?.client !== undefined) {
-      // SAFETY: the no-database setup overload only accepts a one-argument
-      // client factory; the implementation union cannot retain that branch.
-      const createStatelessAuth = config.auth.client as (context: Context<E>) => Auth
-      requestCtx.auth = createStatelessAuth(c) as AuthType
+    const executionContext = getRequestExecutionContextClient(c)
+    const backgroundTasks: AuthBackgroundTasks = {
+      handler: executionContext.waitUntil,
     }
 
-    await next()
+    try {
+      // Set up database first (auth may depend on it)
+      // SAFETY: DB/Auth generics are the app's declared client types; the
+      // HonertiaDatabaseType/HonertiaAuthType module augmentations make these
+      // the same types DatabaseService/AuthService hand back to handlers.
+      if (configured.database !== undefined) {
+        const db = configured.database(c)
+        // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
+        requestCtx.db = db as DatabaseType
+
+        if (config.auth?.client !== undefined) {
+          // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
+          requestCtx.auth = config.auth.client(c, {
+            db,
+            backgroundTasks,
+          }) as AuthType
+        }
+      } else if (config.auth?.client !== undefined) {
+        // SAFETY: the no-database setup overload receives only the shared auth
+        // services; the implementation union cannot retain that branch.
+        const createStatelessAuth = config.auth.client as (
+          context: Context<E>,
+          services: { readonly backgroundTasks: AuthBackgroundTasks }
+        ) => Auth
+        // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
+        requestCtx.auth = createStatelessAuth(c, { backgroundTasks }) as AuthType
+      }
+
+      await next()
+    } finally {
+      await drainRequestBackground(c)
+    }
   })
 
   // Build effect bridge config, passing schema from honertia config
@@ -561,7 +597,7 @@ function assertWebSetupConfig(config: {
   readonly auth?: unknown
   readonly effect?: object
 }): void {
-  if (typeof config.auth === 'function') {
+  if (config.auth instanceof Function) {
     throw new Error(
       'Invalid setupWeb configuration: pass the auth factory as auth.client.'
     )

@@ -4,6 +4,8 @@
 
 import { describe, test, expect } from 'bun:test'
 import { Effect, Schema as S, Layer, Exit, Cause } from 'effect'
+import type { PageProps } from '../../src/types.js'
+import type { RequestData } from '../../src/effect/validation.js'
 import {
   action,
   dbMutation,
@@ -24,8 +26,6 @@ import {
   DatabaseTransactionFailed,
   Redirect,
   ValidationError,
-  UnauthorizedError,
-  ForbiddenError,
 } from '../../src/effect/errors.js'
 
 // Mock user
@@ -67,13 +67,14 @@ const createMockUserWithRole = (
   }
 }
 
+// SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
 const hasRole = (auth: AuthUser): auth is AuthUserWithRole =>
-  'role' in (auth.user as Record<string, unknown>)
+  'role' in (auth.user as PageProps)
 
 // Mock database
 const createMockDb = () => ({
-  insert: (table: string) => ({
-    values: (data: unknown) => Promise.resolve({ inserted: data }),
+  insert: (_table: string) => ({
+    values: <Data>(data: Data) => Promise.resolve({ inserted: data }),
   }),
   query: {
     users: {
@@ -83,9 +84,10 @@ const createMockDb = () => ({
 })
 
 // Mock request context
+// SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
 const createMockRequest = (options: {
   method?: string
-  body?: Record<string, unknown>
+  body?: RequestData
   params?: Record<string, string>
   query?: Record<string, string>
 } = {}): RequestContext => ({
@@ -139,7 +141,7 @@ describe('action', () => {
 
   test('composes with validation', async () => {
     const schema = S.Struct({
-      name: S.String.pipe(S.minLength(2)),
+      name: S.String.check(S.isMinLength(2)),
     })
 
     const myAction = action(
@@ -155,6 +157,7 @@ describe('action', () => {
     const result = await Effect.runPromise(Effect.provide(myAction, layer))
 
     expect(result).toBeInstanceOf(Redirect)
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     expect((result as Redirect).url).toBe('/created/Test')
   })
 
@@ -186,7 +189,7 @@ describe('action', () => {
       Effect.gen(function* () {
         const user = yield* authorize()
         const input = yield* validateRequest(schema)
-        const db = yield* DatabaseService
+        yield* DatabaseService
 
         capturedData = { userId: user.user.id, name: input.name }
         return new Redirect({ url: '/', status: 303 })
@@ -243,10 +246,10 @@ describe('authorize', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(effect, layer))
 
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        expect((option.value as ForbiddenError)._tag).toBe('ForbiddenError')
+        expect(option.value._tag).toBe('ForbiddenError')
       }
     }
   })
@@ -256,12 +259,14 @@ describe('authorize', () => {
 
     const exit = await Effect.runPromiseExit(effect)
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
-        const error = option.value as UnauthorizedError
+        const error = option.value
         expect(error._tag).toBe('UnauthorizedError')
-        expect(error.redirectTo).toBe('/login')
+        if (error._tag === 'UnauthorizedError') {
+          expect(error.redirectTo).toBe('/login')
+        }
       }
     }
   })
@@ -282,13 +287,14 @@ describe('authorize', () => {
 describe('dbTransaction', () => {
   test('runs operations in a transaction', async () => {
     const mockDb = {
-      transaction: async <T>(fn: (tx: unknown) => Promise<T>) => {
+      transaction: async <T, Transaction>(fn: (tx: Transaction) => Promise<T>) => {
         const tx = { insert: () => Promise.resolve({ id: 1 }) }
         return fn(tx)
       },
     }
 
     const effect = dbTransaction(mockDb, async (tx) => {
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const result = await (tx as { insert: () => Promise<{ id: number }> }).insert()
       return { inserted: result.id }
     })
@@ -301,7 +307,7 @@ describe('dbTransaction', () => {
   test('rolls back on error', async () => {
     let rolledBack = false
     const mockDb = {
-      transaction: async <T>(fn: (tx: unknown) => Promise<T>) => {
+      transaction: async <T, Transaction>(fn: (tx: Transaction) => Promise<T>) => {
         try {
           return await fn({})
         } catch (e) {
@@ -323,7 +329,7 @@ describe('dbTransaction', () => {
 
   test('classifies unknown failures as transaction failures', async () => {
     const mockDb = {
-      transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({}),
+      transaction: async <T>(fn: (tx: Record<never, never>) => Promise<T>) => fn({}),
     }
 
     const effect = dbTransaction(mockDb, async () => {
@@ -332,8 +338,8 @@ describe('dbTransaction', () => {
 
     const exit = await Effect.runPromiseExit(effect)
 
-    if (Exit.isFailure(exit) && Cause.isFailure(exit.cause)) {
-      const option = Cause.failureOption(exit.cause)
+    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
+      const option = Cause.findErrorOption(exit.cause)
       if (option._tag === 'Some') {
         expect(option.value).toBeInstanceOf(DatabaseTransactionFailed)
         expect(option.value._tag).toBe('DatabaseTransactionFailed')
@@ -350,7 +356,7 @@ describe('database failure classification', () => {
       })
     )
 
-    const failure = Exit.isFailure(exit) ? Cause.failureOption(exit.cause) : null
+    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : null
     expect(failure?._tag).toBe('Some')
     if (failure?._tag === 'Some') {
       expect(failure.value).toBeInstanceOf(DatabaseMutationFailed)
@@ -365,12 +371,14 @@ describe('database failure classification', () => {
       })
     )
 
-    const failure = Exit.isFailure(exit) ? Cause.failureOption(exit.cause) : null
+    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : null
     expect(failure?._tag).toBe('Some')
     if (failure?._tag === 'Some') {
       expect(failure.value).toBeInstanceOf(DatabaseConstraintViolation)
-      expect(failure.value.constraint).toBe('unique')
-      expect(failure.value.httpStatus).toBe(409)
+      if (failure.value instanceof DatabaseConstraintViolation) {
+        expect(failure.value.constraint).toBe('unique')
+        expect(failure.value.httpStatus).toBe(409)
+      }
     }
   })
 })
@@ -378,7 +386,7 @@ describe('database failure classification', () => {
 describe('Composable Action Patterns', () => {
   test('authorization before validation pattern', async () => {
     const schema = S.Struct({
-      name: S.String.pipe(S.minLength(3)),
+      name: S.String.check(S.isMinLength(3)),
     })
 
     let authCheckTime = 0
@@ -390,7 +398,7 @@ describe('Composable Action Patterns', () => {
         yield* authorize()
 
         validationTime = Date.now()
-        const input = yield* validateRequest(schema)
+        yield* validateRequest(schema)
 
         return new Redirect({ url: '/', status: 303 })
       })
@@ -445,7 +453,7 @@ describe('Composable Action Patterns', () => {
 
     const createUser = (email: string) =>
       Effect.gen(function* () {
-        const db = yield* DatabaseService
+        yield* DatabaseService
         return { id: 'new-id', email }
       })
 
@@ -486,9 +494,7 @@ describe('Composable Action Patterns', () => {
 
   test('minimal action without auth or validation', async () => {
     const publicAction = action(
-      Effect.gen(function* () {
-        return new Response('Public content')
-      })
+      Effect.succeed(new Response('Public content'))
     )
 
     const response = assertResponse(await Effect.runPromise(publicAction))

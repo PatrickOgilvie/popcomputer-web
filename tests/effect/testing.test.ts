@@ -42,12 +42,12 @@ const createTestApp = () => {
     })), { name: 'projects.show' })
 
   effectRoutes(app, { registry })
-    .post('/projects', Effect.gen(function* () {
-      return new Response(JSON.stringify({ project: { id: 'new', name: 'Created' } }), {
+    .post('/projects', Effect.succeed(
+      new Response(JSON.stringify({ project: { id: 'new', name: 'Created' } }), {
         status: 201,
         headers: { 'Content-Type': 'application/json' },
       })
-    }), { name: 'projects.create' })
+    ), { name: 'projects.create' })
 
   effectRoutes(app, { registry })
     .delete('/projects/{project}', Effect.succeed(new Response(null, { status: 204 })), { name: 'projects.destroy' })
@@ -88,6 +88,7 @@ describe('describeRoute Integration', () => {
     routeTest('returns JSON response', {
       assert: async (ctx) => {
         expect(ctx.json).toBeDefined()
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         expect((ctx.json as any).projects).toEqual([])
       },
     })
@@ -98,6 +99,7 @@ describe('describeRoute Integration', () => {
       params: { project: '123' },
       expect: { status: 200 },
       assert: async (ctx) => {
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         expect((ctx.json as any).project.id).toBe('123')
       },
     })
@@ -108,6 +110,7 @@ describe('describeRoute Integration', () => {
       body: { name: 'New Project' },
       expect: { status: 201 },
       assert: async (ctx) => {
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         expect((ctx.json as any).project.name).toBe('Created')
       },
     })
@@ -130,7 +133,7 @@ describe('createRouteTester', () => {
     const { app, registry } = createTestApp()
 
     const testRoute = createRouteTester('projects.index', app, registry)
-    expect(typeof testRoute).toBe('function')
+    expect(testRoute).toBeInstanceOf(Function)
   })
 
   test('defaults to the registry owned by the app', () => {
@@ -139,7 +142,7 @@ describe('createRouteTester', () => {
       name: 'owned.show',
     })
 
-    expect(typeof createRouteTester('owned.show', app)).toBe('function')
+    expect(createRouteTester('owned.show', app)).toBeInstanceOf(Function)
   })
 
   test('throws for unknown route', () => {

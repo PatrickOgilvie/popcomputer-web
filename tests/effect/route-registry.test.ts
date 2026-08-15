@@ -420,6 +420,7 @@ describe('effectRoutes Integration', () => {
     const customRegistry = new RouteRegistry()
 
     const builder = effectRoutes(app, { registry: customRegistry })
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const providedBuilder = builder.provide(
       // Dummy layer
       {} as any

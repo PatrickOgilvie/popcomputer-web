@@ -1,6 +1,7 @@
 /** Rendering and asset helpers for @popcomputer/web. */
 
 import type { Context } from 'hono'
+import { Schema as S } from 'effect'
 import type { PageObject } from './types.js'
 import { HonertiaConfigurationError } from './effect/errors.js'
 
@@ -69,13 +70,18 @@ export function createTemplate(
 ): (page: PageObject, ctx?: Context) => string {
   return (page: PageObject, ctx?: Context) => {
     // If options is a function but no context provided, throw helpful error
-    if (typeof options === 'function' && !ctx) {
-      throw new HonertiaConfigurationError({
-        message: 'createTemplate requires context when using dynamic options function.',
-        hint: 'Pass the Hono context to the render function, or use static options.',
-      })
+    let resolvedOptions: TemplateOptions
+    if (options instanceof Function) {
+      if (!ctx) {
+        throw new HonertiaConfigurationError({
+          message: 'createTemplate requires context when using dynamic options function.',
+          hint: 'Pass the Hono context to the render function, or use static options.',
+        })
+      }
+      resolvedOptions = options(ctx)
+    } else {
+      resolvedOptions = options
     }
-    const resolvedOptions = typeof options === 'function' ? options(ctx!) : options
     
     const {
       title = 'App',
@@ -126,14 +132,11 @@ export function createVersion(manifest: AssetManifest): string {
   const assetFiles: string[] = []
 
   for (const value of Object.values(manifest)) {
-    if (typeof value === 'string') {
+    if (S.is(S.String)(value)) {
       assetFiles.push(value)
       continue
     }
-    if (!value || typeof value !== 'object') {
-      continue
-    }
-    if (typeof value.file === 'string') {
+    if (value.file !== undefined) {
       assetFiles.push(value.file)
     }
     if (Array.isArray(value.css)) {

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.0-rc.1] - 2026-08-15
+
+### Added
+
+- **Effect-native Better Auth boundary**: `effectifyBetterAuth(auth)` mirrors the concrete, plugin-aware `auth.api` with Effect-returning endpoints while retaining the original argument and success types. Better Auth API failures are normalized into a typed failure union, and `raw` remains an explicit escape hatch.
+- **Better Auth background-task ownership**: Auth factories receive a `backgroundTasks` service compatible with Better Auth's `advanced.backgroundTasks`. Cloudflare requests use `waitUntil`; local and test requests drain the promises before their scoped runtime is released.
+
+### Changed
+
+- **Effect 4 runtime and schema model**: The package now requires Effect 4 (`4.0.0-rc.109`) and uses its `Context.Service`, flattened `Cause`, managed-runtime `Exit`, and rewritten Schema APIs throughout source, generated code, and tests.
+
+### Breaking
+
+- **Effect 3 is no longer supported**: Applications must upgrade their Effect dependency and Effect-facing schemas, services, layers, and handlers to Effect 4. This release targets Effect `4.0.0-rc.109` and is therefore published as a prerelease.
+
+### Fixed
+
+- **Rejected auth responses preserve Better Auth headers**: Verified headers accumulated in resolved error responses or Better Auth `APIError` metadata now survive typed error mapping and the shared HTTP error renderer, with `Set-Cookie` values appended safely and framework representation headers retained. Thrown Better Auth redirects preserve their status, `Location`, and cookies instead of becoming 502 responses. APIError verification requires a valid numeric `statusCode`, so unverified thrown objects cannot inject response headers.
+- **Better Auth façade protocol fidelity**: Explicit `asResponse: true` calls retain raw error responses in the success channel, and plugin domain results with a numeric `status` are only treated as HTTP envelopes when they also carry `headers` or `response`. Proxy reflection now reports only real endpoints and enumerates them consistently.
+- **Pre-bridge background cleanup**: Auth promises are drained even when session loading or other middleware fails before the Effect bridge is reached.
+
 ## [0.3.0] - 2026-08-10
 
 ### Added
@@ -128,7 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
         Layer.succeed(EffectErrorObserverService, {
           observe: (event: EffectErrorEvent) =>
             Effect.tryPromise({ try: () => reportToSentry(event), catch: () => undefined })
-              .pipe(Effect.asVoid, Effect.catchAll(() => Effect.void)),
+              .pipe(Effect.asVoid, Effect.catch(() => Effect.void)),
         }),
     },
   }))
@@ -139,7 +162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```typescript
   yield* Effect.tryPromise({ ... }).pipe(
     Effect.tapError((error) => reportEffectError(error, { metadata: { area: 'home' } })),
-    Effect.catchAll(() => Effect.succeed(false))
+    Effect.catch(() => Effect.succeed(false))
   )
   ```
 

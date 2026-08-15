@@ -16,6 +16,7 @@ export {
   type HonertiaSetupConfig,
   type HonertiaFullConfig,
   type ErrorHandlerConfig,
+  type AuthBackgroundTasks,
   type HonertiaApplication,
 } from './setup.js'
 

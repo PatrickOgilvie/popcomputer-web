@@ -9,6 +9,7 @@
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { Effect, Layer, Context } from 'effect'
+import type { PageProps } from '../../src/types.js'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { effectBridge, buildContextLayer } from '../../src/effect/bridge.js'
 import { honertia } from '../../src/middleware.js'
@@ -23,34 +24,34 @@ import { DatabaseService } from '../../src/effect/services.js'
 /**
  * Simulates Cloudflare KV namespace bindings
  */
-class BindingsService extends Context.Tag('app/Bindings')<
+class BindingsService extends Context.Service<
   BindingsService,
   {
     KV: { get: (key: string) => Promise<string | null> }
-    ANALYTICS: { writeDataPoint: (data: Record<string, unknown>) => void }
+    ANALYTICS: { writeDataPoint: (data: PageProps) => void }
   }
->() {}
+>()('app/Bindings') {}
 
 /**
  * Simulates a custom logger service
  */
-class LoggerService extends Context.Tag('app/Logger')<
+class LoggerService extends Context.Service<
   LoggerService,
   {
     log: (message: string) => void
     logs: string[]
   }
->() {}
+>()('app/Logger') {}
 
 /**
  * Simulates a feature flags service
  */
-class FeatureFlagsService extends Context.Tag('app/FeatureFlags')<
+class FeatureFlagsService extends Context.Service<
   FeatureFlagsService,
   {
     isEnabled: (flag: string) => boolean
   }
->() {}
+>()('app/FeatureFlags') {}
 
 // =============================================================================
 // Test Helpers
@@ -74,10 +75,12 @@ const createTestApp = () => {
     })
   )
 
+  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
   app.use('*', async (c, next) => {
     // Simulate Cloudflare Worker bindings
-    ;(c.env as any) = {
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+    (c.env as any) = {
       KV_DATA: { 'user:123': 'John Doe', 'config:theme': 'dark' },
       FEATURES: ['new-dashboard', 'beta-api'],
     }
@@ -94,9 +97,9 @@ const createMockKV = (data: Record<string, string>) => ({
 
 // Mock Analytics implementation
 const createMockAnalytics = () => {
-  const dataPoints: Record<string, unknown>[] = []
+  const dataPoints: PageProps[] = []
   return {
-    writeDataPoint: (data: Record<string, unknown>) => dataPoints.push(data),
+    writeDataPoint: (data: PageProps) => dataPoints.push(data),
     getDataPoints: () => dataPoints,
   }
 }
@@ -199,9 +202,11 @@ describe('Custom Services via effectBridge', () => {
     )
 
     // Simulate Cloudflare Worker bindings and set up db
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     app.use('*', honertiaServices(() => ({ db: { name: 'custom-db' } as never })))
     app.use('*', async (c, next) => {
-      ;(c.env as any) = {
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+      (c.env as any) = {
         KV_DATA: { 'user:123': 'John Doe', 'config:theme': 'dark' },
         FEATURES: ['new-dashboard', 'beta-api'],
       }
@@ -225,6 +230,7 @@ describe('Custom Services via effectBridge', () => {
           bindings.KV.get('user:123')
         )
 
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         return new Response(
           JSON.stringify({
             dbName: (db as any).name,
@@ -246,9 +252,11 @@ describe('Custom Services via setupHonertia', () => {
   test('injects custom services via effect config', async () => {
     const app = new Hono<TestEnv>()
 
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
     app.use('*', async (c, next) => {
-      ;(c.env as any) = {
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+      (c.env as any) = {
         KV_DATA: { 'user:123': 'John Doe', 'config:theme': 'dark' },
         FEATURES: ['new-dashboard', 'beta-api'],
       }
@@ -353,10 +361,10 @@ describe('Custom Services via effectRoutes config', () => {
     app.use('*', effectBridge())
 
     // Additional layer provided via provide()
-    class RequestIdService extends Context.Tag('RequestId')<
+    class RequestIdService extends Context.Service<
       RequestIdService,
       { id: string }
-    >() {}
+    >()('RequestId') {}
 
     effectRoutes<TestEnv, BindingsService>(app, {
       services: (c) =>
@@ -438,11 +446,13 @@ describe('buildContextLayer with custom services', () => {
       }).pipe(Effect.provide(layer))
 
       const result = await Effect.runPromise(program)
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       c.set('testResult' as any, result)
       await next()
     })
 
     app.get('/test', (c) => {
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       return c.text((c.get as any)('testResult'))
     })
 
@@ -457,7 +467,7 @@ describe('Real-world Cloudflare Workers patterns', () => {
     const app = createTestApp()
 
     // Simulate D1 binding
-    class D1Service extends Context.Tag('cf/D1')<
+    class D1Service extends Context.Service<
       D1Service,
       {
         prepare: (sql: string) => {
@@ -467,8 +477,9 @@ describe('Real-world Cloudflare Workers patterns', () => {
           }
         }
       }
-    >() {}
+    >()('cf/D1') {}
 
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const mockD1 = {
       prepare: (sql: string) => ({
         bind: (...params: unknown[]) => ({
@@ -511,9 +522,9 @@ describe('Real-world Cloudflare Workers patterns', () => {
 
   test('simulates Analytics Engine binding', async () => {
     const app = createTestApp()
-    const writtenDataPoints: Record<string, unknown>[] = []
+    const writtenDataPoints: PageProps[] = []
 
-    class AnalyticsService extends Context.Tag('cf/Analytics')<
+    class AnalyticsService extends Context.Service<
       AnalyticsService,
       {
         writeDataPoint: (data: {
@@ -522,7 +533,7 @@ describe('Real-world Cloudflare Workers patterns', () => {
           indexes?: string[]
         }) => void
       }
-    >() {}
+    >()('cf/Analytics') {}
 
     app.use(
       '*',
@@ -563,13 +574,13 @@ describe('Real-world Cloudflare Workers patterns', () => {
     const app = createTestApp()
     const queuedMessages: { body: unknown; options?: object }[] = []
 
-    class QueueService extends Context.Tag('cf/Queue')<
+    class QueueService extends Context.Service<
       QueueService,
       {
-        send: (body: unknown, options?: { contentType?: string }) => Promise<void>
+        send: <Body>(body: Body, options?: { contentType?: string }) => Promise<void>
         sendBatch: (messages: { body: unknown }[]) => Promise<void>
       }
-    >() {}
+    >()('cf/Queue') {}
 
     app.use(
       '*',
@@ -622,6 +633,7 @@ describe('Edge cases', () => {
       '/simple',
       Effect.gen(function* () {
         const db = yield* DatabaseService
+        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         return new Response(`DB: ${(db as any).name}`)
       })
     )
@@ -635,10 +647,10 @@ describe('Edge cases', () => {
     const app = createTestApp()
     let requestCount = 0
 
-    class RequestCounterService extends Context.Tag('RequestCounter')<
+    class RequestCounterService extends Context.Service<
       RequestCounterService,
       { count: number }
-    >() {}
+    >()('RequestCounter') {}
 
     app.use(
       '*',
@@ -671,10 +683,10 @@ describe('Edge cases', () => {
   test('services function receives full Hono context', async () => {
     const app = createTestApp()
 
-    class ContextInfoService extends Context.Tag('ContextInfo')<
+    class ContextInfoService extends Context.Service<
       ContextInfoService,
       { method: string; path: string; hasEnv: boolean }
-    >() {}
+    >()('ContextInfo') {}
 
     app.use(
       '*',

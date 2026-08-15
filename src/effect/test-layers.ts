@@ -12,6 +12,7 @@ import {
   type AuthUser,
   type DatabaseType,
 } from './services.js'
+import type { PageProps } from '../types.js'
 
 export interface TestCaptures {
   emails: Array<{ to: string; subject: string; body: string }>
@@ -19,7 +20,7 @@ export interface TestCaptures {
   events: Array<{ name: string; payload: unknown }>
 }
 
-export class TestCaptureService extends Context.Tag('@popcomputer/web/TestCapture')<
+export class TestCaptureService extends Context.Service<
   TestCaptureService,
   {
     capture: <K extends keyof TestCaptures>(
@@ -28,7 +29,7 @@ export class TestCaptureService extends Context.Tag('@popcomputer/web/TestCaptur
     ) => Effect.Effect<void>
     get: () => Effect.Effect<TestCaptures>
   }
->() {}
+>()('@popcomputer/web/TestCapture') {}
 
 const createEmptyCaptures = (): TestCaptures => ({
   emails: [],
@@ -37,15 +38,15 @@ const createEmptyCaptures = (): TestCaptures => ({
 })
 
 const createId = (): string => {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
+  if (globalThis.crypto?.randomUUID instanceof Function) {
+    return globalThis.crypto.randomUUID()
   }
   return `test_${Math.random().toString(16).slice(2)}`
 }
 
 // Simple Map-backed mock database for tests.
 function createMockDb() {
-  const tables = new Map<string, Map<string, Record<string, unknown>>>()
+  const tables = new Map<string, Map<string, PageProps>>()
 
   const ensureTable = (table: string) => {
     let store = tables.get(table)
@@ -58,7 +59,7 @@ function createMockDb() {
 
   return {
     insert: (table: string) => ({
-      values: (data: Record<string, unknown>) => ({
+      values: (data: PageProps) => ({
         returning: async () => {
           const id = createId()
           const record = { id, ...data }
@@ -70,12 +71,12 @@ function createMockDb() {
     select: () => ({
       from: (table: string) => {
         const store = ensureTable(table)
-        let predicate: ((row: Record<string, unknown>) => boolean) | null = null
+        let predicate: ((row: PageProps) => boolean) | null = null
 
         const builder = {
-          where: (condition: unknown) => {
-            if (typeof condition === 'function') {
-              predicate = condition as (row: Record<string, unknown>) => boolean
+          where: <Condition>(condition: Condition) => {
+            if (condition instanceof Function) {
+              predicate = (row) => Boolean(condition(row))
             }
             return builder
           },
@@ -107,10 +108,11 @@ function createMockDb() {
 
 type TestAuthUserInput =
   | AuthUser
-  | (Partial<AuthUser['user']> & { id: string } & Record<string, unknown>)
+  | (Partial<AuthUser['user']> & { id: string } & PageProps)
 
 function createTestAuthUser(input: TestAuthUserInput): AuthUser {
   if ('user' in input && 'session' in input) {
+    // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
     return input as AuthUser
   }
 
@@ -126,6 +128,7 @@ function createTestAuthUser(input: TestAuthUserInput): AuthUser {
     ...rest,
   }
 
+  // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
   return {
     user: baseUser as AuthUser['user'],
     session: {
@@ -139,13 +142,18 @@ function createTestAuthUser(input: TestAuthUserInput): AuthUser {
   }
 }
 
+function asTestDatabase<Database>(database: Database): DatabaseType {
+  // SAFETY: TestLayer is an explicit test-only seam; callers choose a fixture implementing the augmented DatabaseType contract.
+  return database as DatabaseType
+}
+
 export const TestLayer = {
   Database: {
     /** Map-based mock database - good for unit tests */
-    inMemory: () =>
-      Layer.succeed(DatabaseService, createMockDb() as unknown as DatabaseType),
+    inMemory: () => Layer.succeed(DatabaseService, asTestDatabase(createMockDb())),
     /** Use your own database instance (e.g., SQLite :memory:) */
-    use: (db: unknown) => Layer.succeed(DatabaseService, db as DatabaseType),
+    use: <Database>(db: Database) =>
+      Layer.succeed(DatabaseService, asTestDatabase(db)),
   },
 
   Auth: {
@@ -182,6 +190,7 @@ export const TestLayer = {
               value: TestCaptures[K][number]
             ) =>
               Effect.sync(() => {
+                // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
                 const list = captures[key] as Array<TestCaptures[K][number]>
                 list.push(value)
               }),

@@ -6,7 +6,8 @@
  */
 
 import type { Context as HonoContext, Env } from 'hono'
-import type { ErrorContext, SourceLocation, CodeSnippet } from './error-types.js'
+import { Schema as S } from 'effect'
+import type { ErrorContext, SourceLocation, CodeSnippet, SafeHeaders } from './error-types.js'
 
 /**
  * Headers that are safe to include in error context.
@@ -28,8 +29,8 @@ const SAFE_HEADERS = [
 /**
  * Extract safe headers from a request.
  */
-function extractSafeHeaders(headers: Headers): Record<string, string> {
-  const result: Record<string, string> = {}
+function extractSafeHeaders(headers: Headers): SafeHeaders {
+  const result: SafeHeaders = {}
 
   for (const key of SAFE_HEADERS) {
     const value = headers.get(key)
@@ -69,13 +70,13 @@ export function captureErrorContext<E extends Env>(c: HonoContext<E>): ErrorCont
 
   // Route context
   try {
-    const routePath = (c.req as any).routePath ?? c.req.path
+    const routePath = c.req.routePath ?? c.req.path
     const params = c.req.param()
 
     context.route = {
       method: c.req.method,
       path: routePath,
-      params: typeof params === 'string' ? {} : (params as Record<string, string>),
+      params: S.is(S.String)(params) ? {} : params,
     }
   } catch {
     // Ignore errors extracting route info
@@ -228,6 +229,7 @@ export function captureEnhancedContext<E extends Env>(
   c: HonoContext<E>,
   error?: Error
 ): EnhancedErrorContext {
+  // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
   const context = captureErrorContext(c) as EnhancedErrorContext
 
   if (error) {
@@ -279,12 +281,14 @@ export function mergeContexts(...contexts: Partial<ErrorContext>[]): ErrorContex
 
   for (const ctx of contexts) {
     if (ctx.route) {
+      // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
       result.route = { ...result.route, ...ctx.route } as ErrorContext['route']
     }
     if (ctx.handler) {
       result.handler = { ...result.handler, ...ctx.handler }
     }
     if (ctx.request) {
+      // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
       result.request = { ...result.request, ...ctx.request } as ErrorContext['request']
     }
     if (ctx.service) {

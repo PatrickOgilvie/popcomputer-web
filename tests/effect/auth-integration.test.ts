@@ -47,8 +47,6 @@ describe('Auth Integration Types', () => {
 
   describe('betterAuthFormAction return type compatibility', () => {
     test('loginAction accepts betterAuthFormAction result', () => {
-      const app = new Hono()
-
       // Create action using the factory
       const loginAction = betterAuthFormAction<
         S.Schema.Type<typeof LoginSchema>,
@@ -57,13 +55,13 @@ describe('Auth Integration Types', () => {
       >({
         schema: LoginSchema,
         errorComponent: 'Auth/Login',
-        call: async (auth, input) => {
+        call: async (_auth, _input) => {
           return { headers: new Headers() }
         },
       })
 
       // This should compile without error - the factory result should be assignable to the config
-      const config: AuthRoutesConfig<any> = {
+      const config: AuthRoutesConfig = {
         loginAction: loginAction,
       }
 
@@ -71,8 +69,6 @@ describe('Auth Integration Types', () => {
     })
 
     test('registerAction accepts betterAuthFormAction result', () => {
-      const app = new Hono()
-
       const registerAction = betterAuthFormAction<
         S.Schema.Type<typeof RegisterSchema>,
         S.Schema.Encoded<typeof RegisterSchema>,
@@ -80,12 +76,12 @@ describe('Auth Integration Types', () => {
       >({
         schema: RegisterSchema,
         errorComponent: 'Auth/Register',
-        call: async (auth, input) => {
+        call: async (_auth, _input) => {
           return { headers: new Headers() }
         },
       })
 
-      const config: AuthRoutesConfig<any> = {
+      const config: AuthRoutesConfig = {
         registerAction: registerAction,
       }
 
@@ -95,14 +91,12 @@ describe('Auth Integration Types', () => {
 
   describe('betterAuthLogoutAction return type compatibility', () => {
     test('logoutAction accepts betterAuthLogoutAction result', () => {
-      const app = new Hono()
-
       const logoutAction = betterAuthLogoutAction({
         redirectTo: '/login',
       })
 
       // This should compile without error
-      const config: AuthRoutesConfig<any> = {
+      const config: AuthRoutesConfig = {
         logoutAction: logoutAction,
       }
 
@@ -121,7 +115,7 @@ describe('Auth Integration Types', () => {
       >({
         schema: LoginSchema,
         errorComponent: 'Auth/Login',
-        call: async (auth, input) => ({ headers: new Headers() }),
+        call: async (_auth, _input) => ({ headers: new Headers() }),
       })
 
       const registerAction = betterAuthFormAction<
@@ -131,7 +125,7 @@ describe('Auth Integration Types', () => {
       >({
         schema: RegisterSchema,
         errorComponent: 'Auth/Register',
-        call: async (auth, input) => ({ headers: new Headers() }),
+        call: async (_auth, _input) => ({ headers: new Headers() }),
       })
 
       const logoutAction = betterAuthLogoutAction({
@@ -167,7 +161,7 @@ describe('Auth Integration Types', () => {
       >({
         schema: ForgotPasswordSchema,
         errorComponent: 'Auth/ForgotPassword',
-        call: async (auth, input) => ({ headers: new Headers() }),
+        call: async (_auth, _input) => ({ headers: new Headers() }),
       })
 
       // guestActions should also accept the factory results

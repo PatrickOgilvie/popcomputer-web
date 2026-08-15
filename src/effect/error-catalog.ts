@@ -9,6 +9,7 @@ import type {
   ErrorCategory,
   ErrorContext,
   ErrorDefinition,
+  ErrorParams,
   FixGenerator,
   FixSuggestion,
   HonertiaStructuredError,
@@ -180,7 +181,7 @@ const fixGenerators = {
    */
   makeFieldOptional: (
     ctx: ErrorContext,
-    params: Record<string, unknown>
+    params: ErrorParams
   ): FixSuggestion => ({
     id: 'make-field-optional',
     type: 'modify_code',
@@ -201,7 +202,7 @@ const fixGenerators = {
    */
   provideRequiredField: (
     ctx: ErrorContext,
-    params: Record<string, unknown>
+    params: ErrorParams
   ): FixSuggestion => {
     const routeInfo = ctx.route
       ? ` for ${ctx.route.method} ${ctx.route.path}`
@@ -249,7 +250,7 @@ const fixGenerators = {
 /**
  * The error catalog with all error definitions.
  */
-export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
+export const ErrorCatalog = {
   // Validation Errors
   [ErrorCodes.VAL_001_FIELD_REQUIRED]: {
     code: ErrorCodes.VAL_001_FIELD_REQUIRED,
@@ -725,7 +726,7 @@ export const ErrorCatalog: Record<ErrorCode, ErrorDefinition> = {
     docsPath: '/errors/internal/effect-defect',
     related: [ErrorCodes.INT_800_UNEXPECTED],
   },
-}
+} satisfies Record<ErrorCode, ErrorDefinition>
 
 /**
  * Base URL for error documentation.
@@ -751,11 +752,13 @@ const ERROR_GUIDE_URL = 'https://github.com/patrickogilvie/popcomputer-web#respo
  */
 export function createStructuredError(
   code: ErrorCode | string,
-  params: Record<string, unknown>,
+  params: ErrorParams,
   context: ErrorContext
 ): HonertiaStructuredError {
   // Check if code is a valid ErrorCode
+  // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
   const isValidCode = Object.values(ErrorCodes).includes(code as ErrorCode)
+  // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
   const definition = isValidCode ? ErrorCatalog[code as ErrorCode] : undefined
 
   if (!definition) {
@@ -806,6 +809,7 @@ export function getErrorDefinition(code: ErrorCode): ErrorDefinition | undefined
  * Get all error codes for a category.
  */
 export function getErrorsByCategory(category: ErrorCategory): ErrorCode[] {
+  // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
   return (Object.values(ErrorCodes) as ErrorCode[]).filter(
     (code) => ErrorCatalog[code]?.category === category
   )

@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'bun:test'
-import { betterAuth } from 'better-auth'
+import { APIError, betterAuth } from 'better-auth'
 import { memoryAdapter, type MemoryDB } from 'better-auth/adapters/memory'
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import { Hono } from 'hono'
-import { betterAuthFormAction } from '../../src/effect/auth.js'
+import {
+  betterAuthFormAction,
+  effectifyBetterAuth,
+} from '../../src/effect/auth.js'
 import { effectHandler } from '../../src/effect/handler.js'
 import { ValidationError } from '../../src/effect/errors.js'
 import { AuthService, RequestService } from '../../src/effect/services.js'
 import { setupHonertia } from '../../src/setup.js'
+import type { RequestData } from '../../src/effect/validation.js'
 
 const CredentialsSchema = S.Struct({
   email: S.String,
@@ -39,7 +43,7 @@ function createTestAuth() {
 
 function createAuthRequest(
   url: string,
-  body: Readonly<Record<string, unknown>>
+  body: Readonly<RequestData>
 ) {
   return {
     method: 'POST',
@@ -67,7 +71,7 @@ function getValidationError(
     throw new Error('Expected the Better Auth action to fail')
   }
 
-  const failure = Cause.failureOption(exit.cause)
+  const failure = Cause.findErrorOption(exit.cause)
   expect(Option.isSome(failure)).toBe(true)
   if (Option.isNone(failure) || !(failure.value instanceof ValidationError)) {
     throw new Error('Expected a ValidationError')
@@ -77,6 +81,61 @@ function getValidationError(
 }
 
 describe('betterAuthFormAction with Better Auth', () => {
+  test('retains custom endpoint types and values through the Effect façade', async () => {
+    const auth = {
+      api: {
+        pluginEndpoint: async (input: { readonly value: string }) => ({
+          echoed: input.value,
+        }),
+      },
+      handler: async (_request: Request) => new Response('OK'),
+    }
+    const authEffect = effectifyBetterAuth(auth)
+
+    const result = await Effect.runPromise(
+      authEffect.api.pluginEndpoint({ value: 'from-plugin' })
+    )
+
+    expect(result).toEqual({ echoed: 'from-plugin' })
+    expect(authEffect.raw).toBe(auth)
+    expect(authEffect.api.pluginEndpoint).toBe(authEffect.api.pluginEndpoint)
+    expect('pluginEndpoint' in authEffect.api).toBe(true)
+    expect('missingEndpoint' in authEffect.api).toBe(false)
+    expect(Object.keys(authEffect.api)).toEqual(['pluginEndpoint'])
+  })
+
+  test('preserves explicit asResponse error responses in the success channel', async () => {
+    const auth = {
+      api: {
+        pluginEndpoint: async (_input: { readonly asResponse: true }) =>
+          new Response('Unauthorized', { status: 401 }),
+      },
+      handler: async (_request: Request) => new Response('OK'),
+    }
+    const authEffect = effectifyBetterAuth(auth)
+
+    const response = await Effect.runPromise(
+      authEffect.api.pluginEndpoint({ asResponse: true })
+    )
+
+    expect(response.status).toBe(401)
+    expect(await response.text()).toBe('Unauthorized')
+  })
+
+  test('does not treat a plugin domain status as an HTTP envelope', async () => {
+    const auth = {
+      api: {
+        pluginEndpoint: async () => ({ status: 451, state: 'awaiting-review' }),
+      },
+      handler: async (_request: Request) => new Response('OK'),
+    }
+    const authEffect = effectifyBetterAuth(auth)
+
+    const result = await Effect.runPromise(authEffect.api.pluginEndpoint())
+
+    expect(result).toEqual({ status: 451, state: 'awaiting-review' })
+  })
+
   test('normalizes invalid credentials when a Request makes Better Auth return a Response', async () => {
     const auth = createTestAuth()
     await auth.api.signUpEmail({
@@ -161,7 +220,11 @@ describe('betterAuthFormAction with Better Auth', () => {
         return { form: 'This should not be rendered' }
       },
       call: async () => {
-        throw { status: 400, message: secretMessage }
+        throw {
+          status: 400,
+          message: secretMessage,
+          headers: { 'set-cookie': 'unverified=must-not-survive; Path=/' },
+        }
       },
     })
     const app = new Hono()
@@ -196,6 +259,209 @@ describe('betterAuthFormAction with Better Auth', () => {
     expect(response.status).toBe(502)
     expect(body).not.toContain(secretMessage)
     expect(body).not.toContain('secret')
+    expect(response.headers.get('set-cookie')).toBeNull()
     expect(errorMapperCalled).toBe(false)
+  })
+
+  test('preserves cookies from a resolved Better Auth error response', async () => {
+    const auth = createTestAuth()
+    const action = betterAuthFormAction({
+      schema: CredentialsSchema,
+      errorComponent: 'Auth/Login',
+      call: async () =>
+        new Response(
+          JSON.stringify({
+            code: 'INVALID_SESSION',
+            message: 'Please sign in again.',
+          }),
+          {
+            status: 401,
+            headers: {
+              'content-type': 'application/json',
+              'set-cookie': 'better-auth.session_token=; Max-Age=0; Path=/',
+              'x-auth-recovery': 'reauthenticate',
+            },
+          }
+        ),
+    })
+    const app = new Hono()
+
+    app.use(
+      '*',
+      setupHonertia({
+        honertia: {
+          version: 'test',
+          render: (page) => JSON.stringify(page),
+        },
+        auth: { client: () => auth },
+      })
+    )
+    app.post('/login', effectHandler(action))
+
+    const response = await app.request('/login', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: 'test@example.com',
+        password: 'password123',
+      }),
+    })
+
+    expect(response.status).toBe(422)
+    expect(response.headers.get('set-cookie')).toContain(
+      'better-auth.session_token='
+    )
+    expect(response.headers.get('x-auth-recovery')).toBe('reauthenticate')
+    expect(response.headers.get('content-type')).toContain('application/json')
+  })
+
+  test('preserves Better Auth hidden headers from a thrown APIError', async () => {
+    const auth = createTestAuth()
+    const apiError = new APIError('UNAUTHORIZED', {
+      code: 'INVALID_SESSION',
+      message: 'Please sign in again.',
+    })
+    Reflect.set(
+      apiError,
+      Symbol.for('better-call:api-error-headers'),
+      new Headers({
+        'set-cookie': 'better-auth.session_token=; Max-Age=0; Path=/',
+        'x-auth-recovery': 'reauthenticate',
+      })
+    )
+    const action = betterAuthFormAction({
+      schema: CredentialsSchema,
+      errorComponent: 'Auth/Login',
+      call: async () => {
+        throw apiError
+      },
+    })
+    const app = new Hono()
+
+    app.use(
+      '*',
+      setupHonertia({
+        honertia: {
+          version: 'test',
+          render: (page) => JSON.stringify(page),
+        },
+        auth: { client: () => auth },
+      })
+    )
+    app.post('/login', effectHandler(action))
+
+    const response = await app.request('/login', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: 'test@example.com',
+        password: 'password123',
+      }),
+    })
+
+    expect(response.status).toBe(422)
+    expect(response.headers.get('set-cookie')).toContain(
+      'better-auth.session_token='
+    )
+    expect(response.headers.get('x-auth-recovery')).toBe('reauthenticate')
+  })
+
+  test('preserves thrown Better Auth redirects as redirect control flow', async () => {
+    const auth = createTestAuth()
+    const redirect = new APIError('FOUND', undefined, {
+      Location: 'https://identity.example/continue',
+      'Set-Cookie': 'oauth-state=verified; HttpOnly; Path=/',
+    })
+    const action = betterAuthFormAction({
+      schema: CredentialsSchema,
+      errorComponent: 'Auth/Login',
+      call: async () => {
+        throw redirect
+      },
+    })
+    const app = new Hono()
+
+    app.use(
+      '*',
+      setupHonertia({
+        honertia: {
+          version: 'test',
+          render: (page) => JSON.stringify(page),
+        },
+        auth: { client: () => auth },
+      })
+    )
+    app.post('/login', effectHandler(action))
+
+    const response = await app.request('/login', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: 'test@example.com',
+        password: 'password123',
+      }),
+    })
+
+    expect(response.status).toBe(302)
+    expect(response.headers.get('location')).toBe(
+      'https://identity.example/continue'
+    )
+    expect(response.headers.get('set-cookie')).toContain('oauth-state=verified')
+  })
+
+  test('does not trust an Error named APIError without a numeric statusCode', async () => {
+    const auth = createTestAuth()
+    const spoofedError = new Error('spoofed')
+    spoofedError.name = 'APIError'
+    Reflect.set(spoofedError, 'status', 401)
+    Reflect.set(spoofedError, 'headers', {
+      'set-cookie': 'spoofed=must-not-survive; Path=/',
+      'x-spoofed-auth': 'true',
+    })
+    const action = betterAuthFormAction({
+      schema: CredentialsSchema,
+      errorComponent: 'Auth/Login',
+      call: async () => {
+        throw spoofedError
+      },
+    })
+    const app = new Hono()
+
+    app.use(
+      '*',
+      setupHonertia({
+        honertia: {
+          version: 'test',
+          render: (page) => JSON.stringify(page),
+        },
+        auth: { client: () => auth },
+      })
+    )
+    app.post('/login', effectHandler(action))
+
+    const response = await app.request('/login', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: 'test@example.com',
+        password: 'password123',
+      }),
+    })
+
+    expect(response.status).toBe(502)
+    expect(response.headers.get('set-cookie')).toBeNull()
+    expect(response.headers.get('x-spoofed-auth')).toBeNull()
   })
 })

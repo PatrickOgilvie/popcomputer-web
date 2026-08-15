@@ -4,7 +4,7 @@
  * Middleware that connects Hono's request handling to Effect's runtime.
  */
 
-import { Cause, Effect, Layer, ManagedRuntime, Option } from 'effect'
+import { Cause, Effect, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import { openHonertiaContext } from '../request-context.js'
 import {
@@ -12,6 +12,7 @@ import {
   createWorkersResponseCacheClient,
   createUnavailableResponseCacheClient,
   resolveWorkersCachePurgeApi,
+  type WorkersCachePurgeApi,
 } from './response-cache.js'
 import {
   DatabaseService,
@@ -34,6 +35,7 @@ import {
   type BindingsType,
 } from './services.js'
 import { TestCaptureService } from './test-layers.js'
+import { setResponseTestCaptures } from './test-capture-store.js'
 import type { RouteBindingsConfig } from './binding.js'
 import { observeEffectErrorEvent } from './error-observer.js'
 
@@ -69,7 +71,7 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
    * Usually configured via `setupHonertia(app, { honertia: { schema } })`.
    * Can also be passed here for standalone effectBridge usage.
    */
-  schema?: Record<string, unknown>
+  schema?: object
   /** Row parsers and optional scope metadata for route-model bindings. */
   bindings?: RouteBindingsConfig
 }
@@ -84,20 +86,24 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
 /**
  * Create a RequestContext from Hono context.
  */
-function createRequestContext<E extends Env>(c: HonoContext<E>): RequestContext {
+function createRequestContext<E extends Env>(
+  c: HonoContext<E>
+): RequestContext<NonNullable<E['Bindings']>> {
+  // SAFETY: Hono supplies c.env from the route Env; the empty object is used only when that optional binding bag is absent.
+  const env = (c.env ?? {}) as NonNullable<E['Bindings']>
   return {
     method: c.req.method,
     url: c.req.url,
     headers: c.req.raw.headers,
-    env: (c.env ?? {}) as Record<string, unknown>,
+    env,
     param: (name: string) => c.req.param(name),
     params: () => {
       const params = c.req.param()
-      return typeof params === 'string' ? {} : params
+      return S.is(S.String)(params) ? {} : params
     },
     query: () => c.req.query(),
     json: <T>() => c.req.json<T>(),
-    parseBody: () => c.req.parseBody() as Promise<Record<string, unknown>>,
+    parseBody: () => c.req.parseBody(),
     header: (name: string) => c.req.header(name),
   }
 }
@@ -107,13 +113,20 @@ function createRequestContext<E extends Env>(c: HonoContext<E>): RequestContext 
  * Values are shared with Hono middleware through c.set / c.var.
  */
 function createRequestStateClient<E extends Env>(c: HonoContext<E>): RequestStateClient {
+  // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   return {
     // Arbitrary keys are not represented in Hono's ContextVariableMap typing,
     // so reads and writes go through the untyped context surface.
-    get: <T>(key: string) =>
-      ((c.var as Record<string, unknown> | undefined)?.[key]) as T | undefined,
-    set: (key: string, value: unknown) => {
-      ;(c as { set: (key: string, value: unknown) => void }).set(key, value)
+    get: <T>(key: string) => {
+      // SAFETY: This client is the sole adapter for values written through the matching generic set method during the same request.
+      return Object.getOwnPropertyDescriptor(c.var, key)?.value as T | undefined
+    },
+    set: <Value>(key: string, value: Value) => {
+      // SAFETY: Hono stores arbitrary request-local values at runtime; this adapter confines that untyped surface behind RequestStateClient.
+      const writableContext = c as {
+        set: <StoredValue>(key: string, value: StoredValue) => void
+      }
+      writableContext.set(key, value)
     },
   }
 }
@@ -122,6 +135,7 @@ function createRequestStateClient<E extends Env>(c: HonoContext<E>): RequestStat
  * Create a ResponseFactory from Hono context.
  */
 function createResponseFactory<E extends Env>(c: HonoContext<E>): ResponseFactory {
+  // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   return {
     redirect: (url: string, status = 302) => c.redirect(url, status as 301 | 302 | 303 | 307 | 308),
     json: <T>(data: T, status = 200) => c.json(data, status as any),
@@ -193,6 +207,7 @@ function createUnconfiguredCacheClient(): CacheClient {
 interface CloudflareExecutionContext {
   waitUntil(promise: Promise<unknown>): void
   passThroughOnException(): void
+  readonly cache?: WorkersCachePurgeApi
 }
 
 /**
@@ -204,11 +219,11 @@ function makeObservedBackground<A, E, R>(
 ): Effect.Effect<void, never, R> {
   return effect.pipe(
     Effect.asVoid,
-    Effect.catchAllCause((cause) =>
+    Effect.catchCause((cause) =>
       observeEffectErrorEvent({
         source: 'framework',
         handling: 'unhandled',
-        kind: Option.isSome(Cause.failureOption(cause)) ? 'failure' : 'defect',
+        kind: Option.isSome(Cause.findErrorOption(cause)) ? 'failure' : 'defect',
         error: Cause.squash(cause),
         metadata: { operation },
       })
@@ -216,10 +231,14 @@ function makeObservedBackground<A, E, R>(
   )
 }
 
-interface BackgroundSupervisor {
+/** Request-owned coordinator for Effect and external background work. */
+export interface BackgroundSupervisor {
   readonly client: ExecutionContextClient
   readonly hasPending: () => boolean
-  readonly drain: () => Promise<void>
+  readonly extendLifetime: (promise: Promise<unknown>) => void
+  readonly drain: <R>(
+    runtime?: ManagedRuntime.ManagedRuntime<R, never>
+  ) => Promise<void>
 }
 
 /**
@@ -234,20 +253,84 @@ export async function disposeRequestRuntime<E extends Env, R>(
 ): Promise<void> {
   const supervisor = openHonertiaContext(c).backgroundSupervisor
   if (supervisor?.hasPending() && supervisor.client.isAvailable) {
-    supervisor.client.waitUntil(
-      supervisor.drain().then(() => runtime.dispose())
+    supervisor.extendLifetime(
+      supervisor.drain(runtime).then(() => runtime.dispose())
     )
     return
   }
 
-  await supervisor?.drain()
+  await supervisor?.drain(runtime)
   await runtime.dispose()
+}
+
+/**
+ * Finish background promises when outer middleware exits before the Effect
+ * bridge can own request teardown.
+ */
+export async function drainRequestBackground<E extends Env>(
+  c: HonoContext<E>
+): Promise<void> {
+  const supervisor = openHonertiaContext(c).backgroundSupervisor
+  if (!supervisor?.hasPending()) return
+
+  const draining = supervisor.drain()
+  if (supervisor.client.isAvailable) {
+    supervisor.extendLifetime(draining)
+    return
+  }
+
+  await draining
+}
+
+function createExternalPromiseTracker() {
+  const pending = new Set<Promise<void>>()
+  const failures: unknown[] = []
+
+  const track = (promise: Promise<unknown>): Promise<void> => {
+    let tracked: Promise<void>
+    tracked = promise.then(
+      () => undefined,
+      (cause: unknown) => {
+        failures.push(cause)
+      }
+    ).then(() => {
+      pending.delete(tracked)
+    })
+    pending.add(tracked)
+    return tracked
+  }
+
+  return {
+    pending,
+    hasWork: () => pending.size > 0 || failures.length > 0,
+    track,
+    drain: async <R>(runtime?: ManagedRuntime.ManagedRuntime<R, never>) => {
+      while (pending.size > 0) {
+        await Promise.allSettled(pending)
+      }
+
+      for (const cause of failures.splice(0)) {
+        const observation = observeEffectErrorEvent({
+          source: 'framework',
+          handling: 'unhandled',
+          kind: 'failure',
+          error: cause,
+          metadata: { operation: 'external-background' },
+        })
+        await (runtime
+          ? runtime.runPromise(observation)
+          : Effect.runPromise(observation))
+      }
+    },
+  }
 }
 
 function createExecutionContextSupervisor(
   ctx: CloudflareExecutionContext
 ): BackgroundSupervisor {
   const pending = new Set<Promise<void>>()
+  const external = createExternalPromiseTracker()
+  let drainPromise: Promise<void> | undefined
 
   const schedule = <A, E, R>(
     operation: string,
@@ -269,39 +352,105 @@ function createExecutionContextSupervisor(
 
   const client: ExecutionContextClient = {
     isAvailable: true,
-    waitUntil: (promise) => ctx.waitUntil(promise),
+    waitUntil: (promise) => {
+      const tracked = external.track(promise)
+      ctx.waitUntil(tracked)
+    },
     runInBackground: (effect) => schedule('background', effect),
     schedule,
   }
 
+  const drain: BackgroundSupervisor['drain'] = (runtime) => {
+    if (drainPromise) return drainPromise
+
+    drainPromise = (async () => {
+      while (pending.size > 0) {
+        await Promise.allSettled(pending)
+      }
+      await external.drain(runtime)
+    })()
+    return drainPromise
+  }
+
   return {
     client,
-    hasPending: () => pending.size > 0,
-    drain: async () => {
-      while (pending.size > 0) {
-        await Promise.allSettled([...pending])
-      }
-    },
+    hasPending: () => pending.size > 0 || external.hasWork(),
+    extendLifetime: (promise) => ctx.waitUntil(promise),
+    drain,
   }
 }
 
-/**
- * Create a no-op ExecutionContextClient for environments without ExecutionContext.
- */
+/** Create an inline owner for environments without ExecutionContext. */
 function createInlineExecutionContextSupervisor(): BackgroundSupervisor {
+  const external = createExternalPromiseTracker()
+  let drainPromise: Promise<void> | undefined
   const client: ExecutionContextClient = {
     isAvailable: false,
-    waitUntil: () => {
-      // No-op - silently ignore in non-Worker environments
+    waitUntil: (promise) => {
+      external.track(promise)
     },
     runInBackground: (effect) => makeObservedBackground('background', effect),
     schedule: (operation, effect) => makeObservedBackground(operation, effect),
   }
   return {
     client,
-    hasPending: () => false,
-    drain: async () => {},
+    hasPending: external.hasWork,
+    extendLifetime: () => {},
+    drain: (runtime) => {
+      drainPromise ??= external.drain(runtime)
+      return drainPromise
+    },
   }
+}
+
+function getOrCreateBackgroundSupervisor<E extends Env>(
+  c: HonoContext<E>
+): BackgroundSupervisor {
+  const requestContext = openHonertiaContext(c)
+  if (requestContext.backgroundSupervisor) {
+    return requestContext.backgroundSupervisor
+  }
+
+  const executionContext = getCloudflareExecutionContext(c)
+
+  const supervisor = executionContext
+    ? createExecutionContextSupervisor(executionContext)
+    : createInlineExecutionContextSupervisor()
+  requestContext.backgroundSupervisor = supervisor
+  return supervisor
+}
+
+function getCloudflareExecutionContext<E extends Env>(
+  c: HonoContext<E>
+): CloudflareExecutionContext | undefined {
+  try {
+    const candidate = c.executionCtx
+    if (
+      candidate instanceof Object &&
+      'waitUntil' in candidate &&
+      candidate.waitUntil instanceof Function &&
+      'passThroughOnException' in candidate &&
+      candidate.passThroughOnException instanceof Function
+    ) {
+      // SAFETY: both members of the deliberately minimal Worker contract were
+      // checked above; methods remain owned and invoked through this object.
+      return candidate as CloudflareExecutionContext
+    }
+  } catch {
+    // Hono intentionally throws from executionCtx outside Worker runtimes.
+  }
+
+  return undefined
+}
+
+/**
+ * Return the request-owned execution client, creating its supervisor before
+ * application services that may schedule external background promises.
+ */
+export function getRequestExecutionContextClient<E extends Env>(
+  c: HonoContext<E>
+): ExecutionContextClient {
+  return getOrCreateBackgroundSupervisor(c).client
 }
 
 /**
@@ -354,12 +503,14 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   const pageLayer = Layer.succeed(PageService, createPageRenderer(c))
 
   // Bindings layer - always available, typed via module augmentation
+  // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   const bindingsLayer = Layer.succeed(
     BindingsService,
     (c.env ?? {}) as BindingsType
   )
 
   // Cache layer - backed by KV if available, otherwise unconfigured client
+  // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   const kv = (c.env as { KV?: KVNamespace } | undefined)?.KV
   const cacheLayer = Layer.succeed(
     CacheService,
@@ -373,19 +524,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   const requestCtx = openHonertiaContext(c)
 
   // ExecutionContext layer - for background task execution
-  // Note: Hono's executionCtx getter throws in non-Worker environments, so we wrap in try/catch
-  let executionCtx: CloudflareExecutionContext | undefined
-  try {
-    executionCtx = (c as any).executionCtx
-  } catch {
-    executionCtx = undefined
-  }
-  const backgroundSupervisor = requestCtx.backgroundSupervisor ?? (
-    executionCtx
-      ? createExecutionContextSupervisor(executionCtx)
-      : createInlineExecutionContextSupervisor()
-  )
-  requestCtx.backgroundSupervisor = backgroundSupervisor
+  const backgroundSupervisor = getOrCreateBackgroundSupervisor(c)
   const executionContextLayer = Layer.succeed(
     ExecutionContextService,
     backgroundSupervisor.client
@@ -393,6 +532,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
 
   // Workers Cache purge API: probes ctx.cache, then the cloudflare:workers
   // module export; unavailable (no-op purge, isAvailable: false) elsewhere.
+  const executionCtx = getCloudflareExecutionContext(c)
   const responseCacheLayer = Layer.effect(
     ResponseCacheService,
     resolveWorkersCachePurgeApi(executionCtx).pipe(
@@ -435,6 +575,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     baseLayer = Layer.merge(baseLayer, customServicesLayer)
   }
 
+  // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   return baseLayer as Layer.Layer<
     | RequestService
     | RequestStateService
@@ -469,6 +610,7 @@ export function setEffectBridgeConfig<E extends Env, CustomServices = never>(
   config?: EffectBridgeConfig<E, CustomServices>
 ): void {
   if (!config) return
+  // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   openHonertiaContext(c).bridgeConfig = config as EffectBridgeConfig<E, unknown>
 }
 
@@ -478,6 +620,7 @@ export function setEffectBridgeConfig<E extends Env, CustomServices = never>(
 export function getEffectBridgeConfig<E extends Env>(
   c: HonoContext<E>
 ): EffectBridgeConfig<any, any> | undefined {
+  // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   return openHonertiaContext(c).bridgeConfig as EffectBridgeConfig<any, any> | undefined
 }
 
@@ -488,15 +631,19 @@ export function effectBridge<E extends Env, CustomServices = never>(
   config?: EffectBridgeConfig<E, CustomServices>
 ): MiddlewareHandler<E> {
   return async (c, next) => {
-    // SAFETY: test-layer injection seam used by @popcomputer/web/test (see
+    // SAFETY: test-layer injection seam used by @popcomputer/web/effect (see
     // test-layers.ts). Deliberately untyped and unchanged for now; making it
     // a construction-time config option is tracked as a follow-up.
-    const testLayer =
-      (c as any).var?.__testLayer ?? (c.env as Record<string, unknown> | undefined)?.__testLayer
+    const contextTestLayer = Object.getOwnPropertyDescriptor(c.var, '__testLayer')?.value
+    const envTestLayer = c.env instanceof Object
+      ? Object.getOwnPropertyDescriptor(c.env, '__testLayer')?.value
+      : undefined
+    const testLayer = contextTestLayer ?? envTestLayer
     const hasTestLayer = Layer.isLayer(testLayer)
     setEffectBridgeConfig(c, config)
     let layer = buildContextLayer(c, config)
     if (hasTestLayer) {
+      // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
       layer = Layer.merge(layer, testLayer as Layer.Layer<any, never, never>)
     }
     const runtime = ManagedRuntime.make(layer)
@@ -521,9 +668,9 @@ export function effectBridge<E extends Env, CustomServices = never>(
           )
           if (Option.isSome(maybeCapture)) {
             const captures = await runtime.runPromise(maybeCapture.value.get())
-            const response = (c as any).res
+            const response = c.res
             if (response) {
-              ;(response as any).__testCaptured = captures
+              setResponseTestCaptures(response, captures)
             }
           }
         } catch {
@@ -543,7 +690,7 @@ export function effectBridge<E extends Env, CustomServices = never>(
  */
 export function getEffectSchema<E extends Env>(
   c: HonoContext<E>
-): Record<string, unknown> | undefined {
+): object | undefined {
   return openHonertiaContext(c).schema
 }
 

@@ -10,10 +10,10 @@ import {
 } from '../../src/effect/error-observer.js'
 import { effectRoutes } from '../../src/effect/routing.js'
 
-class ScopedBackgroundResource extends Context.Tag('test/ScopedBackgroundResource')<
+class ScopedBackgroundResource extends Context.Service<
   ScopedBackgroundResource,
   { readonly isReleased: () => boolean }
->() {}
+>()('test/ScopedBackgroundResource') {}
 
 describe('background', () => {
   test('keeps Worker work alive and observes failures with its operation name', async () => {
@@ -40,7 +40,7 @@ describe('background', () => {
         yield* background(
           'analytics.record-signup',
           Effect.sleep('5 millis').pipe(
-            Effect.zipRight(Effect.fail(HttpError.internal('analytics unavailable')))
+            Effect.andThen(Effect.fail(HttpError.internal('analytics unavailable')))
           )
         )
         return new Response(null, { status: 202 })
@@ -98,7 +98,7 @@ describe('background', () => {
     const waitUntilPromises: Promise<unknown>[] = []
     const app = new Hono()
 
-    const resourceLayer = Layer.scoped(
+    const resourceLayer = Layer.effect(
       ScopedBackgroundResource,
       Effect.acquireRelease(
         Effect.succeed({ isReleased: () => released }),
@@ -114,7 +114,7 @@ describe('background', () => {
         yield* background(
           'events.use-scoped-resource',
           Effect.sleep('5 millis').pipe(
-            Effect.zipRight(
+            Effect.andThen(
               Effect.gen(function* () {
                 const resource = yield* ScopedBackgroundResource
                 backgroundObservedReleasedResource = resource.isReleased()

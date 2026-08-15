@@ -4,30 +4,28 @@
  * Provides validated request data to Effect handlers.
  */
 
-import { Context, type Effect } from 'effect'
+import { Context, Effect } from 'effect'
 import type { Validated } from './validation.js'
 export { ValidatedBrand } from './validation.js'
 
-export class ValidatedBodyService extends Context.Tag('@popcomputer/web/ValidatedBody')<
+export class ValidatedBodyService extends Context.Service<
   ValidatedBodyService,
   unknown
->() {}
+>()('@popcomputer/web/ValidatedBody') {}
 
-export class ValidatedQueryService extends Context.Tag('@popcomputer/web/ValidatedQuery')<
+export class ValidatedQueryService extends Context.Service<
   ValidatedQueryService,
   unknown
->() {}
+>()('@popcomputer/web/ValidatedQuery') {}
 
 export const validatedBody = <T>(): Effect.Effect<Validated<T>, never, ValidatedBodyService> =>
-  ValidatedBodyService as unknown as Effect.Effect<
-    Validated<T>,
-    never,
-    ValidatedBodyService
-  >
+  Effect.map(ValidatedBodyService, (body) => {
+    // SAFETY: validateRequestData populated this service from the route's body schema before the handler can access it.
+    return body as Validated<T>
+  })
 
 export const validatedQuery = <T>(): Effect.Effect<Validated<T>, never, ValidatedQueryService> =>
-  ValidatedQueryService as unknown as Effect.Effect<
-    Validated<T>,
-    never,
-    ValidatedQueryService
-  >
+  Effect.map(ValidatedQueryService, (query) => {
+    // SAFETY: validateRequestData populated this service from the route's query schema before the handler can access it.
+    return query as Validated<T>
+  })

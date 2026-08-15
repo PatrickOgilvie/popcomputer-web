@@ -363,10 +363,10 @@ describe('MigrationDefinition type', () => {
       description: 'Add email column to users table',
       up: sql`ALTER TABLE users ADD COLUMN email TEXT`,
       down: sql`ALTER TABLE users DROP COLUMN email`,
-      migrate: async (db) => {
+      migrate: async (_db) => {
         // Data migration logic
       },
-      validate: async (db) => {
+      validate: async (_db) => {
         // Validation logic
         return true
       },
@@ -376,8 +376,8 @@ describe('MigrationDefinition type', () => {
     expect(migration.description).toBe('Add email column to users table')
     expect(migration.up).toContain('ALTER TABLE')
     expect(migration.down).toContain('DROP COLUMN')
-    expect(typeof migration.migrate).toBe('function')
-    expect(typeof migration.validate).toBe('function')
+    expect(migration.migrate).toBeInstanceOf(Function)
+    expect(migration.validate).toBeInstanceOf(Function)
   })
 })
 
@@ -392,9 +392,9 @@ describe('DbStatusResult type', () => {
     expect(result).toHaveProperty('migrations')
 
     expect(['up-to-date', 'pending', 'error']).toContain(result.status)
-    expect(typeof result.total).toBe('number')
-    expect(typeof result.applied).toBe('number')
-    expect(typeof result.pending).toBe('number')
+    expect(result.total).toEqual(expect.any(Number))
+    expect(result.applied).toEqual(expect.any(Number))
+    expect(result.pending).toEqual(expect.any(Number))
     expect(Array.isArray(result.migrations)).toBe(true)
   })
 })
@@ -407,8 +407,8 @@ describe('DbMigrateResult type', () => {
     expect(result).toHaveProperty('applied')
     expect(result).toHaveProperty('migrations')
 
-    expect(typeof result.success).toBe('boolean')
-    expect(typeof result.applied).toBe('number')
+    expect(result.success).toEqual(expect.any(Boolean))
+    expect(result.applied).toEqual(expect.any(Number))
     expect(Array.isArray(result.migrations)).toBe(true)
   })
 })

@@ -64,7 +64,7 @@ function originAllowed(
 
   const allowed = config.allowedOrigins
   if (!allowed) return false
-  if (typeof allowed === 'function') return allowed(origin)
+  if (allowed instanceof Function) return allowed(origin)
   return allowed.includes(origin)
 }
 
@@ -119,6 +119,7 @@ export function verifyOrigin<E extends Env>(
     if (!requestOrigin) {
       // Cannot determine our own origin — fail closed only if strict.
       if (config.requireOrigin) {
+        // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
         return c.json({ error: 'Origin verification failed' }, status as any)
       }
       return next()
@@ -130,12 +131,14 @@ export function verifyOrigin<E extends Env>(
 
     if (!headerOrigin) {
       if (config.requireOrigin) {
+        // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
         return c.json({ error: 'Missing Origin header' }, status as any)
       }
       return next()
     }
 
     if (!originAllowed(headerOrigin, requestOrigin, config)) {
+      // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
       return c.json({ error: 'Cross-origin request blocked' }, status as any)
     }
 

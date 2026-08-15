@@ -10,11 +10,12 @@
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { Effect } from 'effect'
+import { Effect, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { honertia } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import { RequestStateService } from '../../src/effect/services.js'
+import type { PageProps } from '../../src/types.js'
 
 const createApp = () => {
   const app = new Hono()
@@ -31,8 +32,9 @@ describe('RequestStateService', () => {
     // Outer middleware: rewrites the response from state the action published
     app.use('*', async (c, next) => {
       await next()
-      const environment = (c.var as Record<string, unknown>).apiKeyEnvironment
-      if (typeof environment === 'string') {
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+      const environment = (c.var as PageProps).apiKeyEnvironment
+      if (S.is(S.String)(environment)) {
         c.res.headers.set('X-Api-Key-Environment', environment)
       }
     })
@@ -58,6 +60,7 @@ describe('RequestStateService', () => {
     app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
 
     app.use('*', async (c, next) => {
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       c.set('tenantId' as never, 'tenant-42' as never)
       await next()
     })

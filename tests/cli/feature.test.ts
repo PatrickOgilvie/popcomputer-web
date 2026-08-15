@@ -233,7 +233,7 @@ describe('generateFeature', () => {
 
       expect(result.content).toContain('count: S.Number')
       expect(result.content).toContain('active: S.Boolean')
-      expect(result.content).toContain('id: S.UUID')
+      expect(result.content).toContain('id: S.String.check(S.isUUID())')
     })
   })
 

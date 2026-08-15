@@ -8,7 +8,10 @@ import type {
   DatabaseType,
 } from './effect/services.js'
 import type { WebInstance } from './types.js'
-import type { EffectBridgeConfig } from './effect/bridge.js'
+import type {
+  BackgroundSupervisor,
+  EffectBridgeConfig,
+} from './effect/bridge.js'
 import type { ErrorBoundaryConfig } from './effect/handler.js'
 import type { RouteBindingsConfig } from './effect/binding.js'
 
@@ -35,16 +38,12 @@ export interface WebRequestContext<E extends Env = Env> {
    */
   // oxlint-disable-next-line no-explicit-any -- SAFETY: see doc comment above
   runtime?: ManagedRuntime.ManagedRuntime<any, never>
-  /** effectBridge() — owns detached Effects and request-runtime disposal. */
-  backgroundSupervisor?: {
-    readonly client: import('./effect/services.js').ExecutionContextClient
-    readonly hasPending: () => boolean
-    readonly drain: () => Promise<void>
-  }
+  /** setupWeb() / effectBridge() — owns detached request work and teardown. */
+  backgroundSupervisor?: BackgroundSupervisor
   /** effectBridge() — bridge config for downstream route handlers */
   bridgeConfig?: EffectBridgeConfig<E, unknown>
   /** effectBridge() / effectRoutes() — Drizzle schema for route model binding */
-  schema?: Record<string, unknown>
+  schema?: object
   /** effectBridge() / effectRoutes() — registered row parsers and scopes. */
   bindings?: RouteBindingsConfig
   /** setupWeb() — response policy shared by every error entrypoint. */
@@ -57,7 +56,7 @@ export interface WebRequestContext<E extends Env = Env> {
   sessionCookies?: readonly string[]
   /**
    * Test-only layer merged into the runtime by effectBridge. Injection
-   * semantics are owned by @popcomputer/web/test; carried here so the request path
+   * semantics are owned by @popcomputer/web/effect; carried here so the request path
    * has a single context surface.
    */
   testLayer?: Layer.Layer<never, never, never>
@@ -81,12 +80,16 @@ export function openHonertiaContext<E extends Env>(
   // SAFETY: Hono's ContextVariableMap typing does not carry symbol keys
   // through c.set/c.var. This module is the only reader and writer of this
   // symbol, and the holder is created here with the declared type.
-  const vars = c.var as Record<symbol, unknown> | undefined
-  const existing = vars?.[WEB_REQUEST_CONTEXT]
+  const existing = Object.getOwnPropertyDescriptor(
+    c.var,
+    WEB_REQUEST_CONTEXT
+  )?.value
   if (existing) {
+    // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
     return existing as WebRequestContext<E>
   }
   const created: WebRequestContext<E> = {}
+  // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
   c.set(WEB_REQUEST_CONTEXT as never, created as never)
   return created
 }

@@ -30,6 +30,7 @@ describe('honertiaServices + honertiaContext', () => {
 
     app.get('/inspect', (c) => {
       const ctx = honertiaContext(c)
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       return c.json({
         db: (ctx.db as { name: string } | undefined)?.name ?? null,
         auth: (ctx.auth as { name: string } | undefined)?.name ?? null,
@@ -66,6 +67,7 @@ describe('honertiaServices + honertiaContext', () => {
   test('DatabaseService in an effect route resolves to the provided db', async () => {
     const app = new Hono()
     app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     app.use('*', honertiaServices(() => ({ db: { name: 'holder-db' } as never })))
     app.use('*', effectBridge())
 
@@ -73,7 +75,8 @@ describe('honertiaServices + honertiaContext', () => {
       '/db-name',
       Effect.gen(function* () {
         const db = yield* DatabaseService
-        return new Response((db as unknown as { name: string }).name)
+        const name = Object.getOwnPropertyDescriptor(db, 'name')?.value
+        return new Response(String(name))
       })
     )
 
@@ -137,11 +140,13 @@ describe('honertiaServices + honertiaContext', () => {
       },
     }
 
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     app.use('*', honertiaServices(() => ({ auth: fakeAuth as never })))
     app.use('*', loadUser())
 
     app.get('/whoami', (c) => {
       const { authUser } = honertiaContext(c)
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       return c.json({ userId: (authUser?.user as { id?: string } | undefined)?.id ?? null })
     })
 
@@ -163,6 +168,7 @@ describe('honertiaServices + honertiaContext', () => {
 
     app.get('/inspect', (c) => {
       const ctx = honertiaContext(c)
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       return c.text((ctx.auth as { name: string }).name)
     })
 

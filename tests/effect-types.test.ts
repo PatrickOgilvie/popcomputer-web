@@ -103,7 +103,7 @@ declare module '../src/effect/index.js' {
     type: typeof routeBindings
   }
   interface HonertiaAuthType {
-    type: { getSession: () => Promise<unknown> }
+  type: { getSession: () => Promise<object> }
   }
   interface HonertiaAuthUserType {
     type: CustomAuthUser
@@ -137,7 +137,7 @@ const _dbType: AssertExtends<DatabaseType, { query: (sql: string) => Promise<unk
 const _schemaType: AssertExtends<SchemaType, typeof schema> = true
 
 // AuthType resolves to augmented type
-const _authType: AssertExtends<AuthType, { getSession: () => Promise<unknown> }> = true
+const _authType: AssertExtends<AuthType, { getSession: () => Promise<object> }> = true
 
 // AuthUser resolves to augmented custom type (not DefaultAuthUser)
 const _authUserType: AssertExtends<AuthUser, CustomAuthUser> = true
@@ -163,7 +163,7 @@ const _testDbService = Effect.gen(function* () {
 // AuthService yields the augmented auth type
 const _testAuthService = Effect.gen(function* () {
   const auth = yield* AuthService
-  const _getSession: () => Promise<unknown> = auth.getSession
+const _getSession: () => Promise<object> = auth.getSession
   return auth
 })
 
@@ -185,10 +185,10 @@ const _testAuthUserService = Effect.gen(function* () {
 
 const _builderWithRequireAuthLayer = effectRoutes(new Hono()).provide(RequireAuthLayer)
 
-class SharedPropsService extends Context.Tag('SharedPropsService')<
+class SharedPropsService extends Context.Service<
   SharedPropsService,
   { ready: true }
->() {}
+>()('SharedPropsService') {}
 
 // Context-aware layer that depends on request-scoped base services.
 const SharePropsLayer = Layer.effect(
@@ -205,15 +205,15 @@ const SharePropsLayer = Layer.effect(
 const _builderWithContextAwareProvide = effectRoutes(new Hono()).provide(SharePropsLayer)
 
 // Cross-layer dependency: layerB depends on layerA's output (ProvidedServices).
-class CrossServiceA extends Context.Tag('CrossServiceA')<
+class CrossServiceA extends Context.Service<
   CrossServiceA,
   { val: string }
->() {}
+>()('CrossServiceA') {}
 
-class CrossServiceB extends Context.Tag('CrossServiceB')<
+class CrossServiceB extends Context.Service<
   CrossServiceB,
   { derived: string }
->() {}
+>()('CrossServiceB') {}
 
 const CrossLayerA = Layer.succeed(CrossServiceA, { val: 'hello' })
 const CrossLayerB = Layer.effect(
@@ -284,7 +284,7 @@ const _trustedExtendsBase: TrustedExtendsBase = true
 // Spreading a Validated object should NOT produce Validated
 // (This is the key safety feature - spreading drops the brand)
 // We test this by checking that a plain Record can't satisfy Validated
-type SpreadResult = Record<string, unknown> extends Validated<UserInput> ? true : false
+type SpreadResult = object extends Validated<UserInput> ? true : false
 const _spreadDropsBrand: SpreadResult = false
 
 // asValidated creates Validated type
@@ -305,12 +305,12 @@ interface MockInsertBuilder<T> {
 }
 
 interface MockUpdateBuilder<T> {
-  set: (v: Partial<T>) => { where: (c: unknown) => { execute: () => Promise<void> } }
+  set: (v: Partial<T>) => { where: <Condition>(c: Condition) => { execute: () => Promise<void> } }
 }
 
 interface MockDB {
-  insert: (table: unknown) => MockInsertBuilder<UserInput>
-  update: (table: unknown) => MockUpdateBuilder<UserInput>
+  insert: <Table>(table: Table) => MockInsertBuilder<UserInput>
+  update: <Table>(table: Table) => MockUpdateBuilder<UserInput>
   query: (sql: string) => Promise<unknown[]>
 }
 
@@ -319,27 +319,30 @@ type SafeDB = SafeTx<MockDB>
 
 // Verify SafeTx wraps the values method
 type SafeValuesParam = SafeDB extends {
-  insert: (table: unknown) => { values: (v: infer V) => unknown }
+  insert: <Table>(table: Table) => { values: (v: infer V) => object }
 } ? V : never
 
 // SafeValuesParam should NOT accept plain UserInput
-type PlainAccepted = UserInput extends SafeValuesParam ? true : false
+type _PlainAccepted = UserInput extends SafeValuesParam ? true : false
 // Note: Due to how the type works, we can't easily assert this at compile time
 // but the runtime behavior enforces it
 
 // dbMutation and dbTransaction should work with SafeTx
 const _testDbMutation = Effect.gen(function* () {
+  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   const mockDb = {} as MockDB
 
   // This should compile - validated input is accepted
-  yield* dbMutation(mockDb, async (db) => {
+  yield* dbMutation(mockDb, async (_db) => {
     // db is SafeTx<MockDB> here
     return Promise.resolve()
   })
 })
 
 const _testScopedDbMutation = Effect.gen(function* () {
+  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   const mockDb = {} as MockDB
+  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   const txInput = asTrusted({
     createUser: {
       name: 'test',
@@ -382,7 +385,7 @@ const _testValidateTyping = Effect.gen(function* () {
     quantity: '2',
   })
 
-  const raw: unknown = {
+  const raw = {
     status: 'pending',
     quantity: '2',
   }
@@ -391,11 +394,12 @@ const _testValidateTyping = Effect.gen(function* () {
 })
 
 const _testDbTransaction = Effect.gen(function* () {
+  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   const mockDb = {
     transaction: <T>(fn: (tx: MockDB) => Promise<T>) => fn({} as MockDB)
   }
 
-  yield* dbTransaction(mockDb, async (tx) => {
+  yield* dbTransaction(mockDb, async (_tx) => {
     // tx is SafeTx<MockDB> here
     return Promise.resolve({ success: true })
   })

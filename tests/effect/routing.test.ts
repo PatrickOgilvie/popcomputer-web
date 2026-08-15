@@ -22,9 +22,30 @@ import {
 } from '../../src/effect/error-observer.js'
 import { uuid } from '../../src/effect/schema.js'
 
+interface TestDatabase {
+  readonly name: string
+}
+
+declare module '../../src/effect/services.js' {
+  interface WebDatabaseType {
+    type: TestDatabase
+  }
+}
+
+type TestEnv = {
+  Variables: {
+    authUser: AuthUser
+  }
+}
+
+const ObservedTaggedError = S.Struct({ _tag: S.String })
+const isObservedTaggedError = S.is(ObservedTaggedError)
+
 // Helper to create test app
-const createApp = (bridgeConfig?: EffectBridgeConfig<any, any>) => {
-  const app = new Hono()
+const createApp = <CustomServices = never>(
+  bridgeConfig?: EffectBridgeConfig<TestEnv, CustomServices>
+) => {
+  const app = new Hono<TestEnv>()
 
   app.use(
     '*',
@@ -34,7 +55,7 @@ const createApp = (bridgeConfig?: EffectBridgeConfig<any, any>) => {
     })
   )
 
-  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
+  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } })))
 
   app.use('*', effectBridge(bridgeConfig))
 
@@ -42,7 +63,7 @@ const createApp = (bridgeConfig?: EffectBridgeConfig<any, any>) => {
 }
 
 const createAppWithoutBridge = () => {
-  const app = new Hono()
+  const app = new Hono<TestEnv>()
 
   app.use(
     '*',
@@ -52,7 +73,7 @@ const createAppWithoutBridge = () => {
     })
   )
 
-  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
+  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } })))
 
   return app
 }
@@ -88,7 +109,7 @@ describe('effectRoutes', () => {
 })
 
 describe('route-level body validation parseOptions', () => {
-  const postJson = (app: Hono, body: unknown) =>
+  const postJson = <Body>(app: Hono<TestEnv>, body: Body) =>
     app.request('/users', {
       method: 'POST',
       headers: {
@@ -157,7 +178,12 @@ describe('Effect Route Error Observation', () => {
     expect(events[0]?.source).toBe('framework')
     expect(events[0]?.handling).toBe('unhandled')
     expect(events[0]?.kind).toBe('failure')
-    expect((events[0]?.error as { _tag?: string })._tag).toBe('ValidationError')
+    const observedError = events[0]?.error
+    expect(isObservedTaggedError(observedError)).toBe(true)
+    if (!isObservedTaggedError(observedError)) {
+      throw new Error('Expected an observed tagged error')
+    }
+    expect(observedError._tag).toBe('ValidationError')
   })
 
   test('observes failures in the temp runtime path when no runtime is pre-installed', async () => {
@@ -186,7 +212,12 @@ describe('Effect Route Error Observation', () => {
     expect(events[0]?.source).toBe('framework')
     expect(events[0]?.handling).toBe('unhandled')
     expect(events[0]?.kind).toBe('failure')
-    expect(events[0]?.structured.httpStatus).toBe(401)
+    const structured = events[0]?.structured
+    expect(structured).toBeDefined()
+    if (structured === undefined) {
+      throw new Error('Expected structured error details')
+    }
+    expect(structured.httpStatus).toBe(401)
   })
 })
 
@@ -274,7 +305,7 @@ describe('EffectRouteBuilder', () => {
         '/users/:id',
         Effect.gen(function* () {
           const honertia = yield* HonertiaService
-          return yield* Effect.tryPromise(() =>
+          return yield* Effect.promise(() =>
             honertia.render('Users/Show', { userId: 'from-route' })
           )
         })
@@ -404,10 +435,10 @@ describe('EffectRouteBuilder', () => {
       const app = createApp()
 
       // Custom service
-      class ConfigService extends Context.Tag('Config')<
+      class ConfigService extends Context.Service<
         ConfigService,
         { apiKey: string }
-      >() {}
+      >()('Config') {}
 
       const configLayer = Layer.succeed(ConfigService, { apiKey: 'secret' })
 
@@ -428,10 +459,10 @@ describe('EffectRouteBuilder', () => {
     test('supports context-aware layers that consume base services', async () => {
       const app = createApp()
 
-      class SharedPropsReady extends Context.Tag('SharedPropsReady')<
+      class SharedPropsReady extends Context.Service<
         SharedPropsReady,
         { orgCount: number }
-      >() {}
+      >()('SharedPropsReady') {}
 
       const sharedPropsLayer = Layer.effect(
         SharedPropsReady,
@@ -439,7 +470,7 @@ describe('EffectRouteBuilder', () => {
           const db = yield* DatabaseService
           const honertia = yield* HonertiaService
           honertia.share('organizations', [{ id: 'org-1' }])
-          return { orgCount: typeof (db as { name?: unknown }).name === 'string' ? 1 : 0 }
+          return { orgCount: S.is(S.String)(db.name) ? 1 : 0 }
         })
       )
 
@@ -450,7 +481,7 @@ describe('EffectRouteBuilder', () => {
           Effect.gen(function* () {
             const shared = yield* SharedPropsReady
             const honertia = yield* HonertiaService
-            return yield* Effect.tryPromise(() =>
+            return yield* Effect.promise(() =>
               honertia.render('Dashboard', { orgCount: shared.orgCount })
             )
           })
@@ -467,8 +498,8 @@ describe('EffectRouteBuilder', () => {
     test('supports cross-layer dependencies (.provide(A).provide(B needing A))', async () => {
       const app = createApp()
 
-      class ServiceA extends Context.Tag('CrossA')<ServiceA, { a: string }>() {}
-      class ServiceB extends Context.Tag('CrossB')<ServiceB, { derived: string }>() {}
+      class ServiceA extends Context.Service<ServiceA, { a: string }>()('CrossA') {}
+      class ServiceB extends Context.Service<ServiceB, { derived: string }>()('CrossB') {}
 
       const layerA = Layer.succeed(ServiceA, { a: 'hello' })
       const layerB = Layer.effect(
@@ -498,8 +529,8 @@ describe('EffectRouteBuilder', () => {
     test('provides multiple layers', async () => {
       const app = createApp()
 
-      class ServiceA extends Context.Tag('A')<ServiceA, { a: string }>() {}
-      class ServiceB extends Context.Tag('B')<ServiceB, { b: string }>() {}
+      class ServiceA extends Context.Service<ServiceA, { a: string }>()('A') {}
+      class ServiceB extends Context.Service<ServiceB, { b: string }>()('B') {}
 
       effectRoutes(app)
         .provide(Layer.succeed(ServiceA, { a: 'valueA' }))
@@ -561,7 +592,7 @@ describe('EffectRouteBuilder', () => {
         '/render-test',
         Effect.gen(function* () {
           const honertia = yield* HonertiaService
-          return yield* Effect.tryPromise(() =>
+          return yield* Effect.promise(() =>
             honertia.render('Test', { data: 123 })
           )
         })
@@ -671,7 +702,7 @@ describe('Real-world Patterns', () => {
 
     // Add mock auth user for protected routes
     app.use('/dashboard/*', async (c, next) => {
-      c.set('authUser' as any, createMockUser())
+      c.set('authUser', createMockUser())
       await next()
     })
 

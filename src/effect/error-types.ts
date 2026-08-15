@@ -5,6 +5,18 @@
  * Every error includes machine-readable fix suggestions.
  */
 
+import type { PagePropValue } from '../types.js'
+
+export type ErrorParams = Readonly<Record<string, PagePropValue>>
+
+export interface SafeHeaders {
+  [header: string]: string
+}
+
+export interface FieldErrors {
+  [field: string]: FieldError
+}
+
 /**
  * Error category for grouping related errors.
  */
@@ -81,7 +93,7 @@ export interface RequestContext {
   /** Full request URL */
   url: string
   /** Relevant headers (filtered for security) */
-  headers: Record<string, string>
+  headers: SafeHeaders
   /** Request body for validation errors */
   body?: unknown
 }
@@ -227,6 +239,10 @@ export interface HonertiaStructuredError {
   timestamp: string
   /** Request correlation ID */
   requestId?: string
+  /** Validation details projected by validation errors. */
+  validation?: ValidationErrorData
+  /** Optional protocol-safe response body owned by an HTTP error. */
+  body?: unknown
 }
 
 /**
@@ -310,5 +326,5 @@ export interface ErrorDefinition {
  */
 export type FixGenerator = (
   context: ErrorContext,
-  params: Record<string, unknown>
+  params: ErrorParams
 ) => FixSuggestion | null

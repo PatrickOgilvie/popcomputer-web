@@ -38,6 +38,7 @@ const createApp = (bridgeConfig?: EffectBridgeConfig<any, any>) => {
     })
   )
 
+  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
 
   app.use('*', effectBridge(bridgeConfig))
@@ -592,7 +593,8 @@ describe('EffectErrorObserverService', () => {
     expect(events[0]?.source).toBe('framework')
     expect(events[0]?.handling).toBe('unhandled')
     expect(events[0]?.kind).toBe('failure')
-    expect((events[0]?.error as { _tag?: string })._tag).toBe('ForbiddenError')
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+    expect(events[0] ? (events[0].error as { _tag?: string })._tag : undefined).toBe('ForbiddenError')
     expect(events[0]?.structured.httpStatus).toBe(403)
   })
 
@@ -652,7 +654,8 @@ describe('EffectErrorObserverService', () => {
     expect(events[0]?.source).toBe('framework')
     expect(events[0]?.handling).toBe('unhandled')
     expect(events[0]?.kind).toBe('defect')
-    expect((events[0]?.error as Error).message).toBe('boom')
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+    expect(events[0] ? (events[0].error as Error).message : undefined).toBe('boom')
     expect(events[0]?.structured.code).toBe('HON_INT_801_EFFECT_DEFECT')
   })
 })
@@ -679,7 +682,7 @@ describe('reportEffectError', () => {
             Effect.tapError((error) =>
               reportEffectError(error)
             ),
-            Effect.catchAll(() => Effect.succeed('fallback'))
+            Effect.catch(() => Effect.succeed('fallback'))
           )
 
           return new Response(fallback)
@@ -725,7 +728,7 @@ describe('reportEffectError', () => {
                 },
               })
             ),
-            Effect.catchAll(() => Effect.succeed('fallback'))
+            Effect.catch(() => Effect.succeed('fallback'))
           )
 
           return new Response(fallback)
@@ -760,7 +763,7 @@ describe('reportEffectError', () => {
             Effect.tapError((error) =>
               reportEffectError(error)
             ),
-            Effect.catchAll(() => Effect.succeed('fallback'))
+            Effect.catch(() => Effect.succeed('fallback'))
           )
 
           return new Response(fallback)
@@ -821,7 +824,7 @@ describe('Integration Patterns', () => {
     app.get(
       '/',
       effectHandler(
-        Effect.gen(function* () {
+        Effect.sync(() => {
           const shouldRedirect = true
           if (shouldRedirect) {
             return new Redirect({ url: '/other', status: 303 })

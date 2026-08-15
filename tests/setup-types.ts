@@ -8,7 +8,12 @@
 import { Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono, type Context as HonoContext, type MiddlewareHandler } from 'hono'
 import { setupWeb } from '@popcomputer/web'
-import { betterAuthFormAction, bound } from '@popcomputer/web/effect'
+import {
+  betterAuthFormAction,
+  bound,
+  effectifyBetterAuth,
+  type BetterAuthBoundaryFailure,
+} from '@popcomputer/web/effect'
 
 type TestDatabase = {
   readonly name: string
@@ -38,16 +43,16 @@ const TestAuthSession = S.Struct({
     name: S.NullOr(S.String),
     emailVerified: S.Boolean,
     image: S.NullOr(S.String),
-    createdAt: S.DateFromSelf,
-    updatedAt: S.DateFromSelf,
+    createdAt: S.Date,
+    updatedAt: S.Date,
   }),
   session: S.Struct({
     id: S.String,
     userId: S.String,
-    expiresAt: S.DateFromSelf,
+    expiresAt: S.Date,
     token: S.String,
-    createdAt: S.DateFromSelf,
-    updatedAt: S.DateFromSelf,
+    createdAt: S.Date,
+    updatedAt: S.Date,
   }),
 })
 
@@ -83,20 +88,23 @@ const typedBoundProject = Effect.gen(function* () {
 
 void typedBoundProject
 
-class TestSearchService extends Context.Tag('test/SearchService')<
+class TestSearchService extends Context.Service<
   TestSearchService,
   { readonly search: () => 'ok' }
->() {}
+>()('test/SearchService') {}
 
 const inferredMiddleware: MiddlewareHandler<TestEnv> = setupWeb({
   version: 'type-test',
   render: (page) => JSON.stringify(page),
   database: (context) => ({ name: context.env.DATABASE_NAME }),
   auth: {
-    client: (context, { db }) => {
+    client: (context, { db, backgroundTasks }) => {
       const database: TestDatabase = db
       const secret: string = context.env.AUTH_SECRET
+      const handleBackground: (promise: Promise<unknown>) => void =
+        backgroundTasks.handler
       void secret
+      void handleBackground
 
       return { databaseName: database.name }
     },
@@ -127,8 +135,9 @@ setupWeb({
   version: 'type-test',
   render: (page) => JSON.stringify(page),
   auth: {
-    client: (context) => {
+    client: (context, { backgroundTasks }) => {
       const secret: string = context.env.AUTH_SECRET
+      backgroundTasks.handler(Promise.resolve())
       void secret
       return { databaseName: 'none' }
     },
@@ -194,3 +203,21 @@ const typedAuthAction = betterAuthFormAction({
 })
 
 void typedAuthAction
+
+const customBetterAuth = {
+  api: {
+    customEndpoint: async (input: { readonly value: string }) => ({
+      echoed: input.value,
+    }),
+  },
+  handler: async (_request: Request) => new Response('OK'),
+}
+const effectAuth = effectifyBetterAuth(customBetterAuth)
+const customEndpointEffect: Effect.Effect<
+  { readonly echoed: string },
+  BetterAuthBoundaryFailure
+> = effectAuth.api.customEndpoint({ value: 'typed' })
+void customEndpointEffect
+
+// @ts-expect-error Plugin endpoint arguments remain required and typed.
+effectAuth.api.customEndpoint({ value: 123 })

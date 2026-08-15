@@ -141,7 +141,7 @@ export function generateFeature(options: GenerateFeatureOptions): GenerateFeatur
   const routeName = `${resource}.${action}`
 
   // Generate path from name if not provided
-  const routePath = options.path ?? generateDefaultPath(resource, action, method)
+  const routePath = options.path ?? generateDefaultPath(resource, action)
 
   // Generate file path
   const filePath = `${baseDir}/${resource}/${action}.ts`
@@ -172,7 +172,7 @@ export function generateFeature(options: GenerateFeatureOptions): GenerateFeatur
 /**
  * Generate default path based on resource/action naming.
  */
-function generateDefaultPath(resource: string, action: string, method: ActionMethod): string {
+function generateDefaultPath(resource: string, action: string): string {
   // Common REST patterns
   switch (action) {
     case 'index':
@@ -417,13 +417,13 @@ function buildParamsSchema(fields: FieldDefinition[]): string {
         schemaType = 'S.Boolean'
         break
       case 'date':
-        schemaType = 'S.Date'
+        schemaType = 'S.DateFromString'
         break
       case 'uuid':
-        schemaType = 'S.UUID'
+        schemaType = 'S.String.check(S.isUUID())'
         break
       case 'email':
-        schemaType = 'S.String.pipe(S.pattern(/@/))'
+        schemaType = 'S.String.check(S.isPattern(/@/))'
         break
       case 'url':
         schemaType = 'S.String'
@@ -472,7 +472,6 @@ function buildHandler(options: HandlerOptions): string {
     auth,
     hasBindings,
     needsSchema,
-    propsTypeName,
   } = options
 
   const singular = singularize(resource)
@@ -680,6 +679,7 @@ export function parseGenerateFeatureArgs(args: string[]): GenerateFeatureCliOpti
     switch (arg) {
       case '--method':
       case '-m':
+        // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
         options.method = args[++i]?.toUpperCase() as ActionMethod
         break
       case '--path':
@@ -692,6 +692,7 @@ export function parseGenerateFeatureArgs(args: string[]): GenerateFeatureCliOpti
         break
       case '--auth':
       case '-a':
+        // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
         options.auth = args[++i] as 'required' | 'optional' | 'none'
         break
       case '--middleware':

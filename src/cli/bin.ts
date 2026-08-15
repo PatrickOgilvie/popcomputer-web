@@ -75,7 +75,12 @@ function commandHelp(command: string): string | null {
   }
 }
 
-function normalizeCommand(args: string[]): { command: string | null; rest: string[] } {
+interface NormalizedCommand {
+  command: string | null
+  rest: string[]
+}
+
+function normalizeCommand(args: string[]): NormalizedCommand {
   if (args.length === 0) {
     return { command: null, rest: [] }
   }

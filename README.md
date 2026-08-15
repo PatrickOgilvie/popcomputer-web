@@ -35,7 +35,7 @@ export const showProject = action(
 ## Installation
 
 ```bash
-bun add @popcomputer/web hono
+bun add @popcomputer/web@next effect@4.0.0-rc.109 hono
 ```
 
 Add only the optional integrations your application uses:
@@ -47,8 +47,8 @@ bun add @inertiajs/react react react-dom
 
 Effect and Hono are peer dependencies so an application owns one Effect runtime
 and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers.
-The package supports Effect 3.21 or newer within Effect 3, Better Auth 1.x, and
-Hono 4 or newer.
+The package supports Effect 4 (`4.0.0-rc.109`), Better Auth 1.x, and Hono 4
+or newer.
 
 ## Quick start
 
@@ -130,16 +130,16 @@ const AuthSession = S.Struct({
     name: S.NullOr(S.String),
     emailVerified: S.Boolean,
     image: S.NullOr(S.String),
-    createdAt: S.DateFromSelf,
-    updatedAt: S.DateFromSelf,
+    createdAt: S.Date,
+    updatedAt: S.Date,
   }),
   session: S.Struct({
     id: S.String,
     userId: S.String,
-    expiresAt: S.DateFromSelf,
+    expiresAt: S.Date,
     token: S.String,
-    createdAt: S.DateFromSelf,
-    updatedAt: S.DateFromSelf,
+    createdAt: S.Date,
+    updatedAt: S.Date,
   }),
 })
 
@@ -156,10 +156,11 @@ const application = setupWeb(app, {
   schema,
   bindings: routeBindings,
   auth: {
-    client: (c, { db }) => createAuth({
+    client: (c, { db, backgroundTasks }) => createAuth({
       db,
       secret: c.env.BETTER_AUTH_SECRET,
       baseURL: new URL(c.req.url).origin,
+      advanced: { backgroundTasks },
     }),
     session: AuthSession,
     share: ({ user }) => ({
@@ -192,9 +193,36 @@ setupWeb(app, { version, render, database: (c) => createDb(c.env.DB) })
 setupWeb(app, {
   version,
   render,
-  auth: { client: (c) => createStatelessAuth(c.env.AUTH_SECRET) },
+  auth: {
+    client: (c, { backgroundTasks }) => createStatelessAuth({
+      secret: c.env.AUTH_SECRET,
+      advanced: { backgroundTasks },
+    }),
+  },
 })
 ```
+
+The `backgroundTasks` object has Better Auth's
+`advanced.backgroundTasks` shape. Passing it through makes session refreshes,
+email callbacks, and plugin work part of the request lifecycle: Workers use
+`waitUntil`, while local and test runtimes finish the work before teardown.
+
+For application code that calls Better Auth from Effect, wrap the concrete
+instance once and keep plugin-added endpoint types:
+
+```ts
+import { effectifyBetterAuth } from '@popcomputer/web/auth'
+
+const authEffect = effectifyBetterAuth(auth)
+const session = yield* authEffect.api.getSession({ headers })
+```
+
+The raw Better Auth instance remains available as `authEffect.raw`. Expected
+API failures stay typed in Effect, including cookies Better Auth attached while
+processing a rejected request. Better Auth's conditional return-mode overloads
+can lose precision when mirrored through the Effect mapped type; use
+`authEffect.raw.api` when TypeScript does not retain an `asResponse`,
+`returnHeaders`, or `returnStatus` result precisely.
 
 Passing the app installs the middleware stack and shared error boundary and
 returns `{ app, routes }`. The middleware-only form remains available for

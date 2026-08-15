@@ -10,7 +10,7 @@
  * distinct from CacheService, the KV-backed data cache inside actions.
  */
 
-import { Context, Data, Effect } from 'effect'
+import { Context, Data, Effect, Option, Schema as S } from 'effect'
 import { HEADERS } from '../types.js'
 import { pluralize, type ParsedBinding } from './binding.js'
 
@@ -40,6 +40,10 @@ export type PreparedCacheTags =
   | { readonly _tag: 'valid'; readonly tags: readonly string[] }
   | { readonly _tag: 'invalid'; readonly reason: string }
 
+interface ResponseCacheHeaders {
+  [header: string]: string
+}
+
 /**
  * Convert tags to Cloudflare's printable-ASCII wire format. Valid tag
  * characters remain unchanged; whitespace, Unicode, control characters, and
@@ -56,7 +60,7 @@ function prepareCacheTagsWithLimits(
   const identities = new Set<string>()
 
   for (const [index, tag] of tags.entries()) {
-    if (typeof tag !== 'string' || tag.length === 0) {
+    if (!S.is(S.String)(tag) || tag.length === 0) {
       return {
         _tag: 'invalid',
         reason: `cache tag at index ${index} must be a non-empty string`,
@@ -155,8 +159,10 @@ export function deriveCacheTags(
   const tags: string[] = []
 
   for (const binding of bindings) {
-    const model = models.get(binding.param) as Record<string, unknown> | undefined
-    const value = model?.[binding.column]
+    const model = models.get(binding.param)
+    const value = model instanceof Object
+      ? Object.getOwnPropertyDescriptor(model, binding.column)?.value
+      : undefined
     if (value !== undefined && value !== null) {
       tags.push(`${binding.param}:${String(value)}`)
     }
@@ -263,7 +269,7 @@ export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision 
     directives.push(`stale-while-revalidate=${input.options.staleWhileRevalidate}`)
   }
 
-  const headers: Record<string, string> = {
+  const headers: ResponseCacheHeaders = {
     'Cache-Control': directives.join(', '),
     Vary: HEADERS.HONERTIA,
   }
@@ -424,10 +430,10 @@ export interface ResponseCacheClient {
   purge(input: ResponseCachePurgeInput): Effect.Effect<void, ResponseCachePurgeError>
 }
 
-export class ResponseCacheService extends Context.Tag('@popcomputer/web/ResponseCache')<
+export class ResponseCacheService extends Context.Service<
   ResponseCacheService,
   ResponseCacheClient
->() {}
+>()('@popcomputer/web/ResponseCache') {}
 
 /**
  * The purge surface Workers Cache exposes — on the execution context
@@ -435,13 +441,23 @@ export class ResponseCacheService extends Context.Tag('@popcomputer/web/Response
  * when caching is enabled in wrangler config.
  */
 export interface WorkersCachePurgeApi {
-  purge(input: { tags?: string[]; purgeEverything?: boolean }): Promise<unknown>
+  purge(input: { tags?: string[]; purgeEverything?: boolean }): Promise<object>
 }
 
 interface WorkersCachePurgeFailure {
   readonly code?: number
   readonly message?: string
 }
+
+const WorkersCachePurgeResponseSchema = S.Struct({
+  success: S.Boolean,
+  errors: S.optional(S.Array(S.Struct({
+    code: S.optional(S.Number),
+    message: S.optional(S.String),
+  }))),
+})
+
+type WorkersCachePurgeResponse = S.Schema.Type<typeof WorkersCachePurgeResponseSchema>
 
 type WorkersCachePurgeResult =
   | { readonly _tag: 'accepted' }
@@ -451,37 +467,12 @@ type WorkersCachePurgeResult =
     }
   | { readonly _tag: 'invalid' }
 
-function parseWorkersCachePurgeResult(value: unknown): WorkersCachePurgeResult {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return { _tag: 'invalid' }
-  }
-
-  const result = value as Record<string, unknown>
-  if (typeof result.success !== 'boolean') {
-    return { _tag: 'invalid' }
-  }
+function parseWorkersCachePurgeResult(result: WorkersCachePurgeResponse): WorkersCachePurgeResult {
   if (result.success) {
     return { _tag: 'accepted' }
   }
 
-  const errors = Array.isArray(result.errors)
-    ? result.errors.flatMap((error): WorkersCachePurgeFailure[] => {
-        if (error === null || typeof error !== 'object' || Array.isArray(error)) {
-          return []
-        }
-        const candidate = error as Record<string, unknown>
-        return [{
-          ...(typeof candidate.code === 'number'
-            ? { code: candidate.code }
-            : {}),
-          ...(typeof candidate.message === 'string'
-            ? { message: candidate.message }
-            : {}),
-        }]
-      })
-    : []
-
-  return { _tag: 'rejected', errors }
+  return { _tag: 'rejected', errors: result.errors ?? [] }
 }
 
 /** Memoized once per isolate: the cloudflare:workers module never changes. */
@@ -495,12 +486,11 @@ let workersModuleCacheProbe: Promise<WorkersCachePurgeApi | null> | undefined
  * never fails.
  */
 export function resolveWorkersCachePurgeApi(
-  executionCtx: unknown
+  executionCtx: { readonly cache?: WorkersCachePurgeApi } | undefined
 ): Effect.Effect<WorkersCachePurgeApi | null> {
   return Effect.promise(async () => {
-    const ctxCache = (executionCtx as { cache?: WorkersCachePurgeApi } | undefined)
-      ?.cache
-    if (typeof ctxCache?.purge === 'function') {
+    const ctxCache = executionCtx?.cache
+    if (ctxCache?.purge instanceof Function) {
       return ctxCache
     }
 
@@ -511,9 +501,10 @@ export function resolveWorkersCachePurgeApi(
         // conflict with @cloudflare/workers-types in consumer apps). workerd
         // resolves non-literal dynamic imports of cloudflare:* at runtime —
         // verified empirically against wrangler 4.107 local and remote.
-        const specifier = 'cloudflare:workers' as string
+        let specifier = 'cloudflare:workers'
+        // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
         const mod = (await import(specifier)) as { cache?: WorkersCachePurgeApi }
-        return typeof mod.cache?.purge === 'function' ? mod.cache : null
+        return mod.cache?.purge instanceof Function ? mod.cache : null
       } catch {
         return null
       }
@@ -532,6 +523,7 @@ export function createWorkersResponseCacheClient(
   return {
     isAvailable: true,
     purge: (input) => {
+      // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
       const preparedTags = input.everything
         ? { _tag: 'valid' as const, tags: [] as readonly string[] }
         : prepareCachePurgeTags(input.tags ?? [])
@@ -558,7 +550,10 @@ export function createWorkersResponseCacheClient(
         catch: (cause) => new ResponseCachePurgeError({ input, cause }),
       }).pipe(
         Effect.flatMap((result) => {
-          const parsed = parseWorkersCachePurgeResult(result)
+          const decoded = S.decodeUnknownOption(WorkersCachePurgeResponseSchema)(result)
+          const parsed = Option.isSome(decoded)
+            ? parseWorkersCachePurgeResult(decoded.value)
+            : { _tag: 'invalid' as const }
           if (parsed._tag === 'accepted') {
             return Effect.void
           }

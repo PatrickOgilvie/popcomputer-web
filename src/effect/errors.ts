@@ -9,7 +9,8 @@ import { Data } from 'effect'
 import type {
   ErrorContext,
   HonertiaStructuredError,
-  FieldError,
+  FieldErrors,
+  ErrorParams,
 } from './error-types.js'
 import {
   createStructuredError,
@@ -31,7 +32,7 @@ export interface StructuredErrorCapable {
  */
 function structured(
   code: ErrorCode | string,
-  params: Record<string, unknown>,
+  params: ErrorParams,
   context: ErrorContext,
   overrides?: Partial<HonertiaStructuredError>
 ): HonertiaStructuredError {
@@ -53,8 +54,10 @@ function structured(
 export class ValidationError extends Data.TaggedError('ValidationError')<{
   readonly errors: Record<string, string>
   readonly component?: string
-  readonly fieldDetails?: Record<string, FieldError>
+  readonly fieldDetails?: FieldErrors
   readonly code?: ErrorCode
+  /** Verified response headers accumulated by an external provider. */
+  readonly headers?: Headers
 }> implements StructuredErrorCapable {
   get httpStatus(): number {
     return 422
@@ -64,6 +67,7 @@ export class ValidationError extends Data.TaggedError('ValidationError')<{
     const fieldNames = Object.keys(this.errors)
     const code = this.code ?? ErrorCodes.VAL_004_SCHEMA_MISMATCH
 
+    // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
     return {
       ...createStructuredError(code, { fields: fieldNames.join(', '), field: fieldNames[0] ?? 'unknown' }, context),
       message: fieldNames.length === 1
@@ -73,11 +77,11 @@ export class ValidationError extends Data.TaggedError('ValidationError')<{
         fields: this.fieldDetails ?? this.createFieldDetails(),
         component: this.component,
       },
-    } as HonertiaStructuredError & { validation: { fields: Record<string, FieldError>; component?: string } }
+    } as HonertiaStructuredError & { validation: { fields: FieldErrors; component?: string } }
   }
 
-  private createFieldDetails(): Record<string, FieldError> {
-    const details: Record<string, FieldError> = {}
+  private createFieldDetails(): FieldErrors {
+    const details: FieldErrors = {}
     for (const [field, message] of Object.entries(this.errors)) {
       details[field] = {
         value: undefined,
@@ -224,6 +228,8 @@ export class ForbiddenError extends Data.TaggedError('ForbiddenError')<{
 export class AuthRateLimitError extends Data.TaggedError('AuthRateLimitError')<{
   readonly retryAfterSeconds: number | undefined
   readonly cause: unknown
+  /** Verified response headers accumulated before provider rejection. */
+  readonly headers?: Headers
 }> implements StructuredErrorCapable {
   get httpStatus(): number {
     return 429
@@ -275,6 +281,8 @@ export class HttpError extends Data.TaggedError('HttpError')<{
   readonly body?: unknown
   readonly code?: ErrorCode
   readonly cause?: unknown
+  /** Verified response headers that the HTTP boundary must preserve. */
+  readonly headers?: Headers
 }> implements StructuredErrorCapable {
   get httpStatus(): number {
     return this.status
@@ -289,6 +297,7 @@ export class HttpError extends Data.TaggedError('HttpError')<{
     })
 
     if (this.body !== undefined) {
+      // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
       (result as HonertiaStructuredError & { body: unknown }).body = this.body
     }
 
@@ -308,7 +317,7 @@ export class HttpError extends Data.TaggedError('HttpError')<{
   /**
    * Create a bad request error.
    */
-  static badRequest(message: string, body?: unknown): HttpError {
+  static badRequest<Body>(message: string, body?: Body): HttpError {
     return new HttpError({ status: 400, message, body, code: ErrorCodes.HTTP_400_BAD_REQUEST })
   }
 
@@ -331,6 +340,12 @@ export class HttpError extends Data.TaggedError('HttpError')<{
     return new HttpError({ status: 500, message, code: ErrorCodes.HTTP_500_INTERNAL_ERROR })
   }
 }
+
+/** Verified redirect control flow emitted by an authentication provider. */
+export class AuthRedirect extends Data.TaggedClass('AuthRedirect')<{
+  readonly status: number
+  readonly headers: Headers
+}> {}
 
 /** A database write failed outside a transaction. */
 export class DatabaseMutationFailed extends Data.TaggedError('DatabaseMutationFailed')<{
@@ -592,6 +607,7 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
       ? `${context.route.method} ${context.route.path}`
       : 'unknown'
 
+    // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
     return {
       ...createStructuredError(code, { location, reason: this.message }, context),
       message: this.message,
@@ -690,18 +706,18 @@ export type AppError =
   | DatabaseConstraintViolation
   | SessionLookupUnavailable
   | InvalidAuthSession
+  | AuthRedirect
   | RouteConfigurationError
   | HonertiaConfigurationError
 
 /**
  * Check if an error supports structured conversion.
  */
-export function isStructuredError(error: unknown): error is StructuredErrorCapable {
+export function isStructuredError(cause: unknown): cause is StructuredErrorCapable {
   return (
-    error !== null &&
-    typeof error === 'object' &&
-    'toStructured' in error &&
-    typeof (error as any).toStructured === 'function'
+    cause instanceof Object &&
+    'toStructured' in cause &&
+    cause.toStructured instanceof Function
   )
 }
 
@@ -716,24 +732,24 @@ export function isStructuredError(error: unknown): error is StructuredErrorCapab
  * @returns A fully structured error with code, message, fixes, and docs.
  */
 export function toStructuredError(
-  error: unknown,
+  cause: unknown,
   context: ErrorContext = emptyContext()
 ): HonertiaStructuredError {
-  if (isStructuredError(error)) {
-    return error.toStructured(context)
+  if (isStructuredError(cause)) {
+    return cause.toStructured(context)
   }
 
-  if (error instanceof Error) {
+  if (cause instanceof Error) {
     return createStructuredError(
       ErrorCodes.INT_800_UNEXPECTED,
-      { reason: error.message },
+      { reason: cause.message },
       context
     )
   }
 
   return createStructuredError(
     ErrorCodes.INT_800_UNEXPECTED,
-    { reason: String(error) },
+    { reason: String(cause) },
     context
   )
 }

@@ -425,7 +425,7 @@ describe('createVersion', () => {
 
       const version = createVersion(manifest)
 
-      expect(typeof version).toBe('string')
+      expect(version).toEqual(expect.any(String))
       expect(version.length).toBeGreaterThan(0)
     })
 
@@ -461,7 +461,7 @@ describe('createVersion', () => {
       const manifest = {}
       const version = createVersion(manifest)
 
-      expect(typeof version).toBe('string')
+      expect(version).toEqual(expect.any(String))
     })
 
     test('handles single entry manifest', () => {
@@ -471,7 +471,7 @@ describe('createVersion', () => {
 
       const version = createVersion(manifest)
 
-      expect(typeof version).toBe('string')
+      expect(version).toEqual(expect.any(String))
       expect(version.length).toBeGreaterThan(0)
     })
 
@@ -483,7 +483,7 @@ describe('createVersion', () => {
 
       const version = createVersion(manifest)
 
-      expect(typeof version).toBe('string')
+      expect(version).toEqual(expect.any(String))
     })
 
     test('handles special characters in filenames', () => {
@@ -495,7 +495,7 @@ describe('createVersion', () => {
 
       const version = createVersion(manifest)
 
-      expect(typeof version).toBe('string')
+      expect(version).toEqual(expect.any(String))
     })
 
     test('order independence - same files in different order produce same version', () => {

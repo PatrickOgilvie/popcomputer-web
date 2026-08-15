@@ -1,5 +1,5 @@
-import { describe, it, expect, mock } from 'bun:test'
-import { Effect, Layer } from 'effect'
+import { describe, it, expect } from 'bun:test'
+import { Context, Effect, Layer } from 'effect'
 import {
   ExecutionContextService,
   type ExecutionContextClient,
@@ -13,11 +13,7 @@ import {
  * Create a test ExecutionContext that captures background tasks.
  * This allows tests to verify what work was scheduled and await completion.
  */
-const makeTestExecutionContext = (): {
-  layer: Layer.Layer<ExecutionContextService>
-  backgroundTasks: Promise<unknown>[]
-  awaitAll: () => Promise<void>
-} => {
+const makeTestExecutionContext = () => {
   const tasks: Promise<unknown>[] = []
 
   const client: ExecutionContextClient = {
@@ -31,7 +27,7 @@ const makeTestExecutionContext = (): {
           const promise = Effect.runPromise(
             effect.pipe(
               Effect.provide(context),
-              Effect.catchAllCause(() => Effect.void)
+              Effect.catchCause(() => Effect.void)
             )
           )
           tasks.push(promise)
@@ -43,7 +39,7 @@ const makeTestExecutionContext = (): {
           const promise = Effect.runPromise(
             effect.pipe(
               Effect.provide(context),
-              Effect.catchAllCause(() => Effect.void)
+              Effect.catchCause(() => Effect.void)
             )
           )
           tasks.push(promise)
@@ -61,9 +57,7 @@ const makeTestExecutionContext = (): {
 /**
  * Create a no-op ExecutionContext for testing unavailable scenarios.
  */
-const makeNoopExecutionContext = (): {
-  layer: Layer.Layer<ExecutionContextService>
-} => {
+const makeNoopExecutionContext = () => {
   const client: ExecutionContextClient = {
     isAvailable: false,
     waitUntil: () => {},
@@ -164,7 +158,7 @@ describe('ExecutionContextService', () => {
       let capturedValue: string | null = null
 
       // Create a test service to verify context is preserved
-      const TestService = Effect.Tag<{ value: string }>()('TestService')
+      const TestService = Context.Service<{ readonly value: string }>('TestService')
       const testLayer = Layer.succeed(TestService, { value: 'from-context' })
 
       await Effect.gen(function* () {

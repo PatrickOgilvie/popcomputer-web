@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test'
+import { describe, it, expect } from 'bun:test'
 import { Effect, Layer, Option, Schema as S, Duration } from 'effect'
 import {
   CacheService,
@@ -9,9 +9,7 @@ import {
   cacheSet,
   cacheInvalidate,
   cacheInvalidatePrefix,
-  CacheError,
   type CacheClient,
-  type CacheOptions,
   type ExecutionContextClient,
 } from '../src/effect/index'
 
@@ -19,11 +17,7 @@ import {
 // Test ExecutionContext Layer
 // ============================================================================
 
-const makeTestExecutionContext = (): {
-  layer: Layer.Layer<ExecutionContextService>
-  backgroundTasks: Promise<unknown>[]
-  awaitAll: () => Promise<void>
-} => {
+const makeTestExecutionContext = () => {
   const tasks: Promise<unknown>[] = []
 
   const client: ExecutionContextClient = {
@@ -37,7 +31,7 @@ const makeTestExecutionContext = (): {
           const promise = Effect.runPromise(
             effect.pipe(
               Effect.provide(context),
-              Effect.catchAllCause(() => Effect.void)
+              Effect.catchCause(() => Effect.void)
             )
           )
           tasks.push(promise)
@@ -49,7 +43,7 @@ const makeTestExecutionContext = (): {
           const promise = Effect.runPromise(
             effect.pipe(
               Effect.provide(context),
-              Effect.catchAllCause(() => Effect.void)
+              Effect.catchCause(() => Effect.void)
             )
           )
           tasks.push(promise)
@@ -64,9 +58,7 @@ const makeTestExecutionContext = (): {
   }
 }
 
-const makeNoopExecutionContext = (): {
-  layer: Layer.Layer<ExecutionContextService>
-} => {
+const makeNoopExecutionContext = () => {
   const client: ExecutionContextClient = {
     isAvailable: false,
     waitUntil: () => {},
@@ -83,14 +75,7 @@ const makeNoopExecutionContext = (): {
 // Test Cache Layer
 // ============================================================================
 
-const makeTestCache = (): {
-  layer: Layer.Layer<CacheService | ExecutionContextService>
-  store: Map<string, { value: string; expiresAt: number }>
-  executionContext: {
-    backgroundTasks: Promise<unknown>[]
-    awaitAll: () => Promise<void>
-  }
-} => {
+const makeTestCache = () => {
   const store = new Map<string, { value: string; expiresAt: number }>()
 
   const client: CacheClient = {
@@ -223,12 +208,14 @@ describe('cache', () => {
         const compute = Effect.fail(new Error('Database connection failed'))
 
         return yield* cache('user:1', compute, UserSchema, { ttl: Duration.hours(1) })
-      }).pipe(Effect.provide(layer), Effect.either, Effect.runPromise)
+      }).pipe(Effect.provide(layer), Effect.result, Effect.runPromise)
 
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left).toBeInstanceOf(Error)
-        expect((result.left as Error).message).toBe('Database connection failed')
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure).toBeInstanceOf(Error)
+        if (result.failure instanceof Error) {
+          expect(result.failure.message).toBe('Database connection failed')
+        }
       }
     })
 
@@ -249,9 +236,9 @@ describe('cache', () => {
         }))
 
         return yield* cache('user:1', compute, UserSchema, { ttl: Duration.hours(1) })
-      }).pipe(Effect.provide(layer), Effect.either, Effect.runPromise)
+      }).pipe(Effect.provide(layer), Effect.result, Effect.runPromise)
 
-      expect(result._tag).toBe('Left')
+      expect(result._tag).toBe('Failure')
     })
 
     it('caches complex nested objects', async () => {
@@ -348,7 +335,7 @@ describe('cache', () => {
         expect(entry).toBeDefined()
         const parsed = JSON.parse(entry!.value)
         expect(parsed.v).toEqual(user)
-        expect(typeof parsed.t).toBe('number')
+        expect(parsed.t).toEqual(expect.any(Number))
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
 
@@ -569,12 +556,14 @@ describe('cache', () => {
 
       const result = await Effect.gen(function* () {
         return yield* cacheGet('key', UserSchema)
-      }).pipe(Effect.provide(failingLayer), Effect.either, Effect.runPromise)
+      }).pipe(Effect.provide(failingLayer), Effect.result, Effect.runPromise)
 
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left).toBeInstanceOf(CacheClientError)
-        expect((result.left as CacheClientError).reason).toBe('Connection failed')
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure).toBeInstanceOf(CacheClientError)
+        if (result.failure instanceof CacheClientError) {
+          expect(result.failure.reason).toBe('Connection failed')
+        }
       }
     })
   })
@@ -701,7 +690,7 @@ describe('cache', () => {
       })
 
       // Use async compute to simulate real DB call
-      const compute = Effect.async<{ id: string; name: string; email: string }>((resume) => {
+      const compute = Effect.callback<{ id: string; name: string; email: string }>((resume) => {
         computeStarted = true
         // Simulate async work
         setTimeout(() => {
@@ -859,7 +848,7 @@ describe('cache', () => {
 
       // Use async compute to simulate real DB call
       const makeCompute = () =>
-        Effect.async<{ id: string; name: string; email: string }>((resume) => {
+        Effect.callback<{ id: string; name: string; email: string }>((resume) => {
           setTimeout(() => {
             callCount++
             resume(Effect.succeed({ id: '1', name: `Fresh User ${callCount}`, email: 'fresh@example.com' }))
@@ -908,7 +897,7 @@ describe('cache', () => {
     })
 
     it('retrieves versioned cache with matching version', async () => {
-      const { layer, store } = makeTestCache()
+      const { layer } = makeTestCache()
 
       await Effect.gen(function* () {
         const user = { id: '1', name: 'Test', email: 'test@example.com' }
@@ -944,7 +933,7 @@ describe('cache', () => {
     })
 
     it('same schema produces same hash', async () => {
-      const { layer, store } = makeTestCache()
+      const { layer } = makeTestCache()
 
       await Effect.gen(function* () {
         const user = { id: '1', name: 'Test', email: 'test@example.com' }
@@ -959,7 +948,7 @@ describe('cache', () => {
     })
 
     it('different schemas produce different hashes', async () => {
-      const { layer, store } = makeTestCache()
+      const { layer } = makeTestCache()
 
       const OtherSchema = S.Struct({
         id: S.String,
@@ -977,7 +966,7 @@ describe('cache', () => {
     })
 
     it('cache() respects versioning', async () => {
-      const { layer, store } = makeTestCache()
+      const { layer } = makeTestCache()
       let callCount = 0
 
       await Effect.gen(function* () {
@@ -1034,7 +1023,7 @@ describe('cache', () => {
     })
 
     it('schema change auto-invalidates when using version=true', async () => {
-      const { layer, store } = makeTestCache()
+      const { layer } = makeTestCache()
       let callCount = 0
 
       // Original schema

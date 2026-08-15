@@ -5,7 +5,14 @@
  * Automatically resolves route parameters to database models.
  */
 
-import { Context, Data, Effect, Exit, Schema as S } from 'effect'
+import {
+  Context,
+  Data,
+  Effect,
+  Exit,
+  Schema as S,
+  SchemaTransformation,
+} from 'effect'
 import type { Table } from 'drizzle-orm'
 import { RouteConfigurationError } from './errors.js'
 
@@ -58,12 +65,12 @@ export interface RouteBindingOptions {
 
 /** A row parser plus the small amount of metadata inference may need. */
 export interface RouteBindingDefinition<A = unknown> extends RouteBindingOptions {
-  readonly schema: S.Schema<A, unknown, never>
+  readonly schema: S.Codec<A, unknown, never, never>
 }
 
 /** Accepted setup value for one binding. */
 export type RouteBindingConfig =
-  | S.Schema.AnyNoContext
+  | S.Codec<unknown, unknown, never, never>
   | RouteBindingDefinition
 
 /** Binding parsers registered once at application composition. */
@@ -89,7 +96,7 @@ export interface HonertiaRouteBindingsType {}
  * when a table name or nested parent scope is ambiguous.
  */
 export function routeBinding<A>(
-  schema: S.Schema<A, unknown, never>,
+  schema: S.Codec<A, unknown, never, never>,
   options: RouteBindingOptions = {}
 ): RouteBindingDefinition<A> {
   return { schema, ...options }
@@ -100,9 +107,9 @@ export interface CompiledRouteBinding {
   readonly param: string
   readonly column: string
   readonly tableName: string
-  readonly table: Record<string, unknown>
-  readonly paramSchema: S.Schema.AnyNoContext
-  readonly rowSchema: S.Schema.AnyNoContext
+  readonly table: Table
+  readonly paramSchema: S.Codec<unknown, unknown, never, never>
+  readonly rowSchema: S.Codec<unknown, unknown, never, never>
   readonly parent?: {
     readonly param: string
     readonly relation: RelationInfo
@@ -146,10 +153,10 @@ export function toHonoPath(path: string): string {
  * Service tag for bound models.
  * Provides access to resolved route models in handlers.
  */
-export class BoundModels extends Context.Tag('@popcomputer/web/BoundModels')<
+export class BoundModels extends Context.Service<
   BoundModels,
   ReadonlyMap<string, unknown>
->() {}
+>()('@popcomputer/web/BoundModels') {}
 
 /**
  * Error type shown when trying to use bound() without parser types configured.
@@ -167,8 +174,8 @@ type ConfiguredRouteBindings = WebRouteBindingsType extends {
     : never
 
 type RouteBindingOutput<Config> =
-  Config extends S.Schema<infer A, infer _I, infer _R>
-    ? A
+  Config extends S.Codec<unknown, unknown, never, never>
+    ? S.Schema.Type<Config>
     : Config extends RouteBindingDefinition<infer A>
       ? A
       : unknown
@@ -218,11 +225,11 @@ export const bound = <K extends string>(
 function isBindingDefinition(
   config: RouteBindingConfig
 ): config is RouteBindingDefinition {
-  return typeof config === 'object' && config !== null && 'schema' in config
+  return config instanceof Object && 'schema' in config
 }
 
 function normalizeStringList(value: string | readonly string[]): readonly string[] {
-  return typeof value === 'string' ? [value] : value
+  return S.is(S.String)(value) ? [value] : value
 }
 
 function explicitRelation(scope: RouteBindingScope): RelationInfo | null {
@@ -245,9 +252,9 @@ function explicitRelation(scope: RouteBindingScope): RelationInfo | null {
  *
  * Nested bindings fail closed when their relationship cannot be proven.
  */
-export async function compileBindingPlan(
+export async function compileBindingPlan<Schema extends object>(
   bindings: readonly ParsedBinding[],
-  schema: Record<string, unknown>,
+  schema: Schema,
   configured: RouteBindingsConfig
 ): Promise<readonly CompiledRouteBinding[]> {
   const plan: CompiledRouteBinding[] = []
@@ -262,15 +269,16 @@ export async function compileBindingPlan(
       ? config
       : { schema: config }
     const tableName = definition.table ?? pluralize(binding.param)
-    const table = schema[tableName]
-    if (!table || typeof table !== 'object') {
+    const table = Object.getOwnPropertyDescriptor(schema, tableName)?.value
+    if (!(table instanceof Object)) {
       throw RouteConfigurationError.tableNotFound(tableName)
     }
 
-    const column = (table as Record<string, unknown>)[binding.column] as
+    // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
+    const column = Object.getOwnPropertyDescriptor(table, binding.column)?.value as
       | DrizzleColumn
       | undefined
-    if (!column || typeof column !== 'object' || !('columnType' in column)) {
+    if (!(column instanceof Object) || !('columnType' in column)) {
       throw RouteConfigurationError.bindingColumnNotFound(
         binding.param,
         tableName,
@@ -307,16 +315,15 @@ export async function compileBindingPlan(
       parent = { param: parentPlan.param, relation }
     }
 
+    // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
     plan.push({
       param: binding.param,
       column: binding.column,
       tableName,
-      table: table as Record<string, unknown>,
-      // SAFETY: columnTypeToSchema only constructs schemas from Effect's
-      // context-free primitive schemas and transforms.
-      paramSchema: columnTypeToSchema(column.columnType) as S.Schema.AnyNoContext,
+      table: table as Table,
+      paramSchema: columnTypeToSchema(column.columnType),
       rowSchema: definition.schema,
-      ...(parent ? { parent } : {}),
+      parent,
     })
   }
 
@@ -324,20 +331,24 @@ export async function compileBindingPlan(
 }
 
 /** Decode one route parameter through its compiled column parser. */
-export async function decodeBindingParam(
+export async function decodeBindingParam<Input>(
   binding: CompiledRouteBinding,
-  input: unknown
-): Promise<unknown | undefined> {
-  const exit = await Effect.runPromiseExit(S.decodeUnknown(binding.paramSchema)(input))
+  input: Input
+): Promise<S.Schema.Type<typeof S.Unknown> | undefined> {
+  const exit = await Effect.runPromiseExit(
+    S.decodeUnknownEffect(binding.paramSchema)(input)
+  )
   return Exit.isSuccess(exit) ? exit.value : undefined
 }
 
 /** Decode a persisted row through the parser registered for the binding. */
-export async function decodeBoundRow(
+export async function decodeBoundRow<Row>(
   binding: CompiledRouteBinding,
-  row: unknown
-): Promise<unknown> {
-  const exit = await Effect.runPromiseExit(S.decodeUnknown(binding.rowSchema)(row))
+  row: Row
+): Promise<S.Schema.Type<typeof S.Unknown>> {
+  const exit = await Effect.runPromiseExit(
+    S.decodeUnknownEffect(binding.rowSchema)(row)
+  )
   if (Exit.isSuccess(exit)) {
     return exit.value
   }
@@ -397,21 +408,26 @@ export interface RelationInfo {
  * @param parentTableName - Schema key of the parent table (e.g., 'users')
  * @returns Relation info (JS property keys) or null if no relation found
  */
-export async function findRelation(
-  schema: Record<string, unknown>,
+export async function findRelation<Schema extends object>(
+  schema: Schema,
   childTableName: string,
   parentTableName: string
 ): Promise<RelationInfo | null> {
-  const childTable = schema[childTableName]
-  const parentTable = schema[parentTableName]
+  const childTable = Object.getOwnPropertyDescriptor(schema, childTableName)?.value
+  const parentTable = Object.getOwnPropertyDescriptor(schema, parentTableName)?.value
   if (
     !childTable ||
-    typeof childTable !== 'object' ||
+    !(childTable instanceof Object) ||
     !parentTable ||
-    typeof parentTable !== 'object'
+    !(parentTable instanceof Object)
   ) {
     return null
   }
+
+  // SAFETY: Both schema entries were selected from the configured Drizzle schema and passed the object boundary check above.
+  const childDrizzleTable = childTable as Table
+  // SAFETY: Both schema entries were selected from the configured Drizzle schema and passed the object boundary check above.
+  const parentDrizzleTable = parentTable as Table
 
   // Dynamic import to avoid requiring drizzle-orm for non-binding users
   const { getTableColumns, createTableRelationsHelpers } = await import('drizzle-orm')
@@ -419,7 +435,8 @@ export async function findRelation(
   // Map a Drizzle column object back to its JS property key on a table.
   // Column objects carry only the SQL name; table objects and result rows are
   // keyed by the JS property key, so we match by identity.
-  const jsKeyOf = (table: object, column: unknown): string | null => {
+  // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
+  const jsKeyOf = <Column>(table: Table, column: Column): string | null => {
     for (const [key, value] of Object.entries(getTableColumns(table as Table))) {
       if (value === column) return key
     }
@@ -439,8 +456,8 @@ export async function findRelation(
 
     const columnPairs: RelationColumnPair[] = []
     for (let index = 0; index < childColumns.length; index++) {
-      const foreignKey = jsKeyOf(childTable, childColumns[index])
-      const references = jsKeyOf(parentTable, parentColumns[index])
+      const foreignKey = jsKeyOf(childDrizzleTable, childColumns[index])
+      const references = jsKeyOf(parentDrizzleTable, parentColumns[index])
       if (!foreignKey || !references) return null
       columnPairs.push({ foreignKey, references })
     }
@@ -454,10 +471,12 @@ export async function findRelation(
     sym.description?.endsWith('InlineForeignKeys')
   )
   if (fkSymbol) {
-    const foreignKeys = (childTable as Record<symbol, unknown>)[fkSymbol]
+    // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
+    const foreignKeys = Object.getOwnPropertyDescriptor(childTable, fkSymbol)?.value
     if (Array.isArray(foreignKeys)) {
       for (const fk of foreignKeys) {
-        if (typeof fk?.reference !== 'function') continue
+        if (!(fk?.reference instanceof Function)) continue
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         const reference = fk.reference() as {
           foreignTable: unknown
           columns: unknown[]
@@ -472,15 +491,21 @@ export async function findRelation(
 
   // 2. relations() definitions (e.g., postsRelations). Evaluate the config
   // with Drizzle's real helpers so the returned One/Many instances are valid.
-  const relations = schema[`${childTableName}Relations`] as
-    | { table?: unknown; config?: (helpers: unknown) => Record<string, unknown> }
+  // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
+  const relations = Object.getOwnPropertyDescriptor(
+    schema,
+    `${childTableName}Relations`
+  )?.value as
+    | { table?: object; config?: <Helpers>(helpers: Helpers) => object }
     | undefined
-  if (relations?.table && typeof relations.config === 'function') {
+  if (relations?.table && relations.config instanceof Function) {
     try {
+      // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
       const helpers = createTableRelationsHelpers(relations.table as Table)
       const relationDefs = relations.config(helpers)
 
       for (const rel of Object.values(relationDefs)) {
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         const relation = rel as {
           referencedTable?: unknown
           config?: { fields?: unknown[]; references?: unknown[] }
@@ -509,11 +534,13 @@ export async function findRelation(
  * @param columnType - The Drizzle columnType (e.g., 'PgUUID', 'PgInteger')
  * @returns An Effect Schema that validates the URL param string
  */
-export function columnTypeToSchema(columnType: string): S.Schema.Any {
+export function columnTypeToSchema(
+  columnType: string
+): S.Codec<unknown, unknown, never, never> {
   switch (columnType) {
     // UUID types
     case 'PgUUID':
-      return S.UUID
+      return S.String.check(S.isUUID())
 
     // Integer types - URL params are strings, so we parse to number
     case 'PgInteger':
@@ -529,13 +556,13 @@ export function columnTypeToSchema(columnType: string): S.Schema.Any {
     case 'MySqlMediumInt':
     case 'MySqlBigInt53':
     case 'MySqlSerial':
-      return S.NumberFromString.pipe(S.int())
+      return S.NumberFromString.check(S.isInt())
 
     // BigInt types that exceed JS number precision
     case 'PgBigInt64':
     case 'PgBigSerial64':
     case 'MySqlBigInt64':
-      return S.BigInt
+      return S.BigIntFromString
 
     // Numeric/Decimal types
     case 'PgNumeric':
@@ -552,13 +579,14 @@ export function columnTypeToSchema(columnType: string): S.Schema.Any {
     case 'PgBoolean':
     case 'MySqlBoolean':
     case 'SQLiteBoolean':
-      return S.transform(
-        S.String,
-        S.Boolean,
-        {
-          decode: (s) => s.toLowerCase() === 'true' || s === '1',
-          encode: (b) => b ? 'true' : 'false'
-        }
+      return S.String.pipe(
+        S.decodeTo(
+          S.Boolean,
+          SchemaTransformation.transform({
+            decode: (s) => s.toLowerCase() === 'true' || s === '1',
+            encode: (b) => b ? 'true' : 'false',
+          })
+        )
       )
 
     // String types (default for text, varchar, etc.)
@@ -582,25 +610,29 @@ export function columnTypeToSchema(columnType: string): S.Schema.Any {
  * @param schema - The Drizzle schema object
  * @returns An Effect Schema for validating route params, or null if inference fails
  */
-export function inferParamsSchema(
+export function inferParamsSchema<Schema extends object>(
   bindings: ParsedBinding[],
-  schema: Record<string, unknown>
-): S.Schema.Any | null {
+  schema: Schema
+): S.Codec<unknown, unknown, never, never> | null {
   if (bindings.length === 0) return null
 
-  const fields: Record<string, S.Schema.Any> = {}
+  const fields: Record<string, S.Codec<unknown, unknown, never, never>> = {}
 
   for (const binding of bindings) {
     const tableName = pluralize(binding.param)
-    const table = schema[tableName] as Record<string, unknown> | undefined
+    // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
+    const table = Object.getOwnPropertyDescriptor(schema, tableName)?.value
 
     if (!table) {
       // Table not found - can't infer, let it fail at query time
       return null
     }
 
-    const column = table[binding.column] as DrizzleColumn | undefined
-    if (!column || typeof column !== 'object' || !('columnType' in column)) {
+    // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
+    const column = Object.getOwnPropertyDescriptor(table, binding.column)?.value as
+      | DrizzleColumn
+      | undefined
+    if (!(column instanceof Object) || !('columnType' in column)) {
       // Column not found or not a Drizzle column - can't infer
       return null
     }

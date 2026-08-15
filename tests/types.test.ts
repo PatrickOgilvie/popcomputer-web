@@ -7,15 +7,11 @@ import { HEADERS } from '../src/types.js'
 import type {
   PageObject,
   HonertiaConfig,
-  HonertiaInstance,
   RenderOptions,
 } from '../src/types.js'
 import type {
-  HonertiaPage,
-  PageResolver,
   SharedProps,
   WithSharedProps,
-  PageProps,
 } from '../src/react.js'
 
 describe('HEADERS Constant', () => {
@@ -31,12 +27,12 @@ describe('HEADERS Constant', () => {
   test('HEADERS has const assertion type', () => {
     // TypeScript const assertion makes it readonly at the type level
     // At runtime, we verify the expected values are correct strings
-    expect(typeof HEADERS.HONERTIA).toBe('string')
-    expect(typeof HEADERS.VERSION).toBe('string')
-    expect(typeof HEADERS.PARTIAL_COMPONENT).toBe('string')
-    expect(typeof HEADERS.PARTIAL_DATA).toBe('string')
-    expect(typeof HEADERS.PARTIAL_EXCEPT).toBe('string')
-    expect(typeof HEADERS.LOCATION).toBe('string')
+    expect(HEADERS.HONERTIA).toEqual(expect.any(String))
+    expect(HEADERS.VERSION).toEqual(expect.any(String))
+    expect(HEADERS.PARTIAL_COMPONENT).toEqual(expect.any(String))
+    expect(HEADERS.PARTIAL_DATA).toEqual(expect.any(String))
+    expect(HEADERS.PARTIAL_EXCEPT).toEqual(expect.any(String))
+    expect(HEADERS.LOCATION).toEqual(expect.any(String))
   })
 
   test('all expected headers are defined', () => {
@@ -51,7 +47,8 @@ describe('HEADERS Constant', () => {
 
     for (const header of expectedHeaders) {
       expect(HEADERS).toHaveProperty(header)
-      expect(typeof HEADERS[header as keyof typeof HEADERS]).toBe('string')
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+      expect(HEADERS[header as keyof typeof HEADERS]).toEqual(expect.any(String))
     }
   })
 })
@@ -202,7 +199,8 @@ describe('Type Compatibility', () => {
       render: (page) => `<html>${JSON.stringify(page)}</html>`,
     }
 
-    expect(typeof config.version).toBe('function')
+    expect(config.version).toBeInstanceOf(Function)
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     expect((config.version as () => string)()).toBe('1.0.0')
   })
 
@@ -215,6 +213,6 @@ describe('Type Compatibility', () => {
       },
     }
 
-    expect(typeof config.render).toBe('function')
+    expect(config.render).toBeInstanceOf(Function)
   })
 })

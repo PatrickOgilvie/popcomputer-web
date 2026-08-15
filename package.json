@@ -1,6 +1,6 @@
 {
   "name": "@popcomputer/web",
-  "version": "0.3.0",
+  "version": "0.4.0-rc.1",
   "description": "Effect-native server-driven web applications on Hono",
   "type": "module",
   "main": "./dist/index.js",
@@ -65,7 +65,8 @@
   "author": "Patrick Ogilvie",
   "license": "MIT",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "next"
   },
   "repository": {
     "type": "git",
@@ -79,7 +80,7 @@
     "tsx": "^4.23.11"
   },
   "peerDependencies": {
-    "effect": "^3.21.2",
+    "effect": "4.0.0-rc.109",
     "hono": ">=4.0.0",
     "better-auth": ">=1.0.0 <2.0.0",
     "drizzle-orm": ">=0.30.0"
@@ -96,7 +97,7 @@
     "@types/bun": "^1.1.0",
     "better-auth": "1.6.25",
     "drizzle-orm": "^0.45.2",
-    "effect": "^3.21.2",
+    "effect": "4.0.0-rc.109",
     "hono": "^4.6.0",
     "typescript": "^5.3.0"
   }

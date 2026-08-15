@@ -5,7 +5,6 @@
  * Enables `honertia routes` command and `describeRoute()` test helper.
  */
 
-import { Option } from 'effect'
 import type { Schema as S } from 'effect'
 import * as SchemaAST from 'effect/SchemaAST'
 import type { ParsedBinding } from './binding.js'
@@ -15,15 +14,23 @@ import type { ParsedBinding } from './binding.js'
  */
 export type HttpMethod = 'get' | 'post' | 'put' | 'patch' | 'delete' | 'all'
 
-function getSchemaMetadata(schema: S.Schema.Any): SchemaMetadata | undefined {
-  const ast = (schema as { ast?: SchemaAST.AST }).ast
-  if (!ast) return undefined
+export interface RoutesByMethod {
+  get: readonly RouteMetadata[]
+  post: readonly RouteMetadata[]
+  put: readonly RouteMetadata[]
+  patch: readonly RouteMetadata[]
+  delete: readonly RouteMetadata[]
+  all: readonly RouteMetadata[]
+}
 
-  const identifier =
-    Option.getOrUndefined(SchemaAST.getJSONIdentifierAnnotation(ast)) ??
-    Option.getOrUndefined(SchemaAST.getIdentifierAnnotation(ast))
-  const title = Option.getOrUndefined(SchemaAST.getTitleAnnotation(ast))
-  const description = Option.getOrUndefined(SchemaAST.getDescriptionAnnotation(ast))
+export interface RoutesByPrefix {
+  [prefix: string]: readonly RouteMetadata[]
+}
+
+function getSchemaMetadata(schema: S.Top): SchemaMetadata | undefined {
+  const identifier = SchemaAST.resolveIdentifier(schema.ast)
+  const title = SchemaAST.resolveTitle(schema.ast)
+  const description = SchemaAST.resolveDescription(schema.ast)
 
   if (!identifier && !title && !description) return undefined
 
@@ -49,13 +56,13 @@ export interface RouteMetadata {
   /** Parsed route model bindings */
   readonly bindings: readonly ParsedBinding[]
   /** Route params validation schema (if configured) */
-  readonly paramsSchema?: S.Schema.Any
+  readonly paramsSchema?: S.Top
   /** Route body validation schema (if configured) */
-  readonly bodySchema?: S.Schema.Any
+  readonly bodySchema?: S.Top
   /** Route query validation schema (if configured) */
-  readonly querySchema?: S.Schema.Any
+  readonly querySchema?: S.Top
   /** Route response schema (if configured) */
-  readonly responseSchema?: S.Schema.Any
+  readonly responseSchema?: S.Top
   /** Path prefix applied to this route */
   readonly prefix: string
   /** Optional route name for named routes */
@@ -203,15 +210,15 @@ export class RouteRegistry {
   /**
    * Get routes grouped by method.
    */
-  byMethod(): Record<HttpMethod, readonly RouteMetadata[]> {
-    const grouped: Record<HttpMethod, RouteMetadata[]> = {
-      get: [],
-      post: [],
-      put: [],
-      patch: [],
-      delete: [],
-      all: [],
-    }
+  byMethod(): RoutesByMethod {
+    const grouped = {
+      get: new Array<RouteMetadata>(),
+      post: new Array<RouteMetadata>(),
+      put: new Array<RouteMetadata>(),
+      patch: new Array<RouteMetadata>(),
+      delete: new Array<RouteMetadata>(),
+      all: new Array<RouteMetadata>(),
+    } satisfies Record<HttpMethod, RouteMetadata[]>
 
     for (const route of this.routes) {
       grouped[route.method].push(route)
@@ -223,7 +230,7 @@ export class RouteRegistry {
   /**
    * Get routes grouped by prefix.
    */
-  byPrefix(): Record<string, readonly RouteMetadata[]> {
+  byPrefix(): RoutesByPrefix {
     const grouped: Record<string, RouteMetadata[]> = {}
 
     for (const route of this.routes) {
@@ -355,7 +362,7 @@ let globalRegistry: RouteRegistry | null = null
 const appRegistries = new WeakMap<object, RouteRegistry>()
 
 /** Get the registry owned by one Hono application. */
-export function getAppRouteRegistry(app: object): RouteRegistry {
+export function getAppRouteRegistry<App extends object>(app: App): RouteRegistry {
   const existing = appRegistries.get(app)
   if (existing) return existing
 
@@ -365,7 +372,7 @@ export function getAppRouteRegistry(app: object): RouteRegistry {
 }
 
 /** Read an application's registry without creating one. */
-export function findAppRouteRegistry(app: object): RouteRegistry | undefined {
+export function findAppRouteRegistry<App extends object>(app: App): RouteRegistry | undefined {
   return appRegistries.get(app)
 }
 

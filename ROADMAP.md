@@ -697,9 +697,9 @@ import { requiredString, nullableString, uuid } from 'honertia/effect'
 
 export const ProjectSchema = S.Struct({
   id: uuid,
-  name: requiredString.pipe(S.minLength(3), S.maxLength(100)),
+  name: requiredString.check(S.isMinLength(3), S.isMaxLength(100)),
   description: nullableString,
-  status: S.Literal('draft', 'published', 'archived'),
+  status: S.Literals(['draft', 'published', 'archived']),
   userId: uuid,
   createdAt: S.Date,
   updatedAt: S.Date,
@@ -896,12 +896,12 @@ Everything is a service, everything is testable:
 import { Context, Effect, Layer } from 'effect'
 
 // Define the service interface
-export class EmailService extends Context.Tag('EmailService')<
+export class EmailService extends Context.Service<
   EmailService,
   {
     send: (to: string, subject: string, body: string) => Effect.Effect<void, EmailError>
   }
->() {}
+>()('EmailService') {}
 
 // Production implementation
 export const EmailServiceLive = Layer.succeed(EmailService, {
@@ -2097,8 +2097,8 @@ export const CreateProjectSchema = S.Struct({ ... })
 export const UpdateProjectSchema = S.Struct({ ... })
 
 // Services: Always PascalCase with Service suffix
-export const DatabaseService = Context.Tag<Database>('DatabaseService')
-export const CacheService = Context.Tag<Cache>('CacheService')
+export class DatabaseService extends Context.Service<DatabaseService, Database>()('DatabaseService') {}
+export class CacheService extends Context.Service<CacheService, Cache>()('CacheService') {}
 
 // Error codes: Namespaced with category
 HON_CFG_100_DATABASE_NOT_CONFIGURED
@@ -2174,7 +2174,7 @@ Honertia uses Effect Schema for validation:
 ```typescript
 // Schema defines validation
 const CreateProjectSchema = S.Struct({
-  name: requiredString.pipe(S.minLength(3), S.maxLength(100)),
+  name: requiredString.check(S.isMinLength(3), S.isMaxLength(100)),
   description: nullableString,
 })
 
@@ -2212,7 +2212,7 @@ Full schema-driven generation:
 // Single schema definition
 export const ProjectSchema = S.Struct({
   id: uuid,
-  name: requiredString.pipe(S.minLength(3), S.maxLength(100)),
+  name: requiredString.check(S.isMinLength(3), S.isMaxLength(100)),
   description: nullableString,
   userId: uuid,
   createdAt: S.Date,
@@ -2415,7 +2415,7 @@ export const listProjects = action(
 
 | Area | Current | Improvement |
 |------|---------|-------------|
-| Service pattern | Effect Context.Tag | Already optimal |
+| Service pattern | Effect Context.Service | Already optimal |
 | Inheritance | Not used | Document as anti-pattern |
 | Event systems | Not used | Prefer explicit calls |
 | Middleware | Hono chains | Keep visible in setup |
@@ -2847,7 +2847,7 @@ Schema-driven test data:
 ```typescript
 // Generate valid/invalid test data from schema
 const CreateProjectSchema = S.Struct({
-  name: requiredString.pipe(S.minLength(3), S.maxLength(100)),
+  name: requiredString.check(S.isMinLength(3), S.isMaxLength(100)),
   description: nullableString,
 })
 
@@ -3424,7 +3424,7 @@ This crystallized the architectural philosophy:
 
 - **Effect isn't just for async**—it's the type system for the entire application
 - **One schema, everything inferred**: Define `ProjectSchema` once, derive `CreateProjectSchema`, `UpdateProjectSchema`, TypeScript types, OpenAPI specs, test factories—all automatically
-- **Services for testability**: Everything is a `Context.Tag`, swap layers for testing
+- **Services for testability**: Everything is a `Context.Service`, swap layers for testing
 - **Typed errors in signatures**: No `catch (e: unknown)`, errors are part of the type
 
 ### The Composable Primitives Principle
@@ -3515,17 +3515,15 @@ binding-derived cache tags, the `purges` route option, and the typed
 # Platform Upgrade Plan: Effect 4 & Drizzle 1.0 → Honertia 2.0
 
 Honertia's two foundational dependencies both have major versions in flight.
-Neither is ready to adopt today, and neither blocks current work — every fix in
-0.2.0 landed on Effect 3 + Drizzle 0.3x. But both are breaking for consumers
-(Honertia declares `effect` as a peer dependency, so upgrading forces every app
-to migrate with us), so they should ship together as **Honertia 2.0**, one
-migration event instead of two.
+The Effect 4 code migration is complete; Drizzle remains on 0.3x. Both upgrades
+are breaking for consumers, so their release and application-migration story
+still needs to be coordinated as **Honertia 2.0**.
 
-## Effect 4 (currently beta; adopt at stable)
+## Effect 4 (migration complete on 4.0.0-rc.109)
 
-**Status (July 2026):** in beta; the Effect team recommends v3 for production.
-Once stable, v4 becomes an LTS release and v3 goes into feature-freeze
-(bug/security fixes only).
+**Status (August 2026):** Honertia now compiles, tests, builds, and runs its
+package smoke test against Effect `4.0.0-rc.109`. The peer dependency is
+pinned to that verified RC; update it again when Effect 4 reaches stable.
 
 **Why it matters for Honertia:**
 
@@ -3539,19 +3537,21 @@ Once stable, v4 becomes an LTS release and v3 goes into feature-freeze
   (`validateRequest`, route `body`/`query` options, `parseOptions`), so this
   is where most of our migration work will be.
 
-**Preconditions before starting:**
+**Migration basis:**
 
-1. Effect 4 reaches stable (not beta/RC).
-2. The official v3→v4 codemods and the Schema migration guide are published.
-3. The v4 testing story (`@effect/vitest` equivalents) is settled for our
-   bun test setup.
+1. The canonical Effect v3→v4 migration reference and topic guides are used for
+   every API replacement.
+2. Bun remains the test runner; this repository does not depend on
+   `@effect/vitest`.
+3. Stable Effect 4 remains the release target even though the code migration
+   was completed against the RC.
 
 **Migration checklist (tracked here until it becomes issues):**
 
-- [ ] Audit every public API that leaks an Effect type (`EffectHandler`,
+- [x] Audit every public API that leaks an Effect type (`EffectHandler`,
       `BaseServices`, service tags, `ValidateOptions.parseOptions`,
       `S.Schema` route options) — these define the 2.0 breaking surface.
-- [ ] Port validation: v4 Schema `ParseOptions` shape and `onExcessProperty`
+- [x] Port validation: v4 Schema `ParseOptions` shape and `onExcessProperty`
       behavior must be re-verified; any app-side schema-level `parseOptions`
       annotation trick is v3-specific.
 - [ ] Re-verify per-request `ManagedRuntime` construction cost against the v4
@@ -3588,16 +3588,15 @@ Once stable, v4 becomes an LTS release and v3 goes into feature-freeze
 
 ## Sequencing
 
-1. **Now (0.2.x):** framework hardening on Effect 3 + Drizzle 0.3x — done in
-   0.2.0. Keep shipping features here; nothing below blocks 0.2.x work.
+1. **Now:** Effect 4 RC migration is complete; Drizzle remains on 0.3x.
 2. **When Drizzle 1.0 goes stable:** add `defineRelations` support and widen
    the peer range in a **0.x minor** — this is additive and shouldn't wait
    for 2.0.
-3. **When Effect 4 goes stable:** branch `v2`, run the codemods, port the
-   Schema surface, re-verify validation behavior, measure bundles.
+3. **When Effect 4 goes stable:** update from the RC, rerun the compiler and
+   runtime gates, and measure bundles.
 4. **Honertia 2.0:** Effect 4 + Drizzle 1.x peers, a migration guide for apps
    (validation `parseOptions`, any Schema-facing changes), and bundle-size
    numbers in the release notes.
 
-**Explicit non-goals until then:** adopting Effect 4 beta APIs, building on
-`effect/unstable/*` modules, or coupling to the Postgres-only Effect client.
+**Explicit non-goals until then:** building on `effect/unstable/*` modules or
+coupling to the Postgres-only Effect client.

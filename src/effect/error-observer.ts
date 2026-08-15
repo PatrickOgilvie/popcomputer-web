@@ -1,20 +1,23 @@
 import { Context, Effect, Option } from 'effect'
 import type { HonertiaStructuredError } from './error-types.js'
 
+export type EffectErrorMetadata = Readonly<Record<
+  string,
+  string | number | boolean | null
+>>
+
 export interface EffectErrorEvent {
   readonly source: 'framework' | 'user'
   readonly handling: 'unhandled' | 'handled'
   readonly kind: 'failure' | 'defect'
   readonly error: unknown
   readonly structured?: HonertiaStructuredError
-  readonly metadata?: Record<string, unknown>
+  readonly metadata?: EffectErrorMetadata
 }
 
-export class EffectErrorObserverService extends Context.Tag(
-  '@popcomputer/web/EffectErrorObserver'
-)<EffectErrorObserverService, {
+export class EffectErrorObserverService extends Context.Service<EffectErrorObserverService, {
   readonly observe: (event: EffectErrorEvent) => Effect.Effect<void, never>
-}>() {}
+}>()('@popcomputer/web/EffectErrorObserver') {}
 
 export function observeEffectErrorEvent(
   event: EffectErrorEvent
@@ -24,29 +27,29 @@ export function observeEffectErrorEvent(
     if (Option.isNone(maybeObserver)) return
 
     yield* maybeObserver.value.observe(event)
-  }).pipe(Effect.catchAllCause(() => Effect.void))
+  }).pipe(Effect.catchCause(() => Effect.void))
 }
 
 export function reportEffectError(
-  error: unknown
+  cause: unknown
 ): Effect.Effect<void, never>
 export function reportEffectError(
-  error: unknown,
+  cause: unknown,
   options: {
-    readonly metadata?: Record<string, unknown>
+    readonly metadata?: EffectErrorMetadata
   }
 ): Effect.Effect<void, never>
 export function reportEffectError(
-  error: unknown,
+  cause: unknown,
   options?: {
-    readonly metadata?: Record<string, unknown>
+    readonly metadata?: EffectErrorMetadata
   }
 ): Effect.Effect<void, never> {
   return observeEffectErrorEvent({
     source: 'user',
     handling: 'handled',
     kind: 'failure',
-    error,
+    error: cause,
     metadata: options?.metadata,
   })
 }
