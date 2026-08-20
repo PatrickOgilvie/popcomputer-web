@@ -1,6 +1,6 @@
 {
   "name": "@popcomputer/web",
-  "version": "0.4.0-rc.1",
+  "version": "0.4.0",
   "description": "Effect-native server-driven web applications on Hono",
   "type": "module",
   "main": "./dist/index.js",
@@ -80,7 +80,7 @@
     "tsx": "^4.23.11"
   },
   "peerDependencies": {
-    "effect": "4.0.0-rc.109",
+    "effect": "^4.0.0-rc.109",
     "hono": ">=4.0.0",
     "better-auth": ">=1.0.0 <2.0.0",
     "drizzle-orm": ">=0.30.0"
