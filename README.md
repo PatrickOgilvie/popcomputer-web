@@ -372,15 +372,28 @@ Route model binding is currently Drizzle-specific even though the basic
 The Better Auth helpers cover session loading, authenticated and guest routes,
 form actions, logout, and public user projection.
 
+`authorize()` can be called in two ways. Use it without a predicate when the
+route only requires a signed-in user:
+
 ```ts
 const auth = yield* authorize()
-
-yield* authorize((auth) => auth.user.role === 'admin')
 ```
 
-Parse the server session with `auth.session`; do not trust a dependency response
-because it looks session-shaped. Use `auth.share` to deliberately choose the
-fields serialized into page props.
+Pass a predicate when the route has an additional authorization rule. The
+helper still returns the authenticated session when the predicate succeeds:
+
+```ts
+const auth = yield* authorize(
+  ({ user }) => user.role === 'admin'
+)
+```
+
+If there is no signed-in user, both forms fail with `UnauthorizedError`. If the
+predicate returns `false`, the second form fails with `ForbiddenError`.
+
+In the `setupWeb` auth configuration, use `auth.session` to parse the server
+session; do not trust a dependency response because it looks session-shaped.
+Use `auth.share` to deliberately choose the fields serialized into page props.
 
 For form endpoints, `betterAuthFormAction` maps validated Better Auth 4xx
 responses into form errors while keeping rate limits and dependency failures as
