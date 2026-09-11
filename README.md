@@ -41,8 +41,9 @@ bun add @popcomputer/web@next effect@4.0.0-rc.109 hono
 Add only the optional integrations your application uses:
 
 ```bash
-bun add better-auth drizzle-orm
-bun add @inertiajs/react react react-dom
+bun add better-auth                         # Better Auth integration
+bun add drizzle-orm                         # Drizzle route model binding
+bun add @inertiajs/react react react-dom    # React client
 ```
 
 Effect and Hono are peer dependencies so an application owns one Effect runtime
@@ -179,8 +180,9 @@ export default app
 The configuration is deliberately flat. `setupWeb({ web: { ... } })` would
 repeat the framework boundary without clarifying ownership.
 
-Database-backed auth receives the database as an explicit dependency. Other
-supported shapes require no placeholders or explicit generics:
+Database-backed auth receives the database as an explicit dependency. The
+following examples are alternative configurations; choose the shape that
+matches the application. None require placeholders or explicit generics.
 
 ```ts
 // Public application
@@ -344,6 +346,8 @@ effectRoutes(app)
   .get('/projects/{project}/tasks/{task}', showTask)
 ```
 
+Inside `showTask`, both models from the nested route are available by name:
+
 ```ts
 const project = yield* bound('project')
 const task = yield* bound('task')
@@ -380,7 +384,8 @@ const auth = yield* authorize()
 ```
 
 Pass a predicate when the route has an additional authorization rule. The
-helper still returns the authenticated session when the predicate succeeds:
+helper still returns the parsed `{ user, session }` value when the predicate
+succeeds:
 
 ```ts
 const auth = yield* authorize(
@@ -401,14 +406,17 @@ separate typed errors.
 
 ## Responses and failures
 
-```ts
-return yield* render('Dashboard', { stats })
-return yield* redirect('/login')
-return yield* json({ projects })
-return yield* notFound('Project', projectId)
-return yield* forbidden('You cannot edit this project')
-return yield* jsonOrRender('Projects/Index', { projects })
-```
+Choose the helper that matches the current action branch. These are alternative
+endings, not statements to run in sequence:
+
+| Intent | Action ending |
+|---|---|
+| Render a page | `return yield* render('Dashboard', { stats })` |
+| Redirect | `return yield* redirect('/login')` |
+| Return JSON | `return yield* json({ projects })` |
+| Return JSON when requested, otherwise render a page | `return yield* jsonOrRender('Projects/Index', { projects })` |
+| Fail with `NotFoundError` | `return yield* notFound('Project', projectId)` |
+| Fail with `ForbiddenError` | `return yield* forbidden('You cannot edit this project')` |
 
 Typed failures, defects, Hono exceptions, and not-found responses share the
 configured error boundary. Use `EffectErrorObserverService` as the integration
