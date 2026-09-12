@@ -1,3 +1,5 @@
+import { Layer } from 'effect'
+import assert from 'node:assert/strict'
 /**
  * Route Registry Tests
  */
@@ -26,6 +28,7 @@ const createApp = () => {
     })
   )
   app.use('*', effectBridge())
+
   return app
 }
 
@@ -116,7 +119,8 @@ describe('RouteRegistry', () => {
     test('findByName returns correct route', () => {
       const route = registry.findByName('projects.show')
       expect(route).toBeDefined()
-      expect(route!.path).toBe('/projects/{project}')
+      assert.ok(route)
+      expect(route.path).toBe('/projects/{project}')
     })
 
     test('findByName returns undefined for unknown name', () => {
@@ -127,14 +131,17 @@ describe('RouteRegistry', () => {
     test('findByPathAndMethod returns correct route', () => {
       const route = registry.findByPathAndMethod('/projects', 'get')
       expect(route).toBeDefined()
-      expect(route!.name).toBe('projects.index')
+      assert.ok(route)
+      expect(route.name).toBe('projects.index')
     })
 
     test('findByPathAndMethod distinguishes methods', () => {
       const getRoute = registry.findByPathAndMethod('/projects', 'get')
       const postRoute = registry.findByPathAndMethod('/projects', 'post')
-      expect(getRoute!.name).toBe('projects.index')
-      expect(postRoute!.name).toBe('projects.store')
+      assert.ok(getRoute)
+      expect(getRoute.name).toBe('projects.index')
+      assert.ok(postRoute)
+      expect(postRoute.name).toBe('projects.store')
     })
 
     test('find filters by method', () => {
@@ -412,7 +419,8 @@ describe('effectRoutes Integration', () => {
     const registry = getAppRouteRegistry(app)
     const route = registry.findByName('projects.index')
     expect(route).toBeDefined()
-    expect(route!.path).toBe('/projects')
+    assert.ok(route)
+    expect(route.path).toBe('/projects')
   })
 
   test('provide passes registry to new builder', () => {
@@ -420,10 +428,11 @@ describe('effectRoutes Integration', () => {
     const customRegistry = new RouteRegistry()
 
     const builder = effectRoutes(app, { registry: customRegistry })
+
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const providedBuilder = builder.provide(
       // Dummy layer
-      {} as any
+      Layer.empty
     )
 
     expect(providedBuilder.getRegistry()).toBe(customRegistry)

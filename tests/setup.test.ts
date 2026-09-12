@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * setupHonertia Tests
  *
@@ -9,7 +10,9 @@
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { Effect, Schema as S } from 'effect'
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- These teardown tests must yield the actual Hono/SDK Promise event loop; advancing an Effect TestClock cannot flush that native work.
+import { scheduler } from 'node:timers/promises'
+import { Option, Deferred, Effect, Schema as S } from 'effect'
 import { setupWeb, setupHonertia, registerErrorHandlers } from '../src/setup.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import {
@@ -37,6 +40,7 @@ type TestEnv = {
 describe('setupWeb', () => {
   test('composes a flat config and exposes the canonical rendering APIs', async () => {
     const app = new Hono<TestEnv>()
+
     const application = setupWeb(app, {
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
@@ -48,6 +52,7 @@ describe('setupWeb', () => {
       '/effect',
       Effect.gen(function* () {
         const page = yield* PageService
+
         return yield* Effect.promise(() => page.render('Effect', { source: 'effect' }))
       })
     )
@@ -57,11 +62,13 @@ describe('setupWeb', () => {
     const plain = await app.request('/plain', {
       headers: { 'X-Inertia': 'true' },
     })
+
     expect((await plain.json()).component).toBe('Plain')
 
     const effect = await app.request('/effect', {
       headers: { 'X-Inertia': 'true' },
     })
+
     expect((await effect.json()).component).toBe('Effect')
   })
 })
@@ -73,6 +80,7 @@ describe('setupWeb', () => {
 describe('setupHonertia basic configuration', () => {
   test('configures middleware, errors, and app-owned routes in one call', async () => {
     const app = new Hono<TestEnv>()
+
     const configured = setupHonertia(app, {
       honertia: {
         version: '1.0.0',
@@ -97,6 +105,7 @@ describe('setupHonertia basic configuration', () => {
       AUTH_SECRET: 'unused',
       ENVIRONMENT: 'test',
     })
+
     expect(missing.status).toBe(404)
     expect((await missing.json()).component).toBe('Problem')
 
@@ -105,6 +114,7 @@ describe('setupHonertia basic configuration', () => {
       AUTH_SECRET: 'unused',
       ENVIRONMENT: 'test',
     })
+
     expect(failed.status).toBe(404)
     expect((await failed.json()).component).toBe('Problem')
   })
@@ -128,8 +138,9 @@ describe('setupHonertia basic configuration', () => {
       '/db-test',
       Effect.gen(function* () {
         const db = yield* DatabaseService
+
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        return new Response(JSON.stringify({ dbName: (db as any).name }))
+        return Response.json({ dbName: (db).name })
       })
     )
 
@@ -165,13 +176,12 @@ describe('setupHonertia basic configuration', () => {
       '/auth-test',
       Effect.gen(function* () {
         const auth = yield* AuthService
+
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        return new Response(
-          JSON.stringify({
-            dbName: (auth as any).dbName,
-            secret: (auth as any).secret,
+        return Response.json({
+            dbName: (auth as { readonly dbName: string }).dbName,
+            secret: (auth as { readonly secret: string }).secret,
           })
-        )
       })
     )
 
@@ -220,6 +230,7 @@ describe('setupHonertia basic configuration', () => {
         auth: {
           client: function (context) {
             authFactoryArgumentCount = arguments.length
+
             return {
               mode: 'stateless',
               secret: context.env.AUTH_SECRET,
@@ -233,7 +244,8 @@ describe('setupHonertia basic configuration', () => {
       '/stateless-auth-test',
       Effect.gen(function* () {
         const auth = yield* AuthService
-        return new Response(JSON.stringify(auth))
+
+        return Response.json(auth)
       })
     )
 
@@ -253,15 +265,12 @@ describe('setupHonertia basic configuration', () => {
 
   test('owns Better Auth background promises until inline request teardown', async () => {
     const app = new Hono<TestEnv>()
-    let releaseBackground!: () => void
-    let markHandlerComplete!: () => void
     let responseSettled = false
-    const backgroundTask = new Promise<void>((resolve) => {
-      releaseBackground = resolve
-    })
-    const handlerComplete = new Promise<void>((resolve) => {
-      markHandlerComplete = resolve
-    })
+
+    const releaseBackground = Deferred.makeUnsafe<void>()
+    const backgroundTask = Effect.runPromise(Deferred.await(releaseBackground))
+
+    const handlerComplete = Deferred.makeUnsafe<void>()
 
     app.use(
       '*',
@@ -273,26 +282,30 @@ describe('setupHonertia basic configuration', () => {
         auth: {
           client: (_context, { backgroundTasks }) => {
             backgroundTasks.handler(backgroundTask)
+
             return { mode: 'stateless' }
           },
         },
       })
     )
     app.get('/background-auth', (c) => {
-      markHandlerComplete()
+      Effect.runSync(Deferred.succeed(handlerComplete, undefined))
+
       return c.text('OK')
     })
 
     const pendingResponse = app.request('/background-auth').then((response) => {
       responseSettled = true
+
       return response
     })
-    await handlerComplete
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    await Effect.runPromise(Deferred.await(handlerComplete))
+    // Let Hono's native Promise chain reach teardown before checking that it is blocked.
+    await scheduler.yield()
 
     expect(responseSettled).toBe(false)
-    releaseBackground()
+    await Effect.runPromise(Deferred.succeed(releaseBackground, undefined))
 
     const response = await pendingResponse
     expect(response.status).toBe(200)
@@ -301,15 +314,12 @@ describe('setupHonertia basic configuration', () => {
 
   test('drains auth background promises when session loading fails before effectBridge', async () => {
     const app = new Hono<TestEnv>()
-    let releaseBackground!: () => void
-    let markSessionAttempted!: () => void
     let responseSettled = false
-    const backgroundTask = new Promise<void>((resolve) => {
-      releaseBackground = resolve
-    })
-    const sessionAttempted = new Promise<void>((resolve) => {
-      markSessionAttempted = resolve
-    })
+
+    const releaseBackground = Deferred.makeUnsafe<void>()
+    const backgroundTask = Effect.runPromise(Deferred.await(releaseBackground))
+
+    const sessionAttempted = Deferred.makeUnsafe<void>()
 
     setupWeb(app, {
       version: '1.0.0',
@@ -317,10 +327,11 @@ describe('setupHonertia basic configuration', () => {
       auth: {
         client: (_context, { backgroundTasks }) => {
           backgroundTasks.handler(backgroundTask)
+
           return {
             api: {
               getSession: async () => {
-                markSessionAttempted()
+                Effect.runSync(Deferred.succeed(sessionAttempted, undefined))
                 throw new Error('session store unavailable')
               },
             },
@@ -332,14 +343,16 @@ describe('setupHonertia basic configuration', () => {
 
     const pendingResponse = app.request('/pre-bridge-failure').then((response) => {
       responseSettled = true
+
       return response
     })
-    await sessionAttempted
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    await Effect.runPromise(Deferred.await(sessionAttempted))
+    // Let Hono's native Promise chain reach teardown before checking that it is blocked.
+    await scheduler.yield()
 
     expect(responseSettled).toBe(false)
-    releaseBackground()
+    await Effect.runPromise(Deferred.succeed(releaseBackground, undefined))
 
     const response = await pendingResponse
     expect(response.status).toBe(503)
@@ -397,7 +410,8 @@ describe('setupHonertia schema configuration', () => {
       '/projects/{project}',
       Effect.gen(function* () {
         const project = yield* bound('project')
-        return new Response(JSON.stringify(project))
+
+        return Response.json(project)
       })
     )
 
@@ -442,27 +456,33 @@ describe('setupHonertia schema configuration', () => {
       select: () => ({
               from: <Table>(table: Table) => {
           let whereCalls = 0
+
           const query = {
             where: () => {
               whereCalls += 1
+
               if (table === postsTable) {
                 postsWhereCalls = whereCalls
               }
+
               return query
             },
             limit: async () => {
               if (table === usersTable) {
                 return [{ id: 'u1' }]
               }
+
               if (table === postsTable) {
                 // If resolveBindings calls where twice, this returns the wrong model.
                 return whereCalls > 1
                   ? [{ id: 'p1', userId: 'u1' }]
                   : [{ id: 'p2', userId: 'u1' }]
               }
+
               return []
             },
           }
+
           return query
         },
       }),
@@ -491,6 +511,7 @@ describe('setupHonertia schema configuration', () => {
       '/users/{user}/posts/{post}',
       Effect.gen(function* () {
         const post = yield* bound('post')
+
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         return new Response((post as { id: string }).id)
       })
@@ -522,6 +543,7 @@ describe('setupHonertia auth session loading', () => {
             api: {
               getSession: async ({ headers }: { headers: Headers }) => {
                 getSessionCalls.push(headers.get('cookie') ?? '')
+
                 return {
                   user: {
                     id: 'user-42',
@@ -529,15 +551,20 @@ describe('setupHonertia auth session loading', () => {
                     name: 'User 42',
                     emailVerified: true,
                     image: null,
+                    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
                     createdAt: new Date('2026-01-01T00:00:00Z'),
+                    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
                     updatedAt: new Date('2026-01-01T00:00:00Z'),
                   },
                   session: {
                     id: 'session-42',
                     userId: 'user-42',
+                    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
                     expiresAt: new Date('2027-01-01T00:00:00Z'),
                     token: 'redacted-test-token',
+                    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
                     createdAt: new Date('2026-01-01T00:00:00Z'),
+                    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
                     updatedAt: new Date('2026-01-01T00:00:00Z'),
                   },
                 }
@@ -554,10 +581,11 @@ describe('setupHonertia auth session loading', () => {
       Effect.gen(function* () {
         const authUser = yield* AuthUserService
         const honertia = yield* HonertiaService
+
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         return yield* Effect.tryPromise(() =>
           honertia.render('Auth/Me', {
-            userId: (authUser as any).user.id,
+            userId: authUser.user.id,
           })
         )
       })
@@ -594,6 +622,7 @@ describe('setupHonertia auth session loading', () => {
             api: {
               getSession: async () => {
                 getSessionCalls += 1
+
                 return null
               },
             },
@@ -686,7 +715,8 @@ describe('setupHonertia auth session loading', () => {
       '/',
       Effect.gen(function* () {
         const user = yield* Effect.serviceOption(AuthUserService)
-        return Response.json({ anonymous: user._tag === 'None' })
+
+        return Response.json({ anonymous: Option.isNone(user) })
       })
     )
 
@@ -708,6 +738,7 @@ describe('setupHonertia auth session loading', () => {
 describe('setupHonertia configuration errors', () => {
   test('rejects legacy auth ownership at the setup boundary', () => {
     const app = new Hono<TestEnv>()
+
     const legacyConfig = {
       honertia: {
         version: '1.0.0',
@@ -723,6 +754,7 @@ describe('setupHonertia configuration errors', () => {
 
   test('rejects Effect schema ownership at the setup boundary', () => {
     const app = new Hono<TestEnv>()
+
     const legacyConfig = {
       honertia: {
         version: '1.0.0',
@@ -745,7 +777,8 @@ describe('setupHonertia configuration errors', () => {
     // Set environment to development to see full error
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      (c.env as any) = { ENVIRONMENT: 'development' }
+      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the complete Worker binding fixture for the request.
+      c.env = { DATABASE_URL: 'unused', AUTH_SECRET: 'unused', ENVIRONMENT: 'development' }
       await next()
     })
 
@@ -775,7 +808,8 @@ describe('setupHonertia configuration errors', () => {
       '/projects/{project}',
       Effect.gen(function* () {
         const project = yield* bound('project')
-        return new Response(JSON.stringify(project))
+
+        return Response.json(project)
       })
     )
 
@@ -796,7 +830,8 @@ describe('setupHonertia configuration errors', () => {
     app.use('*', async (c, next) => {
       // Set environment to development to see full error
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      (c.env as any) = { ENVIRONMENT: 'development' }
+      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the complete Worker binding fixture for the request.
+      c.env = { DATABASE_URL: 'unused', AUTH_SECRET: 'unused', ENVIRONMENT: 'development' }
       await next()
     })
 
@@ -823,7 +858,8 @@ describe('setupHonertia configuration errors', () => {
       '/users/{user}',
       Effect.gen(function* () {
         const user = yield* bound('user')
-        return new Response(JSON.stringify(user))
+
+        return Response.json(user)
       })
     )
 
@@ -839,7 +875,8 @@ describe('setupHonertia configuration errors', () => {
 
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      (c.env as any) = { ENVIRONMENT: 'development' }
+      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the complete Worker binding fixture for the request.
+      c.env = { DATABASE_URL: 'unused', AUTH_SECRET: 'unused', ENVIRONMENT: 'development' }
       await next()
     })
 
@@ -865,7 +902,8 @@ describe('setupHonertia configuration errors', () => {
       '/articles/{article}',
       Effect.gen(function* () {
         const article = yield* bound('article')
-        return new Response(JSON.stringify(article))
+
+        return Response.json(article)
       })
     )
 
@@ -891,7 +929,8 @@ describe('setupHonertia database configuration errors', () => {
 
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      (c.env as any) = { ENVIRONMENT: 'development' }
+      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the complete Worker binding fixture for the request.
+      c.env = { DATABASE_URL: 'unused', AUTH_SECRET: 'unused', ENVIRONMENT: 'development' }
       await next()
     })
 
@@ -919,7 +958,8 @@ describe('setupHonertia database configuration errors', () => {
       '/projects/{project}',
       Effect.gen(function* () {
         const project = yield* bound('project')
-        return new Response(JSON.stringify(project))
+
+        return Response.json(project)
       })
     )
 
@@ -935,7 +975,8 @@ describe('setupHonertia database configuration errors', () => {
 
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      (c.env as any) = { ENVIRONMENT: 'development' }
+      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the complete Worker binding fixture for the request.
+      c.env = { DATABASE_URL: 'unused', AUTH_SECRET: 'unused', ENVIRONMENT: 'development' }
       await next()
     })
 
@@ -963,8 +1004,9 @@ describe('setupHonertia database configuration errors', () => {
         const db = yield* DatabaseService
         // Try to use the db - this should throw
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const result = (db as any).select()
-        return new Response(JSON.stringify(result))
+        const result = db
+
+        return Response.json(result)
       })
     )
 
@@ -983,7 +1025,8 @@ describe('setupHonertia database configuration errors', () => {
 
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      (c.env as any) = { ENVIRONMENT: 'development' }
+      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the complete Worker binding fixture for the request.
+      c.env = { DATABASE_URL: 'unused', AUTH_SECRET: 'unused', ENVIRONMENT: 'development' }
       await next()
     })
 
@@ -1011,8 +1054,9 @@ describe('setupHonertia database configuration errors', () => {
         const auth = yield* AuthService
         // Try to use the auth - this should throw
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const session = (auth as any).getSession()
-        return new Response(JSON.stringify(session))
+        const session = auth
+
+        return Response.json(session)
       })
     )
 
@@ -1052,7 +1096,8 @@ describe('setupHonertia database configuration errors', () => {
 
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      (c.env as any) = { ENVIRONMENT: 'development' }
+      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the complete Worker binding fixture for the request.
+      c.env = { DATABASE_URL: 'unused', AUTH_SECRET: 'unused', ENVIRONMENT: 'development' }
       await next()
     })
 
@@ -1080,6 +1125,7 @@ describe('setupHonertia database configuration errors', () => {
         // Declaring the dependency without configuring it is misconfiguration,
         // regardless of whether the value is subsequently used.
         yield* DatabaseService
+
         return new Response('OK')
       })
     )
@@ -1140,7 +1186,8 @@ describe('setupHonertia integration with effectRoutes', () => {
       '/tasks/{task}',
       Effect.gen(function* () {
         const task = yield* bound('task')
-        return new Response(JSON.stringify(task))
+
+        return Response.json(task)
       })
     )
 
@@ -1159,18 +1206,22 @@ describe('setupHonertia integration with effectRoutes', () => {
     }
 
     let queryCount = 0
+
     const mockDb = {
       select: () => ({
-        from: (table: any) => ({
+        from: (table: typeof mockSchema.projects | typeof mockSchema.users) => ({
           where: () => ({
             limit: async () => {
               queryCount++
+
               if (table === mockSchema.projects) {
                 return [{ id: '1', name: 'Project A' }]
               }
+
               if (table === mockSchema.users) {
                 return [{ id: '2', email: 'test@example.com' }]
               }
+
               return []
             },
           }),
@@ -1199,7 +1250,8 @@ describe('setupHonertia integration with effectRoutes', () => {
       '/projects/{project}',
       Effect.gen(function* () {
         const project = yield* bound('project')
-        return new Response(JSON.stringify(project))
+
+        return Response.json(project)
       })
     )
 
@@ -1208,7 +1260,8 @@ describe('setupHonertia integration with effectRoutes', () => {
       '/users/{user}',
       Effect.gen(function* () {
         const user = yield* bound('user')
-        return new Response(JSON.stringify(user))
+
+        return Response.json(user)
       })
     )
 
@@ -1283,14 +1336,12 @@ describe('setupHonertia full configuration', () => {
         const auth = yield* AuthService
 
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        return new Response(
-          JSON.stringify({
+        return Response.json({
             project,
             hasDb: !!db,
-            hasAuth: !!(auth as any).getUser,
-            authHasDbRef: !!(auth as any).dbRef,
+            hasAuth: 'getUser' in auth,
+            authHasDbRef: 'dbRef' in auth,
           })
-        )
       })
     )
 
@@ -1336,6 +1387,7 @@ describe('setupHonertia middleware dispatcher (regression)', () => {
       '/form',
       Effect.sync(() => {
         executed.push('handler')
+
         return Response.redirect('/success', 302)
       })
     )
@@ -1400,6 +1452,7 @@ describe('setupHonertia middleware dispatcher (regression)', () => {
             if (c.req.header('X-Block') === 'true') {
               return c.text('Blocked', 403)
             }
+
             await next()
           },
         ],
@@ -1420,6 +1473,7 @@ describe('setupHonertia middleware dispatcher (regression)', () => {
     const res2 = await app.request('/protected', {
       headers: { 'X-Block': 'true' },
     })
+
     expect(res2.status).toBe(403)
     expect(await res2.text()).toBe('Blocked')
   })

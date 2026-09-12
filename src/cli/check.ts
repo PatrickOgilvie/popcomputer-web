@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import -- This CLI adapter owns native Node/Bun IO and raw command output; preserve the stdout/stderr format. */
 /**
  * Project Health Check Module
  *
@@ -5,10 +6,7 @@
  * Returns machine-readable output with fix suggestions.
  */
 
-import {
-  RouteRegistry,
-  type RouteMetadataJson,
-} from '../effect/route-registry.js'
+import type { RouteRegistry, RouteMetadataJson } from '../effect/route-registry.js'
 import { loadAppRouteRegistry } from './load-app.js'
 import { readFileSync, readdirSync } from 'node:fs'
 import { extname, join, relative, resolve } from 'node:path'
@@ -150,20 +148,25 @@ interface RouteExportInfo {
 }
 
 const DEFAULT_ROUTE_SCAN_DIRS = ['src/actions', 'src/features']
+
 const ROUTE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'])
 
 function shouldScanFile(fileName: string): boolean {
   if (fileName.endsWith('.d.ts')) return false
+
   if (fileName.includes('.test.') || fileName.includes('.spec.')) return false
+
   return ROUTE_FILE_EXTENSIONS.has(extname(fileName))
 }
 
 function walkFiles(dir: string, files: string[]): void {
   const entries = readdirSync(dir, { withFileTypes: true })
+
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue
 
     const fullPath = join(dir, entry.name)
+
     if (entry.isDirectory()) {
       walkFiles(fullPath, files)
       continue
@@ -192,13 +195,16 @@ function findMatchingBrace(source: string, startIndex: number): number {
         escaped = false
         continue
       }
+
       if (ch === '\\') {
         escaped = true
         continue
       }
+
       if (ch === inString) {
         inString = null
       }
+
       continue
     }
 
@@ -214,6 +220,7 @@ function findMatchingBrace(source: string, startIndex: number): number {
 
     if (ch === '}') {
       depth -= 1
+
       if (depth === 0) return i
     }
   }
@@ -228,15 +235,18 @@ function extractRouteExports(source: string, file: string): RouteExportInfo[] {
 
   while ((index = source.indexOf(needle, index)) !== -1) {
     const braceStart = source.indexOf('{', index)
+
     if (braceStart === -1) break
 
     const braceEnd = findMatchingBrace(source, braceStart)
+
     if (braceEnd === -1) break
 
     const block = source.slice(braceStart, braceEnd + 1)
     const nameMatch = /name\s*:\s*['"]([^'"]+)['"]/.exec(block)
     const methodMatch = /method\s*:\s*['"]([^'"]+)['"]/.exec(block)
     const pathMatch = /path\s*:\s*['"]([^'"]+)['"]/.exec(block)
+
     const line = nameMatch
       ? lineNumberAt(source, braceStart + nameMatch.index)
       : lineNumberAt(source, index)
@@ -260,7 +270,7 @@ function collectRouteExports(cwd: string, scanDirs: string[]): RouteExportInfo[]
 
   for (const scanDir of scanDirs) {
     const absoluteDir = resolve(cwd, scanDir)
-    let files: string[] = []
+    const files: string[] = []
 
     try {
       walkFiles(absoluteDir, files)
@@ -286,6 +296,7 @@ function checkRouteNaming(routes: RouteMetadataJson[]): CheckResult {
 
   // Check for unnamed routes
   const unnamedRoutes = routes.filter((r) => !r.name)
+
   if (unnamedRoutes.length > 0) {
     for (const route of unnamedRoutes) {
       issues.push({
@@ -301,6 +312,7 @@ function checkRouteNaming(routes: RouteMetadataJson[]): CheckResult {
 
   // Check for duplicate names
   const nameCount = new Map<string, number>()
+
   for (const route of routes) {
     if (route.name) {
       nameCount.set(route.name, (nameCount.get(route.name) ?? 0) + 1)
@@ -322,6 +334,7 @@ function checkRouteNaming(routes: RouteMetadataJson[]): CheckResult {
 
   // Check naming convention (resource.action)
   const validNamePattern = /^[a-z]+\.[a-z]+$/
+
   for (const route of routes) {
     if (route.name && !validNamePattern.test(route.name)) {
       issues.push({
@@ -387,15 +400,17 @@ function checkRouteStructure(routes: RouteMetadataJson[]): CheckResult {
 
   // Check for RESTful resource completeness
   const resourceRoutes = new Map<string, Set<string>>()
+
   for (const route of routes) {
     // Extract resource from path (e.g., /projects -> projects)
     const match = route.fullPath.match(/^\/([a-z]+)/)
+
     if (match) {
       const resource = match[1]
-      if (!resourceRoutes.has(resource)) {
-        resourceRoutes.set(resource, new Set())
-      }
-      resourceRoutes.get(resource)!.add(route.method)
+
+      const methods = resourceRoutes.get(resource) ?? new Set<string>()
+      methods.add(route.method)
+      resourceRoutes.set(resource, methods)
     }
   }
 
@@ -450,6 +465,7 @@ function checkBindings(routes: RouteMetadataJson[]): CheckResult {
 
     // Check for path parameter without binding (edge case)
     const pathParams = route.honoPath.match(/:([^/]+)/g) ?? []
+
     if (pathParams.length !== route.bindings.length) {
       issues.push({
         type: 'warning',
@@ -478,8 +494,7 @@ function checkRouteRegistration(
   options: CheckCommandOptions
 ): CheckResult {
   const issues: CheckDetail[] = []
-  // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
-  const registeredNames = new Set(routes.map((route) => route.name).filter(Boolean) as string[])
+  const registeredNames = new Set(routes.flatMap((route) => route.name ? [route.name] : []))
   const cwd = options.cwd ?? process.cwd()
   const scanDirs = options.scanDirs ?? DEFAULT_ROUTE_SCAN_DIRS
   const exports = collectRouteExports(cwd, scanDirs)
@@ -521,6 +536,7 @@ function checkRouteRegistration(
   const warningCount = issues.filter((i) => i.type === 'warning').length
 
   let message = 'No colocated route exports found'
+
   if (exports.length > 0 && errorCount === 0 && warningCount === 0) {
     message = `All ${exports.length} route export${exports.length === 1 ? '' : 's'} registered`
   } else if (errorCount > 0) {
@@ -559,9 +575,8 @@ export function checkCommand(
   const routes = registry.toJson()
   const checks: CheckResult[] = []
 
-  // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
-  const shouldRun = (name: string) =>
-    !options.only || options.only.includes(name as any)
+  const shouldRun = (name: NonNullable<CheckCommandOptions['only']>[number]) =>
+    !options.only || options.only.includes(name)
 
   // Run checks
   if (shouldRun('routes')) {
@@ -587,6 +602,7 @@ export function checkCommand(
 
   // Collect all issues
   const issues: CheckDetail[] = []
+
   for (const check of checks) {
     if (check.details) {
       issues.push(...check.details)
@@ -629,8 +645,10 @@ function formatCheckText(result: CheckCommandResult, verbose: boolean): string {
 
     if (verbose && check.details) {
       for (const detail of check.details) {
-        const prefix = detail.type === 'error' ? '  ERROR' : detail.type === 'warning' ? '  WARN ' : '  INFO '
+        const prefixes = { error: '  ERROR', warning: '  WARN ', info: '  INFO ' }
+        const prefix = prefixes[detail.type]
         lines.push(`${prefix}: ${detail.message}`)
+
         if (detail.fix) {
           if (detail.fix.command) {
             lines.push(`         Fix: ${detail.fix.command}`)
@@ -682,14 +700,25 @@ export function parseCheckArgs(args: string[]): CheckCommandOptions {
         break
       case '--only':
         const checks = args[++i]?.split(',') ?? []
-        // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
-        options.only = checks as any
+        options.only = checks.map((check) => {
+          switch (check) {
+            case 'routes':
+            case 'naming':
+            case 'bindings':
+            case 'registration':
+              return check
+            default:
+              throw new Error(`Unknown check: ${check}`)
+          }
+        })
         break
       case '--scan':
         const scanDirs = args[++i]?.split(',').filter(Boolean) ?? []
+
         if (scanDirs.length > 0) {
           options.scanDirs = scanDirs
         }
+
         break
     }
   }
@@ -739,22 +768,27 @@ EXAMPLES:
 /**
  * Run the check command from CLI arguments.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- The CLI entrypoint awaits native app loading and dispatch; its public contract is Promise<void>.
 export async function runCheck(
   args: string[] = [],
   registry?: RouteRegistry
 ): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(checkHelp())
+
     return
   }
 
   const options = parseCheckArgs(args)
+
   const resolvedRegistry = registry ?? (
     options.app ? await loadAppRouteRegistry(options.app) : undefined
   )
+
   if (!resolvedRegistry) {
     throw new Error('Missing application entrypoint. Pass --app src/app.ts.')
   }
+
   const result = checkCommand(resolvedRegistry, options)
 
   if (options.format === 'json') {

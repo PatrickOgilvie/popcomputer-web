@@ -6,6 +6,8 @@
 
 import { Cause, Effect, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
+import type { WebRequestContext } from '../request-context.js'
 import { openHonertiaContext } from '../request-context.js'
 import {
   ResponseCacheService,
@@ -91,6 +93,7 @@ function createRequestContext<E extends Env>(
 ): RequestContext<NonNullable<E['Bindings']>> {
   // SAFETY: Hono supplies c.env from the route Env; the empty object is used only when that optional binding bag is absent.
   const env = (c.env ?? {}) as NonNullable<E['Bindings']>
+
   return {
     method: c.req.method,
     url: c.req.url,
@@ -99,6 +102,7 @@ function createRequestContext<E extends Env>(
     param: (name: string) => c.req.param(name),
     params: () => {
       const params = c.req.param()
+
       return S.is(S.String)(params) ? {} : params
     },
     query: () => c.req.query(),
@@ -126,6 +130,7 @@ function createRequestStateClient<E extends Env>(c: HonoContext<E>): RequestStat
       const writableContext = c as {
         set: <StoredValue>(key: string, value: StoredValue) => void
       }
+
       writableContext.set(key, value)
     },
   }
@@ -138,8 +143,8 @@ function createResponseFactory<E extends Env>(c: HonoContext<E>): ResponseFactor
   // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   return {
     redirect: (url: string, status = 302) => c.redirect(url, status as 301 | 302 | 303 | 307 | 308),
-    json: <T>(data: T, status = 200) => c.json(data, status as any),
-    text: (data: string, status = 200) => c.text(data, status as any),
+    json: <T>(data: T, status = 200) => c.json(data, status as ContentfulStatusCode),
+    text: (data: string, status = 200) => c.text(data, status as ContentfulStatusCode),
     notFound: () => c.notFound(),
   }
 }
@@ -193,6 +198,7 @@ function createUnconfiguredCacheClient(): CacheClient {
   const error = new CacheClientError(
     'CacheService requires KV binding. Add KV to your wrangler.toml and ensure it is available in c.env.KV'
   )
+
   return {
     get: () => Effect.fail(error),
     put: () => Effect.fail(error),
@@ -236,8 +242,8 @@ export interface BackgroundSupervisor {
   readonly client: ExecutionContextClient
   readonly hasPending: () => boolean
   readonly extendLifetime: (promise: Promise<unknown>) => void
-  readonly drain: <R>(
-    runtime?: ManagedRuntime.ManagedRuntime<R, never>
+  readonly drain: <R, RuntimeError>(
+    runtime?: ManagedRuntime.ManagedRuntime<R, RuntimeError>
   ) => Promise<void>
 }
 
@@ -247,15 +253,18 @@ export interface BackgroundSupervisor {
  * Worker runtimes hand the drain and disposal promise to `waitUntil`; inline
  * runtimes await completion before releasing scoped services.
  */
-export async function disposeRequestRuntime<E extends Env, R>(
+// oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
+export async function disposeRequestRuntime<E extends Env, R, RuntimeError>(
   c: HonoContext<E>,
-  runtime: ManagedRuntime.ManagedRuntime<R, never>
+  runtime: ManagedRuntime.ManagedRuntime<R, RuntimeError>
 ): Promise<void> {
   const supervisor = openHonertiaContext(c).backgroundSupervisor
+
   if (supervisor?.hasPending() && supervisor.client.isAvailable) {
     supervisor.extendLifetime(
       supervisor.drain(runtime).then(() => runtime.dispose())
     )
+
     return
   }
 
@@ -267,15 +276,19 @@ export async function disposeRequestRuntime<E extends Env, R>(
  * Finish background promises when outer middleware exits before the Effect
  * bridge can own request teardown.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
 export async function drainRequestBackground<E extends Env>(
   c: HonoContext<E>
 ): Promise<void> {
   const supervisor = openHonertiaContext(c).backgroundSupervisor
+
   if (!supervisor?.hasPending()) return
 
   const draining = supervisor.drain()
+
   if (supervisor.client.isAvailable) {
     supervisor.extendLifetime(draining)
+
     return
   }
 
@@ -287,8 +300,7 @@ function createExternalPromiseTracker() {
   const failures: unknown[] = []
 
   const track = (promise: Promise<unknown>): Promise<void> => {
-    let tracked: Promise<void>
-    tracked = promise.then(
+    const tracked: Promise<void> = promise.then(
       () => undefined,
       (cause: unknown) => {
         failures.push(cause)
@@ -296,7 +308,9 @@ function createExternalPromiseTracker() {
     ).then(() => {
       pending.delete(tracked)
     })
+
     pending.add(tracked)
+
     return tracked
   }
 
@@ -304,7 +318,8 @@ function createExternalPromiseTracker() {
     pending,
     hasWork: () => pending.size > 0 || failures.length > 0,
     track,
-    drain: async <R>(runtime?: ManagedRuntime.ManagedRuntime<R, never>) => {
+    // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
+    drain: async <R, RuntimeError>(runtime?: ManagedRuntime.ManagedRuntime<R, RuntimeError>) => {
       while (pending.size > 0) {
         await Promise.allSettled(pending)
       }
@@ -317,6 +332,7 @@ function createExternalPromiseTracker() {
           error: cause,
           metadata: { operation: 'external-background' },
         })
+
         await (runtime
           ? runtime.runPromise(observation)
           : Effect.runPromise(observation))
@@ -341,10 +357,11 @@ function createExecutionContextSupervisor(
         const running = Effect.runPromise(
           makeObservedBackground(operation, effect).pipe(Effect.provide(context))
         )
-        let tracked: Promise<void>
-        tracked = running.then(() => {
+
+        const tracked: Promise<void> = running.then(() => {
           pending.delete(tracked)
         })
+
         pending.add(tracked)
         ctx.waitUntil(tracked)
       })
@@ -363,12 +380,15 @@ function createExecutionContextSupervisor(
   const drain: BackgroundSupervisor['drain'] = (runtime) => {
     if (drainPromise) return drainPromise
 
+    // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
     drainPromise = (async () => {
       while (pending.size > 0) {
         await Promise.allSettled(pending)
       }
+
       await external.drain(runtime)
     })()
+
     return drainPromise
   }
 
@@ -384,20 +404,24 @@ function createExecutionContextSupervisor(
 function createInlineExecutionContextSupervisor(): BackgroundSupervisor {
   const external = createExternalPromiseTracker()
   let drainPromise: Promise<void> | undefined
+
   const client: ExecutionContextClient = {
     isAvailable: false,
     waitUntil: (promise) => {
+      // oxlint-disable-next-line no-floating-promises -- external owns this promise and its rejection; the request awaits external.drain() before disposing services.
       external.track(promise)
     },
     runInBackground: (effect) => makeObservedBackground('background', effect),
     schedule: (operation, effect) => makeObservedBackground(operation, effect),
   }
+
   return {
     client,
     hasPending: external.hasWork,
     extendLifetime: () => {},
     drain: (runtime) => {
       drainPromise ??= external.drain(runtime)
+
       return drainPromise
     },
   }
@@ -407,6 +431,7 @@ function getOrCreateBackgroundSupervisor<E extends Env>(
   c: HonoContext<E>
 ): BackgroundSupervisor {
   const requestContext = openHonertiaContext(c)
+
   if (requestContext.backgroundSupervisor) {
     return requestContext.backgroundSupervisor
   }
@@ -416,7 +441,9 @@ function getOrCreateBackgroundSupervisor<E extends Env>(
   const supervisor = executionContext
     ? createExecutionContextSupervisor(executionContext)
     : createInlineExecutionContextSupervisor()
+
   requestContext.backgroundSupervisor = supervisor
+
   return supervisor
 }
 
@@ -425,6 +452,7 @@ function getCloudflareExecutionContext<E extends Env>(
 ): CloudflareExecutionContext | undefined {
   try {
     const candidate = c.executionCtx
+
     if (
       candidate instanceof Object &&
       'waitUntil' in candidate &&
@@ -434,7 +462,7 @@ function getCloudflareExecutionContext<E extends Env>(
     ) {
       // SAFETY: both members of the deliberately minimal Worker contract were
       // checked above; methods remain owned and invoked through this object.
-      return candidate as CloudflareExecutionContext
+      return candidate
     }
   } catch {
     // Hono intentionally throws from executionCtx outside Worker runtimes.
@@ -459,13 +487,16 @@ export function getRequestExecutionContextClient<E extends Env>(
 function createPageRenderer<E extends Env>(c: HonoContext<E>): PageRenderer {
   const requestContext = openHonertiaContext(c)
   const page = requestContext.web ?? requestContext.honertia
+
   if (!page) {
     return {
+      // oxlint-disable-next-line effecttsgo/async-function -- PageRenderer.render is a Promise-returning Hono adapter contract, including this missing-configuration response.
       render: async () => c.text('@popcomputer/web is not configured', 500),
       share: () => {},
       setErrors: () => {},
     }
   }
+
   return {
     render: (component, props) => Promise.resolve(page.render(component, props)),
     share: (key, value) => page.share(key, value),
@@ -495,10 +526,12 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   never
 > {
   const requestLayer = Layer.succeed(RequestService, createRequestContext(c))
+
   const requestStateLayer = Layer.succeed(
     RequestStateService,
     createRequestStateClient(c)
   )
+
   const responseLayer = Layer.succeed(ResponseFactoryService, createResponseFactory(c))
   const pageLayer = Layer.succeed(PageService, createPageRenderer(c))
 
@@ -511,7 +544,9 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
 
   // Cache layer - backed by KV if available, otherwise unconfigured client
   // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
+  // oxlint-disable-next-line typescript/no-unnecessary-type-assertion -- TypeScript 5 needs the binding shape to retain KVNamespace through Hono's generic environment.
   const kv = (c.env as { KV?: KVNamespace } | undefined)?.KV
+
   const cacheLayer = Layer.succeed(
     CacheService,
     kv ? createKVCacheClient(kv) : createUnconfiguredCacheClient()
@@ -525,6 +560,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
 
   // ExecutionContext layer - for background task execution
   const backgroundSupervisor = getOrCreateBackgroundSupervisor(c)
+
   const executionContextLayer = Layer.succeed(
     ExecutionContextService,
     backgroundSupervisor.client
@@ -533,6 +569,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   // Workers Cache purge API: probes ctx.cache, then the cloudflare:workers
   // module export; unavailable (no-op purge, isAvailable: false) elsewhere.
   const executionCtx = getCloudflareExecutionContext(c)
+
   const responseCacheLayer = Layer.effect(
     ResponseCacheService,
     resolveWorkersCachePurgeApi(executionCtx).pipe(
@@ -544,7 +581,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     )
   )
 
-  let baseLayer: Layer.Layer<any, never, never> = Layer.mergeAll(
+  let baseLayer: Layer.Layer<never, never, never> = Layer.mergeAll(
     requestLayer,
     requestStateLayer,
     responseLayer,
@@ -558,6 +595,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   if (requestCtx.db !== undefined) {
     baseLayer = Layer.merge(baseLayer, Layer.succeed(DatabaseService, requestCtx.db))
   }
+
   if (requestCtx.auth !== undefined) {
     baseLayer = Layer.merge(baseLayer, Layer.succeed(AuthService, requestCtx.auth))
   }
@@ -598,7 +636,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
  */
 export function getEffectRuntime<E extends Env>(
   c: HonoContext<E>
-): ManagedRuntime.ManagedRuntime<any, never> | undefined {
+): WebRequestContext<E>['runtime'] {
   return openHonertiaContext(c).runtime
 }
 
@@ -619,9 +657,8 @@ export function setEffectBridgeConfig<E extends Env, CustomServices = never>(
  */
 export function getEffectBridgeConfig<E extends Env>(
   c: HonoContext<E>
-): EffectBridgeConfig<any, any> | undefined {
-  // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
-  return openHonertiaContext(c).bridgeConfig as EffectBridgeConfig<any, any> | undefined
+): EffectBridgeConfig<E, unknown> | undefined {
+  return openHonertiaContext(c).bridgeConfig
 }
 
 /**
@@ -630,30 +667,36 @@ export function getEffectBridgeConfig<E extends Env>(
 export function effectBridge<E extends Env, CustomServices = never>(
   config?: EffectBridgeConfig<E, CustomServices>
 ): MiddlewareHandler<E> {
+  // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
   return async (c, next) => {
     // SAFETY: test-layer injection seam used by @popcomputer/web/effect (see
     // test-layers.ts). Deliberately untyped and unchanged for now; making it
     // a construction-time config option is tracked as a follow-up.
     const contextTestLayer = Object.getOwnPropertyDescriptor(c.var, '__testLayer')?.value
+
     const envTestLayer = c.env instanceof Object
       ? Object.getOwnPropertyDescriptor(c.env, '__testLayer')?.value
       : undefined
-    const testLayer = contextTestLayer ?? envTestLayer
-    const hasTestLayer = Layer.isLayer(testLayer)
+
+    const testLayer: Layer.Layer<never, never, never> | undefined = contextTestLayer ?? envTestLayer
+    const hasTestLayer = Layer.isLayer(contextTestLayer ?? envTestLayer)
     setEffectBridgeConfig(c, config)
     let layer = buildContextLayer(c, config)
-    if (hasTestLayer) {
-      // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
-      layer = Layer.merge(layer, testLayer as Layer.Layer<any, never, never>)
+
+    if (hasTestLayer && testLayer !== undefined) {
+      layer = Layer.merge(layer, testLayer)
     }
+
     const runtime = ManagedRuntime.make(layer)
 
     // Store runtime and binding schema on the request context
     const requestCtx = openHonertiaContext(c)
     requestCtx.runtime = runtime
+
     if (config?.schema) {
       requestCtx.schema = config.schema
     }
+
     if (config?.bindings) {
       requestCtx.bindings = config.bindings
     }
@@ -666,9 +709,11 @@ export function effectBridge<E extends Env, CustomServices = never>(
           const maybeCapture = await runtime.runPromise(
             Effect.serviceOption(TestCaptureService)
           )
+
           if (Option.isSome(maybeCapture)) {
-            const captures = await runtime.runPromise(maybeCapture.value.get())
+            const captures = await runtime.runPromise(maybeCapture.value.get)
             const response = c.res
+
             if (response) {
               setResponseTestCaptures(response, captures)
             }
@@ -677,6 +722,7 @@ export function effectBridge<E extends Env, CustomServices = never>(
           // Ignore capture errors during tests
         }
       }
+
       await disposeRequestRuntime(c, runtime)
     }
 

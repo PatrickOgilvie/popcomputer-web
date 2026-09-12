@@ -12,6 +12,7 @@ describe('createTemplate', () => {
   describe('Basic Template Generation', () => {
     test('generates valid HTML document', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Home',
         props: { title: 'Welcome' },
@@ -28,6 +29,7 @@ describe('createTemplate', () => {
 
     test('includes default title', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -42,6 +44,7 @@ describe('createTemplate', () => {
 
     test('uses custom title', () => {
       const template = createTemplate({ title: 'My Application' })
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -56,6 +59,7 @@ describe('createTemplate', () => {
 
     test('includes viewport meta tag', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -72,6 +76,7 @@ describe('createTemplate', () => {
 
     test('includes charset meta tag', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -88,6 +93,7 @@ describe('createTemplate', () => {
   describe('Root Element', () => {
     test('uses default root id "app"', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -102,6 +108,7 @@ describe('createTemplate', () => {
 
     test('uses custom root id', () => {
       const template = createTemplate({ rootId: 'inertia-root' })
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -116,6 +123,7 @@ describe('createTemplate', () => {
 
     test('includes script element with serialized page object', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Dashboard',
         props: { userId: 123 },
@@ -138,6 +146,7 @@ describe('createTemplate', () => {
       const template = createTemplate({
         scripts: ['/assets/app.js', '/assets/vendor.js'],
       })
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -159,6 +168,7 @@ describe('createTemplate', () => {
       const template = createTemplate({
         styles: ['/assets/app.css', '/assets/vendor.css'],
       })
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -176,6 +186,7 @@ describe('createTemplate', () => {
 
     test('handles empty scripts array', () => {
       const template = createTemplate({ scripts: [] })
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -190,6 +201,7 @@ describe('createTemplate', () => {
 
     test('handles empty styles array', () => {
       const template = createTemplate({ styles: [] })
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -208,6 +220,7 @@ describe('createTemplate', () => {
       const template = createTemplate({
         head: '<meta name="description" content="My app">',
       })
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -228,6 +241,7 @@ describe('createTemplate', () => {
           <script>window.__CONFIG__ = {};</script>
         `,
       })
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -246,6 +260,7 @@ describe('createTemplate', () => {
   describe('XSS Prevention', () => {
     test('neutralizes closing script tags in page props', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Home',
         props: {
@@ -265,6 +280,7 @@ describe('createTemplate', () => {
 
     test('does not need HTML entity escaping inside JSON script payload', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Home',
         props: {
@@ -282,6 +298,7 @@ describe('createTemplate', () => {
 
     test('allows single quotes in props without attribute escaping', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Home',
         props: {
@@ -301,6 +318,7 @@ describe('createTemplate', () => {
       const template = createTemplate({
         title: '<script>alert("xss")</script>',
       })
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -318,6 +336,7 @@ describe('createTemplate', () => {
       const template = createTemplate({
         scripts: ['"><script>alert("xss")</script>'],
       })
+
       const page: PageObject = {
         component: 'Home',
         props: {},
@@ -335,6 +354,7 @@ describe('createTemplate', () => {
   describe('Edge Cases', () => {
     test('handles empty props', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Empty',
         props: {},
@@ -349,6 +369,7 @@ describe('createTemplate', () => {
 
     test('handles nested props with special characters', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Complex',
         props: {
@@ -369,6 +390,7 @@ describe('createTemplate', () => {
 
     test('handles unicode characters', () => {
       const template = createTemplate({ title: '日本語アプリ' })
+
       const page: PageObject = {
         component: 'Home',
         props: { greeting: '你好世界' },
@@ -384,6 +406,7 @@ describe('createTemplate', () => {
 
     test('handles emoji in props', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Home',
         props: { emoji: '🎉🚀👨‍👩‍👧‍👦' },
@@ -398,6 +421,7 @@ describe('createTemplate', () => {
 
     test('handles clearHistory and encryptHistory options', () => {
       const template = createTemplate({})
+
       const page: PageObject = {
         component: 'Login',
         props: {},
@@ -445,6 +469,7 @@ describe('createVersion', () => {
       const manifest1 = {
         'app.js': 'app.abc123.js',
       }
+
       const manifest2 = {
         'app.js': 'app.def456.js',
       }
@@ -477,8 +502,9 @@ describe('createVersion', () => {
 
     test('handles large manifest', () => {
       const manifest: Record<string, string> = {}
+
       for (let i = 0; i < 100; i++) {
-        manifest[`file${i}.js`] = `file${i}.${Math.random().toString(36)}.js`
+        manifest[`file${i}.js`] = `file${i}.fixture-${i.toString(36)}.js`
       }
 
       const version = createVersion(manifest)
@@ -504,6 +530,7 @@ describe('createVersion', () => {
         'b.js': 'b.456.js',
         'c.js': 'c.789.js',
       }
+
       const manifest2 = {
         'c.js': 'c.789.js',
         'a.js': 'a.123.js',

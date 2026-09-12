@@ -1,10 +1,12 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Effect Handler Tests
  */
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { Effect, Layer } from 'effect'
+import type { Env } from 'hono'
+import { Effect, Layer, Schema as S } from 'effect'
 import { effectHandler, effect, handle, errorToResponse } from '../../src/effect/handler.js'
 import { effectBridge, type EffectBridgeConfig } from '../../src/effect/bridge.js'
 import { honertia } from '../../src/middleware.js'
@@ -27,7 +29,7 @@ import {
 import { createErrorHandlers } from '../../src/setup.js'
 
 // Helper to create test app with all middleware
-const createApp = (bridgeConfig?: EffectBridgeConfig<any, any>) => {
+const createApp = (bridgeConfig?: EffectBridgeConfig<Env, never>) => {
   const app = new Hono()
 
   app.use(
@@ -116,7 +118,8 @@ describe('effectHandler', () => {
       effectHandler(
         Effect.gen(function* () {
           const db = yield* DatabaseService
-          return new Response(JSON.stringify(db))
+
+          return Response.json(db)
         })
       )
     )
@@ -163,6 +166,7 @@ describe('effect helper', () => {
       '/',
       effect(() => {
         callCount++
+
         return Effect.succeed(new Response(`Count: ${callCount}`))
       })
     )
@@ -531,7 +535,7 @@ describe('errorToResponse', () => {
     const app = createApp()
 
     app.get('/test', async (c) => {
-      return await errorToResponse(
+      return errorToResponse(
         new ValidationError({ errors: { field: 'Error' } }),
         c
       )
@@ -540,6 +544,7 @@ describe('errorToResponse', () => {
     const res = await app.request('/test', {
       headers: { Accept: 'application/json' },
     })
+
     expect(res.status).toBe(422)
     const json = await res.json()
     // New structured format includes code and validation details
@@ -551,7 +556,7 @@ describe('errorToResponse', () => {
     const app = new Hono()
 
     app.get('/test', async (c) => {
-      return await errorToResponse(
+      return errorToResponse(
         new ValidationError({ errors: { field: 'Error' } }),
         c
       )
@@ -571,6 +576,7 @@ describe('errorToResponse', () => {
 describe('EffectErrorObserverService', () => {
   test('calls observer exactly once for typed failures', async () => {
     const events: EffectErrorEvent[] = []
+
     const app = createObservedApp((event) =>
       Effect.sync(() => {
         events.push(event)
@@ -628,6 +634,7 @@ describe('EffectErrorObserverService', () => {
 
   test('calls observer exactly once for defects', async () => {
     const events: EffectErrorEvent[] = []
+
     const app = createObservedApp(
       (event) =>
         Effect.sync(() => {
@@ -660,9 +667,14 @@ describe('EffectErrorObserverService', () => {
   })
 })
 
+class ReportedFailure extends S.TaggedError<ReportedFailure>()('ReportedFailure', {
+  message: S.String,
+}) {}
+
 describe('reportEffectError', () => {
   test('defaults to handled user failures', async () => {
     const events: EffectErrorEvent[] = []
+
     const app = createObservedApp((event) =>
       Effect.sync(() => {
         events.push(event)
@@ -673,16 +685,11 @@ describe('reportEffectError', () => {
       '/',
       effectHandler(
         Effect.gen(function* () {
-          const fallback = yield* Effect.try({
-            try: () => {
-              throw new Error('handled failure')
-            },
-            catch: (error) => error,
-          }).pipe(
+          const fallback = yield* Effect.fail(new ReportedFailure({ message: 'handled failure' })).pipe(
             Effect.tapError((error) =>
               reportEffectError(error)
             ),
-            Effect.catch(() => Effect.succeed('fallback'))
+            Effect.orElseSucceed(() => 'fallback')
           )
 
           return new Response(fallback)
@@ -704,6 +711,7 @@ describe('reportEffectError', () => {
 
   test('accepts optional metadata', async () => {
     const events: EffectErrorEvent[] = []
+
     const app = createObservedApp((event) =>
       Effect.sync(() => {
         events.push(event)
@@ -714,12 +722,7 @@ describe('reportEffectError', () => {
       '/',
       effectHandler(
         Effect.gen(function* () {
-          const fallback = yield* Effect.try({
-            try: () => {
-              throw new Error('handled failure')
-            },
-            catch: (error) => error,
-          }).pipe(
+          const fallback = yield* Effect.fail(new ReportedFailure({ message: 'handled failure' })).pipe(
             Effect.tapError((error) =>
               reportEffectError(error, {
                 metadata: {
@@ -728,7 +731,7 @@ describe('reportEffectError', () => {
                 },
               })
             ),
-            Effect.catch(() => Effect.succeed('fallback'))
+            Effect.orElseSucceed(() => 'fallback')
           )
 
           return new Response(fallback)
@@ -754,16 +757,11 @@ describe('reportEffectError', () => {
       '/',
       effectHandler(
         Effect.gen(function* () {
-          const fallback = yield* Effect.try({
-            try: () => {
-              throw new Error('handled without observer')
-            },
-            catch: (error) => error,
-          }).pipe(
+          const fallback = yield* Effect.fail(new ReportedFailure({ message: 'handled without observer' })).pipe(
             Effect.tapError((error) =>
               reportEffectError(error)
             ),
-            Effect.catch(() => Effect.succeed('fallback'))
+            Effect.orElseSucceed(() => 'fallback')
           )
 
           return new Response(fallback)
@@ -788,6 +786,7 @@ describe('Integration Patterns', () => {
         Effect.gen(function* () {
           const db = yield* DatabaseService
           const honertia = yield* HonertiaService
+
           return yield* Effect.tryPromise(() =>
             honertia.render('Projects/Show', { db, id: 'test' })
           )
@@ -826,9 +825,11 @@ describe('Integration Patterns', () => {
       effectHandler(
         Effect.sync(() => {
           const shouldRedirect = true
+
           if (shouldRedirect) {
             return new Redirect({ url: '/other', status: 303 })
           }
+
           return new Response('Stay here')
         })
       )

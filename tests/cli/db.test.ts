@@ -1,9 +1,12 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * CLI Database Migration Tests
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- These integration tests use real temporary files and native paths to verify the Node CLI filesystem boundary.
 import { mkdir, writeFile, rm } from 'fs/promises'
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- These integration tests use real temporary files and native paths to verify the Node CLI filesystem boundary.
 import { join } from 'path'
 import {
   defineMigration,
@@ -32,6 +35,7 @@ describe('defineMigration', () => {
 
   test('supports optional migrate function', () => {
     const migrateFn = async () => {}
+
     const migration = defineMigration({
       version: '20250109_001',
       description: 'Test',
@@ -45,6 +49,7 @@ describe('defineMigration', () => {
 
   test('supports optional validate function', () => {
     const validateFn = async () => true
+
     const migration = defineMigration({
       version: '20250109_001',
       description: 'Test',
@@ -170,6 +175,29 @@ describe('dbStatus', () => {
     expect(result.migrations[0].statements).toBeDefined()
     expect(result.migrations[0].statements?.length).toBe(2)
     expect(result.migrations[0].statements?.[0]).toContain('CREATE TABLE')
+  })
+
+  test('reports malformed migration tracking values instead of trusting JSON types', async () => {
+    await writeFile(join(testDir, '0001_test.sql'), 'SELECT 1;')
+    await writeFile(join(testDir, '.popweb-applied.json'), '{"0001_test":{"token":"private"}}')
+    const configPath = join(testDir, 'drizzle.config.ts')
+    await writeFile(configPath, `export default { out: '${testDir}' }`)
+
+    const result = await dbStatus({ config: configPath })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toBe('Invalid applied migration tracking data')
+  })
+
+  test('reports migration read failures instead of treating them as an empty history', async () => {
+    await mkdir(join(testDir, '0001_unreadable.sql'))
+    const configPath = join(testDir, 'drizzle.config.ts')
+    await writeFile(configPath, `export default { out: '${testDir}' }`)
+
+    const result = await dbStatus({ config: configPath })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toBeDefined()
   })
 
   test('returns up-to-date when no pending migrations', async () => {

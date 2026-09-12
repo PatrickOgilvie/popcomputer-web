@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Compile-time type tests for Effect module.
  * If this file compiles, the types are correct.
@@ -66,7 +67,9 @@ const routeBindings = {
 }
 
 type Project = typeof projects.$inferSelect
+
 type Category = typeof categories.$inferSelect
+
 type PublicProject = S.Schema.Type<typeof routeBindings.publicProject>
 
 // Custom auth user type for testing HonertiaAuthUserType augmentation
@@ -99,12 +102,15 @@ declare module '../src/effect/index.js' {
     type: { query: (sql: string) => Promise<unknown[]> }
     schema: typeof schema
   }
+
   interface HonertiaRouteBindingsType {
     type: typeof routeBindings
   }
+
   interface HonertiaAuthType {
   type: { getSession: () => Promise<object> }
   }
+
   interface HonertiaAuthUserType {
     type: CustomAuthUser
   }
@@ -147,6 +153,7 @@ const _authUserHasCustomFields: AssertExtends<AuthUser, { user: { isAnonymous: b
 
 // DefaultAuthUser should NOT have custom fields (verifies it's the fallback)
 type DefaultHasCustomFields = DefaultAuthUser extends { user: { isAnonymous: boolean } } ? true : false
+
 const _defaultNoCustomFields: DefaultHasCustomFields = false
 
 // ============================================================================
@@ -157,6 +164,7 @@ const _defaultNoCustomFields: DefaultHasCustomFields = false
 const _testDbService = Effect.gen(function* () {
   const db = yield* DatabaseService
   const _query: (sql: string) => Promise<unknown[]> = db.query
+
   return db
 })
 
@@ -164,6 +172,7 @@ const _testDbService = Effect.gen(function* () {
 const _testAuthService = Effect.gen(function* () {
   const auth = yield* AuthService
 const _getSession: () => Promise<object> = auth.getSession
+
   return auth
 })
 
@@ -176,6 +185,7 @@ const _testAuthUserService = Effect.gen(function* () {
   // Standard fields still work
   const _id: string = authUser.user.id
   const _email: string = authUser.user.email
+
   return authUser
 })
 
@@ -198,6 +208,7 @@ const SharePropsLayer = Layer.effect(
     const honertia = yield* HonertiaService
     honertia.share('authUserAvatarSeed', 'seed-123')
     void db
+
     return { ready: true as const }
   })
 )
@@ -216,10 +227,12 @@ class CrossServiceB extends Context.Service<
 >()('CrossServiceB') {}
 
 const CrossLayerA = Layer.succeed(CrossServiceA, { val: 'hello' })
+
 const CrossLayerB = Layer.effect(
   CrossServiceB,
   Effect.gen(function* () {
     const a = yield* CrossServiceA
+
     return { derived: a.val + '-world' }
   })
 )
@@ -237,6 +250,7 @@ const _testBound = Effect.gen(function* () {
   const project = yield* bound('project')
   const _id: string = project.id
   const _name: string = project.name
+
   return project
 })
 
@@ -245,6 +259,7 @@ const _testBoundCategory = Effect.gen(function* () {
   const category = yield* bound('category')
   const _id: string = category.id
   const _title: string = category.title
+
   return category
 })
 
@@ -253,6 +268,7 @@ const _testParsedBound = Effect.gen(function* () {
   const _id: string = project.id
   // @ts-expect-error The registered parser strips fields it does not declare.
   void project.name
+
   return project
 })
 
@@ -267,32 +283,39 @@ interface UserInput {
 
 // Plain object should NOT be assignable to Validated
 type PlainToValidated = UserInput extends Validated<UserInput> ? true : false
+
 const _plainNotValidated: PlainToValidated = false
 
 // Plain object should NOT be assignable to Trusted
 type PlainToTrusted = UserInput extends Trusted<UserInput> ? true : false
+
 const _plainNotTrusted: PlainToTrusted = false
 
 // Validated should extend the base type
 type ValidatedExtendsBase = Validated<UserInput> extends UserInput ? true : false
+
 const _validatedExtendsBase: ValidatedExtendsBase = true
 
 // Trusted should extend the base type
 type TrustedExtendsBase = Trusted<UserInput> extends UserInput ? true : false
+
 const _trustedExtendsBase: TrustedExtendsBase = true
 
 // Spreading a Validated object should NOT produce Validated
 // (This is the key safety feature - spreading drops the brand)
 // We test this by checking that a plain Record can't satisfy Validated
 type SpreadResult = object extends Validated<UserInput> ? true : false
+
 const _spreadDropsBrand: SpreadResult = false
 
 // asValidated creates Validated type
 const validatedInput = asValidated({ name: 'test', email: 'test@test.com' })
+
 const _validatedType: Validated<{ name: string; email: string }> = validatedInput
 
 // asTrusted creates Trusted type
 const trustedInput = asTrusted({ name: 'test', email: 'test@test.com' })
+
 const _trustedType: Trusted<{ name: string; email: string }> = trustedInput
 
 // ============================================================================
@@ -342,6 +365,7 @@ const _testDbMutation = Effect.gen(function* () {
 const _testScopedDbMutation = Effect.gen(function* () {
   // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   const mockDb = {} as MockDB
+
   // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   const txInput = asTrusted({
     createUser: {
@@ -355,6 +379,7 @@ const _testScopedDbMutation = Effect.gen(function* () {
     const scopedUser = mergeMutationInput(scoped.createUser, {
       id: 'user-123',
     })
+
     const _scopedUserIdNarrowed: AssertEqual<typeof scopedUser.id, string> = true
     void scopedUser
 
@@ -362,7 +387,8 @@ const _testScopedDbMutation = Effect.gen(function* () {
     mergeMutationInput(scoped.createUser, { note: 'nope' })
 
     // @ts-expect-error scoped mode rejects ad-hoc trusted payloads
-    await db.insert(projects).values(asTrusted({ name: 'x', email: 'x@test.com' }))
+    void db.insert(projects).values(asTrusted({ name: 'x', email: 'x@test.com' }))
+
     return Promise.resolve()
   })
 })
@@ -370,7 +396,7 @@ const _testScopedDbMutation = Effect.gen(function* () {
 const _testValidateTyping = Effect.gen(function* () {
   const transactionSchema = S.Struct({
     status: S.Literal('pending'),
-    quantity: S.NumberFromString,
+    quantity: S.FiniteFromString,
   })
 
   // Typed validate enforces schema-encoded input at compile time
@@ -389,6 +415,7 @@ const _testValidateTyping = Effect.gen(function* () {
     status: 'pending',
     quantity: '2',
   }
+
   // Unknown payloads are still supported via validateUnknown
   yield* validateUnknown(transactionSchema, raw)
 })

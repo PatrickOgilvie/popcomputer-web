@@ -150,6 +150,7 @@ export class RouteRegistry {
   register(metadata: RouteMetadata): void {
     if (metadata.name) {
       const existing = this.findByName(metadata.name)
+
       if (existing) {
         throw new Error(
           `Duplicate route name '${metadata.name}'. ` +
@@ -157,6 +158,7 @@ export class RouteRegistry {
         )
       }
     }
+
     this.routes.push(metadata)
   }
 
@@ -173,20 +175,26 @@ export class RouteRegistry {
   find(options: FindRouteOptions = {}): readonly RouteMetadata[] {
     return this.routes.filter((route) => {
       if (options.method && route.method !== options.method) return false
+
       if (options.prefix && !route.fullPath.startsWith(options.prefix)) return false
+
       if (options.name && route.name !== options.name) return false
+
       if (options.pathPattern) {
         try {
           const pattern = options.pathPattern
             .replace(/\*/g, '.*')
             .replace(/\{[^}]+\}/g, '[^/]+')
+
           const regex = new RegExp(`^${pattern}$`)
+
           if (!regex.test(route.fullPath)) return false
         } catch {
           // Invalid regex pattern, skip matching
           return false
         }
       }
+
       return true
     })
   }
@@ -235,6 +243,7 @@ export class RouteRegistry {
 
     for (const route of this.routes) {
       const prefix = route.prefix || '/'
+
       if (!grouped[prefix]) grouped[prefix] = []
       grouped[prefix].push(route)
     }
@@ -276,8 +285,10 @@ export class RouteRegistry {
       const paramsSchema = route.paramsSchema
         ? getSchemaMetadata(route.paramsSchema)
         : undefined
+
       const bodySchema = route.bodySchema ? getSchemaMetadata(route.bodySchema) : undefined
       const querySchema = route.querySchema ? getSchemaMetadata(route.querySchema) : undefined
+
       const responseSchema = route.responseSchema
         ? getSchemaMetadata(route.responseSchema)
         : undefined
@@ -326,8 +337,9 @@ export class RouteRegistry {
       nameWidth > 4 ? 'NAME'.padEnd(nameWidth) : null,
       'BINDINGS',
     ]
-      .filter(Boolean)
+      .filter((segment) => segment !== null && segment.length > 0)
       .join('  ')
+
     lines.push(header)
     lines.push('-'.repeat(header.length))
 
@@ -344,8 +356,9 @@ export class RouteRegistry {
         nameWidth > 4 ? (route.name ?? '').padEnd(nameWidth) : null,
         bindings,
       ]
-        .filter(Boolean)
+        .filter((segment) => segment !== null && segment.length > 0)
         .join('  ')
+
       lines.push(row)
     }
 
@@ -364,10 +377,12 @@ const appRegistries = new WeakMap<object, RouteRegistry>()
 /** Get the registry owned by one Hono application. */
 export function getAppRouteRegistry<App extends object>(app: App): RouteRegistry {
   const existing = appRegistries.get(app)
+
   if (existing) return existing
 
   const registry = new RouteRegistry()
   appRegistries.set(app, registry)
+
   return registry
 }
 
@@ -381,9 +396,8 @@ export function findAppRouteRegistry<App extends object>(app: App): RouteRegistr
  * Creates one if it doesn't exist.
  */
 export function getGlobalRegistry(): RouteRegistry {
-  if (!globalRegistry) {
-    globalRegistry = new RouteRegistry()
-  }
+  globalRegistry ??= new RouteRegistry()
+
   return globalRegistry
 }
 

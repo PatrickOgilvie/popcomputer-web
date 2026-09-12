@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import -- This CLI adapter owns native Node/Bun IO and raw command output; preserve the stdout/stderr format. */
 /**
  * Code Generation Module
  *
@@ -164,7 +165,7 @@ function generateSchemaField(field: FieldDefinition): string {
       return `${baseType}.pipe(S.NullOr)`
     case 'optional':
       return `S.optional(${baseType})`
-    default:
+    case 'required':
       return baseType
   }
 }
@@ -205,6 +206,7 @@ function parseActionName(name: string): ParsedActionName {
 
   // Try to extract resource from PascalCase (e.g., CreateProject -> project)
   const match = name.match(/^([A-Z][a-z]+)([A-Z][a-z]+)$/)
+
   if (match) {
     const action = match[1].toLowerCase()
     const resource = match[2].toLowerCase()
@@ -232,6 +234,7 @@ function parseActionName(name: string): ParsedActionName {
  */
 function extractRouteParams(path: string): string[] {
   const matches = path.match(/\{([^}:]+)(?::[^}]+)?\}/g) ?? []
+
   return matches.map((m) => m.replace(/[{}:]/g, '').split(':')[0])
 }
 
@@ -251,15 +254,21 @@ function generateActionContent(options: GenerateActionOptions): string {
 
   // Build imports
   const effectImports = ['Effect']
+
   if (needsValidation) effectImports.push('Schema as S')
 
   const honertiaImports = ['action']
+
   if (isMutationMethod) {
     honertiaImports.push('DatabaseService', 'dbMutation')
   }
+
   if (needsAuth) honertiaImports.push('authorize')
+
   if (needsValidation) honertiaImports.push('validateRequest')
+
   if (needsBinding) honertiaImports.push('bound')
+
   if (isMutationMethod && (needsValidation || needsAuth)) {
     honertiaImports.push('asTrusted')
   }
@@ -273,7 +282,9 @@ function generateActionContent(options: GenerateActionOptions): string {
 
   // Add schema helpers if needed
   const schemaImports: string[] = []
+
   if (fields.some((f) => f.type === 'uuid')) schemaImports.push('uuid')
+
   if (fields.some((f) => f.type === 'email')) schemaImports.push('email')
 
   let content = `/**
@@ -369,7 +380,9 @@ ${needsBinding ? routeParams.map((p) => `      ${p},`).join('\n') + '\n' : ''}  
   } else {
     const redirectPath = names.directory ? `/${names.directory}` : '/'
     const trustedFields: string[] = []
+
     if (needsValidation) trustedFields.push('...input,')
+
     if (needsAuth) trustedFields.push('userId: auth.user.id,')
 
     if (trustedFields.length > 0) {
@@ -650,6 +663,7 @@ export function parseGenerateActionArgs(args: string[]): GenerateActionCliOption
       if (!options.name) {
         options.name = arg
       }
+
       continue
     }
 
@@ -767,6 +781,7 @@ EXAMPLES:
 export function runGenerateAction(args: string[]): void {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(generateActionHelp())
+
     return
   }
 
@@ -780,6 +795,7 @@ export function runGenerateAction(args: string[]): void {
 
   // Derive path from name if not provided
   const names = parseActionName(options.name)
+
   const defaultPath = names.directory
     ? `/${names.directory}`
     : `/${names.fileName}`
@@ -798,6 +814,7 @@ export function runGenerateAction(args: string[]): void {
   })
 
   let written = false
+
   if (!options.preview) {
     try {
       writeGeneratedFile(result.path, result.content, options.force ?? false)
@@ -816,6 +833,7 @@ export function runGenerateAction(args: string[]): void {
       preview: options.preview ?? false,
       written,
     }, null, 2))
+
     return
   }
 
@@ -823,6 +841,7 @@ export function runGenerateAction(args: string[]): void {
     console.log('Would create:', result.path)
     console.log('')
     console.log(result.content)
+
     return
   }
 
@@ -919,12 +938,15 @@ function singularize(word: string): string {
   if (word.endsWith('ies')) {
     return word.slice(0, -3) + 'y'
   }
+
   if (word.endsWith('es')) {
     return word.slice(0, -2)
   }
+
   if (word.endsWith('s')) {
     return word.slice(0, -1)
   }
+
   return word
 }
 
@@ -1099,6 +1121,7 @@ export function parseGenerateCrudArgs(args: string[]): GenerateCrudCliOptions {
       if (!options.resource) {
         options.resource = arg
       }
+
       continue
     }
 
@@ -1206,6 +1229,7 @@ EXAMPLES:
 export function runGenerateCrud(args: string[]): void {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(generateCrudHelp())
+
     return
   }
 
@@ -1230,11 +1254,13 @@ export function runGenerateCrud(args: string[]): void {
   })
 
   let written = false
+
   if (!cliOptions.preview) {
     try {
       for (const action of result.actions) {
         writeGeneratedFile(action.path, action.content, cliOptions.force ?? false)
       }
+
       writeGeneratedFile(result.indexPath, result.indexContent, cliOptions.force ?? false)
       written = true
     } catch (error) {
@@ -1257,6 +1283,7 @@ export function runGenerateCrud(args: string[]): void {
       preview: cliOptions.preview ?? false,
       written,
     }, null, 2))
+
     return
   }
 
@@ -1276,21 +1303,26 @@ export function runGenerateCrud(args: string[]): void {
     console.log(`Would create: ${result.indexPath}`)
     console.log('')
     console.log(result.indexContent)
+
     return
   }
 
   console.log(`Generated CRUD for: ${result.resource}`)
   console.log('')
   console.log('Files (with inline tests):')
+
   for (const action of result.actions) {
     console.log(`  ${action.path}`)
   }
+
   console.log(`  ${result.indexPath}`)
   console.log('')
   console.log('Routes:')
+
   for (const action of result.actions) {
     console.log(`  ${action.routeName}`)
   }
+
   console.log('')
   console.log(`Run tests with: bun test ${result.actions[0]?.path.split('/').slice(0, -1).join('/')}/`)
 }

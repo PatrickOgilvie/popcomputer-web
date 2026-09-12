@@ -31,12 +31,13 @@ export interface StructuredErrorCapable {
  * Helper to create structured error with optional message override.
  */
 function structured(
-  code: ErrorCode | string,
+  code: string,
   params: ErrorParams,
   context: ErrorContext,
   overrides?: Partial<HonertiaStructuredError>
 ): HonertiaStructuredError {
   const base = createStructuredError(code, params, context)
+
   return overrides ? { ...base, ...overrides } : base
 }
 
@@ -77,11 +78,12 @@ export class ValidationError extends Data.TaggedError('ValidationError')<{
         fields: this.fieldDetails ?? this.createFieldDetails(),
         component: this.component,
       },
-    } as HonertiaStructuredError & { validation: { fields: FieldErrors; component?: string } }
+    }
   }
 
   private createFieldDetails(): FieldErrors {
     const details: FieldErrors = {}
+
     for (const [field, message] of Object.entries(this.errors)) {
       details[field] = {
         value: undefined,
@@ -90,6 +92,7 @@ export class ValidationError extends Data.TaggedError('ValidationError')<{
         path: field.split('.'),
       }
     }
+
     return details
   }
 
@@ -126,6 +129,7 @@ export class UnauthorizedError extends Data.TaggedError('UnauthorizedError')<{
 
   toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
     const code = this.code ?? ErrorCodes.AUTH_100_UNAUTHENTICATED
+
     return structured(code, { reason: this.message }, context, { message: this.message })
   }
 
@@ -177,6 +181,7 @@ export class NotFoundError extends Data.TaggedError('NotFoundError')<{
 
   toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
     const code = this.code ?? ErrorCodes.RES_200_NOT_FOUND
+
     return structured(code, { resource: this.resource, id: this.id }, context)
   }
 
@@ -206,6 +211,7 @@ export class ForbiddenError extends Data.TaggedError('ForbiddenError')<{
 
   toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
     const code = this.code ?? ErrorCodes.AUTH_102_FORBIDDEN
+
     return structured(code, { reason: this.message }, context, { message: this.message })
   }
 
@@ -490,6 +496,7 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
 
   toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
     const code = this.code ?? this.inferCode()
+
     return structured(
       code,
       { binding: this.binding, table: this.table, parent: this.parent, child: this.child },
@@ -500,7 +507,9 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
 
   private inferCode(): ErrorCode {
     if (this.table) return ErrorCodes.RTE_601_TABLE_NOT_FOUND
+
     if (this.parent && this.child) return ErrorCodes.RTE_603_RELATION_NOT_FOUND
+
     return ErrorCodes.RTE_600_BINDING_NOT_FOUND
   }
 
@@ -603,6 +612,7 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
 
   toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
     const code = this.code ?? getConfigErrorCode(this.service, this.message)
+
     const location = context.route
       ? `${context.route.method} ${context.route.path}`
       : 'unknown'
@@ -664,6 +674,7 @@ function configurationPathFor(service: string | undefined): string {
       return 'auth.client'
     case 'Schema':
       return 'schema'
+    case undefined:
     default:
       return 'unknown'
   }

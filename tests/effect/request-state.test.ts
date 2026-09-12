@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Request State Service Tests
  *
@@ -21,6 +22,7 @@ const createApp = () => {
   const app = new Hono()
   app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
   app.use('*', effectBridge())
+
   return app
 }
 
@@ -34,6 +36,7 @@ describe('RequestStateService', () => {
       await next()
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const environment = (c.var as PageProps).apiKeyEnvironment
+
       if (S.is(S.String)(environment)) {
         c.res.headers.set('X-Api-Key-Environment', environment)
       }
@@ -46,6 +49,7 @@ describe('RequestStateService', () => {
       Effect.gen(function* () {
         const state = yield* RequestStateService
         state.set('apiKeyEnvironment', 'test')
+
         return new Response('verified')
       })
     )
@@ -71,6 +75,7 @@ describe('RequestStateService', () => {
       '/tenant',
       Effect.gen(function* () {
         const state = yield* RequestStateService
+
         return new Response(state.get<string>('tenantId') ?? 'missing')
       })
     )
@@ -87,6 +92,7 @@ describe('RequestStateService', () => {
       '/unset',
       Effect.gen(function* () {
         const state = yield* RequestStateService
+
         return Response.json({ value: state.get('never-set') ?? null })
       })
     )

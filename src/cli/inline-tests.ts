@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import -- This CLI adapter owns native Node/Bun IO and raw command output; preserve the stdout/stderr format. */
 /**
  * Inline Tests Runner Generator
  *
@@ -50,6 +51,7 @@ export interface GenerateInlineTestsRunnerCliOptions {
 }
 
 const DEFAULT_OUTPUT = 'tests/inline-actions.test.ts'
+
 const DEFAULT_SCAN_DIRS = ['src/actions', 'src/features']
 
 /**
@@ -124,6 +126,7 @@ export function parseGenerateInlineTestsRunnerArgs(
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
+
     switch (arg) {
       case '--output':
       case '-o':
@@ -173,10 +176,12 @@ EXAMPLES:
 export function runGenerateInlineTestsRunner(args: string[] = []): void {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(generateInlineTestsRunnerHelp())
+
     return
   }
 
   const cliOptions = parseGenerateInlineTestsRunnerArgs(args)
+
   const result = generateInlineTestsRunner({
     output: cliOptions.output,
     scanDirs: cliOptions.scanDirs,
@@ -184,6 +189,7 @@ export function runGenerateInlineTestsRunner(args: string[] = []): void {
 
   if (cliOptions.json) {
     console.log(JSON.stringify(result, null, 2))
+
     return
   }
 
@@ -191,6 +197,7 @@ export function runGenerateInlineTestsRunner(args: string[] = []): void {
     console.log(`Preview: ${result.path}`)
     console.log('-'.repeat(50))
     console.log(result.content)
+
     return
   }
 

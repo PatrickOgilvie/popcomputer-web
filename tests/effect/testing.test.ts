@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Testing Utilities Tests
  */
@@ -32,18 +33,18 @@ const createTestApp = () => {
 
   // Register some test routes
   effectRoutes(app, { registry })
-    .get('/projects', Effect.succeed(new Response(JSON.stringify({ projects: [] }), {
+    .get('/projects', Effect.succeed(Response.json({ projects: [] }, {
       headers: { 'Content-Type': 'application/json' },
     })), { name: 'projects.index' })
 
   effectRoutes(app, { registry })
-    .get('/projects/{project}', Effect.succeed(new Response(JSON.stringify({ project: { id: '123', name: 'Test' } }), {
+    .get('/projects/{project}', Effect.succeed(Response.json({ project: { id: '123', name: 'Test' } }, {
       headers: { 'Content-Type': 'application/json' },
     })), { name: 'projects.show' })
 
   effectRoutes(app, { registry })
     .post('/projects', Effect.succeed(
-      new Response(JSON.stringify({ project: { id: 'new', name: 'Created' } }), {
+      Response.json({ project: { id: 'new', name: 'Created' } }, {
         status: 201,
         headers: { 'Content-Type': 'application/json' },
       })
@@ -89,7 +90,7 @@ describe('describeRoute Integration', () => {
       assert: async (ctx) => {
         expect(ctx.json).toBeDefined()
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        expect((ctx.json as any).projects).toEqual([])
+        expect(ctx.json).toMatchObject({ projects: [] })
       },
     })
   })
@@ -100,7 +101,7 @@ describe('describeRoute Integration', () => {
       expect: { status: 200 },
       assert: async (ctx) => {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        expect((ctx.json as any).project.id).toBe('123')
+        expect(ctx.json).toMatchObject({ project: { id: '123' } })
       },
     })
   })
@@ -111,7 +112,7 @@ describe('describeRoute Integration', () => {
       expect: { status: 201 },
       assert: async (ctx) => {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        expect((ctx.json as any).project.name).toBe('Created')
+        expect(ctx.json).toMatchObject({ project: { name: 'Created' } })
       },
     })
   })

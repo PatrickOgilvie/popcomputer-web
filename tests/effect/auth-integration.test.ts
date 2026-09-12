@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Auth Integration Type Tests
  *
@@ -39,9 +40,9 @@ describe('Auth Integration Types', () => {
   // Mock auth client type
   type MockAuthClient = {
     api: {
-      signInEmail: (opts: any) => Promise<{ headers: Headers }>
-      signUpEmail: (opts: any) => Promise<{ headers: Headers }>
-      signOut: (opts: any) => Promise<{ headers: Headers }>
+      signInEmail: (opts: { readonly body?: unknown; readonly request?: Request; readonly returnHeaders?: boolean }) => Promise<{ headers: Headers }>
+      signUpEmail: (opts: { readonly body?: unknown; readonly request?: Request; readonly returnHeaders?: boolean }) => Promise<{ headers: Headers }>
+      signOut: (opts: { readonly body?: unknown; readonly request?: Request; readonly returnHeaders?: boolean }) => Promise<{ headers: Headers }>
     }
   }
 

@@ -82,6 +82,7 @@ describe('generateOpenApi', () => {
   describe('Basic Structure', () => {
     test('generates valid OpenAPI 3.1 spec', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -93,6 +94,7 @@ describe('generateOpenApi', () => {
 
     test('includes paths for all routes', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -104,6 +106,7 @@ describe('generateOpenApi', () => {
 
     test('converts path params correctly', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -117,6 +120,7 @@ describe('generateOpenApi', () => {
   describe('Operations', () => {
     test('generates GET operations', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -127,6 +131,7 @@ describe('generateOpenApi', () => {
 
     test('generates POST operations', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -138,6 +143,7 @@ describe('generateOpenApi', () => {
 
     test('generates PUT operations', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -148,6 +154,7 @@ describe('generateOpenApi', () => {
 
     test('generates DELETE operations', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -158,6 +165,7 @@ describe('generateOpenApi', () => {
 
     test('includes operationId from route name', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -168,6 +176,7 @@ describe('generateOpenApi', () => {
 
     test('generates summary from route name', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -181,6 +190,7 @@ describe('generateOpenApi', () => {
   describe('Parameters', () => {
     test('generates path parameters from bindings', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -195,6 +205,7 @@ describe('generateOpenApi', () => {
 
     test('sets uuid format for id columns', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -207,6 +218,7 @@ describe('generateOpenApi', () => {
   describe('Tags', () => {
     test('extracts tags from route names', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -218,6 +230,7 @@ describe('generateOpenApi', () => {
 
     test('assigns tags to operations', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -228,6 +241,7 @@ describe('generateOpenApi', () => {
 
     test('uses custom tags when provided', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
         tags: [
@@ -243,6 +257,7 @@ describe('generateOpenApi', () => {
   describe('Request Bodies', () => {
     test('includes request body for POST', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -253,6 +268,7 @@ describe('generateOpenApi', () => {
 
     test('includes request body for PUT', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -262,6 +278,7 @@ describe('generateOpenApi', () => {
 
     test('excludes request body for GET', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -271,6 +288,7 @@ describe('generateOpenApi', () => {
 
     test('excludes request body for DELETE', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -282,6 +300,7 @@ describe('generateOpenApi', () => {
   describe('Error Responses', () => {
     test('includes 404 for routes with bindings', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -291,6 +310,7 @@ describe('generateOpenApi', () => {
 
     test('excludes 404 for routes without bindings', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -300,6 +320,7 @@ describe('generateOpenApi', () => {
 
     test('includes 401 for all routes', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -312,6 +333,7 @@ describe('generateOpenApi', () => {
   describe('Filtering', () => {
     test('filters by include prefix', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
         includePrefixes: ['/api'],
@@ -322,6 +344,7 @@ describe('generateOpenApi', () => {
 
     test('filters by exclude prefix', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
         excludePrefixes: ['/api'],
@@ -335,6 +358,7 @@ describe('generateOpenApi', () => {
   describe('Servers', () => {
     test('includes servers when provided', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
         servers: [
@@ -352,6 +376,7 @@ describe('generateOpenApi', () => {
   describe('Security', () => {
     test('includes security schemes when provided', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
         securitySchemes: {
@@ -370,6 +395,7 @@ describe('generateOpenApi', () => {
 
     test('applies default security to operations', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
         defaultSecurity: [{ bearerAuth: [] }],
@@ -382,6 +408,7 @@ describe('generateOpenApi', () => {
   describe('JSON Output', () => {
     test('produces valid JSON', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })
@@ -394,6 +421,7 @@ describe('generateOpenApi', () => {
 
     test('formats YAML output when requested', () => {
       const registry = createTestRegistry()
+
       const spec = generateOpenApi(registry, {
         info: { title: 'Test API', version: '1.0.0' },
       })

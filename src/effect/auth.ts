@@ -6,15 +6,18 @@
 
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import type { Hono, MiddlewareHandler, Env } from 'hono'
-import { AuthUserService, AuthService, DatabaseService, PageService, RequestService, type AuthType, type AuthUser } from './services.js'
+import type { DatabaseService } from './services.js'
+import { AuthUserService, AuthService, PageService, RequestService, type AuthType, type AuthUser } from './services.js'
 import {
   InvalidAuthSession,
-  AuthRedirect,
   HttpError,
   SessionLookupUnavailable,
   UnauthorizedError,
 } from './errors.js'
-import type { AppError, AuthRateLimitError, ValidationError } from './errors.js'
+import type {
+  AppError, AuthRateLimitError, ValidationError,
+  AuthRedirect
+} from './errors.js'
 import {
   runBetterAuthApiCall,
   toHonertiaAuthError,
@@ -44,12 +47,10 @@ export const RequireAuthLayer = Layer.effect(
     const maybeUser = yield* Effect.serviceOption(AuthUserService)
 
     if (Option.isNone(maybeUser)) {
-      return yield* Effect.fail(
-        new UnauthorizedError({
-          message: 'Authentication required',
-          redirectTo: '/login',
-        })
-      )
+      return yield* new UnauthorizedError({
+        message: 'Authentication required',
+        redirectTo: '/login',
+      })
     }
 
     return maybeUser.value
@@ -72,12 +73,10 @@ export const RequireGuestLayer = Layer.effectDiscard(
     const maybeUser = yield* Effect.serviceOption(AuthUserService)
 
     if (Option.isSome(maybeUser)) {
-      return yield* Effect.fail(
-        new UnauthorizedError({
-          message: 'Already authenticated',
-          redirectTo: '/',
-        })
-      )
+      return yield* new UnauthorizedError({
+        message: 'Already authenticated',
+        redirectTo: '/',
+      })
     }
 
     // Guest confirmed - no user present, succeed silently
@@ -133,14 +132,13 @@ export function createGuestLayer(
 
       if (Option.isSome(maybeUser)) {
         const authUser = maybeUser.value
+
         // Check if this user is allowed through
         if (!allowUser(authUser)) {
-          return yield* Effect.fail(
-            new UnauthorizedError({
-              message: 'Already authenticated',
-              redirectTo,
-            })
-          )
+          return yield* new UnauthorizedError({
+            message: 'Already authenticated',
+            redirectTo,
+          })
         }
         // User is allowed (e.g., anonymous user) - continue
       }
@@ -175,6 +173,7 @@ export const requireAuth = (
       if (Option.isNone(option)) {
         return Effect.fail(new UnauthorizedError({ message: 'Unauthenticated', redirectTo }))
       }
+
       return Effect.succeed(option.value)
     })
   )
@@ -190,6 +189,7 @@ export const requireGuest = (
       if (Option.isSome(option)) {
         return Effect.fail(new UnauthorizedError({ message: 'Already authenticated', redirectTo }))
       }
+
       return Effect.void
     })
   )
@@ -227,12 +227,16 @@ function projectSharedUser(
   config: ShareAuthUserConfig
 ): PagePropValue {
   if (!authUser) return null
+
   if (config.project) return config.project(authUser)
 
   const user = authUser.user
+
   if (config.mapUser) return config.mapUser(user)
+
   if (config.fields) {
     const picked: PageProps = {}
+
     for (const key of config.fields) {
       if (key in user) {
         picked[key] = JSON.parse(JSON.stringify(
@@ -240,8 +244,10 @@ function projectSharedUser(
         ))
       }
     }
+
     return picked
   }
+
   return {
     id: String(user.id),
     name: user.name === undefined || user.name === null ? null : String(user.name),
@@ -280,14 +286,17 @@ export function shareAuth(
 export function shareAuthMiddleware<E extends Env>(
   config: ShareAuthUserConfig = {}
 ): MiddlewareHandler<E> {
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return async (c, next) => {
     const requestContext = openHonertiaContext(c)
     const page = requestContext.web ?? requestContext.honertia
+
     if (page) {
       page.share('auth', {
         user: projectSharedUser(requestContext.authUser, config),
       })
     }
+
     await next()
 
     // Return response for proper propagation in forwarding/proxy scenarios
@@ -461,6 +470,7 @@ export function effectAuthRoutes<E extends Env>(
         const sessionCookie = config.sessionCookie ?? 'better-auth.session_token'
         const headers = new Headers({ Location: logoutRedirect })
         appendLogoutCookies(headers, [sessionCookie])
+
         return new Response(null, { status: 303, headers })
       })
     )
@@ -477,11 +487,13 @@ export function effectAuthRoutes<E extends Env>(
   // Apply CORS if configured
   if (config.cors) {
     const corsConfig = config.cors
+    // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
     app.use(`${apiPath}/*`, async (c, next) => {
       const origin = c.req.header('Origin')
 
       // Determine allowed origin
       let allowedOrigin: string | null = null
+
       if (corsConfig.origin instanceof Function) {
         allowedOrigin = origin ? corsConfig.origin(origin) ?? null : null
       } else if (Array.isArray(corsConfig.origin)) {
@@ -492,6 +504,7 @@ export function effectAuthRoutes<E extends Env>(
 
       if (allowedOrigin) {
         c.header('Access-Control-Allow-Origin', allowedOrigin)
+
         if (corsConfig.credentials) {
           c.header('Access-Control-Allow-Credentials', 'true')
         }
@@ -502,6 +515,7 @@ export function effectAuthRoutes<E extends Env>(
         c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
         c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         c.header('Access-Control-Max-Age', '86400')
+
         return c.body(null, 204)
       }
 
@@ -509,12 +523,15 @@ export function effectAuthRoutes<E extends Env>(
     })
   }
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   app.all(`${apiPath}/*`, async (c) => {
     // SAFETY: The Better Auth boundary validated this representation before exposing the narrower adapter contract.
     const auth = openHonertiaContext(c).auth as { handler?: (req: Request) => Response | Promise<Response> } | undefined
+
     if (!auth?.handler) {
       return c.json({ error: 'Auth not configured' }, 500)
     }
+
     return auth.handler(c.req.raw)
   })
 }
@@ -531,6 +548,7 @@ export function loadUser<E extends Env>(
 ): MiddlewareHandler<E> {
   const { sessionCookie, session: sessionSchema = DefaultAuthSessionSchema } = config
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return async (c, next) => {
     const requestCtx = openHonertiaContext(c)
 
@@ -551,13 +569,16 @@ export function loadUser<E extends Env>(
           }
         }
       | undefined
+
     if (!auth?.api?.getSession) {
       await next()
+
       // Return response for proper propagation in forwarding/proxy scenarios
       return c.res
     }
 
     const cookieHeader = c.req.header('Cookie') ?? ''
+
     const hasSessionCookie = sessionCookie
       ? cookieHeader.includes(`${sessionCookie}=`) ||
         cookieHeader.includes(`__Secure-${sessionCookie}=`)
@@ -565,10 +586,12 @@ export function loadUser<E extends Env>(
 
     if (!hasSessionCookie) {
       await next()
+
       return c.res
     }
 
     let session: { user: unknown; session: unknown } | null
+
     try {
       session = await auth.api.getSession({ headers: c.req.raw.headers })
     } catch (cause: unknown) {
@@ -576,13 +599,15 @@ export function loadUser<E extends Env>(
     }
 
     if (session) {
-      const exit = await Effect.runPromiseExit(S.decodeUnknownEffect(sessionSchema)(session))
+      const exit = await Effect.runPromiseExit(S.decodeEffect(sessionSchema)(session))
+
       if (Exit.isFailure(exit)) {
         throw new InvalidAuthSession({
           operation: 'parseSession',
           cause: Cause.squash(exit.cause),
         })
       }
+
       openHonertiaContext(c).authUser = exit.value
     }
 
@@ -652,6 +677,7 @@ export function betterAuthFormAction<A, I, AuthClient = AuthType>(
   return Effect.gen(function* () {
     const auth = yield* AuthService
     const request = yield* RequestService
+
     const input = yield* validateRequest(config.schema, {
       errorComponent: config.errorComponent,
     })
@@ -704,13 +730,14 @@ export function betterAuthLogoutAction(
         request: buildAuthRequest(request),
         returnHeaders: true,
       })
-    ).pipe(Effect.catch(() => Effect.succeed(undefined)))
+    ).pipe(Effect.orElseSucceed(() => undefined))
 
     const responseHeaders = new Headers({
       Location: config.redirectTo ?? '/login',
     })
 
     const resultHeaders = getHeaders(result)
+
     if (resultHeaders) {
       appendSetCookies(responseHeaders, resultHeaders)
     }
@@ -750,11 +777,13 @@ function callBetterAuthSignOut<Auth>(
   }
 
   const api = Object.getOwnPropertyDescriptor(auth, 'api')?.value
+
   if (!(api instanceof Object)) {
     return Promise.reject(new Error('Better Auth API is not configured'))
   }
 
   const signOut = Object.getOwnPropertyDescriptor(api, 'signOut')?.value
+
   if (!(signOut instanceof Function)) {
     return Promise.reject(new Error('Better Auth signOut endpoint is not configured'))
   }
@@ -770,16 +799,21 @@ function resolveRedirect<A>(
   if (target instanceof Function) {
     return target(input, result)
   }
+
   return target ?? '/'
 }
 
 function getHeaders(result: BetterAuthActionResult | undefined): Headers | undefined {
   if (!result) return undefined
+
   if (result instanceof Headers) return result
+
   if (result instanceof Response) return result.headers
+
   if (result instanceof Object && 'headers' in result && result.headers) {
     return coerceHeaders(result.headers)
   }
+
   return undefined
 }
 
@@ -790,14 +824,17 @@ function coerceHeaders(value: Headers | HeadersInit): Headers {
 function appendSetCookies(target: Headers, source: Headers): void {
   // SAFETY: The Better Auth boundary validated this representation before exposing the narrower adapter contract.
   const sourceWithSetCookie = source as Headers & { getSetCookie?: () => string[] }
+
   if (sourceWithSetCookie.getSetCookie instanceof Function) {
     for (const cookie of sourceWithSetCookie.getSetCookie()) {
       target.append('set-cookie', cookie)
     }
+
     return
   }
 
   const setCookie = source.get('set-cookie')
+
   if (!setCookie) {
     return
   }
@@ -830,6 +867,7 @@ function appendLogoutCookies(target: Headers, cookieNames?: string[]): void {
     'better-auth.account_data',
     'better-auth.dont_remember',
   ]
+
   const names = cookieNames?.length ? cookieNames : defaults
 
   for (const name of names) {

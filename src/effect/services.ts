@@ -515,21 +515,20 @@ export function authorize(
 ): Effect.Effect<AuthUser, UnauthorizedError | ForbiddenError, never> {
   return Effect.gen(function* () {
     const maybeUser = yield* Effect.serviceOption(AuthUserService)
+
     if (Option.isNone(maybeUser)) {
-      return yield* Effect.fail(
-        new UnauthorizedError({
-          message: 'Authentication required',
-          redirectTo: '/login',
-        })
-      )
+      return yield* new UnauthorizedError({
+        message: 'Authentication required',
+        redirectTo: '/login',
+      })
     }
 
     const user = maybeUser.value
+
     if (check && !check(user)) {
-      return yield* Effect.fail(
-        new ForbiddenError({ message: 'Not authorized' })
-      )
+      return yield* new ForbiddenError({ message: 'Not authorized' })
     }
+
     return user
   })
 }

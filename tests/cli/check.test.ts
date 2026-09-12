@@ -3,7 +3,9 @@
  */
 
 import { describe, test, expect } from 'bun:test'
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- These integration tests use real temporary files and native paths to verify the Node CLI filesystem boundary.
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- These integration tests use real temporary files and native paths to verify the Node CLI filesystem boundary.
 import { join } from 'node:path'
 import {
   checkCommand,
@@ -227,6 +229,7 @@ export const route = {
 
       try {
         const registry = createTestRegistry([])
+
         const result = checkCommand(registry, {
           only: ['registration'],
           scanDirs: ['tmp/check-registration/actions'],
@@ -257,6 +260,7 @@ export const route = {
         const registry = createTestRegistry([
           { method: 'post', path: '/projects', name: 'projects.create' },
         ])
+
         const result = checkCommand(registry, {
           only: ['registration'],
           scanDirs: ['tmp/check-registration-pass/actions'],
@@ -339,6 +343,10 @@ describe('parseCheckArgs', () => {
   test('parses --only option', () => {
     const options = parseCheckArgs(['--only', 'routes,naming'])
     expect(options.only).toEqual(['routes', 'naming'])
+  })
+
+  test('rejects unknown check names instead of silently skipping checks', () => {
+    expect(() => parseCheckArgs(['--only', 'routes,typo'])).toThrow('Unknown check: typo')
   })
 
   test('parses multiple options', () => {

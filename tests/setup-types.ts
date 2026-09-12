@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Compile-time contracts for setupWeb's inferred application wiring.
  *
@@ -83,6 +84,7 @@ const typedBoundProject = Effect.gen(function* () {
   const id: string = project.id
   // @ts-expect-error Parser output contains no undeclared database fields.
   void project.internalName
+
   return id
 })
 
@@ -101,8 +103,10 @@ const inferredMiddleware: MiddlewareHandler<TestEnv> = setupWeb({
     client: (context, { db, backgroundTasks }) => {
       const database: TestDatabase = db
       const secret: string = context.env.AUTH_SECRET
+
       const handleBackground: (promise: Promise<unknown>) => void =
         backgroundTasks.handler
+
       void secret
       void handleBackground
 
@@ -121,14 +125,19 @@ const inferredMiddleware: MiddlewareHandler<TestEnv> = setupWeb({
 void inferredMiddleware
 
 const app = new Hono<TestEnv>()
+
 const application = setupWeb(app, {
   version: 'type-test',
   render: (page) => JSON.stringify(page),
   errors: { component: 'Problem' },
 })
+
 const inferredApp: Hono<TestEnv> = application.app
+
 const routeCount: number = application.routes.count()
+
 void inferredApp
+
 void routeCount
 
 setupWeb({
@@ -139,6 +148,7 @@ setupWeb({
       const secret: string = context.env.AUTH_SECRET
       backgroundTasks.handler(Promise.resolve())
       void secret
+
       return { databaseName: 'none' }
     },
   },
@@ -212,12 +222,17 @@ const customBetterAuth = {
   },
   handler: async (_request: Request) => new Response('OK'),
 }
+
 const effectAuth = effectifyBetterAuth(customBetterAuth)
+
 const customEndpointEffect: Effect.Effect<
   { readonly echoed: string },
   BetterAuthBoundaryFailure
 > = effectAuth.api.customEndpoint({ value: 'typed' })
+
 void customEndpointEffect
 
 // @ts-expect-error Plugin endpoint arguments remain required and typed.
-effectAuth.api.customEndpoint({ value: 123 })
+const invalidEndpointEffect = effectAuth.api.customEndpoint({ value: 123 })
+
+void invalidEndpointEffect

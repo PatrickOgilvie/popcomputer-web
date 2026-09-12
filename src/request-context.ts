@@ -84,13 +84,16 @@ export function openHonertiaContext<E extends Env>(
     c.var,
     WEB_REQUEST_CONTEXT
   )?.value
+
   if (existing) {
     // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
     return existing as WebRequestContext<E>
   }
+
   const created: WebRequestContext<E> = {}
   // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
   c.set(WEB_REQUEST_CONTEXT as never, created as never)
+
   return created
 }
 
@@ -140,15 +143,19 @@ export type HonertiaProvidedServices = WebProvidedServices
 export function webServices<E extends Env>(
   provide: (c: Context<E>) => WebProvidedServices
 ): MiddlewareHandler<E> {
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return async (c, next) => {
     const ctx = openHonertiaContext(c)
     const services = provide(c)
+
     if (services.db !== undefined) {
       ctx.db = services.db
     }
+
     if (services.auth !== undefined) {
       ctx.auth = services.auth
     }
+
     await next()
   }
 }

@@ -35,6 +35,7 @@ export const render = <T extends PageProps>(
 ): Effect.Effect<Response, never, PageService> =>
   Effect.gen(function* () {
     const page = yield* PageService
+
     return yield* Effect.promise(() => page.render(component, props))
   })
 
@@ -52,6 +53,7 @@ export const renderWithErrors = <T extends PageProps>(
   Effect.gen(function* () {
     const page = yield* PageService
     page.setErrors(errors)
+
     return yield* Effect.promise(() => page.render(component, props))
   })
 
@@ -65,6 +67,7 @@ export const renderWithErrors = <T extends PageProps>(
 export const json = <T>(data: T, status = 200): Effect.Effect<Response, never, ResponseFactoryService> =>
   Effect.gen(function* () {
     const factory = yield* ResponseFactoryService
+
     return factory.json(data, status)
   })
 
@@ -74,6 +77,7 @@ export const json = <T>(data: T, status = 200): Effect.Effect<Response, never, R
 export const text = (data: string, status = 200): Effect.Effect<Response, never, ResponseFactoryService> =>
   Effect.gen(function* () {
     const factory = yield* ResponseFactoryService
+
     return factory.text(data, status)
   })
 
@@ -112,12 +116,15 @@ export const prefersJson: Effect.Effect<boolean, never, RequestService> =
   Effect.gen(function* () {
     const request = yield* RequestService
     const isInertia = request.header('X-Inertia') === 'true'
+
     if (isInertia) return false
 
-    const accept = request.header('Accept') || ''
+    const accept = request.header('Accept') ?? ''
+
     if (accept.includes('application/json')) return true
 
-    const contentType = request.header('Content-Type') || ''
+    const contentType = request.header('Content-Type') ?? ''
+
     return contentType.includes('application/json')
   })
 
@@ -130,9 +137,11 @@ export const jsonOrRender = <T extends PageProps>(
 ): Effect.Effect<Response, never, RequestService | PageService | ResponseFactoryService> =>
   Effect.gen(function* () {
     const wantsJson = yield* prefersJson
+
     if (wantsJson) {
       return yield* json(data)
     }
+
     return yield* render(component, data)
   })
 

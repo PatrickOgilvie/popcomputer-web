@@ -4,8 +4,9 @@
  * Wraps Effect computations into Hono handlers.
  */
 
-import { Effect, Exit, Cause, ManagedRuntime, Result } from 'effect'
+import { Option, Effect, Exit, Cause, ManagedRuntime, Result } from 'effect'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import {
   getEffectBridgeConfig,
   getEffectRuntime,
@@ -82,6 +83,7 @@ function logStructuredError(
 ): void {
   // Suppress logging during tests
   if ('Bun' in globalThis && globalThis.Bun.env?.NODE_ENV === 'test') return
+  // oxlint-disable-next-line effecttsgo/global-console -- The outer HTTP error renderer writes preformatted terminal or JSON diagnostics to stderr; preserve that output format.
   console.error(
     isDev
       ? memoizedFormatters.dev.terminal.format(structured)
@@ -119,9 +121,11 @@ function isDevelopment<E extends Env>(
     envKey = 'ENVIRONMENT',
     devValue = 'development',
   } = config
+
   const env = c.env ?? {}
   const configuredEnvironment = Object.getOwnPropertyDescriptor(env, envKey)?.value
   const nodeEnvironment = Object.getOwnPropertyDescriptor(env, 'NODE_ENV')?.value
+
   return showDevErrors && (
     configuredEnvironment === devValue ||
     (envKey === 'ENVIRONMENT' && nodeEnvironment === devValue)
@@ -140,12 +144,14 @@ export interface ErrorBoundaryConfig {
 /**
  * Render any request failure through Honertia's single error boundary.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
 export async function renderErrorResponse<E extends Env>(
   cause: unknown,
   c: HonoContext<E>,
   config: ErrorBoundaryConfig = {}
 ): Promise<Response> {
   const error = cause
+
   if (error instanceof AuthRedirect) {
     return new Response(null, {
       status: error.status,
@@ -155,14 +161,18 @@ export async function renderErrorResponse<E extends Env>(
 
   const context = captureErrorContext(c)
   const isDev = isDevelopment(c, config)
+
   const format = detectOutputFormat(
     createFormatDetectionContext(c),
     c.env
   )
+
   const structured = error instanceof Error
     ? getStructuredFromThrown(error) ?? toStructuredError(error, context)
     : toStructuredError(error, context)
+
   const formatter = isDev ? memoizedFormatters.dev : memoizedFormatters.prod
+
   const finalize = (response: Response): Response =>
     appendVerifiedErrorHeaders(response, error)
 
@@ -172,28 +182,36 @@ export async function renderErrorResponse<E extends Env>(
 
   if (error instanceof ValidationError) {
     const isInertia = c.req.header('X-Inertia') === 'true'
+
     const prefersJson =
-      c.req.header('Accept')?.includes('application/json') ||
-      c.req.header('Content-Type')?.includes('application/json')
+      c.req.header('Accept')?.includes('application/json') === true ||
+      c.req.header('Content-Type')?.includes('application/json') === true
+
     if ((prefersJson && !isInertia) || format === 'json') {
       return finalize(c.json(formatter.json.format(structured), 422))
     }
 
     const requestContext = openHonertiaContext(c)
     const page = requestContext.web ?? requestContext.honertia
+
     if (error.component && page) {
       page.setErrors(error.errors)
+
       return finalize(await page.render(error.component))
     }
 
     page?.setErrors(error.errors)
-    return finalize(c.redirect(c.req.header('Referer') || '/', 303))
+
+    const referer = c.req.header('Referer')
+
+    return finalize(c.redirect(referer?.length ? referer : '/', 303))
   }
 
   if (error instanceof UnauthorizedError) {
     if (format === 'json') {
       return finalize(c.json(formatter.json.format(structured), 401))
     }
+
     return finalize(c.redirect(
       error.redirectTo ?? '/login',
       c.req.header('X-Inertia') === 'true' ? 303 : 302
@@ -205,6 +223,7 @@ export async function renderErrorResponse<E extends Env>(
   }
 
   const status = structured.httpStatus
+
   if (
     format === 'json' ||
     error instanceof ForbiddenError ||
@@ -212,17 +231,20 @@ export async function renderErrorResponse<E extends Env>(
     error instanceof AuthRateLimitError
   ) {
     // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
-    return finalize(c.json(formatter.json.format(structured), status as any))
+    return finalize(c.json(formatter.json.format(structured), status as ContentfulStatusCode))
   }
 
   const requestContext = openHonertiaContext(c)
   const page = requestContext.web ?? requestContext.honertia
+
   if (page) {
     const response = await page.render(
       config.component ?? 'Error',
       formatter.inertia.format(structured)
     )
+
     if (response.status === status) return finalize(response)
+
     return finalize(new Response(response.body, {
       status,
       statusText: response.statusText,
@@ -231,7 +253,7 @@ export async function renderErrorResponse<E extends Env>(
   }
 
   // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
-  return finalize(c.json(formatter.json.format(structured), status as any))
+  return finalize(c.json(formatter.json.format(structured), status as ContentfulStatusCode))
 }
 
 function appendVerifiedErrorHeaders(
@@ -239,6 +261,7 @@ function appendVerifiedErrorHeaders(
   cause: unknown
 ): Response {
   const error = cause
+
   if (
     !(error instanceof ValidationError) &&
     !(error instanceof AuthRateLimitError) &&
@@ -254,6 +277,7 @@ function appendVerifiedErrorHeaders(
     if (name.toLowerCase() !== 'set-cookie') headers.set(name, value)
   })
   const responseCookies = readResponseSetCookies(response.headers)
+
   for (const cookie of responseCookies) {
     headers.append('set-cookie', cookie)
   }
@@ -270,11 +294,13 @@ function readResponseSetCookies(headers: Headers): readonly string[] {
   const headersWithCookies = headers as Headers & {
     getSetCookie?: () => string[]
   }
+
   if (headersWithCookies.getSetCookie instanceof Function) {
     return headersWithCookies.getSetCookie()
   }
 
   const combined = headers.get('set-cookie')
+
   return combined ? [combined] : []
 }
 
@@ -286,12 +312,15 @@ function readResponseSetCookies(headers: Headers): readonly string[] {
  */
 function classifyMissingService(cause: unknown): HonertiaConfigurationError | null {
   const defect = cause
+
   if (!(defect instanceof Error)) return null
   const prefix = 'Service not found: '
+
   if (!defect.message.startsWith(prefix)) return null
 
   // Exact tag id match ('@popcomputer/web/Auth' must not also match '@popcomputer/web/AuthUser')
   const tagId = defect.message.slice(prefix.length).split(' ')[0]
+
   switch (tagId) {
     case '@popcomputer/web/Database':
       return HonertiaConfigurationError.databaseNotConfigured()
@@ -305,12 +334,14 @@ function classifyMissingService(cause: unknown): HonertiaConfigurationError | nu
 /**
  * Observe an Effect error without changing request behavior.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
 async function observeEffectError<E extends Env>(
   c: HonoContext<E>,
   event: EffectErrorEvent,
-  runtime?: ManagedRuntime.ManagedRuntime<any, never>
+  runtime?: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<void> {
   const activeRuntime = runtime ?? getEffectRuntime(c)
+
   if (!activeRuntime) return
 
   // An unavailable route Layer is represented in the returned Exit in v4.
@@ -324,10 +355,11 @@ async function observeEffectError<E extends Env>(
  * The typed failure is observed once, then rendered through the same boundary
  * used by Hono errors and not-found responses.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
 export async function errorToResponse<E extends Env>(
   error: AppError,
   c: HonoContext<E>,
-  runtime?: ManagedRuntime.ManagedRuntime<any, never>
+  runtime?: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<Response> {
   if (error instanceof AuthRedirect) {
     return renderErrorResponse(error, c, openHonertiaContext(c).errorBoundary)
@@ -370,6 +402,7 @@ function isRedirect<Value>(value: Value): value is Value & Redirect {
 export function effectHandler<E extends Env, R, Err extends AppError>(
   effect: Effect.Effect<Response | Redirect, Err, R>
 ): MiddlewareHandler<E> {
+  // oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
   return async (c) => {
     const runtime = getEffectRuntime(c)
 
@@ -385,19 +418,21 @@ export function effectHandler<E extends Env, R, Err extends AppError>(
       }
     }
 
-    return await runEffectWithRuntime(effect, c, runtime)
+    return runEffectWithRuntime(effect, c, runtime)
   }
 }
 
 /** Run one handler Effect with a caller-owned managed runtime. */
+// oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
 export async function runEffectWithRuntime<
   E extends Env,
   R,
   Err,
+  RuntimeError,
 >(
   effect: Effect.Effect<Response | Redirect, Err, R>,
   c: HonoContext<E>,
-  runtime: ManagedRuntime.ManagedRuntime<R, never>
+  runtime: ManagedRuntime.ManagedRuntime<R, RuntimeError>
 ): Promise<Response> {
   // ManagedRuntime includes both Layer acquisition failures and handler
   // failures in the Exit returned by its v4 runner.
@@ -413,18 +448,21 @@ export async function runEffectWithRuntime<
  * Failures are converted to responses via errorToResponse.
  * Defects (unexpected errors) are observed and rendered by the same boundary.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
 async function handleExit<E extends Env>(
   exit: Exit.Exit<Response | Redirect, unknown>,
   c: HonoContext<E>,
-  runtime?: ManagedRuntime.ManagedRuntime<any, never>
+  runtime?: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<Response> {
   const boundaryConfig = openHonertiaContext(c).errorBoundary
 
   if (Exit.isSuccess(exit)) {
     const value = exit.value
+
     if (isRedirect(value)) {
       return handleRedirect(value, c)
     }
+
     return value
   }
 
@@ -433,9 +471,10 @@ async function handleExit<E extends Env>(
 
   if (Cause.hasFails(cause)) {
     const error = Cause.findErrorOption(cause)
-    if (error._tag === 'Some') {
+
+    if (Option.isSome(error)) {
       // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
-      return await errorToResponse(error.value as AppError, c, runtime)
+      return errorToResponse(error.value as AppError, c, runtime)
     }
   }
 
@@ -444,6 +483,7 @@ async function handleExit<E extends Env>(
 
   if (Cause.hasDies(cause)) {
     const defect = Cause.findDefect(cause)
+
     if (Result.isSuccess(defect)) {
       // A missing Honertia service is a configuration defect; translate it to
       // the structured configuration error before the generic defect paths.
@@ -466,8 +506,9 @@ async function handleExit<E extends Env>(
           },
           runtime
         )
-        const wrapped = new Error(err instanceof Error ? err.message : String(err))
+        const wrapped = new Error(err instanceof Error ? err.message : structured.message)
         structuredErrorsByCause.set(wrapped, structured)
+
         return renderErrorResponse(wrapped, c, boundaryConfig)
       }
 
@@ -492,11 +533,13 @@ async function handleExit<E extends Env>(
 
       if (err instanceof Error) {
         structuredErrorsByCause.set(err, structured)
+
         return renderErrorResponse(err, c, boundaryConfig)
       }
 
       const wrapped = new Error(String(err))
       structuredErrorsByCause.set(wrapped, structured)
+
       return renderErrorResponse(wrapped, c, boundaryConfig)
     }
   }
@@ -507,6 +550,7 @@ async function handleExit<E extends Env>(
     { reason: 'Unknown effect failure' },
     context
   )
+
   await observeEffectError(
     c,
     {
@@ -520,6 +564,7 @@ async function handleExit<E extends Env>(
   )
   const fallbackError = new Error('Unknown effect failure')
   structuredErrorsByCause.set(fallbackError, structured)
+
   return renderErrorResponse(fallbackError, c, boundaryConfig)
 }
 

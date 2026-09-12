@@ -1,6 +1,7 @@
 /** Security middleware for @popcomputer/web applications. */
 
 import type { Context, MiddlewareHandler, Env } from 'hono'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 
 /**
  * HTTP methods that mutate state and are therefore CSRF-relevant.
@@ -63,8 +64,11 @@ function originAllowed(
   }
 
   const allowed = config.allowedOrigins
+
   if (!allowed) return false
+
   if (allowed instanceof Function) return allowed(origin)
+
   return allowed.includes(origin)
 }
 
@@ -73,6 +77,7 @@ function originAllowed(
  */
 function originOf(url: string | undefined | null): string | null {
   if (!url) return null
+
   try {
     return new URL(url).origin
   } catch {
@@ -108,20 +113,24 @@ export function verifyOrigin<E extends Env>(
   const methods = new Set(
     (config.methods ?? [...UNSAFE_METHODS]).map((m) => m.toUpperCase())
   )
+
   const status = config.status ?? 403
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return async (c: Context<E>, next) => {
     if (!methods.has(c.req.method.toUpperCase())) {
       return next()
     }
 
     const requestOrigin = originOf(c.req.url)
+
     if (!requestOrigin) {
       // Cannot determine our own origin — fail closed only if strict.
       if (config.requireOrigin) {
         // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
-        return c.json({ error: 'Origin verification failed' }, status as any)
+        return c.json({ error: 'Origin verification failed' }, status as ContentfulStatusCode)
       }
+
       return next()
     }
 
@@ -132,14 +141,15 @@ export function verifyOrigin<E extends Env>(
     if (!headerOrigin) {
       if (config.requireOrigin) {
         // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
-        return c.json({ error: 'Missing Origin header' }, status as any)
+        return c.json({ error: 'Missing Origin header' }, status as ContentfulStatusCode)
       }
+
       return next()
     }
 
     if (!originAllowed(headerOrigin, requestOrigin, config)) {
       // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
-      return c.json({ error: 'Cross-origin request blocked' }, status as any)
+      return c.json({ error: 'Cross-origin request blocked' }, status as ContentfulStatusCode)
     }
 
     return next()

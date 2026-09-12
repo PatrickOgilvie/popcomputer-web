@@ -70,12 +70,14 @@ export function getClientSafeMessage(
   isDev: boolean
 ): string {
   if (isDev) return error.message
+
   if (
     error.httpStatus >= 500 ||
     SENSITIVE_MESSAGE_CATEGORIES.has(error.category)
   ) {
     return SAFE_GENERIC_MESSAGE
   }
+
   return error.message
 }
 
@@ -178,6 +180,7 @@ export class JsonErrorFormatter implements ErrorFormatter {
 
     if (this.options.safeMessages) {
       const validation = projectValidationExtension(error.validation)
+
       if (validation) {
         output.validation = validation
       }
@@ -205,6 +208,7 @@ export class JsonErrorFormatter implements ErrorFormatter {
    */
   formatString(error: HonertiaStructuredError): string {
     const obj = this.format(error)
+
     return this.options.pretty ? JSON.stringify(obj, null, 2) : JSON.stringify(obj)
   }
 }
@@ -311,9 +315,11 @@ export class TerminalErrorFormatter implements ErrorFormatter {
         // Pointer arrow
         if (snippet.highlight) {
           const padding = ' '.repeat(7 + snippet.highlight.start)
+
           const arrows = '^'.repeat(
             Math.max(1, snippet.highlight.end - snippet.highlight.start)
           )
+
           lines.push(`${c.red}${padding}${arrows}${c.reset}`)
         }
 
@@ -331,11 +337,13 @@ export class TerminalErrorFormatter implements ErrorFormatter {
     if (error.context.route) {
       const { method, path, params } = error.context.route
       lines.push(`${c.cyan}Route:${c.reset} ${method} ${path}`)
+
       if (Object.keys(params).length > 0) {
         lines.push(
           `${c.cyan}Params:${c.reset} ${JSON.stringify(params)}`
         )
       }
+
       lines.push('')
     }
 
@@ -345,12 +353,13 @@ export class TerminalErrorFormatter implements ErrorFormatter {
 
       const fixesToShow = error.fixes.slice(0, this.options.maxFixes)
       fixesToShow.forEach((fix, i) => {
-        const confidence =
-          fix.confidence === 'high'
-            ? `${c.green}[high]${c.reset}`
-            : fix.confidence === 'medium'
-              ? `${c.yellow}[med]${c.reset}`
-              : `${c.gray}[low]${c.reset}`
+        const confidenceLabels = {
+          high: `${c.green}[high]${c.reset}`,
+          medium: `${c.yellow}[med]${c.reset}`,
+          low: `${c.gray}[low]${c.reset}`,
+        }
+
+        const confidence = confidenceLabels[fix.confidence]
 
         const auto = fix.automated ? `${c.cyan}(auto)${c.reset} ` : ''
         lines.push(`  ${i + 1}. ${confidence} ${auto}${fix.description}`)
@@ -358,6 +367,7 @@ export class TerminalErrorFormatter implements ErrorFormatter {
         // Show code preview if available
         if (fix.operations[0]?.content) {
           const preview = fix.operations[0].content.trim().split('\n')[0]
+
           if (preview.length > 60) {
             lines.push(`     ${c.dim}${preview.slice(0, 60)}...${c.reset}`)
           } else {
@@ -428,6 +438,7 @@ export class InertiaErrorFormatter implements ErrorFormatter {
 
       // Include first high-confidence fix as a hint
       const highConfidenceFix = error.fixes.find((f) => f.confidence === 'high')
+
       if (highConfidenceFix) {
         props.set('hint', highConfidenceFix.description)
       }
@@ -493,6 +504,7 @@ export function detectOutputFormat<Environment>(
 ): OutputFormat {
   // Check for AI/CLI User-Agent
   const userAgent = request.header('User-Agent') ?? ''
+
   if (
     userAgent.includes('claude-code') ||
     userAgent.includes('claude') ||
@@ -505,6 +517,7 @@ export function detectOutputFormat<Environment>(
 
   // Check Accept header
   const accept = request.header('Accept') ?? ''
+
   if (accept.includes('application/json')) {
     return 'json'
   }
@@ -516,6 +529,7 @@ export function detectOutputFormat<Environment>(
 
   // Check Content-Type for API requests
   const contentType = request.header('Content-Type') ?? ''
+
   if (contentType.includes('application/json')) {
     return 'json'
   }
@@ -524,6 +538,7 @@ export function detectOutputFormat<Environment>(
   // Must be explicitly signalled — CF_PAGES_BRANCH is intentionally excluded
   // because it is present on production Pages deployments too.
   const environment = env instanceof Object ? env : {}
+
   const isDev =
     Object.getOwnPropertyDescriptor(environment, 'ENVIRONMENT')?.value === 'development' ||
     Object.getOwnPropertyDescriptor(environment, 'NODE_ENV')?.value === 'development'

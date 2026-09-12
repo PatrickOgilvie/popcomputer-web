@@ -71,6 +71,7 @@ export function createTemplate(
   return (page: PageObject, ctx?: Context) => {
     // If options is a function but no context provided, throw helpful error
     let resolvedOptions: TemplateOptions
+
     if (options instanceof Function) {
       if (!ctx) {
         throw new HonertiaConfigurationError({
@@ -78,6 +79,7 @@ export function createTemplate(
           hint: 'Pass the Hono context to the render function, or use static options.',
         })
       }
+
       resolvedOptions = options(ctx)
     } else {
       resolvedOptions = options
@@ -136,12 +138,15 @@ export function createVersion(manifest: AssetManifest): string {
       assetFiles.push(value)
       continue
     }
+
     if (value.file !== undefined) {
       assetFiles.push(value.file)
     }
+
     if (Array.isArray(value.css)) {
       assetFiles.push(...value.css)
     }
+
     if (Array.isArray(value.assets)) {
       assetFiles.push(...value.assets)
     }
@@ -149,11 +154,13 @@ export function createVersion(manifest: AssetManifest): string {
 
   const combined = assetFiles.sort().join('')
   let hash = 0
+
   for (let i = 0; i < combined.length; i++) {
     const char = combined.charCodeAt(i)
     hash = ((hash << 5) - hash) + char
     hash = hash & hash
   }
+
   return Math.abs(hash).toString(36)
 }
 

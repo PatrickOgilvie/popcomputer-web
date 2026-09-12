@@ -17,6 +17,7 @@ export interface PageProps {
 }
 
 export type LazyPageProp = PagePropValue | (() => PagePropValue | Promise<PagePropValue>)
+
 export type SharedPageProps = Record<string, LazyPageProp>
 
 export interface PageObject<TProps extends object = PageProps> {

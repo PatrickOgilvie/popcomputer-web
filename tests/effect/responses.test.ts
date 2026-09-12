@@ -1,9 +1,10 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Response Helpers Tests
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Effect, Layer, Exit, Cause } from 'effect'
+import { Option, Effect, Layer, Exit, Cause } from 'effect'
 import type { PageProps } from '../../src/types.js'
 import {
   redirect,
@@ -26,7 +27,7 @@ import {
   type ResponseFactory,
   type RequestContext,
 } from '../../src/effect/services.js'
-import { Redirect, NotFoundError, ForbiddenError, HttpError } from '../../src/effect/errors.js'
+import { Redirect } from '../../src/effect/errors.js'
 
 // Mock HonertiaRenderer
 const createMockHonertia = (): HonertiaRenderer & {
@@ -36,7 +37,7 @@ const createMockHonertia = (): HonertiaRenderer & {
 } => {
   const renders: Array<{ component: string; props?: PageProps }> = []
   const shared: PageProps = {}
-  let errors: Record<string, string> = {}
+  const errors: Record<string, string> = {}
 
   return {
     renders,
@@ -46,7 +47,8 @@ const createMockHonertia = (): HonertiaRenderer & {
     },
     render: async (component, props) => {
       renders.push({ component, props })
-      return new Response(JSON.stringify({ component, props }), {
+
+      return Response.json({ component, props }, {
         headers: { 'Content-Type': 'application/json' },
       })
     },
@@ -64,7 +66,7 @@ const createMockResponseFactory = (): ResponseFactory => ({
   redirect: (url, status = 302) =>
     new Response(null, { status, headers: { Location: url } }),
   json: (data, status = 200) =>
-    new Response(JSON.stringify(data), {
+    Response.json(data, {
       status,
       headers: { 'Content-Type': 'application/json' },
     }),
@@ -226,11 +228,13 @@ describe('notFound', () => {
     const exit = Effect.runSyncExit(notFound('Project'))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value as NotFoundError
+        const error = option.value
         expect(error._tag).toBe('NotFoundError')
         expect(error.resource).toBe('Project')
       }
@@ -242,9 +246,10 @@ describe('notFound', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value as NotFoundError
+        const error = option.value
         expect(error.id).toBe(42)
       }
     }
@@ -255,9 +260,10 @@ describe('notFound', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value as NotFoundError
+        const error = option.value
         expect(error.id).toBe('abc-123')
       }
     }
@@ -270,9 +276,10 @@ describe('forbidden', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value as ForbiddenError
+        const error = option.value
         expect(error._tag).toBe('ForbiddenError')
         expect(error.message).toBe('Forbidden')
       }
@@ -284,9 +291,10 @@ describe('forbidden', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value as ForbiddenError
+        const error = option.value
         expect(error.message).toBe('You cannot edit this resource')
       }
     }
@@ -299,9 +307,10 @@ describe('httpError', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value as HttpError
+        const error = option.value
         expect(error._tag).toBe('HttpError')
         expect(error.status).toBe(429)
         expect(error.message).toBe('Too many requests')
@@ -316,9 +325,10 @@ describe('httpError', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value as HttpError
+        const error = option.value
         expect(error.body).toEqual({ field: 'Invalid' })
       }
     }
@@ -415,6 +425,7 @@ describe('jsonOrRender', () => {
       'x-inertia': 'true',
       accept: 'application/json',
     })
+
     const mockHonertia = createMockHonertia()
     const mockResponse = createMockResponseFactory()
 

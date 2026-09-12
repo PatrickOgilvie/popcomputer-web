@@ -36,16 +36,26 @@ export const trimmed = S.String.pipe(
 export const nullableString = S.Unknown.pipe(
   S.decodeTo(
     S.NullOr(S.String),
-    SchemaTransformation.transform({
+    SchemaTransformation.transformOrFail({
       decode: (value) => {
-        if (value === undefined || value === null) return null
+        if (value === undefined || value === null) return Effect.succeed(null)
+
         if (S.is(S.String)(value)) {
           const trimmed = value.trim()
-          return trimmed === '' ? null : trimmed
+
+          return Effect.succeed(trimmed === '' ? null : trimmed)
         }
-        return String(value)
+
+        if (S.is(S.Union([S.Finite, S.Boolean, S.BigInt]))(value)) {
+          return Effect.succeed(String(value))
+        }
+
+        return Effect.fail(new SchemaIssue.InvalidValue(
+          { message: 'Expected a string or scalar value' },
+          value,
+        ))
       },
-      encode: (s) => s,
+      encode: Effect.succeed,
     })
   )
 )
@@ -89,18 +99,21 @@ export const required = (message = 'This field is required') =>
 // =============================================================================
 
 /**
- * Coerces a value to a number.
+ * Coerces a value to a finite number.
  */
 export const coercedNumber = S.Unknown.pipe(
   S.decodeTo(
-    S.Number,
+    S.Finite,
     SchemaTransformation.transformOrFail({
       decode: (value, options) => {
-        if (S.is(S.Number)(value)) return Effect.succeed(value)
+        if (S.is(S.Finite)(value)) return Effect.succeed(value)
+
         if (S.is(S.String)(value)) {
           const parsed = parseFloat(value)
-          if (!isNaN(parsed)) return Effect.succeed(parsed)
+
+          if (Number.isFinite(parsed)) return Effect.succeed(parsed)
         }
+
         return Effect.fail(
           new SchemaIssue.InvalidValue({ message: 'Expected a number' }, value, options)
         )
@@ -136,7 +149,9 @@ export const nonNegativeInt = coercedNumber.pipe(
 export function parsePositiveInt(value: string | undefined): number | null {
   if (value === undefined) return null
   const parsed = parseInt(value, 10)
+
   if (isNaN(parsed) || parsed <= 0) return null
+
   return parsed
 }
 
@@ -153,12 +168,15 @@ export const coercedBoolean = S.Unknown.pipe(
     SchemaTransformation.transform({
       decode: (value) => {
         if (S.is(S.Boolean)(value)) return value
-        if (S.is(S.Number)(value)) return value !== 0
+
         if (S.is(S.String)(value)) {
           const lower = value.toLowerCase().trim()
+
           if (['true', '1', 'on', 'yes'].includes(lower)) return true
+
           if (['false', '0', 'off', 'no', ''].includes(lower)) return false
         }
+
         return Boolean(value)
       },
       encode: (b) => b,
@@ -175,11 +193,15 @@ export const checkbox = S.Unknown.pipe(
     SchemaTransformation.transform({
       decode: (value) => {
         if (value === undefined || value === null || value === '') return false
+
         if (S.is(S.Boolean)(value)) return value
+
         if (S.is(S.String)(value)) {
           const lower = value.toLowerCase().trim()
+
           return ['true', '1', 'on', 'yes'].includes(lower)
         }
+
         return Boolean(value)
       },
       encode: (b) => b,
@@ -200,14 +222,21 @@ export const coercedDate = S.Unknown.pipe(
     SchemaTransformation.transformOrFail({
       decode: (value, options) => {
         if (S.is(S.Date)(value)) return Effect.succeed(value)
+
         if (S.is(S.String)(value)) {
+          // oxlint-disable-next-line effecttsgo/global-date -- This codec accepts or returns native Date values; parsing this supplied value does not read the clock.
           const date = new Date(value)
+
           if (!isNaN(date.getTime())) return Effect.succeed(date)
         }
-        if (S.is(S.Number)(value)) {
+
+        if (S.is(S.Finite)(value)) {
+          // oxlint-disable-next-line effecttsgo/global-date -- This codec accepts or returns native Date values; parsing this supplied value does not read the clock.
           const date = new Date(value)
+
           if (!isNaN(date.getTime())) return Effect.succeed(date)
         }
+
         return Effect.fail(
           new SchemaIssue.InvalidValue({ message: 'Expected a valid date' }, value, options)
         )
@@ -226,15 +255,23 @@ export const nullableDate = S.Unknown.pipe(
     SchemaTransformation.transformOrFail({
       decode: (value, options) => {
         if (value === undefined || value === null || value === '') return Effect.succeed(null)
+
         if (S.is(S.Date)(value)) return Effect.succeed(value)
+
         if (S.is(S.String)(value)) {
+          // oxlint-disable-next-line effecttsgo/global-date -- This codec accepts or returns native Date values; parsing this supplied value does not read the clock.
           const date = new Date(value)
+
           if (!isNaN(date.getTime())) return Effect.succeed(date)
         }
-        if (S.is(S.Number)(value)) {
+
+        if (S.is(S.Finite)(value)) {
+          // oxlint-disable-next-line effecttsgo/global-date -- This codec accepts or returns native Date values; parsing this supplied value does not read the clock.
           const date = new Date(value)
+
           if (!isNaN(date.getTime())) return Effect.succeed(date)
         }
+
         return Effect.fail(
           new SchemaIssue.InvalidValue({ message: 'Expected a valid date' }, value, options)
         )
@@ -267,9 +304,11 @@ export const ensureArray = <InputSchema extends S.Constraint>(schema: InputSchem
       >({
         decode: (value, options) => {
           if (value === undefined || value === null) return Effect.succeed([])
+
           if (isUnknownArray(value)) {
             return Effect.forEach(value, (item) => decodeItem(item, options))
           }
+
           return Effect.map(decodeItem(value, options), (item) => [item])
         },
         encode: (values, options) =>
@@ -306,18 +345,23 @@ export const nullableEmail = S.Unknown.pipe(
     SchemaTransformation.transformOrFail({
       decode: (value, options) => {
         if (value === undefined || value === null) return Effect.succeed(null)
+
         if (!S.is(S.String)(value)) {
           return Effect.fail(
             new SchemaIssue.InvalidValue({ message: 'Expected a string' }, value, options)
           )
         }
+
         const trimmed = value.trim().toLowerCase()
+
         if (trimmed === '') return Effect.succeed(null)
+
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
           return Effect.fail(
             new SchemaIssue.InvalidValue({ message: 'Invalid email address' }, value, options)
           )
         }
+
         return Effect.succeed(trimmed)
       },
       encode: Effect.succeed,
@@ -340,6 +384,7 @@ export const url = S.String.pipe(
     S.makeFilter((s) => {
       try {
         new URL(s)
+
         return true
       } catch {
         return false
@@ -357,15 +402,20 @@ export const nullableUrl = S.Unknown.pipe(
     SchemaTransformation.transformOrFail({
       decode: (value, options) => {
         if (value === undefined || value === null) return Effect.succeed(null)
+
         if (!S.is(S.String)(value)) {
           return Effect.fail(
             new SchemaIssue.InvalidValue({ message: 'Expected a string' }, value, options)
           )
         }
+
         const trimmed = value.trim()
+
         if (trimmed === '') return Effect.succeed(null)
+
         try {
           new URL(trimmed)
+
           return Effect.succeed(trimmed)
         } catch {
           return Effect.fail(
@@ -559,6 +609,7 @@ export const multipleOf = (value: number, message?: string) =>
 export const inArray = <T extends readonly string[]>(values: T, message?: string) => {
   const allowedValues = new Set<string>(values)
   const isAllowed = (value: string): value is T[number] => allowedValues.has(value)
+
   return S.String.pipe(
     S.refine(
       isAllowed,
@@ -596,7 +647,9 @@ export const nullableUuid = S.Unknown.pipe(
     SchemaTransformation.transformOrFail({
       decode: (value, options) => {
         if (value === undefined || value === null || value === '') return Effect.succeed(null)
+
         if (S.is(S.String)(value)) return Effect.succeed(value)
+
         return Effect.fail(
           new SchemaIssue.InvalidValue({ message: 'Expected a string' }, value, options)
         )
@@ -656,6 +709,7 @@ export const jsonString = S.String.check(
     (val) => {
       try {
         JSON.parse(val)
+
         return true
       } catch {
         return false
@@ -702,11 +756,15 @@ export const accepted = S.Unknown.pipe(
     SchemaTransformation.transform<boolean, unknown>({
       decode: (value) => {
         if (S.is(S.Boolean)(value)) return value
-        if (S.is(S.Number)(value)) return value === 1
+
+        if (value === 1) return true
+
         if (S.is(S.String)(value)) {
           const lower = value.toLowerCase().trim()
+
           return ['true', '1', 'on', 'yes'].includes(lower)
         }
+
         return false
       },
       encode: () => true,
@@ -724,11 +782,15 @@ export const declined = S.Unknown.pipe(
     SchemaTransformation.transform<boolean, unknown>({
       decode: (value) => {
         if (S.is(S.Boolean)(value)) return value
-        if (S.is(S.Number)(value)) return value === 0
+
+        if (value === 0) return false
+
         if (S.is(S.String)(value)) {
           const lower = value.toLowerCase().trim()
-          return ['false', '0', 'off', 'no'].includes(lower)
+
+          return !['false', '0', 'off', 'no'].includes(lower)
         }
+
         return true
       },
       encode: () => false,
@@ -783,7 +845,9 @@ export const max = (length: number, message?: string) =>
  * Validates a date is after the given date.
  */
 export const after = (date: Date | string, message?: string) => {
+  // oxlint-disable-next-line effecttsgo/global-date -- This codec accepts or returns native Date values; parsing this supplied value does not read the clock.
   const compareDate = S.is(S.String)(date) ? new Date(date) : date
+
   return coercedDate.check(S.isGreaterThanDate(
     compareDate,
     { message: message ?? `Must be after ${compareDate.toISOString()}` }
@@ -794,7 +858,9 @@ export const after = (date: Date | string, message?: string) => {
  * Validates a date is after or equal to the given date.
  */
 export const afterOrEqual = (date: Date | string, message?: string) => {
+  // oxlint-disable-next-line effecttsgo/global-date -- This codec accepts or returns native Date values; parsing this supplied value does not read the clock.
   const compareDate = S.is(S.String)(date) ? new Date(date) : date
+
   return coercedDate.check(S.isGreaterThanOrEqualToDate(
     compareDate,
     { message: message ?? `Must be on or after ${compareDate.toISOString()}` }
@@ -805,7 +871,9 @@ export const afterOrEqual = (date: Date | string, message?: string) => {
  * Validates a date is before the given date.
  */
 export const before = (date: Date | string, message?: string) => {
+  // oxlint-disable-next-line effecttsgo/global-date -- This codec accepts or returns native Date values; parsing this supplied value does not read the clock.
   const compareDate = S.is(S.String)(date) ? new Date(date) : date
+
   return coercedDate.check(S.isLessThanDate(
     compareDate,
     { message: message ?? `Must be before ${compareDate.toISOString()}` }
@@ -816,7 +884,9 @@ export const before = (date: Date | string, message?: string) => {
  * Validates a date is before or equal to the given date.
  */
 export const beforeOrEqual = (date: Date | string, message?: string) => {
+  // oxlint-disable-next-line effecttsgo/global-date -- This codec accepts or returns native Date values; parsing this supplied value does not read the clock.
   const compareDate = S.is(S.String)(date) ? new Date(date) : date
+
   return coercedDate.check(S.isLessThanOrEqualToDate(
     compareDate,
     { message: message ?? `Must be on or before ${compareDate.toISOString()}` }
@@ -951,10 +1021,12 @@ export const excludeIf = <InputSchema extends S.Constraint>(
       SchemaTransformation.transformOrFail({
         decode: (value, options) =>
           condition(value)
+            // oxlint-disable-next-line effecttsgo/effect-succeed-with-void -- Schema transformations distinguish the undefined value from the wider void type.
             ? Effect.succeed(undefined)
             : decodeValue(value, options),
         encode: (value, options) =>
           value === undefined
+            // oxlint-disable-next-line effecttsgo/effect-succeed-with-void -- Preserve the optional field's exact undefined type for the encoder.
             ? Effect.succeed(undefined)
             : encodeValue(value, options),
       })
@@ -980,7 +1052,9 @@ export const nullable = <InputSchema extends S.Constraint>(schema: InputSchema) 
       SchemaTransformation.transformOrFail({
         decode: (value, options) => {
           if (value === undefined || value === null) return Effect.succeed(null)
+
           if (S.is(S.String)(value) && value.trim() === '') return Effect.succeed(null)
+
           return decodeValue(value, options)
         },
         encode: (value, options) =>

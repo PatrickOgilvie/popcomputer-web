@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Honertia Middleware Tests
  */
@@ -173,6 +174,7 @@ describe('Honertia Middleware', () => {
           email: 'Invalid email',
           password: 'Required',
         })
+
         return c.var.honertia.render('Login')
       })
 
@@ -194,6 +196,7 @@ describe('Honertia Middleware', () => {
       app.get('/', (c) => {
         c.var.honertia.setErrors({ email: 'Invalid' })
         c.var.honertia.setErrors({ password: 'Required' })
+
         return c.var.honertia.render('Login')
       })
 
@@ -310,6 +313,7 @@ describe('Honertia Middleware', () => {
       const app = createApp()
       app.get('/', (c) => {
         c.var.honertia.setErrors({ name: 'Required' })
+
         return c.var.honertia.render('Form', {
           users: [1],
           data: { field: 'value' },
@@ -362,12 +366,15 @@ describe('Honertia Middleware', () => {
       app.get('/', (c) => {
         c.var.honertia.share('cheap', () => {
           cheapEvaluated++
+
           return 'cheap-value'
         })
         c.var.honertia.share('expensive', () => {
           expensiveEvaluated++
+
           return 'expensive-value'
         })
+
         return c.var.honertia.render('Dashboard')
       })
 
@@ -395,8 +402,10 @@ describe('Honertia Middleware', () => {
       app.get('/', (c) => {
         c.var.honertia.share('user', () => {
           sharedEvaluated++
+
           return { id: 'shared' }
         })
+
         return c.var.honertia.render('Dashboard', { user: { id: 'passed' } })
       })
 
@@ -557,6 +566,7 @@ describe('Honertia Middleware', () => {
       const res1 = await app.request('/', {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
+
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json1 = (await res1.json()) as PageObject
       expect(json1.version).toBe('v1')
@@ -564,6 +574,7 @@ describe('Honertia Middleware', () => {
       const res2 = await app.request('/', {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
+
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json2 = (await res2.json()) as PageObject
       expect(json2.version).toBe('v2')
@@ -633,6 +644,7 @@ describe('Honertia Middleware', () => {
   describe('Edge Cases: Complex Props', () => {
     test('handles deeply nested objects', async () => {
       const app = createApp()
+
       const deepProps = {
         level1: {
           level2: {
@@ -644,6 +656,7 @@ describe('Honertia Middleware', () => {
           },
         },
       }
+
       app.get('/', (c) => c.var.honertia.render('Home', deepProps))
 
       const res = await app.request('/', {
@@ -700,6 +713,7 @@ describe('Honertia Middleware', () => {
 
     test('handles large arrays (pagination mock)', async () => {
       const app = createApp()
+
       const largeData = {
         users: Array.from({ length: 1000 }, (_, i) => ({
           id: i + 1,
@@ -707,6 +721,7 @@ describe('Honertia Middleware', () => {
         })),
         meta: { total: 1000, page: 1, perPage: 1000 },
       }
+
       app.get('/', (c) => c.var.honertia.render('Users/Index', largeData))
 
       const res = await app.request('/', {
@@ -721,6 +736,7 @@ describe('Honertia Middleware', () => {
 
     test('handles Date objects (serialized to string)', async () => {
       const app = createApp()
+      // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
       const date = new Date('2025-01-01T00:00:00Z')
       app.get('/', (c) =>
         c.var.honertia.render('Home', { createdAt: date.toISOString() })
@@ -745,6 +761,7 @@ describe('Honertia Middleware', () => {
           'user.password': 'Too short',
           'settings.notifications': 'Required',
         })
+
         return c.var.honertia.render('Settings')
       })
 
@@ -767,6 +784,7 @@ describe('Honertia Middleware', () => {
           'items.1.price': 'Must be positive',
           'items.2.quantity': 'Must be integer',
         })
+
         return c.var.honertia.render('Form')
       })
 
@@ -788,20 +806,24 @@ describe('Honertia Middleware', () => {
         if (hasErrors) {
           c.var.honertia.setErrors({ email: 'Invalid' })
         }
+
         return c.var.honertia.render('Form')
       })
 
       const res1 = await app.request('/', {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
+
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json1 = (await res1.json()) as PageObject
       expect(json1.props.errors?.email).toBe('Invalid')
 
       hasErrors = false
+
       const res2 = await app.request('/', {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
+
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json2 = (await res2.json()) as PageObject
       expect(json2.props.errors).toEqual({})
@@ -958,6 +980,7 @@ describe('Honertia Middleware', () => {
       const app = createApp()
       app.get('/', (c) => {
         c.var.honertia.setErrors(mockErrors)
+
         return c.var.honertia.render('Form', {
           users: mockUsers,
           settings: { theme: 'dark' },
@@ -1012,6 +1035,7 @@ describe('Honertia Middleware', () => {
         method: 'POST',
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
+
       expect(postRes.status).toBe(303)
       expect(postRes.headers.get('Location')).toBe('/success')
 
@@ -1019,12 +1043,14 @@ describe('Honertia Middleware', () => {
       const getRes = await app.request('/redirect', {
         headers: { [HEADERS.HONERTIA]: 'true' },
       })
+
       expect(getRes.status).toBe(302)
 
       // POST without Inertia should stay 302
       const noInertiaRes = await app.request('/form', {
         method: 'POST',
       })
+
       expect(noInertiaRes.status).toBe(302)
     })
   })
@@ -1200,6 +1226,7 @@ describe('Context Finalization (regression)', () => {
 
     app.post('/form', (c) => {
       executed.push('handler')
+
       return c.redirect('/success', 302)
     })
 
@@ -1267,6 +1294,7 @@ describe('Context Finalization (regression)', () => {
     outerApp.all('*', async (c) => {
       // Forward request to inner app
       const res = await innerApp.request(c.req.raw)
+
       return res
     })
 
@@ -1274,6 +1302,7 @@ describe('Context Finalization (regression)', () => {
     const getRes = await outerApp.request('/page', {
       headers: { [HEADERS.HONERTIA]: 'true' },
     })
+
     expect(getRes.status).toBe(200)
     const json = await getRes.json()
     expect(json.component).toBe('Page')
@@ -1283,6 +1312,7 @@ describe('Context Finalization (regression)', () => {
       method: 'POST',
       headers: { [HEADERS.HONERTIA]: 'true' },
     })
+
     expect(postRes.status).toBe(303)
     expect(postRes.headers.get('Location')).toBe('/success')
   })

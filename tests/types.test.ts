@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Honertia Types and React Utilities Tests
  */
@@ -209,6 +210,7 @@ describe('Type Compatibility', () => {
       version: '1.0.0',
       render: async (page) => {
         await Promise.resolve()
+
         return `<html>${JSON.stringify(page)}</html>`
       },
     }

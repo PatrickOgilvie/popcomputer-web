@@ -1,9 +1,11 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
+import assert from 'node:assert/strict'
 /**
  * Action Composables Tests
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Effect, Schema as S, Layer, Exit, Cause } from 'effect'
+import { Option, Predicate, Effect, Schema as S, Layer, Exit, Cause } from 'effect'
 import type { PageProps } from '../../src/types.js'
 import type { RequestData } from '../../src/effect/validation.js'
 import {
@@ -25,6 +27,7 @@ import {
   DatabaseMutationFailed,
   DatabaseTransactionFailed,
   Redirect,
+  UnauthorizedError,
   ValidationError,
 } from '../../src/effect/errors.js'
 
@@ -36,16 +39,21 @@ const createMockUser = (overrides: Partial<AuthUser['user']> = {}): AuthUser => 
     name: 'Test User',
     emailVerified: true,
     image: null,
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     createdAt: new Date('2024-01-01'),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     updatedAt: new Date('2024-01-01'),
     ...overrides,
   },
   session: {
     id: 'session-456',
     userId: 'user-123',
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     expiresAt: new Date('2024-12-31'),
     token: 'test-token',
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     createdAt: new Date('2024-01-01'),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     updatedAt: new Date('2024-01-01'),
   },
 })
@@ -58,6 +66,7 @@ const createMockUserWithRole = (
   role: AuthUserWithRole['user']['role']
 ): AuthUserWithRole => {
   const base = createMockUser()
+
   return {
     ...base,
     user: {
@@ -91,14 +100,14 @@ const createMockRequest = (options: {
   params?: Record<string, string>
   query?: Record<string, string>
 } = {}): RequestContext => ({
-  method: options.method || 'POST',
+  method: options.method ?? 'POST',
   url: 'http://localhost/',
   headers: new Headers({ 'Content-Type': 'application/json' }),
   param: (name: string) => options.params?.[name],
-  params: () => options.params || {},
-  query: () => options.query || {},
-  json: async <T>() => (options.body || {}) as T,
-  parseBody: async () => options.body || {},
+  params: () => options.params ?? {},
+  query: () => options.query ?? {},
+  json: async <T>() => (options.body ?? {}) as T,
+  parseBody: async () => options.body ?? {},
   header: (name: string) =>
     name.toLowerCase() === 'content-type' ? 'application/json' : undefined,
 })
@@ -107,6 +116,7 @@ const assertResponse = (value: Response | Redirect): Response => {
   if (!(value instanceof Response)) {
     throw new Error('Expected Response')
   }
+
   return value
 }
 
@@ -126,7 +136,8 @@ describe('action', () => {
     const myAction = action(
       Effect.gen(function* () {
         const db = yield* DatabaseService
-        return new Response(JSON.stringify(db))
+
+        return Response.json(db)
       })
     )
 
@@ -147,6 +158,7 @@ describe('action', () => {
     const myAction = action(
       Effect.gen(function* () {
         const input = yield* validateRequest(schema)
+
         return new Redirect({ url: `/created/${input.name}`, status: 303 })
       })
     )
@@ -165,6 +177,7 @@ describe('action', () => {
     const myAction = action(
       Effect.gen(function* () {
         const user = yield* authorize()
+
         return new Response(`Hello ${user.user.name}`)
       })
     )
@@ -192,6 +205,7 @@ describe('action', () => {
         yield* DatabaseService
 
         capturedData = { userId: user.user.id, name: input.name }
+
         return new Redirect({ url: '/', status: 303 })
       })
     )
@@ -209,8 +223,9 @@ describe('action', () => {
     await Effect.runPromise(Effect.provide(myAction, layer))
 
     expect(capturedData).not.toBeNull()
-    expect(capturedData!.userId).toBe('user-123')
-    expect(capturedData!.name).toBe('Project')
+    assert.ok(capturedData)
+    expect(capturedData.userId).toBe('user-123')
+    expect(capturedData.name).toBe('Project')
   })
 })
 
@@ -246,9 +261,11 @@ describe('authorize', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(effect, layer))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         expect(option.value._tag).toBe('ForbiddenError')
       }
     }
@@ -259,12 +276,15 @@ describe('authorize', () => {
 
     const exit = await Effect.runPromiseExit(effect)
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error._tag).toBe('UnauthorizedError')
-        if (error._tag === 'UnauthorizedError') {
+
+        if (Predicate.isTagged(error, 'UnauthorizedError')) {
           expect(error.redirectTo).toBe('/login')
         }
       }
@@ -289,6 +309,7 @@ describe('dbTransaction', () => {
     const mockDb = {
       transaction: async <T, Transaction>(fn: (tx: Transaction) => Promise<T>) => {
         const tx = { insert: () => Promise.resolve({ id: 1 }) }
+
         return fn(tx)
       },
     }
@@ -296,6 +317,7 @@ describe('dbTransaction', () => {
     const effect = dbTransaction(mockDb, async (tx) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const result = await (tx as { insert: () => Promise<{ id: number }> }).insert()
+
       return { inserted: result.id }
     })
 
@@ -306,12 +328,14 @@ describe('dbTransaction', () => {
 
   test('rolls back on error', async () => {
     let rolledBack = false
+
     const mockDb = {
       transaction: async <T, Transaction>(fn: (tx: Transaction) => Promise<T>) => {
         try {
           return await fn({})
         } catch (e) {
           rolledBack = true
+          // oxlint-disable-next-line only-throw-error -- SAFETY: The fake transaction rethrows the original dependency value so rollback and boundary classification are exercised together.
           throw e
         }
       },
@@ -333,6 +357,7 @@ describe('dbTransaction', () => {
     }
 
     const effect = dbTransaction(mockDb, async () => {
+      // oxlint-disable-next-line no-throw-literal, only-throw-error -- SAFETY: This intentionally malformed dependency failure verifies that the adapter classifies non-Error rejections.
       throw 'string error'
     })
 
@@ -340,7 +365,8 @@ describe('dbTransaction', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         expect(option.value).toBeInstanceOf(DatabaseTransactionFailed)
         expect(option.value._tag).toBe('DatabaseTransactionFailed')
       }
@@ -358,7 +384,8 @@ describe('database failure classification', () => {
 
     const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : null
     expect(failure?._tag).toBe('Some')
-    if (failure?._tag === 'Some') {
+
+    if (Predicate.isTagged(failure, 'Some')) {
       expect(failure.value).toBeInstanceOf(DatabaseMutationFailed)
       expect(failure.value.cause).toBeInstanceOf(Error)
     }
@@ -373,8 +400,10 @@ describe('database failure classification', () => {
 
     const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : null
     expect(failure?._tag).toBe('Some')
-    if (failure?._tag === 'Some') {
+
+    if (Predicate.isTagged(failure, 'Some')) {
       expect(failure.value).toBeInstanceOf(DatabaseConstraintViolation)
+
       if (failure.value instanceof DatabaseConstraintViolation) {
         expect(failure.value.constraint).toBe('unique')
         expect(failure.value.httpStatus).toBe(409)
@@ -384,38 +413,30 @@ describe('database failure classification', () => {
 })
 
 describe('Composable Action Patterns', () => {
-  test('authorization before validation pattern', async () => {
+  test('rejects an unauthenticated invalid request before validating its body', async () => {
     const schema = S.Struct({
       name: S.String.check(S.isMinLength(3)),
     })
 
-    let authCheckTime = 0
-    let validationTime = 0
-
     const myAction = action(
       Effect.gen(function* () {
-        authCheckTime = Date.now()
         yield* authorize()
-
-        validationTime = Date.now()
         yield* validateRequest(schema)
 
         return new Redirect({ url: '/', status: 303 })
       })
     )
 
-    const mockUser = createMockUser()
-    const request = createMockRequest({ body: { name: 'Test' } })
+    const request = createMockRequest({ body: { name: '' } })
 
-    const layer = Layer.mergeAll(
-      Layer.succeed(RequestService, request),
-      Layer.succeed(AuthUserService, mockUser)
-    )
+    const exit = await Effect.runPromiseExit(myAction.pipe(
+      Effect.provideService(RequestService, request),
+    ))
 
-    await Effect.runPromise(Effect.provide(myAction, layer))
-
-    // Auth should happen before validation
-    expect(authCheckTime).toBeLessThanOrEqual(validationTime)
+    assert.ok(Exit.isFailure(exit))
+    const failure = Cause.findErrorOption(exit.cause)
+    assert.ok(Option.isSome(failure))
+    expect(failure.value).toBeInstanceOf(UnauthorizedError)
   })
 
   test('validation before authorization pattern (for input-based auth)', async () => {
@@ -454,6 +475,7 @@ describe('Composable Action Patterns', () => {
     const createUser = (email: string) =>
       Effect.gen(function* () {
         yield* DatabaseService
+
         return { id: 'new-id', email }
       })
 
@@ -465,6 +487,7 @@ describe('Composable Action Patterns', () => {
         const email = yield* validateEmail('test@example.com')
         const user = yield* createUser(email)
         const _ = yield* sendWelcome(user.id)
+
         return new Redirect({ url: '/welcome', status: 303 })
       })
     )
@@ -483,7 +506,7 @@ describe('Composable Action Patterns', () => {
     const safeFlow = action(
       riskyOperation.pipe(
         Effect.catchTag('ValidationError', (e) =>
-          Effect.succeed(new Response(JSON.stringify(e.errors), { status: 422 }))
+          Effect.succeed(Response.json(e.errors, { status: 422 }))
         )
       )
     )

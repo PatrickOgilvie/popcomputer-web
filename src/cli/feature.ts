@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import -- This CLI adapter owns native Node/Bun IO and raw command output; preserve the stdout/stderr format. */
 /**
  * Feature Generation CLI Module
  *
@@ -125,6 +126,7 @@ export function generateFeature(options: GenerateFeatureOptions): GenerateFeatur
 
   // Parse feature name into parts
   const parts = name.split('/')
+
   if (parts.length < 2) {
     return {
       success: false,
@@ -203,12 +205,15 @@ function singularize(word: string): string {
   if (word.endsWith('ies')) {
     return word.slice(0, -3) + 'y'
   }
+
   if (word.endsWith('es')) {
     return word.slice(0, -2)
   }
+
   if (word.endsWith('s')) {
     return word.slice(0, -1)
   }
+
   return word
 }
 
@@ -409,7 +414,10 @@ export const route = {
 function buildParamsSchema(fields: FieldDefinition[]): string {
   const schemaFields = fields.map((field) => {
     let schemaType = 'S.String'
+
     switch (field.type) {
+      case 'string':
+        break
       case 'number':
         schemaType = 'S.Number'
         break
@@ -497,15 +505,19 @@ function buildHandler(options: HandlerOptions): string {
 
   if (isMutationMethod) {
     const trustedFields: string[] = []
+
     if (needsSchema) trustedFields.push('...input,')
+
     if (auth === 'required') trustedFields.push('userId: user.user.id,')
 
     if (trustedFields.length > 0) {
       effectSteps.push('')
       effectSteps.push('const trustedInput = asTrusted({')
+
       for (const field of trustedFields) {
         effectSteps.push(`  ${field}`)
       }
+
       effectSteps.push('})')
     }
   }
@@ -515,11 +527,13 @@ function buildHandler(options: HandlerOptions): string {
     case 'GET':
       effectSteps.push('')
       effectSteps.push(`// TODO: Implement ${action} logic`)
+
       if (hasBindings) {
         effectSteps.push(`return yield* render('${componentPath}', { ${singular} })`)
       } else {
         effectSteps.push(`return yield* render('${componentPath}', { /* props */ })`)
       }
+
       break
     case 'POST':
     case 'PUT':
@@ -527,6 +541,7 @@ function buildHandler(options: HandlerOptions): string {
       effectSteps.push('')
       effectSteps.push(`// TODO: Implement ${action} logic`)
       effectSteps.push('const db = yield* DatabaseService')
+
       if (needsSchema || auth === 'required') {
         effectSteps.push('yield* dbMutation(db, trustedInput, async (tx, trustedInput) => {')
         effectSteps.push('  // Replace with your Drizzle write.')
@@ -541,7 +556,9 @@ function buildHandler(options: HandlerOptions): string {
         effectSteps.push('  void tx')
         effectSteps.push('})')
       }
+
       effectSteps.push('')
+
       if (method.toUpperCase() === 'POST') {
         effectSteps.push(`return yield* redirect('/${resource}')`)
       } else if (hasBindings) {
@@ -549,6 +566,7 @@ function buildHandler(options: HandlerOptions): string {
       } else {
         effectSteps.push(`return yield* redirect('/${resource}')`)
       }
+
       break
     case 'DELETE':
       effectSteps.push('')
@@ -592,11 +610,7 @@ function buildInlineTests(
   const testCases: string[] = []
 
   // Success case
-  const successStatus = method.toUpperCase() === 'DELETE'
-    ? 204
-    : method.toUpperCase() === 'GET'
-      ? 200
-      : 303
+  const successStatus = { DELETE: 204, GET: 200, POST: 303, PUT: 303, PATCH: 303 }[method]
 
   testCases.push(`
   '${action}s ${singular} successfully': async (t) => {
@@ -781,6 +795,7 @@ OUTPUT:
 export function runGenerateFeature(args: string[] = []): void {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(generateFeatureHelp())
+
     return
   }
 
@@ -814,6 +829,7 @@ export function runGenerateFeature(args: string[] = []): void {
     console.log(`Preview: ${result.path}`)
     console.log('-'.repeat(50))
     console.log(result.content)
+
     return
   }
 

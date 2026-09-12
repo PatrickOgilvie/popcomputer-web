@@ -26,10 +26,12 @@ interface ValidationErrorBag {
   [field: string]: string
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
 async function resolveValue<T>(value: T | (() => T | Promise<T>)): Promise<T> {
   if (value instanceof Function) {
-    return await value()
+    return value()
   }
+
   return value
 }
 
@@ -46,14 +48,18 @@ function createPartialPredicate(
   const includeKeys = include
     ? include.split(',').map((k) => k.trim())
     : undefined
+
   const excludeKeys = exclude
     ? exclude.split(',').map((k) => k.trim())
     : undefined
 
   return (key: string): boolean => {
     if (key === 'errors') return true
+
     if (includeKeys && !includeKeys.includes(key)) return false
+
     if (excludeKeys && excludeKeys.includes(key)) return false
+
     return true
   }
 }
@@ -68,6 +74,7 @@ function filterPartialProps(
 }
 
 export function web(config: WebConfig): MiddlewareHandler {
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return async (c: Context, next) => {
     const sharedProps: Record<string, LazyPageProp> = {}
     const errors: ValidationErrorBag = {}
@@ -100,6 +107,7 @@ export function web(config: WebConfig): MiddlewareHandler {
         Object.assign(errors, newErrors)
       },
 
+      // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
       async render<T extends PageProps>(
         component: string,
         props?: T,
@@ -110,6 +118,7 @@ export function web(config: WebConfig): MiddlewareHandler {
         // When it is, we can skip evaluating lazy shared props that the client
         // filtered out — that's the whole point of a partial reload.
         let partialKeep: ((key: string) => boolean) | undefined
+
         if (isHonertia) {
           const partialComponent = c.req.header(HEADERS.PARTIAL_COMPONENT)
           const partialData = c.req.header(HEADERS.PARTIAL_DATA)
@@ -124,13 +133,16 @@ export function web(config: WebConfig): MiddlewareHandler {
         // an explicitly passed prop (the passed value wins) or that a partial
         // reload would discard — avoiding wasted work for deferred/lazy props.
         const resolvedShared = new Map<string, PageProps[string]>()
+
         for (const [key, value] of Object.entries(sharedProps)) {
           if (key in explicitProps) continue
+
           if (partialKeep && !partialKeep(key)) continue
           resolvedShared.set(key, await resolveValue(value))
         }
 
         const mergedProps = new Map<string, PageProps[string]>(resolvedShared)
+
         for (const [key, value] of Object.entries(explicitProps)) {
           mergedProps.set(key, value)
         }
@@ -140,12 +152,15 @@ export function web(config: WebConfig): MiddlewareHandler {
           const decodedErrors = S.decodeUnknownOption(
             S.Record(S.String, S.String)
           )(mergedProps.get('errors'))
+
           const mergedErrors = Option.isSome(decodedErrors)
             ? { ...decodedErrors.value }
             : {}
+
           Object.assign(mergedErrors, errors)
           mergedProps.set('errors', mergedErrors)
         }
+
         if (!mergedProps.has('errors')) {
           mergedProps.set('errors', {})
         }
@@ -173,6 +188,7 @@ export function web(config: WebConfig): MiddlewareHandler {
         }
 
         const html = await config.render(page, c)
+
         return c.html(html, 200, {
           'Vary': HEADERS.HONERTIA,
         })
@@ -195,7 +211,9 @@ export function web(config: WebConfig): MiddlewareHandler {
       ['POST', 'PUT', 'PATCH', 'DELETE'].includes(c.req.method)
     ) {
       const location = c.res.headers.get('Location')
+
       if (location) {
+        // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
         c.res = new Response(null, {
           status: 303,
           headers: { 'Location': location, 'Vary': HEADERS.HONERTIA },

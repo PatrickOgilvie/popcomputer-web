@@ -24,10 +24,11 @@ export function observeEffectErrorEvent(
 ): Effect.Effect<void, never> {
   return Effect.gen(function* () {
     const maybeObserver = yield* Effect.serviceOption(EffectErrorObserverService)
+
     if (Option.isNone(maybeObserver)) return
 
     yield* maybeObserver.value.observe(event)
-  }).pipe(Effect.catchCause(() => Effect.void))
+  }).pipe(Effect.ignoreCause)
 }
 
 export function reportEffectError(

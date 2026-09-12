@@ -1,9 +1,14 @@
+/* oxlint-disable effecttsgo/global-console -- This CLI adapter owns native Node/Bun IO and raw command output; preserve the stdout/stderr format. */
 /**
  * Database Migration CLI Module
  *
  * Wraps Drizzle Kit migrations with preview support and
  * agent-friendly JSON output for migration status.
  */
+
+import { Result, Schema as S } from 'effect'
+
+const AppliedMigrations = S.fromJsonString(S.Record(S.String, S.String))
 
 /**
  * Migration status for a single migration.
@@ -187,9 +192,11 @@ export function defineMigration(definition: MigrationDefinition): MigrationDefin
  */
 export function sql(strings: TemplateStringsArray, ...values: unknown[]): string {
   let result = strings[0]
+
   for (let i = 0; i < values.length; i++) {
     result += String(values[i]) + strings[i + 1]
   }
+
   return result
 }
 
@@ -206,6 +213,7 @@ export function sql(strings: TemplateStringsArray, ...values: unknown[]): string
  * }
  * ```
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 export async function dbStatus(options: DbCommandOptions = {}): Promise<DbStatusResult> {
   try {
     // Try to find and read migration files
@@ -258,6 +266,7 @@ export async function dbStatus(options: DbCommandOptions = {}): Promise<DbStatus
  * console.log(`Applied ${result.applied} migrations`)
  * ```
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 export async function dbMigrate(options: DbCommandOptions = {}): Promise<DbMigrateResult> {
   try {
     const migrationsPath = await findMigrationsPath(options.config)
@@ -288,11 +297,14 @@ export async function dbMigrate(options: DbCommandOptions = {}): Promise<DbMigra
     // Execute migrations via drizzle-kit
     await runDrizzleMigrate(options.config)
 
+    // oxlint-disable-next-line effecttsgo/global-date -- The CLI records a wall-clock ISO audit timestamp; expiry, ordering, and migration selection do not depend on this value.
     const now = new Date().toISOString()
     const updatedApplied = new Map(appliedMigrations)
+
     for (const migration of pendingMigrations) {
       updatedApplied.set(migration.name, now)
     }
+
     await saveAppliedMigrations(updatedApplied, options.config)
 
     return {
@@ -323,6 +335,7 @@ export async function dbMigrate(options: DbCommandOptions = {}): Promise<DbMigra
  * }
  * ```
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 export async function dbRollback(options: DbCommandOptions = {}): Promise<DbRollbackResult> {
   try {
     const migrationsPath = await findMigrationsPath(options.config)
@@ -331,6 +344,7 @@ export async function dbRollback(options: DbCommandOptions = {}): Promise<DbRoll
 
     // Find last applied migration
     const appliedList = migrations.filter((m) => appliedMigrations.has(m.name))
+
     if (appliedList.length === 0) {
       return {
         success: true,
@@ -389,6 +403,7 @@ export async function dbRollback(options: DbCommandOptions = {}): Promise<DbRoll
  * // Creates: drizzle/migrations/20250109_001_add_status_to_projects.sql
  * ```
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 export async function dbGenerate(
   name: string,
   options: DbCommandOptions = {}
@@ -459,22 +474,26 @@ function parseMigrationSql(content: string): ParsedMigrationSql {
 
 function toTrackingObject(applied: Map<string, string | undefined>): Record<string, string> {
   return Object.fromEntries(
+    // oxlint-disable-next-line effecttsgo/global-date -- The CLI records a wall-clock ISO audit timestamp; expiry, ordering, and migration selection do not depend on this value.
     Array.from(applied.entries()).map(([name, appliedAt]) => [name, appliedAt ?? new Date().toISOString()])
   )
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 async function getTrackingFilePaths(configPath?: string): Promise<{
   readonly current: string
   readonly legacy: string
 }> {
   const path = await import('path')
   const migrationsPath = await findMigrationsPath(configPath)
+
   return {
     current: path.join(migrationsPath, '.popweb-applied.json'),
     legacy: path.join(migrationsPath, '.honertia-applied.json'),
   }
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 async function findMigrationsPath(configPath?: string): Promise<string> {
   // Default Drizzle migrations path
   const defaultPath = './drizzle'
@@ -487,17 +506,21 @@ async function findMigrationsPath(configPath?: string): Promise<string> {
 
       // Simple extraction - look for out: 'path'
       const outMatch = content.match(/out:\s*['"]([^'"]+)['"]/)
+
       if (outMatch) {
         return outMatch[1]
       }
-    } catch {
-      // Config file doesn't exist or can't be parsed
+    } catch (cause) {
+      if (!isFileNotFound(cause)) {
+        throw cause instanceof Error ? cause : new Error('Unable to read migration configuration', { cause })
+      }
     }
   }
 
   return defaultPath
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 async function readMigrationFiles(migrationsPath: string): Promise<MigrationFile[]> {
   try {
     const fs = await import('fs/promises')
@@ -522,21 +545,28 @@ async function readMigrationFiles(migrationsPath: string): Promise<MigrationFile
     }
 
     return migrations.sort((a, b) => a.name.localeCompare(b.name))
-  } catch {
-    return []
+  } catch (cause) {
+    if (isFileNotFound(cause)) return []
+
+    throw cause instanceof Error ? cause : new Error('Unable to read migration files', { cause })
   }
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 async function listMigrationFiles(migrationsPath: string): Promise<string[]> {
   try {
     const fs = await import('fs/promises')
     const entries = await fs.readdir(migrationsPath)
+
     return entries.filter((f) => f.endsWith('.sql')).sort()
-  } catch {
-    return []
+  } catch (cause) {
+    if (isFileNotFound(cause)) return []
+
+    throw cause instanceof Error ? cause : new Error('Unable to read migration files', { cause })
   }
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 async function getAppliedMigrations(configPath?: string): Promise<Map<string, string | undefined>> {
   const fs = await import('fs/promises')
   const trackingPaths = await getTrackingFilePaths(configPath)
@@ -544,17 +574,24 @@ async function getAppliedMigrations(configPath?: string): Promise<Map<string, st
   for (const trackingPath of [trackingPaths.current, trackingPaths.legacy]) {
     try {
       const content = await fs.readFile(trackingPath, 'utf-8')
-      // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
-      const parsed = JSON.parse(content) as Record<string, string>
-      return new Map(Object.entries(parsed))
+      const parsed = S.decodeUnknownResult(AppliedMigrations)(content)
+
+      if (Result.isFailure(parsed)) {
+        throw new Error('Invalid applied migration tracking data')
+      }
+
+      return new Map(Object.entries(parsed.success))
     } catch (error) {
-      if (!isFileNotFound(error)) throw error
+      if (!isFileNotFound(error)) {
+        throw error instanceof Error ? error : new Error('Unable to read applied migrations', { cause: error })
+      }
     }
   }
 
   return new Map()
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 async function saveAppliedMigrations(
   applied: Map<string, string | undefined>,
   configPath?: string
@@ -571,6 +608,7 @@ function isFileNotFound(cause: unknown): boolean {
   return cause instanceof Error && 'code' in cause && cause.code === 'ENOENT'
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 async function runDrizzleMigrate(configPath?: string): Promise<void> {
   // Shell out to drizzle-kit migrate
   const { execSync } = await import('child_process')
@@ -578,6 +616,7 @@ async function runDrizzleMigrate(configPath?: string): Promise<void> {
   execSync(`npx drizzle-kit migrate ${configArg}`, { stdio: 'inherit' })
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 async function runDrizzleGenerate(name: string, configPath?: string): Promise<void> {
   const { execSync } = await import('child_process')
   const configArg = configPath ? `--config ${configPath}` : ''
@@ -635,6 +674,7 @@ function formatStatusText(result: DbStatusResult, verbose: boolean): string {
 
   if (result.status === 'error') {
     lines.push(`[ERROR] ${result.error}`)
+
     return lines.join('\n')
   }
 
@@ -645,6 +685,7 @@ function formatStatusText(result: DbStatusResult, verbose: boolean): string {
 
   if (verbose && result.migrations.length > 0) {
     lines.push('Migrations:')
+
     for (const m of result.migrations) {
       const icon = m.applied ? '[x]' : '[ ]'
       const appliedAt = m.appliedAt ? ` (${m.appliedAt})` : ''
@@ -663,11 +704,13 @@ function formatMigrateText(result: DbMigrateResult, preview: boolean): string {
 
   if (!result.success) {
     lines.push(`[ERROR] Migration failed: ${result.error}`)
+
     return lines.join('\n')
   }
 
   if (result.applied === 0) {
     lines.push('No pending migrations.')
+
     return lines.join('\n')
   }
 
@@ -675,18 +718,22 @@ function formatMigrateText(result: DbMigrateResult, preview: boolean): string {
     lines.push(`Preview: ${result.applied} migration(s) would be applied`)
     lines.push('')
     lines.push('Migrations:')
+
     for (const m of result.migrations) {
       lines.push(`  - ${m}`)
     }
+
     if (result.statements) {
       lines.push('')
       lines.push('SQL Statements:')
+
       for (const s of result.statements) {
         lines.push(`  ${s};`)
       }
     }
   } else {
     lines.push(`Applied ${result.applied} migration(s)`)
+
     for (const m of result.migrations) {
       lines.push(`  - ${m}`)
     }
@@ -741,9 +788,11 @@ EXAMPLES:
 /**
  * Run db command from CLI arguments.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This Node/Drizzle CLI adapter awaits native IO; its public command results classify failures before returning to the CLI.
 export async function runDb(args: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h') || args.length === 0) {
     console.log(dbHelp())
+
     return
   }
 
@@ -752,39 +801,48 @@ export async function runDb(args: string[] = []): Promise<void> {
   switch (options.command) {
     case 'status': {
       const result = await dbStatus(options)
+
       if (options.format === 'json') {
         console.log(JSON.stringify(result, null, 2))
       } else {
         console.log(formatStatusText(result, options.verbose ?? false))
       }
+
       if (result.status === 'error') {
         process.exit(1)
       }
+
       break
     }
 
     case 'migrate': {
       const result = await dbMigrate(options)
+
       if (options.format === 'json') {
         console.log(JSON.stringify(result, null, 2))
       } else {
         console.log(formatMigrateText(result, options.preview ?? false))
       }
+
       if (!result.success) {
         process.exit(1)
       }
+
       break
     }
 
     case 'rollback': {
       const result = await dbRollback(options)
+
       if (options.format === 'json') {
         console.log(JSON.stringify(result, null, 2))
       } else {
         if (!result.success) {
           console.log(`[ERROR] Rollback failed: ${result.error}`)
+
           if (result.statements && result.statements.length > 0) {
             console.log('\nRollback SQL:')
+
             for (const s of result.statements) {
               console.log(`  ${s};`)
             }
@@ -793,8 +851,10 @@ export async function runDb(args: string[] = []): Promise<void> {
           console.log('No migrations to rollback.')
         } else if (options.preview) {
           console.log(`Preview: Would rollback ${result.migration}`)
+
           if (result.statements) {
             console.log('\nSQL Statements:')
+
             for (const s of result.statements) {
               console.log(`  ${s};`)
             }
@@ -803,9 +863,11 @@ export async function runDb(args: string[] = []): Promise<void> {
           console.log(`Rolled back: ${result.migration}`)
         }
       }
+
       if (!result.success) {
         process.exit(1)
       }
+
       break
     }
 
@@ -815,7 +877,9 @@ export async function runDb(args: string[] = []): Promise<void> {
         console.log('Usage: popweb db generate <name>')
         process.exit(1)
       }
+
       const result = await dbGenerate(options.name, options)
+
       if (options.format === 'json') {
         console.log(JSON.stringify(result, null, 2))
       } else {
@@ -825,12 +889,15 @@ export async function runDb(args: string[] = []): Promise<void> {
           console.log(`[ERROR] ${result.error}`)
         }
       }
+
       if (!result.success) {
         process.exit(1)
       }
+
       break
     }
 
+    case undefined:
     default:
       console.log(`Unknown command: ${options.command}`)
       console.log('Run "popweb db --help" for usage')

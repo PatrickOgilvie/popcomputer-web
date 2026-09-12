@@ -6,13 +6,13 @@
  */
 
 import { Effect, Schema as S } from 'effect'
+import type { Redirect } from './errors.js'
 import {
   DatabaseConstraintViolation,
   DatabaseMutationFailed,
   DatabaseTransactionFailed,
-  Redirect,
 } from './errors.js'
-import { type Validated, type Trusted } from './validation.js'
+import type { Validated, Trusted } from './validation.js'
 
 declare const MutationScopeBrand: unique symbol
 
@@ -92,6 +92,7 @@ export function dbMutation<DB, I, T>(
 ): Effect.Effect<T, DatabaseMutationFailed | DatabaseConstraintViolation> {
   if (inputOrOperation instanceof Function) {
     const operation = inputOrOperation
+
     // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
     return Effect.tryPromise({
       try: (): Promise<T> => operation(db as SafeTx<DB>),
@@ -126,9 +127,9 @@ type SafeValues<V> =
       : SafeInput<V>
 
 type SafeParam<P> =
-  P extends ReadonlyArray<any>
+  P extends ReadonlyArray<unknown>
     ? SafeValues<P>
-    : P extends Array<any>
+    : P extends Array<unknown>
       ? SafeValues<P>
       : P extends object
         ? SafeInput<P>
@@ -240,9 +241,9 @@ type ScopedSafeValues<Scope extends symbol, V> =
       : MutationInput<Scope, V>
 
 type ScopedSafeParam<Scope extends symbol, P> =
-  P extends ReadonlyArray<any>
+  P extends ReadonlyArray<unknown>
     ? ScopedSafeValues<Scope, P>
-    : P extends Array<any>
+    : P extends Array<unknown>
       ? ScopedSafeValues<Scope, P>
       : P extends object
         ? MutationInput<Scope, P>
@@ -297,10 +298,12 @@ interface TransactionNotSupported {
   readonly __hint: 'Expected signature: db.transaction((tx) => Promise<T>) => Promise<T>. See https://github.com/patrickogilvie/popcomputer-web#validation-and-safe-writes'
 }
 
+interface TransactionDatabase<Tx> {
+  transaction<Result>(fn: (tx: Tx) => Promise<Result>): Promise<Result>
+}
+
 type TransactionClient<DB> =
-  DB extends { transaction: (fn: (tx: infer Tx) => Promise<any>) => Promise<any> }
-    ? Tx
-    : TransactionNotSupported
+  DB extends TransactionDatabase<infer Tx> ? Tx : TransactionNotSupported
 
 /**
  * Run multiple database operations in a transaction.
@@ -334,7 +337,7 @@ type TransactionClient<DB> =
  * })
  */
 export function dbTransaction<
-  DB extends { transaction: (fn: (tx: any) => Promise<any>) => Promise<any> },
+  DB extends TransactionDatabase<unknown>,
   T
 >(
   db: DB,
@@ -342,7 +345,7 @@ export function dbTransaction<
 ): Effect.Effect<T, DatabaseTransactionFailed | DatabaseConstraintViolation>
 
 export function dbTransaction<
-  DB extends { transaction: (fn: (tx: any) => Promise<any>) => Promise<any> },
+  DB extends TransactionDatabase<unknown>,
   I,
   T
 >(
@@ -355,7 +358,7 @@ export function dbTransaction<
 ): Effect.Effect<T, DatabaseTransactionFailed | DatabaseConstraintViolation>
 
 export function dbTransaction<
-  DB extends { transaction: (fn: (tx: any) => Promise<any>) => Promise<any> },
+  DB extends TransactionDatabase<unknown>,
   I,
   T
 >(
@@ -370,6 +373,7 @@ export function dbTransaction<
 ): Effect.Effect<T, DatabaseTransactionFailed | DatabaseConstraintViolation> {
   if (inputOrOperations instanceof Function) {
     const operations = inputOrOperations
+
     // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
     return Effect.tryPromise({
       try: (): Promise<T> => db.transaction((tx) =>
@@ -401,11 +405,15 @@ type DatabaseOperation = 'mutation' | 'transaction'
 
 function readDatabaseCode(cause: unknown): string | number | undefined {
   if (!(cause instanceof Object)) return undefined
+
   if ('code' in cause) {
     const code = cause.code
-    if (S.is(S.String)(code) || S.is(S.Number)(code)) return code
+
+    if (S.is(S.String)(code) || S.is(S.Finite)(code)) return code
   }
-  if ('errno' in cause && S.is(S.Number)(cause.errno)) return cause.errno
+
+  if ('errno' in cause && S.is(S.Finite)(cause.errno)) return cause.errno
+
   return undefined
 }
 
@@ -418,6 +426,7 @@ function classifyConstraint(code: string | number | undefined):
   if (normalized === '23505' || normalized === '1062' || normalized === 'ER_DUP_ENTRY') {
     return 'unique'
   }
+
   if (
     normalized === '23503' ||
     normalized === '1451' ||
@@ -427,9 +436,13 @@ function classifyConstraint(code: string | number | undefined):
   ) {
     return 'foreign-key'
   }
+
   if (normalized === '23502') return 'not-null'
+
   if (normalized === '23514') return 'check'
+
   if (normalized.startsWith('SQLITE_CONSTRAINT')) return 'unknown'
+
   return undefined
 }
 
@@ -447,6 +460,7 @@ export function classifyDatabaseFailure(
   operation: DatabaseOperation
 ): DatabaseMutationFailed | DatabaseTransactionFailed | DatabaseConstraintViolation {
   const constraint = classifyConstraint(readDatabaseCode(cause))
+
   if (constraint) {
     return new DatabaseConstraintViolation({ operation, constraint, cause })
   }

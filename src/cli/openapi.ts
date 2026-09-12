@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import -- This CLI adapter owns native Node/Bun IO and raw command output; preserve the stdout/stderr format. */
 /**
  * OpenAPI Specification Generator
  *
@@ -7,13 +8,10 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import {
-  RouteRegistry,
-  type RouteMetadata,
-} from '../effect/route-registry.js'
+import type { RouteRegistry, RouteMetadata } from '../effect/route-registry.js'
 import { loadAppRouteRegistry } from './load-app.js'
 import { Schema as S } from 'effect'
-import * as JsonSchema from 'effect/JsonSchema'
+import type * as JsonSchema from 'effect/JsonSchema'
 
 type JsonValue =
   | string
@@ -192,6 +190,7 @@ function toOpenApiPath(path: string): string {
 
 function toOpenApiSchema(schema: S.Constraint): OpenApiSchema {
   const document = S.toJsonSchemaDocument(schema)
+
   if (Object.keys(document.definitions).length === 0) {
     return document.schema
   }
@@ -204,6 +203,7 @@ function toOpenApiSchema(schema: S.Constraint): OpenApiSchema {
 
 function stringSchema(format?: string): OpenApiSchema {
   const schema: OpenApiSchema = format ? { type: 'string', format } : { type: 'string' }
+
   return schema
 }
 
@@ -218,6 +218,7 @@ function objectSchema(
     required,
     description,
   }
+
   return schema
 }
 
@@ -227,6 +228,7 @@ function objectSchema(
 function extractTag(route: RouteMetadata): string {
   if (route.name) {
     const parts = route.name.split('.')
+
     if (parts.length > 1) {
       return parts[0]
     }
@@ -234,6 +236,7 @@ function extractTag(route: RouteMetadata): string {
 
   // Extract from path
   const match = route.fullPath.match(/^\/([^/]+)/)
+
   return match ? match[1] : 'default'
 }
 
@@ -260,6 +263,7 @@ function generateOperationId(route: RouteMetadata): string {
 function generateSummary(route: RouteMetadata): string {
   if (route.name) {
     const parts = route.name.split('.')
+
     if (parts.length === 2) {
       const action = parts[1]
       const resource = parts[0].slice(0, -1) // Remove 's' from plural
@@ -291,6 +295,7 @@ function generateQueryParameters(route: RouteMetadata): OpenApiParameter[] {
   if (!route.querySchema) return []
 
   const schema = toOpenApiSchema(route.querySchema)
+
   if (
     schema &&
     schema instanceof Object &&
@@ -299,6 +304,7 @@ function generateQueryParameters(route: RouteMetadata): OpenApiParameter[] {
     schema.properties instanceof Object
   ) {
     const required = Array.isArray(schema.required) ? new Set(schema.required) : new Set<string>()
+
     // SAFETY: The CLI parser checked this option against its finite accepted values before constructing the typed command.
     return Object.entries(schema.properties).map(([name, propertySchema]) => ({
       name,
@@ -334,11 +340,14 @@ function generateParameters(route: RouteMetadata): OpenApiParameter[] {
  */
 function generateResponses(route: RouteMetadata): OpenApiResponses {
   const responses: OpenApiResponses = {}
+
   const responseSchema = route.responseSchema
     ? toOpenApiSchema(route.responseSchema)
     : objectSchema()
 
   switch (route.method) {
+    case 'all':
+      break
     case 'get':
       responses['200'] = {
         description: 'Successful response',
@@ -466,14 +475,18 @@ export function generateOpenApi(
 
   // Filter routes
   let filteredRoutes = routes
-  if (options.includePrefixes?.length) {
+
+  const { includePrefixes, excludePrefixes } = options
+
+  if (includePrefixes?.length) {
     filteredRoutes = filteredRoutes.filter((r) =>
-      options.includePrefixes!.some((p) => r.fullPath.startsWith(p))
+      includePrefixes.some((p) => r.fullPath.startsWith(p))
     )
   }
-  if (options.excludePrefixes?.length) {
+
+  if (excludePrefixes?.length) {
     filteredRoutes = filteredRoutes.filter((r) =>
-      !options.excludePrefixes!.some((p) => r.fullPath.startsWith(p))
+      !excludePrefixes.some((p) => r.fullPath.startsWith(p))
     )
   }
 
@@ -528,6 +541,7 @@ export function generateOpenApi(
 
   if (options.securitySchemes || options.defaultSecurity) {
     spec.components = {}
+
     if (options.securitySchemes) {
       spec.components.securitySchemes = options.securitySchemes
     }
@@ -542,7 +556,8 @@ export function generateOpenApi(
 
 function formatYamlScalar(value: string | number | boolean | null): string {
   if (value === null) return 'null'
-  if (S.is(S.Number)(value) || S.is(S.Boolean)(value)) {
+
+  if (S.is(S.Finite)(value) || S.is(S.Boolean)(value)) {
     return String(value)
   }
 
@@ -570,6 +585,7 @@ function toYaml(value: JsonValue, indent = 0): string {
       .map((item) => {
         if (item instanceof Object) {
           const nested = toYaml(item, indent + 1)
+
           return `${padding}-\n${nested}`
         }
 
@@ -580,6 +596,7 @@ function toYaml(value: JsonValue, indent = 0): string {
 
   if (value instanceof Object) {
     const entries = Object.entries(value)
+
     if (entries.length === 0) {
       return `${padding}{}`
     }
@@ -590,6 +607,7 @@ function toYaml(value: JsonValue, indent = 0): string {
 
         if (item instanceof Object) {
           const nested = toYaml(item, indent + 1)
+
           return `${padding}${safeKey}:\n${nested}`
         }
 
@@ -607,6 +625,7 @@ export function formatOpenApiOutput(
 ): string {
   if (format === 'yaml') {
     const serializedSpec: JsonValue = JSON.parse(JSON.stringify(spec))
+
     return `${toYaml(serializedSpec)}\n`
   }
 
@@ -730,19 +749,23 @@ EXAMPLES:
 /**
  * Run the generate:openapi command.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- The CLI entrypoint awaits native app loading and dispatch; its public contract is Promise<void>.
 export async function runGenerateOpenApi(
   args: string[] = [],
   registry?: RouteRegistry
 ): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(generateOpenApiHelp())
+
     return
   }
 
   const cliOptions = parseGenerateOpenApiArgs(args)
+
   const resolvedRegistry = registry ?? (
     cliOptions.app ? await loadAppRouteRegistry(cliOptions.app) : undefined
   )
+
   if (!resolvedRegistry) {
     throw new Error('Missing application entrypoint. Pass --app src/app.ts.')
   }
@@ -763,6 +786,7 @@ export async function runGenerateOpenApi(
 
   if (cliOptions.preview || !cliOptions.output) {
     console.log(output)
+
     return
   }
 

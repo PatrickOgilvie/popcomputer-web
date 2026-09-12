@@ -1,9 +1,12 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * CLI Generate Command Tests
  */
 
 import { describe, test, expect } from 'bun:test'
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- These integration tests use real temporary files and native paths to verify the Node CLI filesystem boundary.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- These integration tests use real temporary files and native paths to verify the Node CLI filesystem boundary.
 import { join } from 'node:path'
 import {
   generateAction,
@@ -344,17 +347,20 @@ describe('generateAction', () => {
         auth: 'required',
         schema: 'name:string:required',
       })
+
       const directory = mkdtempSync(join(import.meta.dir, '.generated-action-'))
       const file = join(directory, 'create.ts')
 
       try {
         writeFileSync(file, result.content)
+
         const child = Bun.spawn(['bun', 'test', file], {
           cwd: join(import.meta.dir, '../..'),
           env: { ...process.env, NODE_ENV: 'test' },
           stdout: 'pipe',
           stderr: 'pipe',
         })
+
         const [exitCode, stdout, stderr] = await Promise.all([
           child.exited,
           new Response(child.stdout).text(),

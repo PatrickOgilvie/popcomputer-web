@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Test Utilities Self-Tests
  * 
@@ -5,6 +6,8 @@
  */
 
 import { describe, test, expect } from 'bun:test'
+import { Clock, Effect } from 'effect'
+import { TestClock } from 'effect/testing'
 import {
   createTestApp,
   makeRequest,
@@ -65,6 +68,7 @@ describe('Test Utilities', () => {
       const app = createTestApp({
         render: (page) => `CUSTOM:${page.component}`,
       })
+
       app.get('/', (c) => c.var.honertia.render('MyComponent'))
 
       const res = await makeRequest(app, '/')
@@ -96,7 +100,7 @@ describe('Test Utilities', () => {
 
     test('makes request with custom headers', async () => {
       const app = createTestApp()
-      app.get('/headers', (c) => c.text(c.req.header('X-Custom') || 'missing'))
+      app.get('/headers', (c) => c.text(c.req.header('X-Custom') ?? 'missing'))
 
       const res = await makeRequest(app, '/headers', {
         headers: { 'X-Custom': 'test-value' },
@@ -297,9 +301,9 @@ describe('Test Utilities', () => {
 
   describe('Timing Utilities', () => {
     test('delay waits for specified time', async () => {
-      const start = Date.now()
+      const start = performance.now()
       await delay(50)
-      const elapsed = Date.now() - start
+      const elapsed = performance.now() - start
 
       expect(elapsed).toBeGreaterThanOrEqual(45) // Allow for timing variance
     })
@@ -314,9 +318,9 @@ describe('Test Utilities', () => {
     test('lazyProp with delay waits before returning', async () => {
       const getValue = lazyProp('delayed', 50)
 
-      const start = Date.now()
+      const start = performance.now()
       const result = await getValue()
-      const elapsed = Date.now() - start
+      const elapsed = performance.now() - start
 
       expect(result).toBe('delayed')
       expect(elapsed).toBeGreaterThanOrEqual(45)
@@ -343,15 +347,15 @@ describe('Test Utilities', () => {
       expect(tracker.requests[0].method).toBe('POST')
     })
 
-    test('records timestamp', () => {
-      const tracker = createRequestTracker()
-      const before = Date.now()
+    test('records timestamps from the supplied clock', async () => {
+      await Effect.runPromise(Effect.gen(function* () {
+        const clock = yield* Clock.Clock
+        const tracker = createRequestTracker(clock)
+        yield* TestClock.adjust('5 seconds')
+        tracker.track('/test', 'GET')
 
-      tracker.track('/test', 'GET')
-
-      const after = Date.now()
-      expect(tracker.requests[0].timestamp).toBeGreaterThanOrEqual(before)
-      expect(tracker.requests[0].timestamp).toBeLessThanOrEqual(after)
+        expect(tracker.requests[0].timestamp).toBe(5_000)
+      }).pipe(Effect.provide(TestClock.layer())))
     })
 
     test('reset clears all requests', () => {

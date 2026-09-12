@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Error Formatter Tests
  *
@@ -16,6 +17,30 @@ import {
 import { createStructuredError, ErrorCodes } from '../../src/effect/error-catalog.js'
 import { HttpError, ValidationError } from '../../src/effect/errors.js'
 import type { PageProps } from '../../src/types.js'
+
+describe('structured error parameter formatting', () => {
+  test('inserts scalar parameters literally', () => {
+    const error = createStructuredError(ErrorCodes.VAL_001_FIELD_REQUIRED, { field: '$&' }, {})
+
+    expect(error.message).toContain('$&')
+    expect(error.message).not.toContain('{field}')
+  })
+
+  test('does not serialize object payloads into diagnostic messages or fixes', () => {
+    const error = createStructuredError(
+      ErrorCodes.VAL_001_FIELD_REQUIRED,
+      { field: { token: 'must-not-appear' } },
+      {},
+    )
+
+    expect(error.message).toContain('[object]')
+    expect(error.message).not.toContain('must-not-appear')
+
+    for (const fix of error.fixes) {
+      expect(fix.description).not.toContain('must-not-appear')
+    }
+  })
+})
 
 const SAFE_GENERIC = 'An error occurred. Please try again later.'
 
@@ -60,6 +85,7 @@ describe('JsonErrorFormatter safeMessages', () => {
     const out = new JsonErrorFormatter({ safeMessages: false }).format(
       internalError()
     ) as PageProps
+
     expect(out.message).toContain('secret')
   })
 
@@ -68,16 +94,19 @@ describe('JsonErrorFormatter safeMessages', () => {
     const out = new JsonErrorFormatter({ safeMessages: true }).format(
       internalError()
     ) as PageProps
+
     expect(out.message).toBe(SAFE_GENERIC)
     expect(JSON.stringify(out)).not.toContain('secret')
   })
 
   test('still surfaces validation messages in prod (not sensitive)', () => {
     const error = validationError()
+
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const out = new JsonErrorFormatter({ safeMessages: true }).format(
       error
     ) as PageProps
+
     expect(out.message).toBe(error.message)
   })
 
@@ -148,7 +177,8 @@ describe('InertiaErrorFormatter parity', () => {
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const out = new InertiaErrorFormatter({ isDev: false }).format(
       internalError()
-    ) as PageProps
+    )
+
     expect(out.message).toBe(SAFE_GENERIC)
   })
 
@@ -156,7 +186,8 @@ describe('InertiaErrorFormatter parity', () => {
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const out = new InertiaErrorFormatter({ isDev: true }).format(
       internalError()
-    ) as PageProps
+    )
+
     expect(out.message).toContain('secret')
   })
 })
@@ -198,6 +229,7 @@ describe('createFormatter', () => {
     const serialized = JSON.stringify(
       createFormatter('json', true).format(internalError())
     )
+
     expect(serialized).toContain('secret')
   })
 })

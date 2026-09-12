@@ -13,12 +13,15 @@ import { ErrorCodes, type ErrorCode } from './error-catalog.js'
 import type { PagePropValue } from '../types.js'
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
+
 const RequestValidationProfileSchema = S.Literals(['legacy', 'laravel'])
+
 const formatSchemaIssue = SchemaIssue.makeFormatterStandardSchemaV1()
 
 type FormattedSchemaIssue = ReturnType<typeof formatSchemaIssue>['issues'][number]
 
 export type RequestDataValue = PagePropValue | File
+
 export type RequestData = Record<string, RequestDataValue>
 
 /**
@@ -97,9 +100,11 @@ function normalizeRequestValidationOptions(
   const profile = objectConfig.profile ?? 'legacy'
   const profileOrder = getProfileOrder(profile)
   const seen = new Set<RequestValidationSource>()
+
   const order = (objectConfig.order ?? profileOrder).filter((source) => {
     if (seen.has(source)) return false
     seen.add(source)
+
     return true
   })
 
@@ -112,6 +117,7 @@ function normalizeRequestValidationOptions(
 function isJsonContentType(contentType: string): boolean {
   const normalized = contentType.toLowerCase()
   const mediaType = normalized.split(';')[0].trim()
+
   return mediaType.endsWith('/json') || mediaType.endsWith('+json')
 }
 
@@ -176,6 +182,7 @@ function mergeRequestSources(
       }
 
       const existingValue = merged[key]
+
       if (Object.is(existingValue, value)) {
         continue
       }
@@ -209,6 +216,7 @@ function getValidationDataWithOptions(
     const queryParams = order.includes('query') ? request.query() : {}
 
     let body: RequestData = {}
+
     if (
       order.includes('body') &&
       !BODYLESS_METHODS.has(request.method.toUpperCase())
@@ -263,7 +271,7 @@ function getFormattedIssuePath(
   issue: FormattedSchemaIssue
 ): ReadonlyArray<PropertyKey> {
   return (issue.path ?? []).map((segment) =>
-    typeof segment === 'object' ? segment.key : segment
+    segment instanceof Object ? segment.key : segment
   )
 }
 
@@ -293,11 +301,13 @@ export function formatSchemaErrorsWithDetails<Input>(
     errors[field] = message.replace(/:attribute/g, attribute)
 
     let value: unknown = data
+
     for (const segment of path) {
       if (!(value instanceof Object)) {
         value = undefined
         break
       }
+
       value = Object.getOwnPropertyDescriptor(value, segment)?.value
     }
 
@@ -322,6 +332,7 @@ function extractSchemaType(message: string): string | undefined {
   // Common patterns in Effect Schema messages
   if (message.includes('Expected')) {
     const match = message.match(/Expected\s+([^,]+)/)
+
     if (match) return match[1].trim()
   }
 
@@ -453,9 +464,11 @@ export function createBodyParseValidationError(
   const isJson = isJsonContentType(contentType)
   const reason = cause instanceof Error ? cause.message : String(cause)
   const base = isJson ? 'Invalid JSON body' : 'Could not parse request body'
+
   const hint = isJson
     ? 'Ensure Content-Type is application/json and the body is valid JSON.'
     : 'Ensure the body encoding matches Content-Type and can be parsed by the request parser.'
+
   const message = `${base}. ${hint}`
 
   return new ValidationError({
@@ -552,6 +565,7 @@ export function validateRequest<A, I>(
       options.request,
       options.errorComponent
     )
+
     return yield* validateUnknown(schema, data, options)
   })
 }

@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Custom Services Tests
  *
@@ -62,6 +63,7 @@ type TestEnv = {
     KV_DATA: Record<string, string>
     FEATURES: string[]
   }
+  Variables: { testResult: string }
 }
 
 const createTestApp = () => {
@@ -80,7 +82,8 @@ const createTestApp = () => {
   app.use('*', async (c, next) => {
     // Simulate Cloudflare Worker bindings
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    (c.env as any) = {
+    // oxlint-disable-next-line no-param-reassign -- This middleware supplies the Worker binding fixture consumed by the bridge.
+    c.env = {
       KV_DATA: { 'user:123': 'John Doe', 'config:theme': 'dark' },
       FEATURES: ['new-dashboard', 'beta-api'],
     }
@@ -98,6 +101,7 @@ const createMockKV = (data: Record<string, string>) => ({
 // Mock Analytics implementation
 const createMockAnalytics = () => {
   const dataPoints: PageProps[] = []
+
   return {
     writeDataPoint: (data: PageProps) => dataPoints.push(data),
     getDataPoints: () => dataPoints,
@@ -107,6 +111,7 @@ const createMockAnalytics = () => {
 // Mock Logger implementation
 const createMockLogger = () => {
   const logs: string[] = []
+
   return {
     log: (message: string) => logs.push(message),
     logs,
@@ -137,6 +142,7 @@ describe('Custom Services via effectBridge', () => {
       Effect.gen(function* () {
         const bindings = yield* BindingsService
         const name = yield* Effect.tryPromise(() => bindings.KV.get('user:123'))
+
         return new Response(`User: ${name}`)
       })
     )
@@ -172,14 +178,13 @@ describe('Custom Services via effectBridge', () => {
         const theme = yield* Effect.tryPromise(() =>
           bindings.KV.get('config:theme')
         )
+
         logger.log(`Theme loaded: ${theme}`)
 
-        return new Response(
-          JSON.stringify({
+        return Response.json({
             theme,
             logCount: logger.logs.length,
           })
-        )
       })
     )
 
@@ -206,7 +211,8 @@ describe('Custom Services via effectBridge', () => {
     app.use('*', honertiaServices(() => ({ db: { name: 'custom-db' } as never })))
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      (c.env as any) = {
+      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the Worker binding fixture consumed by the bridge.
+      c.env = {
         KV_DATA: { 'user:123': 'John Doe', 'config:theme': 'dark' },
         FEATURES: ['new-dashboard', 'beta-api'],
       }
@@ -231,12 +237,10 @@ describe('Custom Services via effectBridge', () => {
         )
 
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        return new Response(
-          JSON.stringify({
-            dbName: (db as any).name,
+        return Response.json({
+            dbName: (db).name,
             userName,
           })
-        )
       })
     )
 
@@ -256,7 +260,8 @@ describe('Custom Services via setupHonertia', () => {
     app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      (c.env as any) = {
+      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the Worker binding fixture consumed by the bridge.
+      c.env = {
         KV_DATA: { 'user:123': 'John Doe', 'config:theme': 'dark' },
         FEATURES: ['new-dashboard', 'beta-api'],
       }
@@ -285,6 +290,7 @@ describe('Custom Services via setupHonertia', () => {
       Effect.gen(function* () {
         const bindings = yield* BindingsService
         const name = yield* Effect.tryPromise(() => bindings.KV.get('user:123'))
+
         return new Response(name ?? 'missing')
       })
     )
@@ -310,12 +316,10 @@ describe('Custom Services via effectRoutes config', () => {
       Effect.gen(function* () {
         const flags = yield* FeatureFlagsService
 
-        return new Response(
-          JSON.stringify({
+        return Response.json({
             newDashboard: flags.isEnabled('new-dashboard'),
             oldFeature: flags.isEnabled('old-feature'),
           })
-        )
       })
     )
 
@@ -343,9 +347,11 @@ describe('Custom Services via effectRoutes config', () => {
           '/kv/:key',
           Effect.gen(function* () {
             const bindings = yield* BindingsService
+
             const value = yield* Effect.tryPromise(() =>
               bindings.KV.get('user:123')
             )
+
             return new Response(value ?? 'not found')
           })
         )
@@ -384,12 +390,10 @@ describe('Custom Services via effectRoutes config', () => {
             bindings.KV.get('user:123')
           )
 
-          return new Response(
-            JSON.stringify({
+          return Response.json({
               requestId: requestId.id,
               userName,
             })
-          )
         })
       )
 
@@ -413,9 +417,11 @@ describe('Custom Services via effectRoutes config', () => {
       '/no-bridge',
       Effect.gen(function* () {
         const bindings = yield* BindingsService
+
         const theme = yield* Effect.tryPromise(() =>
           bindings.KV.get('config:theme')
         )
+
         return new Response(theme ?? 'missing')
       })
     )
@@ -442,18 +448,19 @@ describe('buildContextLayer with custom services', () => {
       // Verify the layer can be used to run an effect requiring BindingsService
       const program = Effect.gen(function* () {
         const bindings = yield* BindingsService
+
         return yield* Effect.tryPromise(() => bindings.KV.get('user:123'))
       }).pipe(Effect.provide(layer))
 
       const result = await Effect.runPromise(program)
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      c.set('testResult' as any, result)
+      c.set('testResult', result)
       await next()
     })
 
     app.get('/test', (c) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      return c.text((c.get as any)('testResult'))
+      return c.text(c.get('testResult'))
     })
 
     const res = await app.request('/test')
@@ -509,7 +516,7 @@ describe('Real-world Cloudflare Workers patterns', () => {
           }>()
         )
 
-        return new Response(JSON.stringify(project))
+        return Response.json(project)
       })
     )
 
@@ -633,8 +640,9 @@ describe('Edge cases', () => {
       '/simple',
       Effect.gen(function* () {
         const db = yield* DatabaseService
+
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        return new Response(`DB: ${(db as any).name}`)
+        return new Response(`DB: ${(db).name}`)
       })
     )
 
@@ -657,6 +665,7 @@ describe('Edge cases', () => {
       effectBridge<TestEnv, RequestCounterService>({
         services: () => {
           requestCount++
+
           return Layer.succeed(RequestCounterService, { count: requestCount })
         },
       })
@@ -666,6 +675,7 @@ describe('Edge cases', () => {
       '/count',
       Effect.gen(function* () {
         const counter = yield* RequestCounterService
+
         return new Response(`Count: ${counter.count}`)
       })
     )
@@ -704,7 +714,8 @@ describe('Edge cases', () => {
       '/context-info',
       Effect.gen(function* () {
         const info = yield* ContextInfoService
-        return new Response(JSON.stringify(info))
+
+        return Response.json(info)
       })
     )
 

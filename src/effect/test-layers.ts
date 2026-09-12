@@ -4,7 +4,7 @@
  * Reusable Layer helpers for tests.
  */
 
-import { Context, Effect, Layer } from 'effect'
+import { Context, DateTime, Effect, Layer } from 'effect'
 import {
   AuthUserService,
   DatabaseService,
@@ -27,7 +27,7 @@ export class TestCaptureService extends Context.Service<
       key: K,
       value: TestCaptures[K][number]
     ) => Effect.Effect<void>
-    get: () => Effect.Effect<TestCaptures>
+    get: Effect.Effect<TestCaptures>
   }
 >()('@popcomputer/web/TestCapture') {}
 
@@ -37,33 +37,31 @@ const createEmptyCaptures = (): TestCaptures => ({
   events: [],
 })
 
-const createId = (): string => {
-  if (globalThis.crypto?.randomUUID instanceof Function) {
-    return globalThis.crypto.randomUUID()
-  }
-  return `test_${Math.random().toString(16).slice(2)}`
-}
-
 // Simple Map-backed mock database for tests.
 function createMockDb() {
   const tables = new Map<string, Map<string, PageProps>>()
+  let nextId = 0
 
   const ensureTable = (table: string) => {
     let store = tables.get(table)
+
     if (!store) {
       store = new Map()
       tables.set(table, store)
     }
+
     return store
   }
 
   return {
     insert: (table: string) => ({
       values: (data: PageProps) => ({
+        // oxlint-disable-next-line effecttsgo/async-function -- This database fixture implements the Promise-returning Drizzle query contract consumed by the adapter.
         returning: async () => {
-          const id = createId()
+          const id = `test_${++nextId}`
           const record = { id, ...data }
           ensureTable(table).set(id, record)
+
           return [record]
         },
       }),
@@ -78,24 +76,31 @@ function createMockDb() {
             if (condition instanceof Function) {
               predicate = (row) => Boolean(condition(row))
             }
+
             return builder
           },
           // Cross-database compatible: returns array, use [0] for single row
+          // oxlint-disable-next-line effecttsgo/async-function -- This database fixture implements the Promise-returning Drizzle query contract consumed by the adapter.
           limit: async (n: number) => {
             const values = Array.from(store.values())
             const currentPredicate = predicate
             const filtered = currentPredicate ? values.filter((row) => currentPredicate(row)) : values
+
             return filtered.slice(0, n)
           },
           // Legacy SQLite-style method (kept for backwards compatibility)
+          // oxlint-disable-next-line effecttsgo/async-function -- This database fixture implements the Promise-returning Drizzle query contract consumed by the adapter.
           get: async () => {
             const values = Array.from(store.values())
             const currentPredicate = predicate
+
             return currentPredicate ? values.find((row) => currentPredicate(row)) : values[0]
           },
+          // oxlint-disable-next-line effecttsgo/async-function -- This database fixture implements the Promise-returning Drizzle query contract consumed by the adapter.
           all: async () => {
             const values = Array.from(store.values())
             const currentPredicate = predicate
+
             return currentPredicate ? values.filter((row) => currentPredicate(row)) : values
           },
         }
@@ -110,33 +115,39 @@ type TestAuthUserInput =
   | AuthUser
   | (Partial<AuthUser['user']> & { id: string } & PageProps)
 
-function createTestAuthUser(input: TestAuthUserInput): AuthUser {
+function createTestAuthUser(input: TestAuthUserInput, expiresAt: Date): AuthUser {
   if ('user' in input && 'session' in input) {
     // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
     return input as AuthUser
   }
 
   const { id, ...rest } = input
+
   const baseUser = {
     id,
     email: 'test@example.com',
     name: null,
     emailVerified: false,
     image: null,
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     createdAt: new Date(0),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     updatedAt: new Date(0),
     ...rest,
   }
 
   // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
   return {
+    // oxlint-disable-next-line typescript/no-unnecessary-type-assertion -- Consumer module augmentation can add user fields supplied by this test fixture's caller.
     user: baseUser as AuthUser['user'],
     session: {
       id: 'test-session',
       userId: baseUser.id,
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      expiresAt,
       token: 'test-token',
+      // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
       createdAt: new Date(0),
+      // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
       updatedAt: new Date(0),
     },
   }
@@ -159,7 +170,9 @@ export const TestLayer = {
   Auth: {
     guest: () => Layer.empty,
     withUser: (user: TestAuthUserInput) =>
-      Layer.succeed(AuthUserService, createTestAuthUser(user)),
+      Layer.effect(AuthUserService, Effect.map(DateTime.now, (now) =>
+        createTestAuthUser(user, DateTime.toDateUtc(DateTime.add(now, { hours: 1 })))
+      )),
     withRole: (role: string) =>
       TestLayer.Auth.withUser({ id: 'test-user', role }),
   },
@@ -170,6 +183,7 @@ export const TestLayer = {
         EmailService,
         Effect.gen(function* () {
           const capture = yield* TestCaptureService
+
           return {
             send: (to: string, subject: string, body: string) =>
               capture.capture('emails', { to, subject, body }),
@@ -184,6 +198,7 @@ export const TestLayer = {
         TestCaptureService,
         Effect.sync(() => {
           const captures = createEmptyCaptures()
+
           return {
             capture: <K extends keyof TestCaptures>(
               key: K,
@@ -194,7 +209,7 @@ export const TestLayer = {
                 const list = captures[key] as Array<TestCaptures[K][number]>
                 list.push(value)
               }),
-            get: () => Effect.succeed(captures),
+            get: Effect.succeed(captures),
           }
         })
       ),

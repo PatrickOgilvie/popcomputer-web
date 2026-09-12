@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Workers Cache Integration Tests
  *
@@ -24,6 +25,7 @@ import { Redirect } from '../../src/effect/errors.js'
 
 const recordingCacheLayer = () => {
   const purges: ResponseCachePurgeInput[] = []
+
   const layer = Layer.succeed(ResponseCacheService, {
     isAvailable: true,
     purge: (input: ResponseCachePurgeInput) =>
@@ -31,6 +33,7 @@ const recordingCacheLayer = () => {
         purges.push(input)
       }),
   })
+
   return { purges, layer }
 }
 
@@ -38,6 +41,7 @@ const createApp = () => {
   const app = new Hono()
   app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
   app.use('*', effectBridge())
+
   return app
 }
 
@@ -146,6 +150,7 @@ describe('cache route option', () => {
       const app = new Hono()
       app.use('*', async (c, next) => {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+        // oxlint-disable-next-line no-param-reassign -- This middleware supplies the development binding fixture consumed by the cache-policy diagnostics.
         (c.env as { ENVIRONMENT?: string }) = { ENVIRONMENT: 'development' }
         await next()
       })
@@ -163,15 +168,20 @@ describe('cache route option', () => {
                   name: 'User',
                   emailVerified: true,
                   image: null,
+                  // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
                   createdAt: new Date('2026-01-01T00:00:00Z'),
+                  // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
                   updatedAt: new Date('2026-01-01T00:00:00Z'),
                 },
                 session: {
                   id: 'session-1',
                   userId: 'user-1',
+                  // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
                   expiresAt: new Date('2027-01-01T00:00:00Z'),
                   token: 'redacted-test-token',
+                  // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
                   createdAt: new Date('2026-01-01T00:00:00Z'),
+                  // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
                   updatedAt: new Date('2026-01-01T00:00:00Z'),
                 },
               }),
@@ -208,6 +218,7 @@ describe('cache route option', () => {
       const app = new Hono()
       app.use('*', async (c, next) => {
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+        // oxlint-disable-next-line no-param-reassign -- This middleware supplies the development binding fixture consumed by the cache-policy diagnostics.
         (c.env as { ENVIRONMENT?: string }) = { ENVIRONMENT: 'development' }
         await next()
       })
@@ -261,11 +272,13 @@ describe('cache route option', () => {
     const plain = await app.request('/dashboard', {
       headers: { Cookie: 'better-auth.session_token=abc' },
     })
+
     expect(plain.headers.get('Cache-Control')).toBeNull()
 
     const secure = await app.request('/dashboard', {
       headers: { Cookie: '__Secure-better-auth.session_token=abc' },
     })
+
     expect(secure.headers.get('Cache-Control')).toBeNull()
   })
 
@@ -284,11 +297,13 @@ describe('cache route option', () => {
     const withSession = await app.request('/custom', {
       headers: { Cookie: 'my_app_session=abc' },
     })
+
     expect(withSession.headers.get('Cache-Control')).toBeNull()
 
     const withoutSession = await app.request('/custom', {
       headers: { Cookie: '_ga=GA1.2.3' },
     })
+
     expect(withoutSession.headers.get('Cache-Control')).toBe('public, max-age=300')
   })
 
@@ -358,7 +373,9 @@ describe('cache route option', () => {
       id: text('id').primaryKey(),
       slug: text('slug').notNull(),
     })
+
     const schema = { workspaces }
+
     const bindings = {
       workspace: S.Struct({ id: S.String, slug: S.String }),
     }
@@ -378,6 +395,7 @@ describe('cache route option', () => {
       '/workspaces/{workspace}',
       Effect.gen(function* () {
         const workspace = yield* bound('workspace')
+
         return Response.json(workspace)
       }),
       { cache: { maxAge: 300, tags: ['marketing'] } }
@@ -409,6 +427,7 @@ describe('cache route option', () => {
 
   test('does not cache when the aggregate Cache-Tag header exceeds 16 KB', async () => {
     const app = createApp()
+
     const tags = Array.from(
       { length: 17 },
       (_, index) => `${index.toString().padStart(2, '0')}${'x'.repeat(1022)}`
@@ -447,7 +466,9 @@ describe('purges route option', () => {
       id: text('id').primaryKey(),
       slug: text('slug').notNull(),
     })
+
     const schema = { workspaces }
+
     const bindings = {
       workspace: S.Struct({ id: S.String, slug: S.String }),
     }
@@ -553,6 +574,7 @@ describe('resolveWorkersCachePurgeApi', () => {
     const { resolveWorkersCachePurgeApi } = await import(
       '../../src/effect/response-cache.js'
     )
+
     const purge = async () => undefined
     const executionCtx = { cache: { purge } }
 
@@ -581,6 +603,7 @@ describe('ResponseCacheService default client', () => {
       Effect.gen(function* () {
         const cache = yield* ResponseCacheService
         yield* cache.purge({ tags: ['anything'] })
+
         return Response.json({ available: cache.isAvailable })
       })
     )
@@ -594,9 +617,11 @@ describe('ResponseCacheService default client', () => {
 describe('Workers ResponseCacheClient', () => {
   test('succeeds only when Workers Cache confirms the purge', async () => {
     const calls: Array<{ tags?: string[]; purgeEverything?: boolean }> = []
+
     const client = createWorkersResponseCacheClient({
       purge: async (input) => {
         calls.push(input)
+
         return { success: true, errors: [] }
       },
     })
@@ -628,6 +653,7 @@ describe('Workers ResponseCacheClient', () => {
 
     expect(error).toBeInstanceOf(ResponseCachePurgeError)
     expect(error.cause).toEqual({
+      // oxlint-disable-next-line popcomputer/effect-no-manual-tagged-construction -- Assert the literal external error shape independently of its production constructor.
       _tag: 'WorkersCachePurgeRejected',
       errors: [{ code: 10000, message: 'rate limited' }],
     })
@@ -643,14 +669,17 @@ describe('Workers ResponseCacheClient', () => {
     )
 
     expect(error).toBeInstanceOf(ResponseCachePurgeError)
+    // oxlint-disable-next-line popcomputer/effect-no-manual-tagged-construction -- Assert the literal external error shape independently of its production constructor.
     expect(error.cause).toEqual({ _tag: 'InvalidWorkersCachePurgeResult' })
   })
 
   test('rejects overlong tags before calling Workers Cache', async () => {
     let calls = 0
+
     const client = createWorkersResponseCacheClient({
       purge: async () => {
         calls++
+
         return { success: true }
       },
     })
@@ -660,15 +689,18 @@ describe('Workers ResponseCacheClient', () => {
     )
 
     expect(error).toBeInstanceOf(ResponseCachePurgeError)
+    // oxlint-disable-next-line popcomputer/effect-no-manual-tagged-construction -- Assert the literal external error shape independently of its production constructor.
     expect(error.cause).toMatchObject({ _tag: 'InvalidCacheTags' })
     expect(calls).toBe(0)
   })
 
   test('rejects more than 100 purge tags before calling Workers Cache', async () => {
     let calls = 0
+
     const client = createWorkersResponseCacheClient({
       purge: async () => {
         calls++
+
         return { success: true }
       },
     })
@@ -682,6 +714,7 @@ describe('Workers ResponseCacheClient', () => {
     )
 
     expect(error).toBeInstanceOf(ResponseCachePurgeError)
+    // oxlint-disable-next-line popcomputer/effect-no-manual-tagged-construction -- Assert the literal external error shape independently of its production constructor.
     expect(error.cause).toMatchObject({ _tag: 'InvalidCacheTags' })
     expect(calls).toBe(0)
   })

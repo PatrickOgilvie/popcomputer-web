@@ -1,5 +1,6 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 import { describe, expect, test } from 'bun:test'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Deferred, Effect, Layer } from 'effect'
 import { Hono } from 'hono'
 import { setupHonertia } from '../../src/setup.js'
 import { background } from '../../src/effect/background.js'
@@ -19,6 +20,7 @@ describe('background', () => {
   test('keeps Worker work alive and observes failures with its operation name', async () => {
     const events: EffectErrorEvent[] = []
     const waitUntilPromises: Promise<unknown>[] = []
+    const releaseBackground = Deferred.makeUnsafe<void>()
     const app = new Hono()
 
     setupHonertia(app, {
@@ -39,10 +41,11 @@ describe('background', () => {
       Effect.gen(function* () {
         yield* background(
           'analytics.record-signup',
-          Effect.sleep('5 millis').pipe(
+          Deferred.await(releaseBackground).pipe(
             Effect.andThen(Effect.fail(HttpError.internal('analytics unavailable')))
           )
         )
+
         return new Response(null, { status: 202 })
       })
     )
@@ -58,6 +61,7 @@ describe('background', () => {
 
     expect(response.status).toBe(202)
     expect(waitUntilPromises.length).toBeGreaterThan(0)
+    await Effect.runPromise(Deferred.succeed(releaseBackground, undefined))
     await Promise.allSettled(waitUntilPromises)
     expect(events).toHaveLength(1)
     expect(events[0].metadata).toEqual({ operation: 'analytics.record-signup' })
@@ -83,6 +87,7 @@ describe('background', () => {
             completed = true
           })
         )
+
         return new Response(null, { status: 202 })
       })
     )
@@ -94,8 +99,9 @@ describe('background', () => {
 
   test('keeps a standalone route runtime alive until scoped background work settles', async () => {
     let released = false
-    let backgroundObservedReleasedResource = false
+    let backgroundObservedReleasedResource: boolean | undefined
     const waitUntilPromises: Promise<unknown>[] = []
+    const releaseBackground = Deferred.makeUnsafe<void>()
     const app = new Hono()
 
     const resourceLayer = Layer.effect(
@@ -113,7 +119,7 @@ describe('background', () => {
       Effect.gen(function* () {
         yield* background(
           'events.use-scoped-resource',
-          Effect.sleep('5 millis').pipe(
+          Deferred.await(releaseBackground).pipe(
             Effect.andThen(
               Effect.gen(function* () {
                 const resource = yield* ScopedBackgroundResource
@@ -122,6 +128,7 @@ describe('background', () => {
             )
           )
         )
+
         return new Response(null, { status: 202 })
       })
     )
@@ -137,6 +144,8 @@ describe('background', () => {
 
     expect(response.status).toBe(202)
     expect(waitUntilPromises.length).toBeGreaterThan(0)
+    expect(released).toBe(false)
+    await Effect.runPromise(Deferred.succeed(releaseBackground, undefined))
     await Promise.allSettled(waitUntilPromises)
     expect(backgroundObservedReleasedResource).toBe(false)
     expect(released).toBe(true)

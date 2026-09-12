@@ -1,5 +1,8 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
+import assert from 'node:assert/strict'
+import { TestClock } from 'effect/testing'
 import { describe, it, expect } from 'bun:test'
-import { Effect, Layer, Option, Schema as S, Duration } from 'effect'
+import { Clock, Deferred, Predicate, Effect, Layer, Option, Schema as S, Duration } from 'effect'
 import {
   CacheService,
   CacheClientError,
@@ -25,8 +28,8 @@ const makeTestExecutionContext = () => {
     waitUntil: (promise) => {
       tasks.push(promise)
     },
-    runInBackground: (effect) =>
-      Effect.flatMap(Effect.context<any>(), (context) =>
+    runInBackground: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.flatMap(Effect.context<R>(), (context) =>
         Effect.sync(() => {
           const promise = Effect.runPromise(
             effect.pipe(
@@ -34,11 +37,12 @@ const makeTestExecutionContext = () => {
               Effect.catchCause(() => Effect.void)
             )
           )
+
           tasks.push(promise)
         })
       ),
-    schedule: (_operation, effect) =>
-      Effect.flatMap(Effect.context<any>(), (context) =>
+    schedule: <A, E, R>(_operation: string, effect: Effect.Effect<A, E, R>) =>
+      Effect.flatMap(Effect.context<R>(), (context) =>
         Effect.sync(() => {
           const promise = Effect.runPromise(
             effect.pipe(
@@ -46,6 +50,7 @@ const makeTestExecutionContext = () => {
               Effect.catchCause(() => Effect.void)
             )
           )
+
           tasks.push(promise)
         })
       ),
@@ -80,18 +85,23 @@ const makeTestCache = () => {
 
   const client: CacheClient = {
     get: (key) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
         const entry = store.get(key)
-        if (!entry || entry.expiresAt < Date.now()) {
+
+        if (!entry || entry.expiresAt <= now) {
           store.delete(key)
+
           return null
         }
+
         return entry.value
       }),
     put: (key, value, options) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
         const ttlMs = (options?.expirationTtl ?? 3600) * 1000
-        store.set(key, { value, expiresAt: Date.now() + ttlMs })
+        store.set(key, { value, expiresAt: now + ttlMs })
       }),
     delete: (key) =>
       Effect.sync(() => {
@@ -100,8 +110,7 @@ const makeTestCache = () => {
     list: (options) =>
       Effect.sync(() => ({
         keys: [...store.keys()]
-          .filter((k) => !options?.prefix || k.startsWith(options.prefix))
-          .map((name) => ({ name })),
+          .flatMap((name) => !options?.prefix || name.startsWith(options.prefix) ? [{ name }] : []),
         list_complete: true,
       })),
   }
@@ -109,9 +118,10 @@ const makeTestCache = () => {
   const execCtx = makeTestExecutionContext()
 
   return {
-    layer: Layer.merge(
+    layer: Layer.mergeAll(
       Layer.succeed(CacheService, client),
-      execCtx.layer
+      execCtx.layer,
+      TestClock.layer(),
     ),
     store,
     executionContext: {
@@ -131,6 +141,11 @@ const UserSchema = S.Struct({
   email: S.String,
 })
 
+const UserCacheEntry = S.fromJsonString(S.Struct({
+  v: UserSchema,
+  t: S.Finite,
+}))
+
 const ProjectSchema = S.Struct({
   id: S.String,
   name: S.String,
@@ -142,7 +157,60 @@ const ProjectSchema = S.Struct({
 // ============================================================================
 
 describe('cache', () => {
+  it('uses the Effect clock for cache freshness and stored timestamps', async () => {
+    const { layer, store } = makeTestCache()
+    let computations = 0
+    const value = { id: 'clock-user', name: 'Clock User', email: 'clock@example.com' }
+
+    const compute = Effect.sync(() => {
+      computations++
+
+      return value
+    })
+
+    const program = Effect.gen(function*() {
+      yield* cache('clock-key', compute, UserSchema, { ttl: '1 second' })
+      yield* TestClock.adjust('500 millis')
+      yield* cache('clock-key', compute, UserSchema, { ttl: '1 second' })
+      expect(computations).toBe(1)
+
+      yield* TestClock.adjust('500 millis')
+      yield* cache('clock-key', compute, UserSchema, { ttl: '1 second' })
+      expect(computations).toBe(2)
+
+      yield* cacheSet('manual-clock-key', value, UserSchema, { ttl: '1 second' })
+      const entry = store.get('manual-clock-key')
+      assert.ok(entry)
+
+      const decoded = yield* S.decodeEffect(S.fromJsonString(S.Struct({
+        v: UserSchema,
+        t: S.Finite,
+      })))(entry.value)
+
+      expect(decoded.t).toBe(1000)
+      expect(decoded.v).toEqual(value)
+    })
+
+    await Effect.runPromise(program.pipe(
+      Effect.provide(layer),
+    ))
+  })
+
   describe('cache()', () => {
+    it('rejects a non-finite persisted cache timestamp', async () => {
+      const { layer, store } = makeTestCache()
+      store.set('user:1', {
+        value: '{"v":{"id":"1","name":"Test","email":"test@example.com"},"t":1e999}',
+        expiresAt: 3_600_000,
+      })
+
+      const result = await Effect.runPromiseExit(cacheGet('user:1', UserSchema).pipe(
+        Effect.provide(layer),
+      ))
+
+      expect(result._tag).toBe('Failure')
+    })
+
     it('computes and caches value on first call', async () => {
       const { layer } = makeTestCache()
       let callCount = 0
@@ -150,6 +218,7 @@ describe('cache', () => {
       await Effect.gen(function* () {
         const compute = Effect.sync(() => {
           callCount++
+
           return { id: '1', name: 'Test User', email: 'test@example.com' }
         })
 
@@ -167,6 +236,7 @@ describe('cache', () => {
       await Effect.gen(function* () {
         const compute = Effect.sync(() => {
           callCount++
+
           return { id: '1', name: 'Test User', email: 'test@example.com' }
         })
 
@@ -187,6 +257,7 @@ describe('cache', () => {
       await Effect.gen(function* () {
         const compute = Effect.sync(() => {
           callCount++
+
           return { id: '1', name: `User ${callCount}`, email: 'test@example.com' }
         })
 
@@ -205,16 +276,19 @@ describe('cache', () => {
       const { layer } = makeTestCache()
 
       const result = await Effect.gen(function* () {
-        const compute = Effect.fail(new Error('Database connection failed'))
+        const failure = new CacheClientError('Database connection failed')
+        const compute = Effect.fail(failure)
 
         return yield* cache('user:1', compute, UserSchema, { ttl: Duration.hours(1) })
       }).pipe(Effect.provide(layer), Effect.result, Effect.runPromise)
 
       expect(result._tag).toBe('Failure')
-      if (result._tag === 'Failure') {
-        expect(result.failure).toBeInstanceOf(Error)
-        if (result.failure instanceof Error) {
-          expect(result.failure.message).toBe('Database connection failed')
+
+      if (Predicate.isTagged(result, 'Failure')) {
+        expect(result.failure).toBeInstanceOf(CacheClientError)
+
+        if (result.failure instanceof CacheClientError) {
+          expect(result.failure.reason).toBe('Database connection failed')
         }
       }
     })
@@ -224,8 +298,8 @@ describe('cache', () => {
 
       // Pre-populate cache with invalid data (missing required fields in value)
       store.set('user:1', {
-        value: JSON.stringify({ v: { id: '1', invalid: 'data' }, t: Date.now() }),
-        expiresAt: Date.now() + 3600000,
+        value: JSON.stringify({ v: { id: '1', invalid: 'data' }, t: 0 }),
+        expiresAt: 3600000,
       })
 
       const result = await Effect.gen(function* () {
@@ -247,7 +321,7 @@ describe('cache', () => {
       const ComplexSchema = S.Struct({
         id: S.String,
         data: S.Struct({
-          items: S.Array(S.Struct({ name: S.String, value: S.Number })),
+          items: S.Array(S.Struct({ name: S.String, value: S.Finite })),
           metadata: S.Struct({
             createdAt: S.String,
             tags: S.Array(S.String),
@@ -293,14 +367,15 @@ describe('cache', () => {
 
       // Pre-populate cache with new internal format
       store.set('user:1', {
-        value: JSON.stringify({ v: { id: '1', name: 'Test', email: 'test@example.com' }, t: Date.now() }),
-        expiresAt: Date.now() + 3600000,
+        value: JSON.stringify({ v: { id: '1', name: 'Test', email: 'test@example.com' }, t: 0 }),
+        expiresAt: 3600000,
       })
 
       await Effect.gen(function* () {
         const result = yield* cacheGet('user:1', UserSchema)
 
         expect(Option.isSome(result)).toBe(true)
+
         if (Option.isSome(result)) {
           expect(result.value).toEqual({ id: '1', name: 'Test', email: 'test@example.com' })
         }
@@ -312,8 +387,8 @@ describe('cache', () => {
 
       // Pre-populate cache with expired entry
       store.set('user:1', {
-        value: JSON.stringify({ v: { id: '1', name: 'Test', email: 'test@example.com' }, t: Date.now() }),
-        expiresAt: Date.now() - 1000, // Expired
+        value: JSON.stringify({ v: { id: '1', name: 'Test', email: 'test@example.com' }, t: 0 }),
+        expiresAt: -1000, // Expired
       })
 
       await Effect.gen(function* () {
@@ -333,7 +408,8 @@ describe('cache', () => {
 
         const entry = store.get('user:1')
         expect(entry).toBeDefined()
-        const parsed = JSON.parse(entry!.value)
+        assert.ok(entry)
+        const parsed = yield* S.decodeEffect(UserCacheEntry)(entry.value)
         expect(parsed.v).toEqual(user)
         expect(parsed.t).toEqual(expect.any(Number))
       }).pipe(Effect.provide(layer), Effect.runPromise)
@@ -350,7 +426,9 @@ describe('cache', () => {
         yield* cacheSet('user:1', user2, UserSchema, { ttl: Duration.hours(1) })
 
         const entry = store.get('user:1')
-        expect(JSON.parse(entry!.value).v).toEqual(user2)
+        assert.ok(entry)
+        const parsed = yield* S.decodeEffect(UserCacheEntry)(entry.value)
+        expect(parsed.v).toEqual(user2)
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
 
@@ -362,10 +440,9 @@ describe('cache', () => {
         yield* cacheSet('user:1', user, UserSchema, { ttl: Duration.seconds(60) })
 
         const entry = store.get('user:1')
-        const expectedExpiry = Date.now() + 60000
-        // Allow 1 second tolerance
-        expect(entry!.expiresAt).toBeGreaterThan(expectedExpiry - 1000)
-        expect(entry!.expiresAt).toBeLessThan(expectedExpiry + 1000)
+        const expectedExpiry = 60000
+        assert.ok(entry)
+        expect(entry.expiresAt).toBe(expectedExpiry)
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
   })
@@ -376,7 +453,7 @@ describe('cache', () => {
 
       store.set('user:1', {
         value: JSON.stringify({ id: '1', name: 'Test', email: 'test@example.com' }),
-        expiresAt: Date.now() + 3600000,
+        expiresAt: 3600000,
       })
 
       await Effect.gen(function* () {
@@ -388,10 +465,7 @@ describe('cache', () => {
     it('succeeds for non-existent keys', async () => {
       const { layer } = makeTestCache()
 
-      await Effect.gen(function* () {
-        // Should not throw
-        yield* cacheInvalidate('nonexistent')
-      }).pipe(Effect.provide(layer), Effect.runPromise)
+      await cacheInvalidate('nonexistent').pipe(Effect.provide(layer), Effect.runPromise)
     })
   })
 
@@ -402,23 +476,23 @@ describe('cache', () => {
       // Pre-populate cache with multiple keys
       store.set('user:1:profile', {
         value: '{}',
-        expiresAt: Date.now() + 3600000,
+        expiresAt: 3600000,
       })
       store.set('user:1:settings', {
         value: '{}',
-        expiresAt: Date.now() + 3600000,
+        expiresAt: 3600000,
       })
       store.set('user:1:notifications', {
         value: '{}',
-        expiresAt: Date.now() + 3600000,
+        expiresAt: 3600000,
       })
       store.set('user:2:profile', {
         value: '{}',
-        expiresAt: Date.now() + 3600000,
+        expiresAt: 3600000,
       })
       store.set('other:key', {
         value: '{}',
-        expiresAt: Date.now() + 3600000,
+        expiresAt: 3600000,
       })
 
       await Effect.gen(function* () {
@@ -435,8 +509,8 @@ describe('cache', () => {
     it('handles empty prefix (deletes nothing)', async () => {
       const { layer, store } = makeTestCache()
 
-      store.set('key1', { value: '{}', expiresAt: Date.now() + 3600000 })
-      store.set('key2', { value: '{}', expiresAt: Date.now() + 3600000 })
+      store.set('key1', { value: '{}', expiresAt: 3600000 })
+      store.set('key2', { value: '{}', expiresAt: 3600000 })
 
       await Effect.gen(function* () {
         yield* cacheInvalidatePrefix('nonexistent:')
@@ -451,26 +525,31 @@ describe('cache', () => {
       const listCalls: Array<string | undefined> = []
       let listedSnapshot: string[] | null = null
 
-      store.set('user:1:profile', { value: '{}', expiresAt: Date.now() + 3600000 })
-      store.set('user:1:settings', { value: '{}', expiresAt: Date.now() + 3600000 })
-      store.set('user:1:notifications', { value: '{}', expiresAt: Date.now() + 3600000 })
-      store.set('user:1:projects', { value: '{}', expiresAt: Date.now() + 3600000 })
-      store.set('user:2:profile', { value: '{}', expiresAt: Date.now() + 3600000 })
+      store.set('user:1:profile', { value: '{}', expiresAt: 3600000 })
+      store.set('user:1:settings', { value: '{}', expiresAt: 3600000 })
+      store.set('user:1:notifications', { value: '{}', expiresAt: 3600000 })
+      store.set('user:1:projects', { value: '{}', expiresAt: 3600000 })
+      store.set('user:2:profile', { value: '{}', expiresAt: 3600000 })
 
       const cacheClient: CacheClient = {
         get: (key) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis
             const entry = store.get(key)
-            if (!entry || entry.expiresAt < Date.now()) {
+
+            if (!entry || entry.expiresAt <= now) {
               store.delete(key)
+
               return null
             }
+
             return entry.value
           }),
         put: (key, value, options) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis
             const ttlMs = (options?.expirationTtl ?? 3600) * 1000
-            store.set(key, { value, expiresAt: Date.now() + ttlMs })
+            store.set(key, { value, expiresAt: now + ttlMs })
           }),
         delete: (key) =>
           Effect.sync(() => {
@@ -479,11 +558,10 @@ describe('cache', () => {
         list: (options) =>
           Effect.sync(() => {
             listCalls.push(options?.cursor)
-            if (listedSnapshot === null) {
-              listedSnapshot = [...store.keys()]
-                .filter((k) => !options?.prefix || k.startsWith(options.prefix))
-                .sort()
-            }
+
+            listedSnapshot ??= [...store.keys()]
+              .filter((k) => !options?.prefix || k.startsWith(options.prefix))
+              .sort()
 
             const pageSize = 2
             const offset = Number(options?.cursor ?? '0')
@@ -508,7 +586,7 @@ describe('cache', () => {
         expect(store.has('user:1:projects')).toBe(false)
         expect(store.has('user:2:profile')).toBe(true)
       }).pipe(
-        Effect.provide(Layer.succeed(CacheService, cacheClient)),
+        Effect.provideService(CacheService, cacheClient),
         Effect.runPromise
       )
 
@@ -554,13 +632,13 @@ describe('cache', () => {
 
       const failingLayer = Layer.succeed(CacheService, failingClient)
 
-      const result = await Effect.gen(function* () {
-        return yield* cacheGet('key', UserSchema)
-      }).pipe(Effect.provide(failingLayer), Effect.result, Effect.runPromise)
+      const result = await cacheGet('key', UserSchema).pipe(Effect.provide(failingLayer), Effect.result, Effect.runPromise)
 
       expect(result._tag).toBe('Failure')
-      if (result._tag === 'Failure') {
+
+      if (Predicate.isTagged(result, 'Failure')) {
         expect(result.failure).toBeInstanceOf(CacheClientError)
+
         if (result.failure instanceof CacheClientError) {
           expect(result.failure.reason).toBe('Connection failed')
         }
@@ -576,6 +654,7 @@ describe('cache', () => {
       const fetchFromDb = (id: string) =>
         Effect.sync(() => {
           dbCalls++
+
           return { id, name: `Project ${id}`, userId: 'user-1' }
         })
 
@@ -587,6 +666,7 @@ describe('cache', () => {
           ProjectSchema,
           { ttl: Duration.minutes(5) }
         )
+
         expect(project1.id).toBe('1')
         expect(dbCalls).toBe(1)
 
@@ -597,6 +677,7 @@ describe('cache', () => {
           ProjectSchema,
           { ttl: Duration.minutes(5) }
         )
+
         expect(project1Again.id).toBe('1')
         expect(dbCalls).toBe(1) // Still 1, no DB call
 
@@ -607,6 +688,7 @@ describe('cache', () => {
           ProjectSchema,
           { ttl: Duration.minutes(5) }
         )
+
         expect(project2.id).toBe('2')
         expect(dbCalls).toBe(2)
       }).pipe(Effect.provide(layer), Effect.runPromise)
@@ -657,13 +739,14 @@ describe('cache', () => {
 
       // Pre-populate cache with fresh entry (cached just now)
       store.set('user:1', {
-        value: JSON.stringify({ v: { id: '1', name: 'Cached User', email: 'cached@example.com' }, t: Date.now() }),
-        expiresAt: Date.now() + 3600000,
+        value: JSON.stringify({ v: { id: '1', name: 'Cached User', email: 'cached@example.com' }, t: 0 }),
+        expiresAt: 3600000,
       })
 
       await Effect.gen(function* () {
         const compute = Effect.sync(() => {
           callCount++
+
           return { id: '1', name: 'Fresh User', email: 'fresh@example.com' }
         })
 
@@ -683,28 +766,26 @@ describe('cache', () => {
       let computeStarted = false
 
       // Pre-populate cache with stale entry (cached 2 hours ago, TTL is 1 hour)
-      const twoHoursAgo = Date.now() - Duration.toMillis(Duration.hours(2))
+      const twoHoursAgo = -Duration.toMillis(Duration.hours(2))
       store.set('user:1', {
         value: JSON.stringify({ v: { id: '1', name: 'Stale User', email: 'stale@example.com' }, t: twoHoursAgo }),
-        expiresAt: Date.now() + 3600000, // KV hasn't expired yet (TTL + SWR window)
+        expiresAt: 3600000, // KV hasn't expired yet (TTL + SWR window)
       })
 
-      // Use async compute to simulate real DB call
-      const compute = Effect.callback<{ id: string; name: string; email: string }>((resume) => {
+      const releaseCompute = Deferred.makeUnsafe<void>()
+
+      const compute = Effect.gen(function* () {
         computeStarted = true
-        // Simulate async work
-        setTimeout(() => {
-          callCount++
-          resume(Effect.succeed({ id: '1', name: 'Fresh User', email: 'fresh@example.com' }))
-        }, 10)
+        yield* Deferred.await(releaseCompute)
+        callCount++
+
+        return { id: '1', name: 'Fresh User', email: 'fresh@example.com' }
       })
 
-      const result = await Effect.gen(function* () {
-        return yield* cache('user:1', compute, UserSchema, {
+      const result = await cache('user:1', compute, UserSchema, {
           ttl: Duration.hours(1),
           swr: Duration.hours(2), // SWR window covers the staleness
-        })
-      }).pipe(Effect.provide(layer), Effect.runPromise)
+        }).pipe(Effect.provide(layer), Effect.runPromise)
 
       // Returns stale value immediately
       expect(result.name).toBe('Stale User')
@@ -713,7 +794,9 @@ describe('cache', () => {
       expect(computeStarted).toBe(true)
       expect(executionContext.backgroundTasks.length).toBe(1)
 
-      // Wait for background refresh to complete
+      // Release the pending refresh after verifying the stale response.
+      expect(callCount).toBe(0)
+      await Effect.runPromise(Deferred.succeed(releaseCompute, undefined))
       await executionContext.awaitAll()
 
       // Now the compute function completed
@@ -722,7 +805,8 @@ describe('cache', () => {
       // Cache should be updated with fresh value
       const cachedEntry = store.get('user:1')
       expect(cachedEntry).toBeDefined()
-      const parsed = JSON.parse(cachedEntry!.value)
+      assert.ok(cachedEntry)
+      const parsed = await Effect.runPromise(S.decodeEffect(UserCacheEntry)(cachedEntry.value))
       expect(parsed.v.name).toBe('Fresh User')
     })
 
@@ -731,15 +815,16 @@ describe('cache', () => {
       let callCount = 0
 
       // Pre-populate cache with very stale entry (cached 3 hours ago)
-      const threeHoursAgo = Date.now() - Duration.toMillis(Duration.hours(3))
+      const threeHoursAgo = -Duration.toMillis(Duration.hours(3))
       store.set('user:1', {
         value: JSON.stringify({ v: { id: '1', name: 'Very Stale User', email: 'stale@example.com' }, t: threeHoursAgo }),
-        expiresAt: Date.now() + 3600000,
+        expiresAt: 3600000,
       })
 
       await Effect.gen(function* () {
         const compute = Effect.sync(() => {
           callCount++
+
           return { id: '1', name: 'Fresh User', email: 'fresh@example.com' }
         })
 
@@ -765,58 +850,66 @@ describe('cache', () => {
 
         const entry = store.get('user:1')
         // TTL should be 1 hour + 30 minutes = 5400 seconds
-        const expectedExpiry = Date.now() + (3600 + 1800) * 1000
-        expect(entry!.expiresAt).toBeGreaterThan(expectedExpiry - 1000)
-        expect(entry!.expiresAt).toBeLessThan(expectedExpiry + 1000)
+        const expectedExpiry = (3600 + 1800) * 1000
+        assert.ok(entry)
+        expect(entry.expiresAt).toBe(expectedExpiry)
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
 
     it('recomputes synchronously when ExecutionContext is unavailable', async () => {
       // Create cache layer with noop ExecutionContext
       const store = new Map<string, { value: string; expiresAt: number }>()
+
       const cacheClient: CacheClient = {
         get: (key) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis
             const entry = store.get(key)
-            if (!entry || entry.expiresAt < Date.now()) {
+
+            if (!entry || entry.expiresAt <= now) {
               store.delete(key)
+
               return null
             }
+
             return entry.value
           }),
         put: (key, value, options) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis
             const ttlMs = (options?.expirationTtl ?? 3600) * 1000
-            store.set(key, { value, expiresAt: Date.now() + ttlMs })
+            store.set(key, { value, expiresAt: now + ttlMs })
           }),
         delete: (key) => Effect.sync(() => { store.delete(key) }),
         list: (options) =>
           Effect.sync(() => ({
             keys: [...store.keys()]
-              .filter((k) => !options?.prefix || k.startsWith(options.prefix))
-              .map((name) => ({ name })),
+              .flatMap((name) => !options?.prefix || name.startsWith(options.prefix) ? [{ name }] : []),
             list_complete: true,
           })),
       }
 
       const { layer: noopExecCtx } = makeNoopExecutionContext()
-      const layer = Layer.merge(
+
+      const layer = Layer.mergeAll(
         Layer.succeed(CacheService, cacheClient),
-        noopExecCtx
+        noopExecCtx,
+        TestClock.layer(),
       )
 
       let callCount = 0
 
       // Pre-populate cache with stale entry
-      const twoHoursAgo = Date.now() - Duration.toMillis(Duration.hours(2))
+      const twoHoursAgo = -Duration.toMillis(Duration.hours(2))
       store.set('user:1', {
         value: JSON.stringify({ v: { id: '1', name: 'Stale User', email: 'stale@example.com' }, t: twoHoursAgo }),
-        expiresAt: Date.now() + 3600000,
+        expiresAt: 3600000,
       })
 
       await Effect.gen(function* () {
         const compute = Effect.sync(() => {
           callCount++
+
           return { id: '1', name: 'Fresh User', email: 'fresh@example.com' }
         })
 
@@ -831,7 +924,8 @@ describe('cache', () => {
 
       // Cache was refreshed synchronously
       const cachedEntry = store.get('user:1')
-      const parsed = JSON.parse(cachedEntry!.value)
+      assert.ok(cachedEntry)
+      const parsed = await Effect.runPromise(S.decodeEffect(UserCacheEntry)(cachedEntry.value))
       expect(parsed.v.name).toBe('Fresh User')
     })
 
@@ -840,42 +934,40 @@ describe('cache', () => {
       let callCount = 0
 
       // Pre-populate cache with stale entry
-      const twoHoursAgo = Date.now() - Duration.toMillis(Duration.hours(2))
+      const twoHoursAgo = -Duration.toMillis(Duration.hours(2))
       store.set('user:1', {
         value: JSON.stringify({ v: { id: '1', name: 'Stale User', email: 'stale@example.com' }, t: twoHoursAgo }),
-        expiresAt: Date.now() + 3600000,
+        expiresAt: 3600000,
       })
 
-      // Use async compute to simulate real DB call
-      const makeCompute = () =>
-        Effect.callback<{ id: string; name: string; email: string }>((resume) => {
-          setTimeout(() => {
-            callCount++
-            resume(Effect.succeed({ id: '1', name: `Fresh User ${callCount}`, email: 'fresh@example.com' }))
-          }, 10)
-        })
+      const releaseCompute = Deferred.makeUnsafe<void>()
+
+      const compute = Effect.gen(function* () {
+        yield* Deferred.await(releaseCompute)
+        callCount++
+
+        return { id: '1', name: `Fresh User ${callCount}`, email: 'fresh@example.com' }
+      })
 
       // First request: returns stale, triggers background refresh
-      const firstResult = await Effect.gen(function* () {
-        return yield* cache('user:1', makeCompute(), UserSchema, {
+      const firstResult = await cache('user:1', compute, UserSchema, {
           ttl: Duration.hours(1),
           swr: Duration.hours(2),
-        })
-      }).pipe(Effect.provide(layer), Effect.runPromise)
+        }).pipe(Effect.provide(layer), Effect.runPromise)
 
       expect(firstResult.name).toBe('Stale User')
 
-      // Wait for background refresh
+      // Complete the pending refresh before making the next request.
+      expect(callCount).toBe(0)
+      await Effect.runPromise(Deferred.succeed(releaseCompute, undefined))
       await executionContext.awaitAll()
       expect(callCount).toBe(1)
 
       // Second request: should get the fresh value from cache (not compute again)
-      const secondResult = await Effect.gen(function* () {
-        return yield* cache('user:1', makeCompute(), UserSchema, {
+      const secondResult = await cache('user:1', compute, UserSchema, {
           ttl: Duration.hours(1),
           swr: Duration.hours(2),
-        })
-      }).pipe(Effect.provide(layer), Effect.runPromise)
+        }).pipe(Effect.provide(layer), Effect.runPromise)
 
       expect(secondResult.name).toBe('Fresh User 1') // Fresh value from background refresh
       expect(callCount).toBe(1) // No additional compute
@@ -906,6 +998,7 @@ describe('cache', () => {
         // Can retrieve with same version
         const result = yield* cacheGet('user:1', UserSchema, { version: 'v2' })
         expect(Option.isSome(result)).toBe(true)
+
         if (Option.isSome(result)) {
           expect(result.value.name).toBe('Test')
         }
@@ -972,6 +1065,7 @@ describe('cache', () => {
       await Effect.gen(function* () {
         const compute = Effect.sync(() => {
           callCount++
+
           return { id: '1', name: 'Test User', email: 'test@example.com' }
         })
 
@@ -980,6 +1074,7 @@ describe('cache', () => {
           ttl: Duration.hours(1),
           version: 'v1',
         })
+
         expect(first.name).toBe('Test User')
         expect(callCount).toBe(1)
 
@@ -988,6 +1083,7 @@ describe('cache', () => {
           ttl: Duration.hours(1),
           version: 'v1',
         })
+
         expect(second.name).toBe('Test User')
         expect(callCount).toBe(1) // No recompute
 
@@ -996,6 +1092,7 @@ describe('cache', () => {
           ttl: Duration.hours(1),
           version: 'v2',
         })
+
         expect(third.name).toBe('Test User')
         expect(callCount).toBe(2) // Recomputed for new version
       }).pipe(Effect.provide(layer), Effect.runPromise)
@@ -1045,6 +1142,7 @@ describe('cache', () => {
         // Cache with v1 schema
         const computeV1 = Effect.sync(() => {
           callCount++
+
           return { id: '1', name: 'User V1', email: 'v1@example.com' }
         })
 
@@ -1057,6 +1155,7 @@ describe('cache', () => {
         // Try to get with v2 schema - different hash, so cache miss
         const computeV2 = Effect.sync(() => {
           callCount++
+
           return { id: '1', name: 'User V2', email: 'v2@example.com' }
         })
 
@@ -1064,6 +1163,7 @@ describe('cache', () => {
           ttl: Duration.hours(1),
           version: true,
         })
+
         expect(result.name).toBe('User V2') // Got v2, not v1
         expect(callCount).toBe(2) // Recomputed because schema changed
       }).pipe(Effect.provide(layer), Effect.runPromise)

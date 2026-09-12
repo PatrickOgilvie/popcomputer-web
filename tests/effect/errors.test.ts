@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Effect, Exit, Cause } from 'effect'
+import { Match, Option, Effect, Exit, Cause } from 'effect'
 import {
   ValidationError,
   UnauthorizedError,
@@ -48,7 +48,8 @@ describe('Error Types', () => {
 
       if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
         const option = Cause.findErrorOption(exit.cause)
-        if (option._tag === 'Some') {
+
+        if (Option.isSome(option)) {
           expect(option.value._tag).toBe('ValidationError')
         }
       }
@@ -160,6 +161,7 @@ describe('Error Types', () => {
 
     test('supports various status codes', () => {
       const codes = [400, 401, 403, 404, 422, 429, 500, 502, 503]
+
       for (const status of codes) {
         const error = new HttpError({ status, message: 'Error' })
         expect(error.status).toBe(status)
@@ -216,9 +218,9 @@ describe('Error Types', () => {
 
       try {
         throw error
-      } catch (e: any) {
-        expect(e._tag).toBe('HonertiaConfigurationError')
-        expect(e.hint).toBe('Test hint')
+      } catch (e: unknown) {
+        expect(e).toBeInstanceOf(HonertiaConfigurationError)
+        expect(e).toMatchObject({ hint: 'Test hint' })
       }
     })
   })
@@ -301,14 +303,11 @@ describe('Error Handling Patterns', () => {
     type AppError = ValidationError | UnauthorizedError | NotFoundError
 
     const handleError = (error: AppError): string => {
-      switch (error._tag) {
-        case 'ValidationError':
-          return `Validation failed: ${Object.keys(error.errors).length} errors`
-        case 'UnauthorizedError':
-          return `Unauthorized: ${error.message}`
-        case 'NotFoundError':
-          return `Not found: ${error.resource}`
-      }
+      return Match.value(error).pipe(Match.tagsExhaustive({
+        ValidationError: (error) => `Validation failed: ${Object.keys(error.errors).length} errors`,
+        UnauthorizedError: (error) => `Unauthorized: ${error.message}`,
+        NotFoundError: (error) => `Not found: ${error.resource}`,
+      }))
     }
 
     expect(handleError(new ValidationError({ errors: { a: '1', b: '2' } }))).toBe(

@@ -14,6 +14,20 @@ import type {
   FixSuggestion,
   HonertiaStructuredError,
 } from './error-types.js'
+import { Predicate } from 'effect'
+import type { PagePropValue } from '../types.js'
+
+// Error text accepts scalar labels. Never serialize arbitrary object payloads
+// into diagnostics, where they could expose request fields or credentials.
+function formatErrorParam(value: PagePropValue): string {
+  if (value === null || value === undefined) return String(value)
+
+  if (Predicate.isString(value) || Predicate.isNumber(value) || Predicate.isBoolean(value)) {
+    return String(value)
+  }
+
+  return Array.isArray(value) ? '[array]' : '[object]'
+}
 
 /**
  * All Honertia error codes organized by category.
@@ -186,13 +200,13 @@ const fixGenerators = {
     id: 'make-field-optional',
     type: 'modify_code',
     confidence: 'medium',
-    description: `Make the "${params.field}" field optional in your schema`,
+    description: `Make the "${formatErrorParam(params.field)}" field optional in your schema`,
     automated: false,
     operations: [
       {
         type: 'modify_code',
         file: ctx.handler?.file,
-        content: `S.optional(S.String), // Make ${params.field} optional`,
+        content: `S.optional(S.String), // Make ${formatErrorParam(params.field)} optional`,
       },
     ],
   }),
@@ -207,11 +221,12 @@ const fixGenerators = {
     const routeInfo = ctx.route
       ? ` for ${ctx.route.method} ${ctx.route.path}`
       : ''
+
     return {
       id: 'provide-field-value',
       type: 'modify_code',
       confidence: 'high',
-      description: `Provide a value for the "${params.field}" field in your request${routeInfo}`,
+      description: `Provide a value for the "${formatErrorParam(params.field)}" field in your request${routeInfo}`,
       automated: false,
       operations: [],
     }
@@ -751,7 +766,7 @@ const ERROR_GUIDE_URL = 'https://github.com/patrickogilvie/popcomputer-web#respo
  * ```
  */
 export function createStructuredError(
-  code: ErrorCode | string,
+  code: string,
   params: ErrorParams,
   context: ErrorContext
 ): HonertiaStructuredError {
@@ -772,8 +787,9 @@ export function createStructuredError(
 
   // Interpolate message template
   let message = definition.messageTemplate
+
   for (const [key, value] of Object.entries(params)) {
-    message = message.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value))
+    message = message.replaceAll(`{${key}}`, () => formatErrorParam(value))
   }
 
   // Generate fixes
@@ -794,6 +810,7 @@ export function createStructuredError(
       url: ERROR_GUIDE_URL,
       related: definition.related,
     },
+    // oxlint-disable-next-line effecttsgo/global-date -- The synchronous diagnostic formatter stamps its output at the native reporting boundary; this timestamp does not drive application decisions.
     timestamp: new Date().toISOString(),
   }
 }

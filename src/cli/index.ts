@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console -- This CLI adapter owns native Node/Bun IO and raw command output; preserve the stdout/stderr format. */
 /**
  * Popcomputer Web CLI
  *
@@ -5,10 +6,7 @@
  * Designed for both human developers and AI agent workflows.
  */
 
-import {
-  RouteRegistry,
-  type RouteMetadataJson,
-} from '../effect/route-registry.js'
+import type { RouteRegistry, RouteMetadataJson } from '../effect/route-registry.js'
 import { loadAppRouteRegistry } from './load-app.js'
 
 /**
@@ -108,6 +106,7 @@ function formatTable(routes: RouteMetadataJson[]): string {
     'METHOD'.padEnd(methodWidth),
     'PATH'.padEnd(pathWidth),
   ]
+
   if (hasNames) headerParts.push('NAME'.padEnd(nameWidth))
   headerParts.push('BINDINGS')
 
@@ -126,6 +125,7 @@ function formatTable(routes: RouteMetadataJson[]): string {
       route.method.toUpperCase().padEnd(methodWidth),
       route.fullPath.padEnd(pathWidth),
     ]
+
     if (hasNames) rowParts.push((route.name ?? '').padEnd(nameWidth))
     rowParts.push(bindings)
 
@@ -148,6 +148,7 @@ function sortRoutes(
 ): RouteMetadataJson[] {
   const sorted = [...routes].sort((a, b) => {
     let comparison = 0
+
     switch (sortBy) {
       case 'method':
         comparison = a.method.localeCompare(b.method)
@@ -159,8 +160,10 @@ function sortRoutes(
         comparison = (a.name ?? '').localeCompare(b.name ?? '')
         break
     }
+
     return reverse ? -comparison : comparison
   })
+
   return sorted
 }
 
@@ -215,11 +218,13 @@ export function routesCommand(
   }
 
   let patternError: string | undefined
+
   if (pattern) {
     try {
       const regex = new RegExp(
         pattern.replace(/\*/g, '.*').replace(/\{[^}]+\}/g, '[^/]+')
       )
+
       routes = routes.filter((r) => regex.test(r.fullPath))
     } catch {
       routes = []
@@ -232,6 +237,7 @@ export function routesCommand(
 
   // Format output
   let output: string
+
   switch (format) {
     case 'json':
       output = JSON.stringify(routes, null, 2)
@@ -359,27 +365,34 @@ EXAMPLES:
  * runRoutes(process.argv.slice(2))
  * ```
  */
+// oxlint-disable-next-line effecttsgo/async-function -- The CLI entrypoint awaits native app loading and dispatch; its public contract is Promise<void>.
 export async function runRoutes(
   args: string[] = [],
   registry?: RouteRegistry
 ): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(routesHelp())
+
     return
   }
 
   const options = parseRoutesArgs(args)
+
   const resolvedRegistry = registry ?? (
     options.app ? await loadAppRouteRegistry(options.app) : undefined
   )
+
   if (!resolvedRegistry) {
     throw new Error('Missing application entrypoint. Pass --app src/app.ts.')
   }
+
   const result = routesCommand(resolvedRegistry, options)
+
   if (result.error) {
     console.error(result.error)
     process.exit(1)
   }
+
   console.log(result.output)
 }
 
@@ -391,6 +404,7 @@ export {
   getGlobalRegistry,
   resetGlobalRegistry,
 } from '../effect/route-registry.js'
+
 export { loadAppRouteRegistry } from './load-app.js'
 
 // Code generation

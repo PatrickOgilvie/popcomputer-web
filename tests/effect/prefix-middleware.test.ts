@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Prefix-Wide Middleware Tests
  *
@@ -26,6 +27,7 @@ const createApp = () => {
   app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
   app.use('*', effectBridge())
   registerErrorHandlers(app)
+
   return app
 }
 
@@ -58,6 +60,7 @@ describe('prefixMiddleware', () => {
     const res = await app.request('/api/does-not-exist', {
       headers: { Accept: 'application/json' },
     })
+
     expect(res.status).toBe(404)
     expect(res.headers.get('X-Policy')).toBe('applied')
   })
@@ -95,6 +98,7 @@ describe('prefixMiddleware', () => {
     const unmatched = await app.request('/api/does-not-exist', {
       headers: { Accept: 'application/json' },
     })
+
     expect(unmatched.status).toBe(404)
     expect(unmatched.headers.get('X-Policy')).toBeNull()
   })

@@ -1,9 +1,10 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Validation Helpers Tests
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Effect, Schema as S, Layer, Exit, Cause } from 'effect'
+import { Option, Effect, Schema as S, Layer, Exit, Cause } from 'effect'
 import {
   getValidationData,
   formatSchemaErrors,
@@ -39,12 +40,15 @@ const createMockRequest = (options: {
 
   const parseBody = async (): Promise<Record<string, string | File>> => {
     const parsed: Record<string, string | File> = {}
+
     for (const [key, value] of Object.entries(body)) {
-      if (typeof value !== 'string' && !(value instanceof File)) {
+      if (!S.is(S.String)(value) && !(value instanceof File)) {
         throw new TypeError(`Form body field "${key}" must be a string or File`)
       }
+
       parsed[key] = value
     }
+
     return parsed
   }
 
@@ -56,7 +60,7 @@ const createMockRequest = (options: {
     param: (name: string) => params[name],
     params: () => params,
     query: () => query,
-    json: () => new Response(JSON.stringify(body)).json(),
+    json: () => Response.json(body).json(),
     parseBody,
     header: (name: string) => headers[name] || (name.toLowerCase() === 'content-type' ? contentType : undefined),
   }
@@ -67,6 +71,7 @@ const runWithRequestAsync = <A, E>(
   request: RequestContext
 ) => {
   const layer = Layer.succeed(RequestService, request)
+
   return Effect.runPromiseExit(Effect.provide(effect, layer))
 }
 
@@ -78,6 +83,7 @@ describe('getValidationData', () => {
 
     const exit = await runWithRequestAsync(getValidationData, request)
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.id).toBe('123')
       expect(exit.value.slug).toBe('test-post')
@@ -91,6 +97,7 @@ describe('getValidationData', () => {
 
     const exit = await runWithRequestAsync(getValidationData, request)
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.page).toBe('1')
       expect(exit.value.limit).toBe('10')
@@ -105,6 +112,7 @@ describe('getValidationData', () => {
 
     const exit = await runWithRequestAsync(getValidationData, request)
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.name).toBe('Test Project')
       expect(exit.value.description).toBe('A test')
@@ -121,6 +129,7 @@ describe('getValidationData', () => {
 
     const exit = await runWithRequestAsync(getValidationData, request)
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.id).toBe('123')
       expect(exit.value.format).toBe('json')
@@ -138,6 +147,7 @@ describe('getValidationData', () => {
 
     const exit = await runWithRequestAsync(getValidationData, request)
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.name).toBe('from-body')
     }
@@ -152,6 +162,7 @@ describe('getValidationData', () => {
 
     const exit = await runWithRequestAsync(getValidationData, request)
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.search).toBe('test')
       expect(exit.value.shouldNotAppear).toBeUndefined()
@@ -160,61 +171,65 @@ describe('getValidationData', () => {
 })
 
 describe('formatSchemaErrors', () => {
-  test('formats single field error', async () => {
+  test('formats single field error', () => {
     const schema = S.Struct({
       name: S.String.check(S.isMinLength(1)),
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknownEffect(schema)({ name: '' })
+      S.decodeEffect(schema)({ name: '' })
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
   })
 
-  test('formats errors with custom messages', async () => {
+  test('formats errors with custom messages', () => {
     const schema = S.Struct({
       name: S.String.check(S.isMinLength(1)),
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknownEffect(schema)({ name: '' })
+      S.decodeEffect(schema)({ name: '' })
     )
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const errors = formatSchemaErrors(option.value, {
           name: 'Name is required',
         })
+
         expect(errors.name).toBe('Name is required')
       }
     }
   })
 
-  test('formats errors with attribute substitution', async () => {
+  test('formats errors with attribute substitution', () => {
     const schema = S.Struct({
       email: S.String.check(S.isMinLength(1)),
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknownEffect(schema)({ email: '' })
+      S.decodeEffect(schema)({ email: '' })
     )
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const errors = formatSchemaErrors(
           option.value,
           { email: 'The :attribute field is required' },
           { email: 'email address' }
         )
+
         expect(errors.email).toBe('The email address field is required')
       }
     }
   })
 
-  test('handles nested field errors', async () => {
+  test('handles nested field errors', () => {
     const schema = S.Struct({
       user: S.Struct({
         name: S.String.check(S.isMinLength(1)),
@@ -222,12 +237,13 @@ describe('formatSchemaErrors', () => {
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknownEffect(schema)({ user: { name: '' } })
+      S.decodeEffect(schema)({ user: { name: '' } })
     )
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const errors = formatSchemaErrors(option.value)
         expect(errors['user.name']).toBeDefined()
         expect(errors['user.name']).toContain('length of at least 1')
@@ -235,18 +251,19 @@ describe('formatSchemaErrors', () => {
     }
   })
 
-  test('handles array index in field path', async () => {
+  test('handles array index in field path', () => {
     const schema = S.Struct({
       tags: S.Array(S.String.check(S.isMinLength(1))),
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknownEffect(schema)({ tags: ['valid', ''] })
+      S.decodeEffect(schema)({ tags: ['valid', ''] })
     )
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const errors = formatSchemaErrors(option.value)
         expect(errors['tags.1']).toBeDefined()
         expect(errors['tags.1']).toContain('length of at least 1')
@@ -254,7 +271,7 @@ describe('formatSchemaErrors', () => {
     }
   })
 
-  test('handles deeply nested field paths', async () => {
+  test('handles deeply nested field paths', () => {
     const schema = S.Struct({
       company: S.Struct({
         address: S.Struct({
@@ -264,12 +281,13 @@ describe('formatSchemaErrors', () => {
     })
 
     const exit = Effect.runSyncExit(
-      S.decodeUnknownEffect(schema)({ company: { address: { zip: '123' } } })
+      S.decodeEffect(schema)({ company: { address: { zip: '123' } } })
     )
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const errors = formatSchemaErrors(option.value)
         expect(errors['company.address.zip']).toBeDefined()
       }
@@ -281,7 +299,7 @@ describe('validate', () => {
   test('validates valid data', () => {
     const schema = S.Struct({
       name: S.String,
-      age: S.Number,
+      age: S.Finite,
     })
 
     const result = Effect.runSync(
@@ -299,9 +317,11 @@ describe('validate', () => {
     const exit = Effect.runSyncExit(validate(schema, { name: 'Jo' }))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error._tag).toBe('ValidationError')
         expect(error.errors).toBeDefined()
@@ -322,7 +342,8 @@ describe('validate', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error.errors.email).toBe('Please enter your email')
       }
@@ -342,7 +363,8 @@ describe('validate', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error.component).toBe('Users/Create')
       }
@@ -357,9 +379,11 @@ describe('validate', () => {
     const exit = Effect.runSyncExit(validateUnknown(schema, {}))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error.code).toBe(ErrorCodes.VAL_001_FIELD_REQUIRED)
       }
@@ -371,8 +395,9 @@ describe('validateUnknown', () => {
   test('validates unknown input', () => {
     const schema = S.Struct({
       id: S.String,
-      count: S.NumberFromString,
+      count: S.FiniteFromString,
     })
+
     const raw = { id: 'x', count: '3' }
 
     const result = Effect.runSync(validateUnknown(schema, raw))
@@ -389,6 +414,7 @@ describe('parseOptions', () => {
     const result = Effect.runSync(
       validateUnknown(schema, { name: 'Test', extra: 'field' })
     )
+
     expect(result).toEqual(asValidated({ name: 'Test' }))
   })
 
@@ -402,10 +428,12 @@ describe('parseOptions', () => {
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit)) {
       const option = Cause.findErrorOption(exit.cause)
       expect(option._tag).toBe('Some')
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error).toBeInstanceOf(ValidationError)
         expect(error.errors.extra).toBeDefined()
@@ -429,10 +457,12 @@ describe('parseOptions', () => {
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit)) {
       const option = Cause.findErrorOption(exit.cause)
       expect(option._tag).toBe('Some')
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error).toBeInstanceOf(ValidationError)
         expect(error.errors.workspaceId).toBeDefined()
@@ -442,6 +472,7 @@ describe('parseOptions', () => {
 
   test('validate rejects excess properties with onExcessProperty error', () => {
     const inputWithExtraField = { name: 'Test', extra: 'field' }
+
     const exit = Effect.runSyncExit(
       validate(
         schema,
@@ -470,6 +501,7 @@ describe('validateRequest', () => {
     const exit = await runWithRequestAsync(validateRequest(schema), request)
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value).toEqual(asValidated({ id: '123', name: 'Test' }))
     }
@@ -488,9 +520,11 @@ describe('validateRequest', () => {
     const exit = await runWithRequestAsync(validateRequest(schema), request)
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         expect(option.value._tag).toBe('ValidationError')
       }
     }
@@ -516,7 +550,8 @@ describe('validateRequest', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error.errors.email).toBe('Email required')
         expect(error.component).toBe('Auth/Register')
@@ -543,7 +578,8 @@ describe('validateRequest', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error.errors.email).toBe('The email address field is required')
       }
@@ -570,9 +606,11 @@ describe('validateRequest', () => {
     const exit = await runWithRequestAsync(validateRequest(schema), request)
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error._tag).toBe('ValidationError')
         expect(error.errors.form).toContain('Invalid JSON body.')
@@ -610,6 +648,7 @@ describe('validateRequest', () => {
 
     const exit = await runWithRequestAsync(validateRequest(UserSchema), validRequest)
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.name).toBe('John Doe')
       expect(exit.value.address.city).toBe('Springfield')
@@ -619,7 +658,7 @@ describe('validateRequest', () => {
   test('handles array fields', async () => {
     const schema = S.Struct({
       tags: S.Array(S.String),
-      scores: S.Array(S.Number),
+      scores: S.Array(S.Finite),
     })
 
     const request = createMockRequest({
@@ -632,6 +671,7 @@ describe('validateRequest', () => {
 
     const exit = await runWithRequestAsync(validateRequest(schema), request)
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.tags).toEqual(['one', 'two', 'three'])
       expect(exit.value.scores).toEqual([1, 2, 3])
@@ -651,6 +691,7 @@ describe('validateRequest', () => {
 
     const exit = await runWithRequestAsync(validateRequest(schema), request)
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.name).toBe('John')
       expect(exit.value.bio).toBeUndefined()
@@ -674,9 +715,11 @@ describe('validateRequest', () => {
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error.errors.id).toBeDefined()
       }
@@ -706,6 +749,7 @@ describe('validateRequest', () => {
     )
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.name).toBe('from-params')
     }
@@ -733,6 +777,7 @@ describe('validateRequest', () => {
     )
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.id).toBe('123')
     }
@@ -760,6 +805,7 @@ describe('validateRequest', () => {
     )
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.name).toBe('from-params')
     }
@@ -787,9 +833,11 @@ describe('validateRequest', () => {
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error.errors.name).toContain('Conflicting values')
         expect(error.code).toBe(ErrorCodes.VAL_006_SOURCE_CONFLICT)
@@ -816,9 +864,11 @@ describe('validateRequest', () => {
     const exit = await runWithRequestAsync(validateRequest(schema), request)
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error.errors.form).toContain('Invalid JSON body.')
         expect(error.code).toBe(ErrorCodes.VAL_003_BODY_PARSE_FAILED)
@@ -847,6 +897,7 @@ describe('validateRequest', () => {
     const exit = await runWithRequestAsync(validateRequest(schema), request)
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       expect(exit.value.name).toBe('from-parse-body')
     }

@@ -10,7 +10,7 @@
  * distinct from CacheService, the KV-backed data cache inside actions.
  */
 
-import { Context, Data, Effect, Option, Schema as S } from 'effect'
+import { Predicate, Context, Data, Effect, Option, Schema as S } from 'effect'
 import { HEADERS } from '../types.js'
 import { pluralize, type ParsedBinding } from './binding.js'
 
@@ -32,13 +32,18 @@ export interface RouteCacheOptions {
 }
 
 const MAX_CACHE_TAG_LENGTH = 1024
+
 const MAX_CACHE_TAG_COUNT = 1000
+
 const MAX_CACHE_TAG_HEADER_LENGTH = 16 * 1024
+
 const MAX_CACHE_PURGE_TAG_COUNT = 100
 
 export type PreparedCacheTags =
   | { readonly _tag: 'valid'; readonly tags: readonly string[] }
   | { readonly _tag: 'invalid'; readonly reason: string }
+
+const PreparedCacheTags = Data.taggedEnum<PreparedCacheTags>()
 
 interface ResponseCacheHeaders {
   [header: string]: string
@@ -61,15 +66,16 @@ function prepareCacheTagsWithLimits(
 
   for (const [index, tag] of tags.entries()) {
     if (!S.is(S.String)(tag) || tag.length === 0) {
-      return {
-        _tag: 'invalid',
-        reason: `cache tag at index ${index} must be a non-empty string`,
-      }
+      return PreparedCacheTags.invalid({
+        reason: `cache tag at index ${index} must be a non-empty string`
+      })
     }
 
     let encoded = ''
+
     for (const character of tag) {
       const codePoint = character.codePointAt(0)
+
       if (
         codePoint !== undefined &&
         codePoint >= 0x21 &&
@@ -83,23 +89,22 @@ function prepareCacheTagsWithLimits(
       try {
         encoded += encodeURIComponent(character)
       } catch {
-        return {
-          _tag: 'invalid',
-          reason: `cache tag at index ${index} contains invalid Unicode`,
-        }
+        return PreparedCacheTags.invalid({
+          reason: `cache tag at index ${index} contains invalid Unicode`
+        })
       }
     }
 
     if (encoded.length > MAX_CACHE_TAG_LENGTH) {
-      return {
-        _tag: 'invalid',
+      return PreparedCacheTags.invalid({
         reason:
           `cache tag at index ${index} exceeds Cloudflare's ` +
-          `${MAX_CACHE_TAG_LENGTH}-character limit after encoding`,
-      }
+          `${MAX_CACHE_TAG_LENGTH}-character limit after encoding`
+      })
     }
 
     const identity = encoded.toLowerCase()
+
     if (!identities.has(identity)) {
       identities.add(identity)
       prepared.push(encoded)
@@ -107,25 +112,25 @@ function prepareCacheTagsWithLimits(
   }
 
   if (prepared.length > limits.maxCount) {
-    return {
-      _tag: 'invalid',
-      reason: `cache tag count exceeds Cloudflare's ${limits.maxCount}-tag limit`,
-    }
+    return PreparedCacheTags.invalid({
+      reason: `cache tag count exceeds Cloudflare's ${limits.maxCount}-tag limit`
+    })
   }
 
   if (
     limits.maxAggregateLength !== undefined &&
     prepared.join(',').length > limits.maxAggregateLength
   ) {
-    return {
-      _tag: 'invalid',
+    return PreparedCacheTags.invalid({
       reason:
         `Cache-Tag header exceeds Cloudflare's ` +
-        `${limits.maxAggregateLength}-character aggregate limit`,
-    }
+        `${limits.maxAggregateLength}-character aggregate limit`
+    })
   }
 
-  return { _tag: 'valid', tags: prepared }
+  return PreparedCacheTags.valid({
+    tags: prepared,
+  })
 }
 
 export function prepareCacheTags(
@@ -160,9 +165,11 @@ export function deriveCacheTags(
 
   for (const binding of bindings) {
     const model = models.get(binding.param)
+
     const value = model instanceof Object
       ? Object.getOwnPropertyDescriptor(model, binding.column)?.value
       : undefined
+
     if (value !== undefined && value !== null) {
       tags.push(`${binding.param}:${String(value)}`)
     }
@@ -170,6 +177,7 @@ export function deriveCacheTags(
 
   for (const binding of bindings) {
     const collection = pluralize(binding.param)
+
     if (!tags.includes(collection)) {
       tags.push(collection)
     }
@@ -214,6 +222,8 @@ export type CachePolicyDecision =
   | { readonly _tag: 'noStore' }
   | { readonly _tag: 'skip'; readonly warning?: string }
 
+const CachePolicyDecision = Data.taggedEnum<CachePolicyDecision>()
+
 const CACHEABLE_METHODS = new Set(['GET', 'HEAD'])
 
 /**
@@ -222,17 +232,17 @@ const CACHEABLE_METHODS = new Set(['GET', 'HEAD'])
  */
 export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision {
   if (!CACHEABLE_METHODS.has(input.method.toUpperCase())) {
-    return { _tag: 'skip' }
+    return CachePolicyDecision.skip({})
   }
 
   // Partial reloads are keyed by unbounded X-Inertia-Partial-* combinations;
   // storing them would explode the variant space. Forbid storage outright.
   if (input.isPartialReload) {
-    return { _tag: 'noStore' }
+    return CachePolicyDecision.noStore()
   }
 
   if (input.status < 200 || input.status >= 300) {
-    return { _tag: 'skip' }
+    return CachePolicyDecision.skip({})
   }
 
   // The handler's own directives win when they are stricter than the route
@@ -243,28 +253,28 @@ export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision 
     hasCacheControlDirective(input.existingCacheControl, 'private') ||
     hasCacheControlDirective(input.existingCacheControl, 'no-cache')
   ) {
-    return { _tag: 'skip' }
+    return CachePolicyDecision.skip({})
   }
 
   // A Set-Cookie response is per-recipient by definition.
   if (input.setsCookie) {
-    return { _tag: 'skip' }
+    return CachePolicyDecision.skip({})
   }
 
   // Publicly caching private request state would serve one visitor's page
   // (including shared auth props) to everyone. Fail safe: skip caching and
   // tell the developer in development.
   if (input.hasPrivateRequestState) {
-    return {
-      _tag: 'skip',
+    return CachePolicyDecision.skip({
       warning:
         'has the `cache` route option but this request carries private/authentication state; ' +
         'public caching is disabled for it. Cache only guest routes, or key ' +
-        'per-user at a gateway boundary.',
-    }
+        'per-user at a gateway boundary.'
+    })
   }
 
   const directives = [`public`, `max-age=${input.options.maxAge}`]
+
   if (input.options.staleWhileRevalidate !== undefined) {
     directives.push(`stale-while-revalidate=${input.options.staleWhileRevalidate}`)
   }
@@ -278,19 +288,20 @@ export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision 
     ...input.derivedTags,
     ...(input.options.tags ?? []),
   ])
-  if (preparedTags._tag === 'invalid') {
-    return {
-      _tag: 'skip',
+
+  if (Predicate.isTagged(preparedTags, 'invalid')) {
+    return CachePolicyDecision.skip({
       warning:
         `has an invalid Cache-Tag configuration (${preparedTags.reason}); ` +
-        'public caching is disabled for it.',
-    }
+        'public caching is disabled for it.'
+    })
   }
+
   if (preparedTags.tags.length > 0) {
     headers['Cache-Tag'] = preparedTags.tags.join(',')
   }
 
-  return { _tag: 'apply', headers }
+  return CachePolicyDecision.apply({ headers })
 }
 
 function hasCacheControlDirective(
@@ -305,6 +316,7 @@ function hasCacheControlDirective(
 
   return header.split(',').some((part) => {
     const [name] = part.trim().toLowerCase().split('=', 1)
+
     return name === expected
   })
 }
@@ -367,23 +379,26 @@ export function applyCachePolicy(
   response: Response,
   decision: CachePolicyDecision
 ): Response {
-  if (decision._tag === 'skip') {
+  if (CachePolicyDecision.$is('skip')(decision)) {
     return response
   }
 
   const result = new Response(response.body, response)
 
-  if (decision._tag === 'noStore') {
+  if (CachePolicyDecision.$is('noStore')(decision)) {
     result.headers.set('Cache-Control', 'no-store')
+
     return result
   }
 
   for (const [name, value] of Object.entries(decision.headers)) {
-    if (name.toLowerCase() === 'vary' && result.headers.has('Vary')) {
-      const existing = result.headers
-        .get('Vary')!
+    const vary = result.headers.get('Vary')
+
+    if (name.toLowerCase() === 'vary' && vary !== null) {
+      const existing = vary
         .split(',')
         .map((v) => v.trim())
+
       if (!existing.includes(value)) {
         result.headers.set('Vary', [...existing, value].join(', '))
       }
@@ -452,7 +467,7 @@ interface WorkersCachePurgeFailure {
 const WorkersCachePurgeResponseSchema = S.Struct({
   success: S.Boolean,
   errors: S.optional(S.Array(S.Struct({
-    code: S.optional(S.Number),
+    code: S.optional(S.Finite),
     message: S.optional(S.String),
   }))),
 })
@@ -467,12 +482,23 @@ type WorkersCachePurgeResult =
     }
   | { readonly _tag: 'invalid' }
 
+const WorkersCachePurgeResult = Data.taggedEnum<WorkersCachePurgeResult>()
+
+type ResponseCachePurgeFailure = Data.TaggedEnum<{
+  InvalidCacheTags: { readonly reason: string }
+  WorkersCachePurgeRejected: { readonly errors: readonly WorkersCachePurgeFailure[] }
+  InvalidWorkersCachePurgeResult: {}
+}>
+
+/** Structured causes produced by response-cache validation and purge responses. */
+export const ResponseCachePurgeFailure = Data.taggedEnum<ResponseCachePurgeFailure>()
+
 function parseWorkersCachePurgeResult(result: WorkersCachePurgeResponse): WorkersCachePurgeResult {
   if (result.success) {
-    return { _tag: 'accepted' }
+    return WorkersCachePurgeResult.accepted()
   }
 
-  return { _tag: 'rejected', errors: result.errors ?? [] }
+  return WorkersCachePurgeResult.rejected({ errors: result.errors ?? [] })
 }
 
 /** Memoized once per isolate: the cloudflare:workers module never changes. */
@@ -488,29 +514,27 @@ let workersModuleCacheProbe: Promise<WorkersCachePurgeApi | null> | undefined
 export function resolveWorkersCachePurgeApi(
   executionCtx: { readonly cache?: WorkersCachePurgeApi } | undefined
 ): Effect.Effect<WorkersCachePurgeApi | null> {
-  return Effect.promise(async () => {
+  return Effect.suspend(() => {
     const ctxCache = executionCtx?.cache
+
     if (ctxCache?.purge instanceof Function) {
-      return ctxCache
+      return Effect.succeed(ctxCache)
     }
 
-    workersModuleCacheProbe ??= (async () => {
-      try {
-        // Non-literal specifier: TypeScript must not try to resolve types for
-        // this runtime-provided module (and an ambient declaration would
-        // conflict with @cloudflare/workers-types in consumer apps). workerd
-        // resolves non-literal dynamic imports of cloudflare:* at runtime —
-        // verified empirically against wrangler 4.107 local and remote.
-        let specifier = 'cloudflare:workers'
-        // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
-        const mod = (await import(specifier)) as { cache?: WorkersCachePurgeApi }
-        return mod.cache?.purge instanceof Function ? mod.cache : null
-      } catch {
-        return null
-      }
-    })()
+    return Effect.promise(() => {
+      // Non-literal specifier: TypeScript must not try to resolve types for
+      // this runtime-provided module (and an ambient declaration would
+      // conflict with @cloudflare/workers-types in consumer apps). workerd
+      // resolves non-literal dynamic imports of cloudflare:* at runtime —
+      // verified empirically against wrangler 4.107 local and remote.
+      const specifier = 'cloudflare:workers'
+      workersModuleCacheProbe ??= import(specifier).then(
+        (mod: { cache?: WorkersCachePurgeApi }) =>
+          mod.cache?.purge instanceof Function ? mod.cache : null,
+      ).catch(() => null)
 
-    return workersModuleCacheProbe
+      return workersModuleCacheProbe
+    })
   })
 }
 
@@ -525,17 +549,16 @@ export function createWorkersResponseCacheClient(
     purge: (input) => {
       // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
       const preparedTags = input.everything
-        ? { _tag: 'valid' as const, tags: [] as readonly string[] }
+        ? PreparedCacheTags.valid({ tags: [] })
         : prepareCachePurgeTags(input.tags ?? [])
 
-      if (preparedTags._tag === 'invalid') {
+      if (Predicate.isTagged(preparedTags, 'invalid')) {
         return Effect.fail(
           new ResponseCachePurgeError({
             input,
-            cause: {
-              _tag: 'InvalidCacheTags',
-              reason: preparedTags.reason,
-            },
+            cause: ResponseCachePurgeFailure.InvalidCacheTags({
+              reason: preparedTags.reason
+            }),
           })
         )
       }
@@ -551,10 +574,12 @@ export function createWorkersResponseCacheClient(
       }).pipe(
         Effect.flatMap((result) => {
           const decoded = S.decodeUnknownOption(WorkersCachePurgeResponseSchema)(result)
+
           const parsed = Option.isSome(decoded)
             ? parseWorkersCachePurgeResult(decoded.value)
-            : { _tag: 'invalid' as const }
-          if (parsed._tag === 'accepted') {
+            : WorkersCachePurgeResult.invalid()
+
+          if (Predicate.isTagged(parsed, 'accepted')) {
             return Effect.void
           }
 
@@ -562,12 +587,11 @@ export function createWorkersResponseCacheClient(
             new ResponseCachePurgeError({
               input,
               cause:
-                parsed._tag === 'rejected'
-                  ? {
-                      _tag: 'WorkersCachePurgeRejected',
+                Predicate.isTagged(parsed, 'rejected')
+                  ? ResponseCachePurgeFailure.WorkersCachePurgeRejected({
                       errors: parsed.errors,
-                    }
-                  : { _tag: 'InvalidWorkersCachePurgeResult' },
+                    })
+                  : ResponseCachePurgeFailure.InvalidWorkersCachePurgeResult(),
             })
           )
         })

@@ -4,7 +4,7 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import { Predicate, Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
 import type { ParseOptions } from 'effect/SchemaAST'
 import type { Context as HonoContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { errorToResponse, runEffectWithRuntime } from './handler.js'
@@ -34,10 +34,11 @@ import {
   isPartialReloadRequest,
   prepareCachePurgeTags,
   ResponseCachePurgeError,
+  ResponseCachePurgeFailure,
   ResponseCacheService,
   type RouteCacheOptions,
 } from './response-cache.js'
-import {
+import type {
   DatabaseService,
   AuthService,
   PageService,
@@ -59,8 +60,8 @@ import {
   type CompiledRouteBinding,
   type ParsedBinding,
 } from './binding.js'
+import type { RouteRegistry } from './route-registry.js'
 import {
-  RouteRegistry,
   getAppRouteRegistry,
   type HttpMethod,
   type RouteMetadata,
@@ -178,6 +179,7 @@ const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
  */
 function isDevEnv<E extends Env>(c: HonoContext<E>): boolean {
   const env = c.env ?? {}
+
   return (
     Object.getOwnPropertyDescriptor(env, 'ENVIRONMENT')?.value === 'development' ||
     Object.getOwnPropertyDescriptor(env, 'NODE_ENV')?.value === 'development'
@@ -186,6 +188,7 @@ function isDevEnv<E extends Env>(c: HonoContext<E>): boolean {
 
 function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
   const requestCtx = openHonertiaContext(c)
+
   return (
     requestCtx.authUser !== undefined ||
     c.req.header('Authorization') !== undefined ||
@@ -194,6 +197,7 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
 }
 
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits request parsing and runtime completion, then maps the result to an HTTP response.
 async function parseRequestBody<E extends Env>(
   c: HonoContext<E>
 ): Promise<S.Schema.Type<typeof S.Unknown>> {
@@ -204,26 +208,32 @@ async function parseRequestBody<E extends Env>(
     if (isJson) {
       return await c.req.json<S.Schema.Type<typeof S.Unknown>>()
     }
+
     return await c.req.parseBody()
   } catch (error) {
     throw createBodyParseValidationError(error, contentType)
   }
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary converts completed Effect failures and defects into the framework exception contract.
 async function runValidation<A>(
   effect: Effect.Effect<A, ValidationError, never>
 ): Promise<A> {
   const exit = await Effect.runPromiseExit(effect)
+
   if (Exit.isSuccess(exit)) {
     return exit.value
   }
 
   const error = Cause.findErrorOption(exit.cause)
+
   if (Option.isSome(error)) {
     throw error.value
   }
 
-  throw Cause.squash(exit.cause)
+  const cause = Cause.squash(exit.cause)
+
+  throw cause instanceof Error ? cause : new Error('Validation effect failed', { cause })
 }
 
 /**
@@ -236,7 +246,7 @@ export class EffectRouteBuilder<
 > {
   constructor(
     private readonly app: Hono<E>,
-    private readonly layers: Layer.Layer<any, never, never>[] = [],
+    private readonly layers: Layer.Layer<never, AppError, never>[] = [],
     private readonly pathPrefix: string = '',
     private readonly bridgeConfig?: EffectBridgeConfig<E, CustomServices>,
     private readonly registry: RouteRegistry = getAppRouteRegistry(app),
@@ -260,7 +270,11 @@ export class EffectRouteBuilder<
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
     return new EffectRouteBuilder(
       this.app,
-      [...this.layers, layer as Layer.Layer<S, never, never>],
+      [
+        ...this.layers,
+        // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- SAFETY: provide's LayerReq constraint only accepts base, bridge, or previously provided services; createHandler composes those before this private layer is built. Preserve LayerErr for the request error boundary.
+        layer as Layer.Layer<S, LayerErr, never>,
+      ],
       this.pathPrefix,
       this.bridgeConfig,
       this.registry,
@@ -325,6 +339,7 @@ export class EffectRouteBuilder<
     } else {
       this.app.use('/*', ...handlers)
     }
+
     return this
   }
 
@@ -333,6 +348,7 @@ export class EffectRouteBuilder<
    */
   prefix(path: string): EffectRouteBuilder<E, ProvidedServices, CustomServices> {
     const normalizedPath = path.replace(/\/$/, '')
+
     return new EffectRouteBuilder(
       this.app,
       this.layers,
@@ -357,12 +373,14 @@ export class EffectRouteBuilder<
     if (this.pathPrefix) {
       return path === '/' ? this.pathPrefix : `${this.pathPrefix}${path}`
     }
+
     return path
   }
 
   /**
    * Validate route params against a schema.
    */
+  // oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits request parsing and runtime completion, then maps the result to an HTTP response.
   private async ensureParams(
     c: HonoContext<E>,
     schema?: S.Codec<unknown, unknown, never, never>
@@ -370,6 +388,7 @@ export class EffectRouteBuilder<
     if (!schema) return null
 
     const rawParams = c.req.param()
+
     const params: Record<string, string> =
       S.is(S.String)(rawParams) ? {} : rawParams
 
@@ -377,8 +396,7 @@ export class EffectRouteBuilder<
     const exit = await Effect.runPromiseExit(decode(params))
 
     if (Exit.isFailure(exit)) {
-      // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-      return c.notFound() as Response
+      return c.notFound()
     }
 
     return null
@@ -388,6 +406,7 @@ export class EffectRouteBuilder<
    * Resolve route model bindings from the database.
    * Returns a Map of binding names to resolved models, or a 404 Response if any binding fails.
    */
+  // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Drizzle adapter awaits native query builders sequentially to enforce parent binding scope before returning HTTP results.
   private async resolveBindings<Database>(
     c: HonoContext<E>,
     plan: readonly CompiledRouteBinding[],
@@ -405,15 +424,15 @@ export class EffectRouteBuilder<
 
     for (const binding of plan) {
       const rawParam = c.req.param(binding.param)
+
       if (!rawParam) {
-        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-        return c.notFound() as Response
+        return c.notFound()
       }
 
       const paramValue = await decodeBindingParam(binding, rawParam)
+
       if (paramValue === undefined) {
-        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-        return c.notFound() as Response
+        return c.notFound()
       }
 
       // QueryBuilder type compatible with all Drizzle databases (PostgreSQL, MySQL, SQLite)
@@ -421,6 +440,7 @@ export class EffectRouteBuilder<
         where: <Condition>(condition: Condition) => QueryBuilder
         limit: (n: number) => PromiseLike<object[]>
       }
+
       // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
       let whereCondition: unknown = eq(
         Object.getOwnPropertyDescriptor(binding.table, binding.column)?.value as Parameters<typeof eq>[0],
@@ -429,6 +449,7 @@ export class EffectRouteBuilder<
 
       if (binding.parent) {
         const parentRow = rows.get(binding.parent.param)
+
         if (!parentRow) {
           throw RouteConfigurationError.relationNotFound(
             binding.parent.param,
@@ -441,11 +462,13 @@ export class EffectRouteBuilder<
         const conditions: Parameters<typeof and> = [
           whereCondition as Parameters<typeof and>[number],
         ]
+
         for (const pair of binding.parent.relation.columnPairs) {
           const parentReferenceValue = Object.getOwnPropertyDescriptor(
             parentRow,
             pair.references
           )?.value
+
           if (parentReferenceValue === undefined || parentReferenceValue === null) {
             throw RouteConfigurationError.relationNotFound(
               binding.parent.param,
@@ -462,9 +485,10 @@ export class EffectRouteBuilder<
                 pair.foreignKey
               )?.value as Parameters<typeof eq>[0],
               parentReferenceValue
-            ) as Parameters<typeof and>[number]
+            )
           )
         }
+
         whereCondition = and(...conditions)
       }
 
@@ -472,6 +496,7 @@ export class EffectRouteBuilder<
       const dbClient = db as {
         select: () => { from: <TableValue>(table: TableValue) => QueryBuilder }
       }
+
       const query: QueryBuilder = dbClient.select().from(binding.table).where(whereCondition)
 
       // Execute the query - use .limit(1) for cross-database compatibility
@@ -480,8 +505,7 @@ export class EffectRouteBuilder<
       const result = results[0]
 
       if (!result) {
-        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-        return c.notFound() as Response
+        return c.notFound()
       }
 
       // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
@@ -504,6 +528,7 @@ export class EffectRouteBuilder<
     // once per route (this handler closure), not once per request.
     let warnedIneffectiveCache = false
 
+    // oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits request parsing and runtime completion, then maps the result to an HTTP response.
     return async (c) => {
       setEffectBridgeConfig(c, bridgeConfig)
 
@@ -519,6 +544,7 @@ export class EffectRouteBuilder<
       )
 
       const validation = await this.ensureParams(c, paramsSchema)
+
       if (validation) return validation
 
       const bodySchema = options?.body
@@ -556,16 +582,19 @@ export class EffectRouteBuilder<
         }
       } catch (error) {
         if (error instanceof ValidationError) {
-          return await errorToResponse(error, c)
+          return errorToResponse(error, c)
         }
-        throw error
+
+        throw error instanceof Error ? error : new Error('Request validation failed', { cause: error })
       }
 
       // Build context layer from Hono context
       const requestRuntime = getEffectRuntime(c)
+
       let contextLayer = requestRuntime
         ? Layer.succeedContext(await requestRuntime.context())
         : buildContextLayer(c, bridgeConfig ?? getEffectBridgeConfig(c))
+
       if (requestRuntime && bridgeConfig?.services) {
         contextLayer = Layer.merge(contextLayer, bridgeConfig.services(c))
       }
@@ -576,6 +605,7 @@ export class EffectRouteBuilder<
 
       if (bindings.length > 0 && schema && configuredBindings) {
         const db = openHonertiaContext(c).db
+
         if (!db) {
           // A binding cannot be resolved without a database; this is
           // misconfiguration, not a missing row. Thrown to Hono's onError,
@@ -586,12 +616,12 @@ export class EffectRouteBuilder<
         bindingPlanPromise ??= compileBindingPlan(bindings, schema, configuredBindings)
         const plan = await bindingPlanPromise
         const result = await this.resolveBindings(c, plan, db)
+
         if (result instanceof Response) {
           return result
         }
 
-        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-        boundModels = result as ReadonlyMap<string, unknown>
+        boundModels = result
         boundModelsLayer = Layer.succeed(BoundModels, boundModels)
       } else if (bindings.length > 0 && !schema) {
         // Bindings exist but no schema - provide a map that signals this for better errors
@@ -608,21 +638,22 @@ export class EffectRouteBuilder<
       }
 
       // Combine with provided layers
-      let fullLayer: Layer.Layer<any, never, never> = Layer.merge(contextLayer, boundModelsLayer)
+      let fullLayer: Layer.Layer<never, AppError, never> = Layer.merge(contextLayer, boundModelsLayer)
+
       if (hasValidatedBody) {
-        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         fullLayer = Layer.merge(
           fullLayer,
-          Layer.succeed(ValidatedBodyService, validatedBody as any)
+          Layer.succeed(ValidatedBodyService, validatedBody)
         )
       }
+
       if (hasValidatedQuery) {
-        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
         fullLayer = Layer.merge(
           fullLayer,
-          Layer.succeed(ValidatedQueryService, validatedQuery as any)
+          Layer.succeed(ValidatedQueryService, validatedQuery)
         )
       }
+
       for (const layer of layers) {
         fullLayer = Layer.provideMerge(layer, fullLayer)
       }
@@ -631,30 +662,33 @@ export class EffectRouteBuilder<
       // Runs inside the effect so a failed purge surfaces in the typed error
       // channel instead of leaving stale entries silently.
       const purges = options?.purges
-      // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-      let handlerEffect: Effect.Effect<Response | Redirect, unknown, unknown> =
-        effect as Effect.Effect<Response | Redirect, unknown, unknown>
+
+      let handlerEffect: Effect.Effect<Response | Redirect, AppError | ResponseCachePurgeError, R | ResponseCacheService> =
+        effect
+
       if (purges) {
         handlerEffect = handlerEffect.pipe(
           Effect.tap((result) => {
             const succeeded =
               result instanceof Redirect ||
               (result instanceof Response && result.status < 400)
+
             if (!succeeded) return Effect.void
 
             const tags =
               purges === true ? deriveCacheTags(bindings, boundModels) : purges
+
             if (tags.length === 0) return Effect.void
 
             const preparedTags = prepareCachePurgeTags(tags)
-            if (preparedTags._tag === 'invalid') {
+
+            if (Predicate.isTagged(preparedTags, 'invalid')) {
               return Effect.fail(
                 new ResponseCachePurgeError({
                   input: { tags },
-                  cause: {
-                    _tag: 'InvalidCacheTags',
+                  cause: ResponseCachePurgeFailure.InvalidCacheTags({
                     reason: preparedTags.reason,
-                  },
+                  }),
                 })
               )
             }
@@ -668,8 +702,15 @@ export class EffectRouteBuilder<
 
       // The route runtime owns every provided Layer until background work has
       // settled, including scoped services added with route.provide().
-      const routeRuntime = ManagedRuntime.make(fullLayer)
+      // SAFETY: The builder's provide() constraint and ordered composition above
+      // establish this service union; optional base services retain their runtime
+      // missing-configuration diagnostics. Acquisition failures remain AppError.
+      const routeRuntime = ManagedRuntime.make(
+        fullLayer as Layer.Layer<BaseServices | ProvidedServices | CustomServices, AppError>
+      )
+
       let response: Response
+
       try {
         response = await runEffectWithRuntime(handlerEffect, c, routeRuntime)
       } finally {
@@ -692,12 +733,13 @@ export class EffectRouteBuilder<
       })
 
       if (
-        decision._tag === 'skip' &&
+        Predicate.isTagged(decision, 'skip') &&
         decision.warning &&
         !warnedIneffectiveCache &&
         isDevEnv(c)
       ) {
         warnedIneffectiveCache = true
+        // oxlint-disable-next-line effecttsgo/global-console -- This outer Hono adapter emits a once-per-route development configuration warning after the request runtime has been disposed.
         console.warn(`[@popcomputer/web] Route '${c.req.path}' ${decision.warning}`)
       }
 
@@ -733,16 +775,19 @@ export class EffectRouteBuilder<
       prefix: this.pathPrefix,
       name: options?.name,
     }
+
     this.registry.register(metadata)
 
     // Register with Hono - apply middlewares before the Effect handler
     const handler = this.createHandler(effect, bindings, options)
+
     if (this.middlewares.length > 0) {
       // SAFETY: The method is selected from the finite Hono routing-method union and every supplied handler uses the builder's Env.
       const register = this.app[method] as (
         path: string,
         ...handlers: MiddlewareHandler<E>[]
       ) => void
+
       register(
         fullPath,
         ...this.middlewares,
@@ -852,5 +897,6 @@ export function effectRoutes<E extends Env, CustomServices = never>(
   config?: EffectRoutesConfig<E, CustomServices>
 ): EffectRouteBuilder<E, never, CustomServices> {
   const registry = config?.registry ?? getAppRouteRegistry(app)
+
   return new EffectRouteBuilder(app, [], '', config, registry)
 }

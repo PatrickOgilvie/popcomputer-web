@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import -- This CLI adapter owns native Node/Bun IO and raw command output; preserve the stdout/stderr format. */
 /**
  * Popcomputer Web CLI entrypoint.
  *
@@ -90,64 +91,81 @@ function normalizeCommand(args: string[]): NormalizedCommand {
   // Support grouped form: "generate action ..."
   if (first === 'generate' && rest.length > 0) {
     const [subcommand, ...remaining] = rest
+
     return { command: `generate:${subcommand}`, rest: remaining }
   }
 
   return { command: first, rest }
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- The CLI entrypoint awaits native app loading and dispatch; its public contract is Promise<void>.
 export async function runCli(args: string[] = process.argv.slice(2)): Promise<void> {
   const { command, rest } = normalizeCommand(args)
 
   if (!command || command === '--help' || command === '-h' || command === 'help') {
     if (rest.length > 0) {
       const help = commandHelp(rest[0])
+
       if (help) {
         console.log(help)
+
         return
       }
     }
 
     console.log(mainHelp())
+
     return
   }
 
   switch (command) {
     case 'routes':
       await runRoutes(rest)
+
       return
     case 'check':
       await runCheck(rest)
+
       return
     case 'db':
       await runDb(rest)
+
       return
     case 'db:status':
       await runDb(['status', ...rest])
+
       return
     case 'db:migrate':
       await runDb(['migrate', ...rest])
+
       return
     case 'db:rollback':
       await runDb(['rollback', ...rest])
+
       return
     case 'db:generate':
       await runDb(['generate', ...rest])
+
       return
     case 'generate:action':
       runGenerateAction(rest)
+
       return
     case 'generate:crud':
       runGenerateCrud(rest)
+
       return
     case 'generate:feature':
       runGenerateFeature(rest)
+
       return
     case 'generate:openapi':
       await runGenerateOpenApi(rest)
+
       return
     case 'generate:tests-runner':
       runGenerateInlineTestsRunner(rest)
+
       return
     default:
       console.error(`Unknown command: ${command}`)
@@ -161,7 +179,8 @@ const isMain = process.argv[1]
   : false
 
 if (isMain) {
-  runCli().catch((error) => {
+  // oxlint-disable-next-line popcomputer/no-unknown-parameters -- Promise rejection is an untrusted boundary; this callback classifies it before rendering the CLI error.
+  runCli().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   })

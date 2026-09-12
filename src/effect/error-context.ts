@@ -34,6 +34,7 @@ function extractSafeHeaders(headers: Headers): SafeHeaders {
 
   for (const key of SAFE_HEADERS) {
     const value = headers.get(key)
+
     if (value) {
       result[key] = value
     }
@@ -122,8 +123,10 @@ export function parseStackTrace(stack: string): StackFrame[] {
     // Match V8 stack format: "    at functionName (file:line:col)"
     // or "    at file:line:col"
     const match = line.match(/^\s*at\s+(?:(.+?)\s+\()?(.+):(\d+):(\d+)\)?$/)
+
     if (match) {
       const file = match[2]
+
       const isInternal =
         file.includes('node_modules') ||
         file.includes('@popcomputer/web/dist') ||
@@ -281,16 +284,17 @@ export function mergeContexts(...contexts: Partial<ErrorContext>[]): ErrorContex
 
   for (const ctx of contexts) {
     if (ctx.route) {
-      // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
-      result.route = { ...result.route, ...ctx.route } as ErrorContext['route']
+      result.route = { ...result.route, ...ctx.route }
     }
+
     if (ctx.handler) {
       result.handler = { ...result.handler, ...ctx.handler }
     }
+
     if (ctx.request) {
-      // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
-      result.request = { ...result.request, ...ctx.request } as ErrorContext['request']
+      result.request = { ...result.request, ...ctx.request }
     }
+
     if (ctx.service) {
       result.service = { ...result.service, ...ctx.service }
     }

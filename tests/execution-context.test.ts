@@ -1,5 +1,6 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 import { describe, it, expect } from 'bun:test'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Deferred, Effect, Layer } from 'effect'
 import {
   ExecutionContextService,
   type ExecutionContextClient,
@@ -21,8 +22,8 @@ const makeTestExecutionContext = () => {
     waitUntil: (promise) => {
       tasks.push(promise)
     },
-    runInBackground: (effect) =>
-      Effect.flatMap(Effect.context<any>(), (context) =>
+    runInBackground: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.flatMap(Effect.context<R>(), (context) =>
         Effect.sync(() => {
           const promise = Effect.runPromise(
             effect.pipe(
@@ -30,11 +31,12 @@ const makeTestExecutionContext = () => {
               Effect.catchCause(() => Effect.void)
             )
           )
+
           tasks.push(promise)
         })
       ),
-    schedule: (_operation, effect) =>
-      Effect.flatMap(Effect.context<any>(), (context) =>
+    schedule: <A, E, R>(_operation: string, effect: Effect.Effect<A, E, R>) =>
+      Effect.flatMap(Effect.context<R>(), (context) =>
         Effect.sync(() => {
           const promise = Effect.runPromise(
             effect.pipe(
@@ -42,6 +44,7 @@ const makeTestExecutionContext = () => {
               Effect.catchCause(() => Effect.void)
             )
           )
+
           tasks.push(promise)
         })
       ),
@@ -88,23 +91,24 @@ describe('ExecutionContextService', () => {
     it('captures waitUntil promises', async () => {
       const { layer, backgroundTasks, awaitAll } = makeTestExecutionContext()
       let completed = false
+      const releaseBackground = Deferred.makeUnsafe<void>()
+
+      const background = Effect.runPromise(Deferred.await(releaseBackground).pipe(
+        Effect.andThen(Effect.sync(() => {
+          completed = true
+        })),
+      ))
 
       await Effect.gen(function* () {
         const ctx = yield* ExecutionContextService
 
-        ctx.waitUntil(
-          new Promise<void>((resolve) => {
-            setTimeout(() => {
-              completed = true
-              resolve()
-            }, 10)
-          })
-        )
+        ctx.waitUntil(background)
       }).pipe(Effect.provide(layer), Effect.runPromise)
 
       expect(backgroundTasks.length).toBe(1)
-      expect(completed).toBe(false) // Not yet completed
+      expect(completed).toBe(false)
 
+      await Effect.runPromise(Deferred.succeed(releaseBackground, undefined))
       await awaitAll()
       expect(completed).toBe(true) // Now completed
     })
@@ -136,9 +140,8 @@ describe('ExecutionContextService', () => {
         const ctx = yield* ExecutionContextService
 
         yield* ctx.runInBackground(
-          Effect.gen(function* () {
-            yield* Effect.fail(new Error('Background task failed'))
-          })
+          // oxlint-disable-next-line effecttsgo/global-error-in-effect-failure -- A plain Error intentionally verifies that background supervision isolates arbitrary dependency failures, not just known tagged errors.
+          Effect.fail(new Error('Background task failed'))
         )
 
         yield* ctx.runInBackground(

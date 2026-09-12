@@ -1,10 +1,12 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
+import assert from 'node:assert/strict'
 /**
  * Route Model Binding Tests
  */
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { Effect, Layer, Schema as S } from 'effect'
+import { Predicate, Effect, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { honertia } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
@@ -210,6 +212,7 @@ describe('compiled route binding contract', () => {
         }
       )
     ).rejects.toMatchObject({
+      // oxlint-disable-next-line popcomputer/effect-no-manual-tagged-construction -- Assert the literal external error shape independently of its production constructor.
       _tag: 'RouteConfigurationError',
       parent: 'projects',
       child: 'tasks',
@@ -226,6 +229,7 @@ describe('compiled route binding contract', () => {
     await expect(
       decodeBoundRow(binding, { id: 'project-1', name: 42 })
     ).rejects.toMatchObject({
+      // oxlint-disable-next-line popcomputer/effect-no-manual-tagged-construction -- Assert the literal external error shape independently of its production constructor.
       _tag: 'RouteConfigurationError',
       binding: 'project',
     })
@@ -403,11 +407,12 @@ describe('bound() accessor', () => {
 
     const effect = Effect.gen(function* () {
       const project = yield* bound('project')
+
       return project
     })
 
     const result = await Effect.runPromise(
-      effect.pipe(Effect.provide(Layer.succeed(BoundModels, models)))
+      effect.pipe(Effect.provideService(BoundModels, models))
     )
 
     expect(result).toEqual({ id: '123', name: 'Test Project' })
@@ -418,15 +423,17 @@ describe('bound() accessor', () => {
 
     const effect = Effect.gen(function* () {
       const project = yield* bound('project')
+
       return project
     })
 
     const result = await Effect.runPromiseExit(
-      effect.pipe(Effect.provide(Layer.succeed(BoundModels, models)))
+      effect.pipe(Effect.provideService(BoundModels, models))
     )
 
     expect(result._tag).toBe('Failure')
-    if (result._tag === 'Failure') {
+
+    if (Predicate.isTagged(result, 'Failure')) {
       const error = result.cause
       // The error should be a BoundModelNotFound
       expect(String(error)).toContain('BoundModelNotFound')
@@ -669,12 +676,14 @@ describe('Route Model Binding Integration', () => {
       const secondInvalid = await app.request(
         '/users/123e4567-e89b-12d3-a456-426614174000/posts/not-uuid'
       )
+
       expect(secondInvalid.status).toBe(404)
 
       // Both valid
       const bothValid = await app.request(
         '/users/123e4567-e89b-12d3-a456-426614174000/posts/987fcdeb-51a2-3bc4-a567-890123456789'
       )
+
       expect(bothValid.status).toBe(200)
       expect(await bothValid.text()).toBe('Both valid')
     })
@@ -765,7 +774,8 @@ describe('Route Model Binding Integration', () => {
         '/projects/{project}',
         Effect.gen(function* () {
           const project = yield* bound('project')
-          return new Response(`Project: ${project}`)
+
+          return Response.json(project)
         })
       )
 
@@ -784,10 +794,11 @@ describe('Route Model Binding Integration', () => {
 
 describe('columnTypeToSchema', () => {
   // Helper to decode with the dynamically returned schema
+  // oxlint-disable-next-line effecttsgo/schema-sync -- These tests deliberately exercise the synchronous throwing decoder with toThrow; their schemas require no runtime services.
   const decodeWith = (schema: S.Constraint) => S.decodeUnknownSync(schema)
 
   describe('UUID types', () => {
-    test('PgUUID returns UUID schema', async () => {
+    test('PgUUID returns UUID schema', () => {
       const decode = decodeWith(columnTypeToSchema('PgUUID'))
 
       // Valid UUID should pass
@@ -799,7 +810,7 @@ describe('columnTypeToSchema', () => {
   })
 
   describe('Integer types', () => {
-    test('PgInteger returns NumberFromString with int filter', async () => {
+    test('PgInteger returns NumberFromString with int filter', () => {
       const decode = decodeWith(columnTypeToSchema('PgInteger'))
 
       expect(decode('42')).toBe(42)
@@ -811,59 +822,69 @@ describe('columnTypeToSchema', () => {
       expect(() => decode('abc')).toThrow()
     })
 
-    test('SQLiteInteger returns NumberFromString with int filter', async () => {
+    test('SQLiteInteger returns NumberFromString with int filter', () => {
       const decode = decodeWith(columnTypeToSchema('SQLiteInteger'))
       expect(decode('100')).toBe(100)
     })
 
-    test('MySqlInt returns NumberFromString with int filter', async () => {
+    test('MySqlInt returns NumberFromString with int filter', () => {
       const decode = decodeWith(columnTypeToSchema('MySqlInt'))
       expect(decode('999')).toBe(999)
     })
   })
 
   describe('BigInt types', () => {
-    test('PgBigInt64 returns BigInt schema', async () => {
+    test('PgBigInt64 returns BigInt schema', () => {
       const decode = decodeWith(columnTypeToSchema('PgBigInt64'))
       expect(decode('9007199254740993')).toBe(9007199254740993n)
     })
   })
 
   describe('Numeric/Decimal types', () => {
-    test('PgNumeric returns NumberFromString', async () => {
+    test('PgNumeric returns NumberFromString', () => {
       const decode = decodeWith(columnTypeToSchema('PgNumeric'))
 
       expect(decode('3.14159')).toBe(3.14159)
       expect(decode('42')).toBe(42)
     })
 
-    test('PgDoublePrecision returns NumberFromString', async () => {
+    test('PgDoublePrecision returns NumberFromString', () => {
       const decode = decodeWith(columnTypeToSchema('PgDoublePrecision'))
       expect(decode('1.23456789')).toBe(1.23456789)
+    })
+
+    test('rejects non-finite numeric route parameters', () => {
+      for (const type of ['PgNumeric', 'PgDoublePrecision', 'MySqlDecimal', 'SQLiteReal']) {
+        const decode = decodeWith(columnTypeToSchema(type))
+
+        for (const value of ['NaN', 'Infinity', '-Infinity', '1e999']) {
+          expect(() => decode(value)).toThrow()
+        }
+      }
     })
   })
 
   describe('String types', () => {
-    test('PgText returns String schema', async () => {
+    test('PgText returns String schema', () => {
       const decode = decodeWith(columnTypeToSchema('PgText'))
 
       expect(decode('hello world')).toBe('hello world')
       expect(decode('')).toBe('')
     })
 
-    test('PgVarchar returns String schema', async () => {
+    test('PgVarchar returns String schema', () => {
       const decode = decodeWith(columnTypeToSchema('PgVarchar'))
       expect(decode('some-slug')).toBe('some-slug')
     })
 
-    test('SQLiteText returns String schema', async () => {
+    test('SQLiteText returns String schema', () => {
       const decode = decodeWith(columnTypeToSchema('SQLiteText'))
       expect(decode('sqlite text')).toBe('sqlite text')
     })
   })
 
   describe('Boolean types', () => {
-    test('PgBoolean transforms string to boolean (case-insensitive)', async () => {
+    test('PgBoolean transforms string to boolean (case-insensitive)', () => {
       const decode = decodeWith(columnTypeToSchema('PgBoolean'))
 
       expect(decode('true')).toBe(true)
@@ -876,7 +897,7 @@ describe('columnTypeToSchema', () => {
       expect(decode('anything-else')).toBe(false)
     })
 
-    test('SQLiteBoolean transforms string to boolean', async () => {
+    test('SQLiteBoolean transforms string to boolean', () => {
       const decode = decodeWith(columnTypeToSchema('SQLiteBoolean'))
 
       expect(decode('true')).toBe(true)
@@ -887,7 +908,7 @@ describe('columnTypeToSchema', () => {
   })
 
   describe('Unknown types', () => {
-    test('unknown column type returns String schema as fallback', async () => {
+    test('unknown column type returns String schema as fallback', () => {
       const decode = decodeWith(columnTypeToSchema('SomeUnknownType'))
       expect(decode('anything')).toBe('anything')
     })
@@ -896,6 +917,7 @@ describe('columnTypeToSchema', () => {
 
 describe('inferParamsSchema', () => {
   // Helper to decode with the dynamically returned schema
+  // oxlint-disable-next-line effecttsgo/schema-sync -- These tests deliberately exercise the synchronous throwing decoder with toThrow; their schemas require no runtime services.
   const decodeWith = (schema: S.Constraint) => S.decodeUnknownSync(schema)
 
   // Mock Drizzle-like schema for testing
@@ -920,7 +942,8 @@ describe('inferParamsSchema', () => {
 
     expect(schema).not.toBeNull()
 
-    const decode = decodeWith(schema!)
+    assert.ok(schema)
+    const decode = decodeWith(schema)
 
     // Valid UUID
     expect(decode({ project: '123e4567-e89b-12d3-a456-426614174000' })).toEqual({
@@ -937,7 +960,8 @@ describe('inferParamsSchema', () => {
 
     expect(schema).not.toBeNull()
 
-    const decode = decodeWith(schema!)
+    assert.ok(schema)
+    const decode = decodeWith(schema)
 
     // Any string should work for slug
     expect(decode({ project: 'my-awesome-project' })).toEqual({
@@ -951,7 +975,8 @@ describe('inferParamsSchema', () => {
 
     expect(schema).not.toBeNull()
 
-    const decode = decodeWith(schema!)
+    assert.ok(schema)
+    const decode = decodeWith(schema)
 
     // String number should be decoded to number
     expect(decode({ user: '42' })).toEqual({ user: 42 })
@@ -966,7 +991,8 @@ describe('inferParamsSchema', () => {
 
     expect(schema).not.toBeNull()
 
-    const decode = decodeWith(schema!)
+    assert.ok(schema)
+    const decode = decodeWith(schema)
 
     expect(decode({ post: '9007199254740993' })).toEqual({ post: 9007199254740993n })
   })
@@ -977,7 +1003,8 @@ describe('inferParamsSchema', () => {
 
     expect(schema).not.toBeNull()
 
-    const decode = decodeWith(schema!)
+    assert.ok(schema)
+    const decode = decodeWith(schema)
 
     expect(
       decode({

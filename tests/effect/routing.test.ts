@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Effect Route Builder Tests
  */
@@ -39,6 +40,7 @@ type TestEnv = {
 }
 
 const ObservedTaggedError = S.Struct({ _tag: S.String })
+
 const isObservedTaggedError = S.is(ObservedTaggedError)
 
 // Helper to create test app
@@ -86,16 +88,21 @@ const createMockUser = (): AuthUser => ({
     name: 'Test User',
     emailVerified: true,
     image: null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
   },
   session: {
     id: 'session-456',
     userId: 'user-123',
-    expiresAt: new Date(),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+    expiresAt: new Date('2026-01-01T00:00:00Z'),
     token: 'token',
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
   },
 })
 
@@ -146,6 +153,7 @@ describe('route-level body validation parseOptions', () => {
 describe('Effect Route Error Observation', () => {
   test('observes validation failures exactly once', async () => {
     const events: EffectErrorEvent[] = []
+
     const app = createApp({
       services: () =>
         Layer.succeed(EffectErrorObserverService, {
@@ -180,9 +188,11 @@ describe('Effect Route Error Observation', () => {
     expect(events[0]?.kind).toBe('failure')
     const observedError = events[0]?.error
     expect(isObservedTaggedError(observedError)).toBe(true)
+
     if (!isObservedTaggedError(observedError)) {
       throw new Error('Expected an observed tagged error')
     }
+
     expect(observedError._tag).toBe('ValidationError')
   })
 
@@ -214,9 +224,11 @@ describe('Effect Route Error Observation', () => {
     expect(events[0]?.kind).toBe('failure')
     const structured = events[0]?.structured
     expect(structured).toBeDefined()
+
     if (structured === undefined) {
       throw new Error('Expected structured error details')
     }
+
     expect(structured.httpStatus).toBe(401)
   })
 })
@@ -305,6 +317,7 @@ describe('EffectRouteBuilder', () => {
         '/users/:id',
         Effect.gen(function* () {
           const honertia = yield* HonertiaService
+
           return yield* Effect.promise(() =>
             honertia.render('Users/Show', { userId: 'from-route' })
           )
@@ -342,6 +355,7 @@ describe('EffectRouteBuilder', () => {
       const valid = await app.request(
         '/users/123e4567-e89b-12d3-a456-426614174000'
       )
+
       expect(valid.status).toBe(200)
       expect(await valid.text()).toBe('Validated')
     })
@@ -448,6 +462,7 @@ describe('EffectRouteBuilder', () => {
           '/config',
           Effect.gen(function* () {
             const config = yield* ConfigService
+
             return new Response(`Key: ${config.apiKey}`)
           })
         )
@@ -470,6 +485,7 @@ describe('EffectRouteBuilder', () => {
           const db = yield* DatabaseService
           const honertia = yield* HonertiaService
           honertia.share('organizations', [{ id: 'org-1' }])
+
           return { orgCount: S.is(S.String)(db.name) ? 1 : 0 }
         })
       )
@@ -481,6 +497,7 @@ describe('EffectRouteBuilder', () => {
           Effect.gen(function* () {
             const shared = yield* SharedPropsReady
             const honertia = yield* HonertiaService
+
             return yield* Effect.promise(() =>
               honertia.render('Dashboard', { orgCount: shared.orgCount })
             )
@@ -499,13 +516,16 @@ describe('EffectRouteBuilder', () => {
       const app = createApp()
 
       class ServiceA extends Context.Service<ServiceA, { a: string }>()('CrossA') {}
+
       class ServiceB extends Context.Service<ServiceB, { derived: string }>()('CrossB') {}
 
       const layerA = Layer.succeed(ServiceA, { a: 'hello' })
+
       const layerB = Layer.effect(
         ServiceB,
         Effect.gen(function* () {
           const a = yield* ServiceA
+
           return { derived: a.a + '-world' }
         })
       )
@@ -517,6 +537,7 @@ describe('EffectRouteBuilder', () => {
           '/cross-layer',
           Effect.gen(function* () {
             const b = yield* ServiceB
+
             return new Response(b.derived)
           })
         )
@@ -530,6 +551,7 @@ describe('EffectRouteBuilder', () => {
       const app = createApp()
 
       class ServiceA extends Context.Service<ServiceA, { a: string }>()('A') {}
+
       class ServiceB extends Context.Service<ServiceB, { b: string }>()('B') {}
 
       effectRoutes(app)
@@ -540,6 +562,7 @@ describe('EffectRouteBuilder', () => {
           Effect.gen(function* () {
             const a = yield* ServiceA
             const b = yield* ServiceB
+
             return new Response(`${a.a}-${b.b}`)
           })
         )
@@ -576,7 +599,8 @@ describe('EffectRouteBuilder', () => {
         '/db-test',
         Effect.gen(function* () {
           const db = yield* DatabaseService
-          return new Response(JSON.stringify(db))
+
+          return Response.json(db)
         })
       )
 
@@ -592,6 +616,7 @@ describe('EffectRouteBuilder', () => {
         '/render-test',
         Effect.gen(function* () {
           const honertia = yield* HonertiaService
+
           return yield* Effect.promise(() =>
             honertia.render('Test', { data: 123 })
           )

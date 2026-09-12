@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Nested Route Model Binding Scoping Tests
  *
@@ -159,6 +160,7 @@ function createApp() {
     '/workspaces/{workspace}/api-keys/{apiKey}',
     Effect.gen(function* () {
       const apiKey = yield* bound('apiKey')
+
       return Response.json(apiKey)
     })
   )
@@ -167,6 +169,7 @@ function createApp() {
     '/workspaces/{workspace}/memberships/{membership}',
     Effect.gen(function* () {
       const membership = yield* bound('membership')
+
       return Response.json(membership)
     })
   )
@@ -175,6 +178,7 @@ function createApp() {
     '/parents/{parent}/childs/{child}',
     Effect.gen(function* () {
       const child = yield* bound('child')
+
       return Response.json(child)
     })
   )

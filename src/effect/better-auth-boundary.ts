@@ -9,7 +9,7 @@
  * Better Auth output.
  */
 
-import { Effect, Schema as S } from 'effect'
+import { Data, Effect, Match, Schema as S } from 'effect'
 import {
   AuthRateLimitError,
   AuthRedirect,
@@ -86,6 +86,8 @@ export type BetterAuthBoundaryFailure =
       readonly setCookies: readonly string[]
     }
 
+const BetterAuthBoundaryFailure = Data.taggedEnum<BetterAuthBoundaryFailure>()
+
 interface BetterAuthFailureHints {
   readonly source: 'exception' | 'result'
   readonly status?: number
@@ -116,9 +118,11 @@ export function inspectBetterAuthActionResult<A>(
 
   if (!(result instanceof Response) && !(result instanceof Headers)) {
     const status = parseHttpStatus(getBoundaryProperty(result, 'status'))
+
     const isHttpEnvelope =
       hasBoundaryProperty(result, 'response') ||
       hasBoundaryProperty(result, 'headers')
+
     if (isHttpEnvelope && status !== undefined && status >= 400) {
       return Effect.fail(
         classifyBetterAuthFailure(result, {
@@ -145,6 +149,7 @@ export function runBetterAuthApiCall<A>(
     try: call,
     catch: (cause) => classifyBetterAuthFailure(cause),
   })
+
   return options.inspectResult === false
     ? result
     : result.pipe(Effect.flatMap(inspectBetterAuthActionResult))
@@ -210,11 +215,13 @@ export function effectifyBetterAuth<Auth extends BetterAuthServer>(
   auth: Auth
 ): BetterAuthEffectClient<Auth> {
   const wrappers = new Map<PropertyKey, unknown>()
+
   const readEndpoint = (
     key: PropertyKey
   ): ((...args: unknown[]) => BetterAuthBoundaryProperty) | undefined => {
     if (!S.is(S.String)(key) || key === 'then') return undefined
     const endpoint = Object.getOwnPropertyDescriptor(auth.api, key)?.value
+
     if (!(endpoint instanceof Function)) return undefined
 
     // SAFETY: runtime reflection established callability. The wrapper owns
@@ -222,12 +229,15 @@ export function effectifyBetterAuth<Auth extends BetterAuthServer>(
     // concrete arguments and success value.
     return endpoint as (...args: unknown[]) => BetterAuthBoundaryProperty
   }
+
   const api = new Proxy<BetterAuthApiProxy>({}, {
     get: (_target, key) => {
       const existing = wrappers.get(key)
+
       if (existing !== undefined) return existing
 
       const endpoint = readEndpoint(key)
+
       if (!endpoint) return undefined
 
       const wrapper = (...args: unknown[]) =>
@@ -235,7 +245,9 @@ export function effectifyBetterAuth<Auth extends BetterAuthServer>(
           () => Promise.resolve(endpoint.apply(auth.api, args)),
           { inspectResult: !requestsRawBetterAuthResponse(args) }
         )
+
       wrappers.set(key, wrapper)
+
       return wrapper
     },
     has: (_target, key) => readEndpoint(key) !== undefined,
@@ -266,6 +278,7 @@ export function effectifyBetterAuth<Auth extends BetterAuthServer>(
 
 function requestsRawBetterAuthResponse(args: readonly unknown[]): boolean {
   const options = args.at(-1)
+
   return getBoundaryProperty(options, 'asResponse') === true
 }
 
@@ -276,6 +289,7 @@ export function classifyBetterAuthFailure(
   const nestedResponse = getBoundaryProperty(cause, 'response')
   const nestedBody = getBoundaryProperty(cause, 'body')
   const body = hints.body ?? nestedBody ?? getBoundaryProperty(nestedResponse, 'body')
+
   const status = firstHttpStatus(
     hints.status,
     getBoundaryProperty(cause, 'statusCode'),
@@ -283,11 +297,13 @@ export function classifyBetterAuthFailure(
     getBoundaryProperty(nestedResponse, 'statusCode'),
     getBoundaryProperty(nestedResponse, 'status')
   )
+
   const code = firstString(
     getBoundaryProperty(body, 'code'),
     getBoundaryProperty(nestedResponse, 'code'),
     getBoundaryProperty(cause, 'code')
   )
+
   const message = firstString(
     getBoundaryProperty(body, 'message'),
     getBoundaryProperty(nestedResponse, 'message'),
@@ -302,34 +318,33 @@ export function classifyBetterAuthFailure(
   // production clients.
   const isVerifiedBetterAuthFailure =
     hints.source === 'result' || isBetterAuthApiErrorLike(cause)
+
   const headers = isVerifiedBetterAuthFailure
     ? collectBetterAuthHeaders(cause, nestedResponse)
     : new Headers()
+
   const setCookies = readSetCookies(headers)
 
   if (!isVerifiedBetterAuthFailure || status === undefined) {
-    return {
-      _tag: 'BetterAuthServiceFailed',
+    return BetterAuthBoundaryFailure.BetterAuthServiceFailed({
       status: status !== undefined && status >= 500 ? status : 502,
       cause,
       headers,
-      setCookies,
-    }
+      setCookies
+    })
   }
 
   if (status >= 300 && status < 400) {
-    return {
-      _tag: 'BetterAuthRedirected',
+    return BetterAuthBoundaryFailure.BetterAuthRedirected({
       status,
       cause,
       headers,
-      setCookies,
-    }
+      setCookies
+    })
   }
 
   if (status === 429) {
-    return {
-      _tag: 'BetterAuthRateLimited',
+    return BetterAuthBoundaryFailure.BetterAuthRateLimited({
       retryAfterSeconds: firstRetryAfterSeconds(
         headers.get('X-Retry-After'),
         headers.get('Retry-After'),
@@ -341,13 +356,12 @@ export function classifyBetterAuthFailure(
       ),
       cause,
       headers,
-      setCookies,
-    }
+      setCookies
+    })
   }
 
   if (status >= 400 && status < 500) {
-    return {
-      _tag: 'BetterAuthRequestRejected',
+    return BetterAuthBoundaryFailure.BetterAuthRequestRejected({
       error: {
         status,
         code,
@@ -358,17 +372,16 @@ export function classifyBetterAuthFailure(
         setCookies,
       },
       headers,
-      setCookies,
-    }
+      setCookies
+    })
   }
 
-  return {
-    _tag: 'BetterAuthServiceFailed',
+  return BetterAuthBoundaryFailure.BetterAuthServiceFailed({
     status: status !== undefined && status >= 500 ? status : 502,
     cause,
     headers,
-    setCookies,
-  }
+    setCookies
+  })
 }
 
 export function toHonertiaAuthError(
@@ -376,32 +389,32 @@ export function toHonertiaAuthError(
   component: string,
   errorMapper: ((error: BetterAuthActionError) => Record<string, string>) | undefined
 ): AuthRedirect | ValidationError | AuthRateLimitError | HttpError {
-  switch (failure._tag) {
-    case 'BetterAuthRedirected':
-      return new AuthRedirect({
+  return Match.value(failure).pipe(Match.tagsExhaustive({
+    BetterAuthRedirected: (failure) =>
+      new AuthRedirect({
         status: failure.status,
         headers: new Headers(failure.headers),
-      })
-    case 'BetterAuthRequestRejected':
-      return new ValidationError({
+      }),
+    BetterAuthRequestRejected: (failure) =>
+      new ValidationError({
         errors: (errorMapper ?? defaultAuthErrorMapper)(failure.error),
         component,
         headers: new Headers(failure.headers),
-      })
-    case 'BetterAuthRateLimited':
-      return new AuthRateLimitError({
+      }),
+    BetterAuthRateLimited: (failure) =>
+      new AuthRateLimitError({
         retryAfterSeconds: failure.retryAfterSeconds,
         cause: failure.cause,
         headers: new Headers(failure.headers),
-      })
-    case 'BetterAuthServiceFailed':
-      return new HttpError({
+      }),
+    BetterAuthServiceFailed: (failure) =>
+      new HttpError({
         status: failure.status,
         message: 'Authentication service failed.',
         cause: failure.cause,
         headers: new Headers(failure.headers),
-      })
-  }
+      }),
+  }))
 }
 
 function collectBetterAuthHeaders<NestedResponse>(
@@ -419,11 +432,13 @@ function collectBetterAuthHeaders<NestedResponse>(
     getHiddenBetterCallHeaders(cause),
   ]) {
     const headers = coerceBoundaryHeaders(candidate)
+
     if (!headers) continue
 
     headers.forEach((value, name) => {
       if (name.toLowerCase() !== 'set-cookie') merged.set(name, value)
     })
+
     for (const cookie of readSetCookies(headers)) {
       cookies.add(cookie)
     }
@@ -446,6 +461,7 @@ function getHiddenBetterCallHeaders<Value>(value: Value): BetterAuthBoundaryProp
   if (!(value instanceof Object)) {
     return undefined
   }
+
   return Object.getOwnPropertyDescriptor(value, BETTER_CALL_API_ERROR_HEADERS)?.value
 }
 
@@ -476,11 +492,13 @@ function readSetCookies(headers: Headers): readonly string[] {
   const headersWithCookies = headers as Headers & {
     getSetCookie?: () => string[]
   }
+
   if (headersWithCookies.getSetCookie instanceof Function) {
     return headersWithCookies.getSetCookie()
   }
 
   const combined = headers.get('set-cookie')
+
   if (!combined) return []
 
   return combined
@@ -489,10 +507,12 @@ function readSetCookies(headers: Headers): readonly string[] {
     .filter((cookie) => cookie.length > 0)
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- The Better Auth response adapter consumes the native Fetch body Promise and treats an unreadable body as unavailable error metadata.
 async function readBetterAuthResponseBody(
   response: Response
 ): Promise<BetterAuthBoundaryProperty> {
   const contentType = response.headers.get('content-type')?.toLowerCase()
+
   if (!contentType?.includes('json')) return undefined
 
   try {
@@ -509,6 +529,7 @@ function getBoundaryProperty<Value>(
   if (!(value instanceof Object)) {
     return undefined
   }
+
   return Object.getOwnPropertyDescriptor(value, key)?.value
 }
 
@@ -528,25 +549,29 @@ function firstString(...values: readonly unknown[]): string | undefined {
   for (const value of values) {
     if (S.is(S.String)(value)) return value
   }
+
   return undefined
 }
 
 function firstHttpStatus(...values: readonly unknown[]): number | undefined {
   for (const value of values) {
     const status = parseHttpStatus(value)
+
     if (status !== undefined) return status
   }
+
   return undefined
 }
 
 function firstRetryAfterSeconds(...values: readonly unknown[]): number | undefined {
   for (const value of values) {
-    if (S.is(S.Number)(value) && Number.isSafeInteger(value) && value >= 0) {
+    if (S.is(S.Finite)(value) && Number.isSafeInteger(value) && value >= 0) {
       return value
     }
 
     if (S.is(S.String)(value) && /^\d+$/.test(value)) {
       const seconds = Number(value)
+
       if (Number.isSafeInteger(seconds)) return seconds
     }
   }
@@ -556,6 +581,7 @@ function firstRetryAfterSeconds(...values: readonly unknown[]): number | undefin
 
 function getBoundaryHeader<Value>(value: Value, name: string): string | undefined {
   const headers = getBoundaryProperty(value, 'headers')
+
   if (headers instanceof Headers) {
     return headers.get(name) ?? undefined
   }
@@ -583,6 +609,7 @@ function getBoundaryHeader<Value>(value: Value, name: string): string | undefine
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() !== name.toLowerCase()) continue
     const header = Object.getOwnPropertyDescriptor(headers, key)?.value
+
     if (S.is(S.String)(header)) return header
   }
 
@@ -590,8 +617,10 @@ function getBoundaryHeader<Value>(value: Value, name: string): string | undefine
 }
 
 function parseHttpStatus<Value>(value: Value): number | undefined {
-  if (!S.is(S.Number)(value) || !Number.isInteger(value)) return undefined
+  if (!S.is(S.Finite)(value) || !Number.isInteger(value)) return undefined
+
   if (value < 100 || value > 599) return undefined
+
   return value
 }
 

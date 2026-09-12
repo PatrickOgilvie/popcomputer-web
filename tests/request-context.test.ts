@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Request Context Seam Tests
  *
@@ -30,9 +31,10 @@ describe('honertiaServices + honertiaContext', () => {
 
     app.get('/inspect', (c) => {
       const ctx = honertiaContext(c)
+
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       return c.json({
-        db: (ctx.db as { name: string } | undefined)?.name ?? null,
+        db: (ctx.db)?.name ?? null,
         auth: (ctx.auth as { name: string } | undefined)?.name ?? null,
       })
     })
@@ -47,6 +49,7 @@ describe('honertiaServices + honertiaContext', () => {
 
     app.get('/inspect', (c) => {
       const ctx = honertiaContext(c)
+
       return c.json({
         db: ctx.db === undefined,
         auth: ctx.auth === undefined,
@@ -76,6 +79,7 @@ describe('honertiaServices + honertiaContext', () => {
       Effect.gen(function* () {
         const db = yield* DatabaseService
         const name = Object.getOwnPropertyDescriptor(db, 'name')?.value
+
         return new Response(String(name))
       })
     )
@@ -104,6 +108,7 @@ describe('honertiaServices + honertiaContext', () => {
     app.get('/shared', (c) => {
       const instance = honertiaContext(c).honertia
       instance?.share('appName', 'context-test')
+
       return c.json({ shared: instance?.getShared() ?? null })
     })
 
@@ -125,15 +130,20 @@ describe('honertiaServices + honertiaContext', () => {
             name: 'Ada',
             emailVerified: true,
             image: null,
+            // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
             createdAt: new Date('2026-01-01T00:00:00Z'),
+            // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
             updatedAt: new Date('2026-01-01T00:00:00Z'),
           },
           session: {
             id: 'session-1',
             userId: 'user-1',
+            // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
             expiresAt: new Date('2027-01-01T00:00:00Z'),
             token: 'redacted-test-token',
+            // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
             createdAt: new Date('2026-01-01T00:00:00Z'),
+            // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
             updatedAt: new Date('2026-01-01T00:00:00Z'),
           },
         }),
@@ -146,6 +156,7 @@ describe('honertiaServices + honertiaContext', () => {
 
     app.get('/whoami', (c) => {
       const { authUser } = honertiaContext(c)
+
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       return c.json({ userId: (authUser?.user as { id?: string } | undefined)?.id ?? null })
     })
@@ -162,12 +173,14 @@ describe('honertiaServices + honertiaContext', () => {
       '*',
       honertiaServices(() => {
         const db = { name: 'db-first' }
+
         return { db, auth: { name: `auth-over-${db.name}` } }
       })
     )
 
     app.get('/inspect', (c) => {
       const ctx = honertiaContext(c)
+
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       return c.text((ctx.auth as { name: string }).name)
     })

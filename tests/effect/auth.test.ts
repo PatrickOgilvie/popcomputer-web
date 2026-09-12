@@ -1,12 +1,15 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * Auth Layers and Helpers Tests
  */
 
 import { describe, test, expect } from 'bun:test'
 import { APIError } from 'better-auth'
-import { Effect, Layer, Exit, Cause, Option } from 'effect'
+import { Predicate, Effect, Layer, Exit, Cause, Option, Schema as S } from 'effect'
 import type { PageProps } from '../../src/types.js'
 import {
+  betterAuthFormAction,
+  betterAuthLogoutAction,
   RequireAuthLayer,
   RequireGuestLayer,
   isAuthenticated,
@@ -16,6 +19,8 @@ import {
   shareAuth,
 } from '../../src/effect/auth.js'
 import {
+  AuthService,
+  RequestService,
   AuthUserService,
   HonertiaService,
   type AuthUser,
@@ -24,7 +29,6 @@ import {
 import {
   AuthRateLimitError,
   HttpError,
-  UnauthorizedError,
   ValidationError,
 } from '../../src/effect/errors.js'
 import type { BetterAuthActionError } from '../../src/effect/auth.js'
@@ -37,16 +41,21 @@ const createMockUser = (overrides: Partial<AuthUser['user']> = {}): AuthUser => 
     name: 'Test User',
     emailVerified: true,
     image: null,
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     createdAt: new Date('2024-01-01'),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     updatedAt: new Date('2024-01-01'),
     ...overrides,
   },
   session: {
     id: 'session-456',
     userId: 'user-123',
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     expiresAt: new Date('2024-12-31'),
     token: 'test-token',
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     createdAt: new Date('2024-01-01'),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     updatedAt: new Date('2024-01-01'),
   },
 })
@@ -56,10 +65,11 @@ const createMockHonertia = (): HonertiaRenderer & {
   shared: PageProps
 } => {
   const shared: PageProps = {}
+
   return {
     shared,
     render: async (component, props) =>
-      new Response(JSON.stringify({ component, props })),
+      Response.json({ component, props }),
     share: (key, value) => {
       shared[key] = value
     },
@@ -74,9 +84,7 @@ describe('RequireAuthLayer', () => {
     const baseLayer = Layer.succeed(AuthUserService, mockUser)
 
     // Consume AuthUserService after applying RequireAuthLayer on top of base layer
-    const program = Effect.gen(function* () {
-      return yield* AuthUserService
-    })
+    const program = AuthUserService
 
     // RequireAuthLayer is applied over the base layer
     const result = await Effect.runPromise(
@@ -89,18 +97,18 @@ describe('RequireAuthLayer', () => {
 
   test('fails with UnauthorizedError when no AuthUserService is available', async () => {
     // RequireAuthLayer checks serviceOption, which returns None when service isn't provided
-    const program = Effect.gen(function* () {
-      return yield* AuthUserService
-    })
+    const program = AuthUserService
 
     const exit = await Effect.runPromiseExit(
       Effect.provide(program, RequireAuthLayer)
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error._tag).toBe('UnauthorizedError')
         expect(error.redirectTo).toBe('/login')
@@ -184,9 +192,11 @@ describe('requireAuth', () => {
     const exit = Effect.runSyncExit(requireAuth())
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error._tag).toBe('UnauthorizedError')
         expect(error.redirectTo).toBe('/login')
@@ -199,7 +209,8 @@ describe('requireAuth', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error.redirectTo).toBe('/signin')
       }
@@ -222,9 +233,11 @@ describe('requireGuest', () => {
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error._tag).toBe('UnauthorizedError')
         expect(error.redirectTo).toBe('/')
@@ -242,7 +255,8 @@ describe('requireGuest', () => {
 
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error.redirectTo).toBe('/dashboard')
       }
@@ -274,6 +288,7 @@ describe('shareAuth', () => {
   test('supports an explicit public user projection', async () => {
     const mockUser = createMockUser({ name: 'John Doe' })
     const mockHonertia = createMockHonertia()
+
     const layer = Layer.mergeAll(
       Layer.succeed(AuthUserService, mockUser),
       Layer.succeed(HonertiaService, mockHonertia)
@@ -322,13 +337,6 @@ describe('shareAuth', () => {
 })
 
 describe('betterAuthFormAction', () => {
-  // Import the function we're testing
-  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  const { betterAuthFormAction } = require('../../src/effect/auth.js') as typeof import('../../src/effect/auth.js')
-  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  const { AuthService, RequestService } = require('../../src/effect/services.js') as typeof import('../../src/effect/services.js')
-  const S = require('effect').Schema
-
   // Helper to create a mock request context for auth actions
   // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   const createAuthRequest = (options: {
@@ -361,8 +369,10 @@ describe('betterAuthFormAction', () => {
     api: {
       signInEmail: async () => {
         if (!options.shouldSucceed && options.error) {
+          // oxlint-disable-next-line only-throw-error -- SAFETY: The fake SDK deliberately rejects with the supplied value to exercise boundary classification.
           throw options.error
         }
+
         return {
           headers: options.responseHeaders ?? new Headers({
             'set-cookie': 'better-auth.session_token=abc123; Path=/; HttpOnly',
@@ -371,8 +381,10 @@ describe('betterAuthFormAction', () => {
       },
       signUpEmail: async () => {
         if (!options.shouldSucceed && options.error) {
+          // oxlint-disable-next-line only-throw-error -- SAFETY: The fake SDK deliberately rejects with the supplied value to exercise boundary classification.
           throw options.error
         }
+
         return {
           headers: options.responseHeaders ?? new Headers({
             'set-cookie': 'better-auth.session_token=xyz789; Path=/; HttpOnly',
@@ -392,7 +404,7 @@ describe('betterAuthFormAction', () => {
       schema: LoginSchema,
       errorComponent: 'Auth/Login',
       redirectTo: '/dashboard',
-      call: (auth: any, input: any, request: Request) =>
+      call: (auth: ReturnType<typeof createMockAuth>, input, request) =>
         auth.api.signInEmail({
           body: { email: input.email, password: input.password },
           request,
@@ -401,6 +413,7 @@ describe('betterAuthFormAction', () => {
     })
 
     const mockAuth = createMockAuth({ shouldSucceed: true })
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'password123' },
     })
@@ -413,9 +426,10 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       expect(response.status).toBe(303)
       expect(response.headers.get('Location')).toBe('/dashboard')
     }
@@ -439,6 +453,7 @@ describe('betterAuthFormAction', () => {
     })
 
     const mockAuth = createMockAuth({ shouldSucceed: true })
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'password123' },
     })
@@ -451,9 +466,10 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       expect(response.headers.get('set-cookie')).toContain('better-auth.session_token')
     }
   })
@@ -472,6 +488,7 @@ describe('betterAuthFormAction', () => {
     })
 
     const mockAuth = createMockAuth({ shouldSucceed: true })
+
     const mockRequest = createAuthRequest({
       body: { email: '', password: 'short' }, // Invalid: empty email, short password
     })
@@ -484,12 +501,15 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error._tag).toBe('ValidationError')
-        if (error._tag === 'ValidationError') {
+
+        if (Predicate.isTagged(error, 'ValidationError')) {
           expect(error.component).toBe('Auth/Login')
         }
       }
@@ -502,12 +522,13 @@ describe('betterAuthFormAction', () => {
       password: S.String,
     })
 
-    const errorMapper = (error: BetterAuthActionError): Record<string, string> => {
+    const errorMapper = (error: BetterAuthActionError) => {
       switch (error.code) {
         case 'INVALID_EMAIL_OR_PASSWORD':
           return { email: 'Invalid email or password' }
         case 'USER_NOT_FOUND':
           return { email: 'No account found with this email' }
+        case undefined:
         default:
           return { form: error.message ?? 'Login failed' }
       }
@@ -527,6 +548,7 @@ describe('betterAuthFormAction', () => {
     })
 
     const mockAuth = createMockAuth()
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'wrongpassword' },
     })
@@ -539,12 +561,15 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error._tag).toBe('ValidationError')
-        if (error._tag === 'ValidationError') {
+
+        if (Predicate.isTagged(error, 'ValidationError')) {
           expect(error.errors.email).toBe('Invalid email or password')
           expect(error.component).toBe('Auth/Login')
         }
@@ -571,6 +596,7 @@ describe('betterAuthFormAction', () => {
     })
 
     const mockAuth = createMockAuth()
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'password123' },
     })
@@ -583,12 +609,15 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
       const option = Cause.findErrorOption(exit.cause)
-      if (option._tag === 'Some') {
+
+      if (Option.isSome(option)) {
         const error = option.value
         expect(error._tag).toBe('ValidationError')
-        if (error._tag === 'ValidationError') {
+
+        if (Predicate.isTagged(error, 'ValidationError')) {
           expect(error.errors.form).toBe('Something went wrong')
         }
       }
@@ -602,14 +631,17 @@ describe('betterAuthFormAction', () => {
     })
 
     let errorMapperCalled = false
+
     const action = betterAuthFormAction({
       schema: LoginSchema,
       errorComponent: 'Auth/Login',
       errorMapper: () => {
         errorMapperCalled = true
+
         return { form: 'This should not be rendered' }
       },
       call: async () => {
+        // oxlint-disable-next-line no-throw-literal, only-throw-error -- SAFETY: This unverified SDK-shaped rejection tests that the boundary never exposes its secret-bearing fields.
         throw {
           status: 400,
           code: 'DATABASE_ERROR',
@@ -619,9 +651,11 @@ describe('betterAuthFormAction', () => {
     })
 
     const mockAuth = createMockAuth()
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'password123' },
     })
+
     const layer = Layer.mergeAll(
       Layer.succeed(AuthService, mockAuth),
       Layer.succeed(RequestService, mockRequest)
@@ -630,17 +664,21 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit)) {
       const failure = Cause.findErrorOption(exit.cause)
       expect(Option.isSome(failure)).toBe(true)
+
       if (Option.isSome(failure)) {
         expect(failure.value).toBeInstanceOf(HttpError)
+
         if (failure.value instanceof HttpError) {
           expect(failure.value.status).toBe(502)
           expect(failure.value.message).toBe('Authentication service failed.')
         }
       }
     }
+
     expect(errorMapperCalled).toBe(false)
   })
 
@@ -651,11 +689,13 @@ describe('betterAuthFormAction', () => {
     })
 
     let errorMapperCalled = false
+
     const action = betterAuthFormAction({
       schema: LoginSchema,
       errorComponent: 'Auth/Login',
       errorMapper: () => {
         errorMapperCalled = true
+
         return { form: 'This should not be rendered' }
       },
       call: async () => {
@@ -668,9 +708,11 @@ describe('betterAuthFormAction', () => {
     })
 
     const mockAuth = createMockAuth()
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'password123' },
     })
+
     const layer = Layer.mergeAll(
       Layer.succeed(AuthService, mockAuth),
       Layer.succeed(RequestService, mockRequest)
@@ -679,17 +721,21 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit)) {
       const failure = Cause.findErrorOption(exit.cause)
       expect(Option.isSome(failure)).toBe(true)
+
       if (Option.isSome(failure)) {
         expect(failure.value).toBeInstanceOf(HttpError)
+
         if (failure.value instanceof HttpError) {
           expect(failure.value.status).toBe(502)
           expect(failure.value.message).toBe('Authentication service failed.')
         }
       }
     }
+
     expect(errorMapperCalled).toBe(false)
   })
 
@@ -708,6 +754,7 @@ describe('betterAuthFormAction', () => {
     })
 
     const mockAuth = createMockAuth({ shouldSucceed: true })
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'password123', returnTo: '/settings' },
     })
@@ -720,9 +767,10 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       expect(response.headers.get('Location')).toBe('/settings')
     }
   })
@@ -746,6 +794,7 @@ describe('betterAuthFormAction', () => {
     })
 
     const mockAuth = createMockAuth({ shouldSucceed: true })
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'password123' },
     })
@@ -758,9 +807,10 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       expect(response.status).toBe(303)
       expect(response.headers.get('set-cookie')).toContain('test-cookie')
     }
@@ -773,31 +823,32 @@ describe('betterAuthFormAction', () => {
     })
 
     let mappedError: BetterAuthActionError | undefined
+
     const action = betterAuthFormAction({
       schema: LoginSchema,
       errorComponent: 'Auth/Login',
       redirectTo: '/dashboard',
       errorMapper: (error) => {
         mappedError = error
+
         return { email: error.code ?? 'MISSING_ERROR_CODE' }
       },
       call: async () =>
-        new Response(
-          JSON.stringify({
+        Response.json({
             message: 'Invalid email or password',
             code: 'INVALID_EMAIL_OR_PASSWORD',
-          }),
-          {
+          }, {
             status: 401,
             headers: { 'content-type': 'application/json' },
-          }
-        ),
+          }),
     })
 
     const mockAuth = createMockAuth()
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'wrong-password' },
     })
+
     const layer = Layer.mergeAll(
       Layer.succeed(AuthService, mockAuth),
       Layer.succeed(RequestService, mockRequest)
@@ -806,11 +857,14 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit)) {
       const failure = Cause.findErrorOption(exit.cause)
       expect(Option.isSome(failure)).toBe(true)
+
       if (Option.isSome(failure)) {
         expect(failure.value).toBeInstanceOf(ValidationError)
+
         if (failure.value instanceof ValidationError) {
           expect(failure.value.errors).toEqual({ email: 'INVALID_EMAIL_OR_PASSWORD' })
           expect(failure.value.component).toBe('Auth/Login')
@@ -830,27 +884,28 @@ describe('betterAuthFormAction', () => {
     })
 
     let errorMapperCalled = false
+
     const action = betterAuthFormAction({
       schema: LoginSchema,
       errorComponent: 'Auth/Login',
       errorMapper: () => {
         errorMapperCalled = true
+
         return { form: 'This should not be rendered' }
       },
       call: async () =>
-        new Response(
-          JSON.stringify({ message: 'Database connection failed' }),
-          {
+        Response.json({ message: 'Database connection failed' }, {
             status: 503,
             headers: { 'content-type': 'application/json' },
-          }
-        ),
+          }),
     })
 
     const mockAuth = createMockAuth()
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'password123' },
     })
+
     const layer = Layer.mergeAll(
       Layer.succeed(AuthService, mockAuth),
       Layer.succeed(RequestService, mockRequest)
@@ -859,17 +914,21 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit)) {
       const failure = Cause.findErrorOption(exit.cause)
       expect(Option.isSome(failure)).toBe(true)
+
       if (Option.isSome(failure)) {
         expect(failure.value).toBeInstanceOf(HttpError)
+
         if (failure.value instanceof HttpError) {
           expect(failure.value.status).toBe(503)
           expect(failure.value.message).toBe('Authentication service failed.')
         }
       }
     }
+
     expect(errorMapperCalled).toBe(false)
   })
 
@@ -880,30 +939,31 @@ describe('betterAuthFormAction', () => {
     })
 
     let errorMapperCalled = false
+
     const action = betterAuthFormAction({
       schema: LoginSchema,
       errorComponent: 'Auth/Login',
       errorMapper: () => {
         errorMapperCalled = true
+
         return { form: 'This should not be rendered' }
       },
       call: async () =>
-        new Response(
-          JSON.stringify({ message: 'Too many requests. Please try again later.' }),
-          {
+        Response.json({ message: 'Too many requests. Please try again later.' }, {
             status: 429,
             headers: {
               'content-type': 'application/json',
               'X-Retry-After': '37',
             },
-          }
-        ),
+          }),
     })
 
     const mockAuth = createMockAuth()
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'password123' },
     })
+
     const layer = Layer.mergeAll(
       Layer.succeed(AuthService, mockAuth),
       Layer.succeed(RequestService, mockRequest)
@@ -912,16 +972,20 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit)) {
       const failure = Cause.findErrorOption(exit.cause)
       expect(Option.isSome(failure)).toBe(true)
+
       if (Option.isSome(failure)) {
         expect(failure.value).toBeInstanceOf(AuthRateLimitError)
+
         if (failure.value instanceof AuthRateLimitError) {
           expect(failure.value.retryAfterSeconds).toBe(37)
         }
       }
     }
+
     expect(errorMapperCalled).toBe(false)
   })
 
@@ -939,11 +1003,13 @@ describe('betterAuthFormAction', () => {
         // Some better-auth methods return raw Headers
         const headers = new Headers()
         headers.set('set-cookie', 'session=xyz; Path=/')
+
         return headers
       },
     })
 
     const mockAuth = createMockAuth({ shouldSucceed: true })
+
     const mockRequest = createAuthRequest({
       body: { email: 'test@example.com', password: 'password123' },
     })
@@ -956,20 +1022,16 @@ describe('betterAuthFormAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       expect(response.headers.get('set-cookie')).toContain('session=xyz')
     }
   })
 })
 
 describe('betterAuthLogoutAction', () => {
-  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  const { betterAuthLogoutAction } = require('../../src/effect/auth.js') as typeof import('../../src/effect/auth.js')
-  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  const { AuthService, RequestService } = require('../../src/effect/services.js') as typeof import('../../src/effect/services.js')
-
   // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   const createLogoutRequest = () => ({
     method: 'POST',
@@ -985,6 +1047,7 @@ describe('betterAuthLogoutAction', () => {
     parseBody: async () => ({}),
     header: (name: string) => {
       if (name.toLowerCase() === 'cookie') return 'better-auth.session_token=abc123'
+
       return undefined
     },
   })
@@ -1013,9 +1076,10 @@ describe('betterAuthLogoutAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       expect(response.status).toBe(303)
       expect(response.headers.get('Location')).toBe('/login')
     }
@@ -1035,9 +1099,10 @@ describe('betterAuthLogoutAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       expect(response.headers.get('Location')).toBe('/login')
     }
   })
@@ -1061,9 +1126,10 @@ describe('betterAuthLogoutAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       expect(response.headers.get('set-cookie')).toContain('Expires=Thu, 01 Jan 1970')
     }
   })
@@ -1084,9 +1150,10 @@ describe('betterAuthLogoutAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       const cookies = response.headers.get('set-cookie') ?? ''
       // Should clear the default better-auth cookies
       expect(cookies).toContain('better-auth.session_token=')
@@ -1111,9 +1178,10 @@ describe('betterAuthLogoutAction', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
 
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       const cookies = response.headers.get('set-cookie') ?? ''
       expect(cookies).toContain('my-app-session=')
       expect(cookies).toContain('my-app-refresh=')
@@ -1145,9 +1213,10 @@ describe('betterAuthLogoutAction', () => {
 
     // Should still succeed and redirect
     expect(Exit.isSuccess(exit)).toBe(true)
+
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const response = exit.value as Response
+      const response = exit.value
       expect(response.status).toBe(303)
       expect(response.headers.get('Location')).toBe('/login')
     }
@@ -1160,6 +1229,7 @@ describe('Auth flow patterns', () => {
 
     const protectedHandler = Effect.gen(function* () {
       const user = yield* requireAuth()
+
       return `Welcome, ${user.user.name}!`
     })
 
@@ -1169,9 +1239,10 @@ describe('Auth flow patterns', () => {
     expect(result).toBe('Welcome, Test User!')
   })
 
-  test('guest-only route pattern', async () => {
+  test('guest-only route pattern', () => {
     const guestHandler = Effect.gen(function* () {
       yield* requireGuest()
+
       return 'Login page'
     })
 
@@ -1182,9 +1253,11 @@ describe('Auth flow patterns', () => {
   test('conditional auth pattern', async () => {
     const conditionalHandler = Effect.gen(function* () {
       const user = yield* currentUser
+
       if (user) {
         return `Hello, ${user.user.name}`
       }
+
       return 'Hello, Guest'
     })
 
@@ -1202,6 +1275,7 @@ describe('Auth flow patterns', () => {
   test('auth check without failing', async () => {
     const checkHandler = Effect.gen(function* () {
       const authed = yield* isAuthenticated
+
       return authed ? 'Logged in' : 'Logged out'
     })
 

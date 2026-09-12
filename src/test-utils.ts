@@ -1,6 +1,7 @@
 /** Shared utilities for testing @popcomputer/web applications. */
 
 import { Hono } from 'hono'
+import { Clock, Effect } from 'effect'
 import { web, HEADERS } from './middleware.js'
 import { serializePage } from './helpers.js'
 import type { PageObject } from './types.js'
@@ -126,8 +127,10 @@ export function makeInertiaRequest(
 /**
  * Parses an Inertia JSON response
  */
+// oxlint-disable-next-line effecttsgo/async-function -- These public test adapters consume native Fetch bodies or implement Promise-returning lazy page props.
 export async function parseInertiaResponse(res: Response): Promise<PageObject> {
   const json = await res.json()
+
   // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
   return json as PageObject
 }
@@ -135,8 +138,10 @@ export async function parseInertiaResponse(res: Response): Promise<PageObject> {
 /**
  * Extracts page object from HTML response
  */
+// oxlint-disable-next-line effecttsgo/async-function -- These public test adapters consume native Fetch bodies or implement Promise-returning lazy page props.
 export async function parseHtmlResponse(res: Response): Promise<PageObject | null> {
   const html = await res.text()
+
   const scriptMatch = html.match(
     /<script\s+data-page="[^"]+"\s+type="application\/json">([\s\S]*?)<\/script>/
   )
@@ -162,6 +167,7 @@ export function assertInertiaResponse(res: Response) {
   }
   
   const contentType = res.headers.get('Content-Type')
+
   if (!contentType?.includes('application/json')) {
     throw new Error(`Expected JSON content type, got ${contentType}`)
   }
@@ -180,6 +186,7 @@ export function assertHtmlResponse(res: Response) {
   }
   
   const contentType = res.headers.get('Content-Type')
+
   if (!contentType?.includes('text/html')) {
     throw new Error(`Expected HTML content type, got ${contentType}`)
   }
@@ -194,6 +201,7 @@ export function assertVersionMismatch(res: Response, expectedLocation?: string) 
   }
   
   const location = res.headers.get(HEADERS.LOCATION)
+
   if (!location) {
     throw new Error(`Missing ${HEADERS.LOCATION} header`)
   }
@@ -265,17 +273,19 @@ export const edgeCaseStrings = {
  * Creates a delayed promise for testing async behavior
  */
 export function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+  return Effect.runPromise(Effect.sleep(ms))
 }
 
 /**
  * Creates a lazy prop that resolves after a delay
  */
 export function lazyProp<T>(value: T, delayMs = 0): () => Promise<T> {
+  // oxlint-disable-next-line effecttsgo/async-function -- These public test adapters consume native Fetch bodies or implement Promise-returning lazy page props.
   return async () => {
     if (delayMs > 0) {
       await delay(delayMs)
     }
+
     return value
   }
 }
@@ -291,13 +301,14 @@ export interface RequestTracker {
   count: () => number
 }
 
-export function createRequestTracker(): RequestTracker {
+/** Record requests using the supplied clock, or the live clock at this test boundary. */
+export function createRequestTracker(clock: Clock.Clock = Effect.runSync(Clock.Clock)): RequestTracker {
   const requests: Array<{ path: string; method: string; timestamp: number }> = []
   
   return {
     requests,
     track(path: string, method: string) {
-      requests.push({ path, method, timestamp: Date.now() })
+      requests.push({ path, method, timestamp: clock.currentTimeMillisUnsafe() })
     },
     reset() {
       requests.length = 0

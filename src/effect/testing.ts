@@ -8,24 +8,32 @@
  * bundling issues when deploying to Cloudflare Workers.
  */
 
-import { Layer } from 'effect'
+import { Layer, Predicate } from 'effect'
+import type * as BunTest from 'bun:test'
 import type { PagePropValue, PageProps } from '../types.js'
 import type { RequestData } from './validation.js'
 
 // Lazy-loaded bun:test exports (only loaded when tests actually run)
 // Using a computed module name to prevent bundlers from statically analyzing this
-let _bunTestModule: typeof import('bun:test') | null = null
+type BunTestRuntime = Pick<typeof BunTest, 'describe' | 'test' | 'expect'>
 
-function getBunTestSync(): typeof import('bun:test') {
+let _bunTestModule: BunTestRuntime | null = null
+
+function getBunTestSync(): BunTestRuntime {
   if (!_bunTestModule) {
     // Compute module name to prevent static analysis by bundlers
     const modName = ['bun', 'test'].join(':')
     // Use require for synchronous loading (available in Bun)
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    _bunTestModule = require(modName)
+    const loaded: BunTestRuntime = require(modName)
+    _bunTestModule = loaded
+
+    return loaded
   }
-  return _bunTestModule!
+
+  return _bunTestModule
 }
+
 import type { Context, Hono, Env } from 'hono'
 import {
   RouteRegistry,
@@ -231,13 +239,16 @@ function createTestFn<E extends Env>(
   app: Hono<E>,
   route: RouteMetadata,
   config: TestAppConfig<E>,
-  testLayer?: Layer.Layer<any, never, never>
+  testLayer?: Layer.Layer<never, never, never>
 ): TestFn {
   const { test, expect: expectBun } = getBunTestSync()
+
   return (name: string, options: TestCaseOptions) => {
+    // oxlint-disable-next-line effecttsgo/async-function -- Bun invokes this Promise-returning test callback; Effect programs execute inside the native test-runner boundary.
     test(name, async () => {
       // Setup database if configured
       let db: unknown
+
       if (config.setupDatabase) {
         db = await config.setupDatabase()
       }
@@ -245,8 +256,9 @@ function createTestFn<E extends Env>(
       try {
         // Resolve user
         let user: TestUser | null = null
+
         if (options.as) {
-          if (typeof options.as === 'string') {
+          if (Predicate.isString(options.as)) {
             user = options.as === 'guest' ? null : (config.userFactory ?? defaultUserFactory)(options.as)
           } else {
             user = options.as
@@ -268,6 +280,7 @@ function createTestFn<E extends Env>(
         }
 
         let body: BodyInit | undefined
+
         if (options.body) {
           if (options.body instanceof FormData) {
             body = options.body
@@ -279,6 +292,7 @@ function createTestFn<E extends Env>(
 
         // Make request
         const env = testLayer ? { __testLayer: testLayer } : undefined
+
         const response = await app.request(url, {
           method,
           headers,
@@ -288,6 +302,7 @@ function createTestFn<E extends Env>(
         // Parse response
         let json: unknown
         const contentType = response.headers.get('Content-Type') ?? ''
+
         if (contentType.includes('application/json')) {
           try {
             json = await response.clone().json()
@@ -298,6 +313,7 @@ function createTestFn<E extends Env>(
 
         // Create context
         const captured = getResponseTestCaptures(response) ?? createEmptyCaptures()
+
         const ctx: TestContext = {
           response,
           json,
@@ -317,6 +333,7 @@ function createTestFn<E extends Env>(
           if (exp.headers) {
             for (const [key, value] of Object.entries(exp.headers)) {
               const actual = response.headers.get(key)
+
               if (value instanceof RegExp) {
                 expectBun(actual).toMatch(value)
               } else {
@@ -335,9 +352,12 @@ function createTestFn<E extends Env>(
             const errorBody = json as {
               errors?: Record<string, string | string[]>
             } | undefined
+
             expectBun(errorBody?.errors).toBeDefined()
+
             for (const [field, expectedError] of Object.entries(exp.errors)) {
               const fieldErrors = errorBody?.errors?.[field]
+
               if (Array.isArray(expectedError)) {
                 expectBun(fieldErrors).toEqual(expectedError)
               } else {
@@ -358,9 +378,11 @@ function createTestFn<E extends Env>(
               component?: string
               props?: PageProps
             } | undefined
+
             if (exp.component) {
               expectBun(inertiaBody?.component).toBe(exp.component)
             }
+
             if (exp.props) {
               for (const [key, value] of Object.entries(exp.props)) {
                 expectBun(inertiaBody?.props?.[key]).toEqual(value)
@@ -426,7 +448,7 @@ export function describeRoute<E extends Env>(
 export function describeRoute<E extends Env>(
   routeName: string,
   app: Hono<E>,
-  testLayer: Layer.Layer<any, never, never>,
+  testLayer: Layer.Layer<never, never, never>,
   callback: (test: TestFn) => void,
   config?: TestAppConfig<E>
 ): void
@@ -441,7 +463,7 @@ export function describeRoute<E extends Env>(
   routeName: string,
   app: Hono<E>,
   registry: RouteRegistry,
-  testLayer: Layer.Layer<any, never, never>,
+  testLayer: Layer.Layer<never, never, never>,
   callback: (test: TestFn) => void,
   config?: TestAppConfig<E>
 ): void
@@ -450,24 +472,31 @@ export function describeRoute<E extends Env>(
   app: Hono<E>,
   registryOrLayerOrCallback:
     | RouteRegistry
-    | Layer.Layer<any, never, never>
+    | Layer.Layer<never, never, never>
     | ((test: TestFn) => void),
   layerOrCallbackOrConfig?:
-    | Layer.Layer<any, never, never>
+    | Layer.Layer<never, never, never>
     | ((test: TestFn) => void)
     | TestAppConfig<E>,
   callbackOrConfig?: ((test: TestFn) => void) | TestAppConfig<E>,
   maybeConfig?: TestAppConfig<E>
 ): void {
+  // Public overloads only accept self-contained test layers. Keep their error
+  // and requirement channels when the runtime marker selects that argument.
+  const isTestLayer = (
+    value: typeof registryOrLayerOrCallback | typeof layerOrCallbackOrConfig
+  ): value is Layer.Layer<never, never, never> => Layer.isLayer(value)
+
   // Handle overloads
   let registry: RouteRegistry
-  let testLayer: Layer.Layer<any, never, never> | undefined
+  let testLayer: Layer.Layer<never, never, never> | undefined
   let callback: (test: TestFn) => void
   let config: TestAppConfig<E>
 
   if (registryOrLayerOrCallback instanceof RouteRegistry) {
     registry = registryOrLayerOrCallback
-    if (Layer.isLayer(layerOrCallbackOrConfig)) {
+
+    if (isTestLayer(layerOrCallbackOrConfig)) {
       testLayer = layerOrCallbackOrConfig
       // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
       callback = callbackOrConfig as (test: TestFn) => void
@@ -478,7 +507,7 @@ export function describeRoute<E extends Env>(
       // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
       config = (callbackOrConfig as TestAppConfig<E>) ?? {}
     }
-  } else if (Layer.isLayer(registryOrLayerOrCallback)) {
+  } else if (isTestLayer(registryOrLayerOrCallback)) {
     registry = getAppRouteRegistry(app)
     testLayer = registryOrLayerOrCallback
     // SAFETY: This test adapter constructs and owns the fixture, so the asserted framework contract is confined to controlled test data.
@@ -499,8 +528,7 @@ export function describeRoute<E extends Env>(
     throw new Error(
       `Route '${routeName}' not found in registry. Available routes: ${registry
         .all()
-        .map((r) => r.name)
-        .filter(Boolean)
+        .flatMap((r) => r.name ? [r.name] : [])
         .join(', ') || '(none)'}`
     )
   }
@@ -540,8 +568,7 @@ export function createRouteTester<E extends Env>(
     throw new Error(
       `Route '${routeName}' not found in registry. Available routes: ${registry
         .all()
-        .map((r) => r.name)
-        .filter(Boolean)
+        .flatMap((r) => r.name ? [r.name] : [])
         .join(', ') || '(none)'}`
     )
   }
@@ -565,6 +592,7 @@ export function generateTestCases<E extends Env>(
   registry: RouteRegistry = getAppRouteRegistry(app)
 ): Array<{ name: string; options: TestCaseOptions }> {
   const route = registry.findByName(routeName)
+
   if (!route) return []
 
   const cases: Array<{ name: string; options: TestCaseOptions }> = []

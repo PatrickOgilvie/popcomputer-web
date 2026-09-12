@@ -74,10 +74,10 @@ import {
   excludeIf,
 } from '../../src/effect/schema.js'
 
-const decode = <A, I, Input>(schema: S.Schema<A, I>, value: Input) =>
+const decode = <A, I, Input>(schema: S.Codec<A, I>, value: Input) =>
   Effect.runSync(S.decodeUnknownEffect(schema)(value))
 
-const decodeEither = <A, I, Input>(schema: S.Schema<A, I>, value: Input) =>
+const decodeEither = <A, I, Input>(schema: S.Codec<A, I>, value: Input) =>
   Effect.runSyncExit(S.decodeUnknownEffect(schema)(value))
 
 // =============================================================================
@@ -97,6 +97,14 @@ describe('String Types', () => {
   })
 
   describe('nullableString', () => {
+    test('coerces scalar values and rejects objects', () => {
+      expect(decode(nullableString, 42)).toBe('42')
+      expect(decode(nullableString, false)).toBe('false')
+      expect(decode(nullableString, 42n)).toBe('42')
+      expect(decodeEither(nullableString, { value: 'secret' })._tag).toBe('Failure')
+      expect(decodeEither(nullableString, ['a', 'b'])._tag).toBe('Failure')
+    })
+
     test('converts empty strings to null', () => {
       expect(decode(nullableString, '')).toBeNull()
       expect(decode(nullableString, '   ')).toBeNull()
@@ -242,6 +250,12 @@ describe('Numeric Types', () => {
 
     test('throws on non-numeric strings', () => {
       expect(() => decode(coercedNumber, 'abc')).toThrow()
+    })
+
+    test('rejects non-finite values and overflowing numeric strings', () => {
+      for (const value of [NaN, Infinity, -Infinity, 'NaN', 'Infinity', '-Infinity', '1e999']) {
+        expect(decodeEither(coercedNumber, value)._tag).toBe('Failure')
+      }
     })
   })
 
@@ -409,6 +423,18 @@ describe('Boolean Types', () => {
   })
 
   describe('declined', () => {
+    test('accepts declined form values', () => {
+      for (const value of [0, '0', 'false', 'no', 'off']) {
+        expect(decode(declined, value)).toBe(false)
+      }
+    })
+
+    test('rejects affirmative form values', () => {
+      for (const value of [1, '1', 'true', 'yes', 'on']) {
+        expect(decodeEither(declined, value)._tag).toBe('Failure')
+      }
+    })
+
     test('validates false literal', () => {
       // The declined schema validates that a value represents "declined"
       // The literal false value passes directly
@@ -435,13 +461,14 @@ describe('Date Types', () => {
     })
 
     test('coerces timestamps to dates', () => {
-      const timestamp = Date.now()
+      const timestamp = 1_704_067_200_000
       const result = decode(coercedDate, timestamp)
       expect(result).toBeInstanceOf(Date)
     })
 
     test('passes through dates', () => {
-      const date = new Date()
+      // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+      const date = new Date('2024-01-01T00:00:00Z')
       expect(decode(coercedDate, date)).toEqual(date)
     })
 
@@ -817,6 +844,7 @@ describe('Password', () => {
         numbers: true,
         symbols: true,
       })
+
       expect(decode(schema, 'Password1!')).toBe('Password1!')
       expect(decodeEither(schema, 'password')._tag).toBe('Failure')
     })
@@ -830,7 +858,7 @@ describe('Password', () => {
 describe('Utility', () => {
   describe('nullable', () => {
     test('makes schema nullable', () => {
-      const schema = nullable(S.Number)
+      const schema = nullable(S.Finite)
       expect(decode(schema, null)).toBeNull()
       expect(decode(schema, undefined)).toBeNull()
       expect(decode(schema, '')).toBeNull()

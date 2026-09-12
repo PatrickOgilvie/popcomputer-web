@@ -1,7 +1,7 @@
 /** Application setup for @popcomputer/web. */
 
 import { createMiddleware } from 'hono/factory'
-import { Hono } from 'hono'
+import type { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
 import type { Schema as S } from 'effect'
 import { web } from './middleware.js'
@@ -352,6 +352,7 @@ export function setupWeb<
   const config = (maybeConfig ?? appOrConfig) as
     | WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
     | WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+
   assertWebSetupConfig(config)
   const legacyConfig = toLegacySetupConfig(config)
 
@@ -429,6 +430,7 @@ function installSetup<
   const config = (maybeConfig ?? appOrConfig) as
     | HonertiaSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
     | HonertiaSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+
   const middleware = createSetupMiddleware(config)
 
   if (maybeConfig === undefined) {
@@ -439,6 +441,7 @@ function installSetup<
   const app = appOrConfig as Hono<E>
   app.use('*', middleware)
   registerErrorHandlers(app, config.errors)
+
   return { app, routes: getAppRouteRegistry(app) }
 }
 
@@ -494,16 +497,19 @@ function createSetupMiddleware<
   const configured = config.honertia
   const schema = configured.schema
   const bindings = configured.bindings
+
   const webConfig: WebConfig = {
     version: configured.version,
     render: configured.render,
   }
 
   // Middleware to wire db and auth into the typed request context
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   const setupServices: MiddlewareHandler<E> = createMiddleware<E>(async (c, next) => {
     const requestCtx = openHonertiaContext(c)
     requestCtx.errorBoundary = config.errors
     const executionContext = getRequestExecutionContextClient(c)
+
     const backgroundTasks: AuthBackgroundTasks = {
       handler: executionContext.waitUntil,
     }
@@ -532,6 +538,7 @@ function createSetupMiddleware<
           context: Context<E>,
           services: { readonly backgroundTasks: AuthBackgroundTasks }
         ) => Auth
+
         // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
         requestCtx.auth = createStatelessAuth(c, { backgroundTasks }) as AuthType
       }
@@ -568,20 +575,27 @@ function createSetupMiddleware<
     ...(config.middleware ?? []),
   ]
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return createMiddleware<E>(async (c, next) => {
     // Mirrors Hono's compose contract: next() resolves to void, wrapper
     // middleware observe downstream responses via c.res after awaiting it,
     // and a middleware that returns a Response (without finalizing the
     // context) has that response adopted — exactly like hono/compose.
+    // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
     const dispatch = async (i: number): Promise<void> => {
       if (i >= middlewares.length) {
         await next()
+
         return
       }
+
+      // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
       const res = await middlewares[i](c, async () => {
         await dispatch(i + 1)
       })
+
       if (res instanceof Response && !c.finalized) {
+        // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
         c.res = res
       }
     }
@@ -685,7 +699,7 @@ export function createErrorHandlers<E extends Env>(config: ErrorHandlerConfig = 
  * ```
  */
 export function registerErrorHandlers<E extends Env>(
-  app: { notFound: (handler: any) => void; onError: (handler: any) => void },
+  app: Pick<Hono<E>, 'notFound' | 'onError'>,
   config: ErrorHandlerConfig = {}
 ): void {
   const { notFound, onError } = createErrorHandlers<E>(config)

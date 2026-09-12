@@ -8,8 +8,9 @@
  * Supports stale-while-revalidate (SWR) pattern for improved latency and resilience.
  */
 
-import { Duration, Effect, Option, Schema } from 'effect'
-import { CacheService, CacheClientError, ExecutionContextService } from './effect/services.js'
+import { Clock, Duration, Effect, Option, Schema } from 'effect'
+import type { CacheClientError } from './effect/services.js'
+import { CacheService, ExecutionContextService } from './effect/services.js'
 
 // ============================================================================
 // Types
@@ -59,7 +60,7 @@ export class CacheError extends Schema.TaggedError<CacheError>()('CacheError', {
 const CacheEntrySchema = <V>(valueSchema: Schema.Codec<V>) =>
   Schema.Struct({
     v: valueSchema,
-    t: Schema.Number, // cachedAt timestamp
+    t: Schema.Finite, // cachedAt timestamp
   })
 
 type CacheEntry<V> = { v: V; t: number }
@@ -70,9 +71,11 @@ type CacheEntry<V> = { v: V; t: number }
  */
 const hashString = (str: string): string => {
   let hash = 5381
+
   for (let i = 0; i < str.length; i++) {
     hash = ((hash << 5) + hash) ^ str.charCodeAt(i)
   }
+
   // Convert to unsigned 32-bit and then to base36 for short strings
   return (hash >>> 0).toString(36)
 }
@@ -84,6 +87,7 @@ const hashString = (str: string): string => {
 const hashSchema = <V>(schema: Schema.Codec<V>): string => {
   // Stringify the AST - this captures the schema structure
   const astString = JSON.stringify(schema.ast)
+
   return hashString(astString)
 }
 
@@ -98,9 +102,11 @@ const resolveKey = <V>(
   if (version === true) {
     return `${hashSchema(schema)}:${key}`
   }
+
   if (Schema.is(Schema.String)(version)) {
     return `${version}:${key}`
   }
+
   return key
 }
 
@@ -161,15 +167,17 @@ export const cache = <V, E, R>(
 
     const effectiveKey = resolveKey(key, schema, options.version)
     const ttlMs = Duration.toMillis(Duration.fromInputUnsafe(options.ttl))
+
     const swrMs = options.swr
       ? Duration.toMillis(Duration.fromInputUnsafe(options.swr))
       : 0
+
     const totalTtlSeconds = Math.ceil((ttlMs + swrMs) / 1000)
 
     // Helper to store a value in cache
     const storeInCache = (value: V) =>
       Effect.gen(function* () {
-        const newEntry: CacheEntry<V> = { v: value, t: Date.now() }
+        const newEntry: CacheEntry<V> = { v: value, t: yield* Clock.currentTimeMillis }
         const serialized = yield* Schema.encodeEffect(jsonSchema)(newEntry)
         yield* cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
       })
@@ -178,8 +186,8 @@ export const cache = <V, E, R>(
     const cached = yield* cacheService.get(effectiveKey)
 
     if (cached !== null) {
-      const entry = yield* Schema.decodeUnknownEffect(jsonSchema)(cached)
-      const age = Date.now() - entry.t
+      const entry = yield* Schema.decodeEffect(jsonSchema)(cached)
+      const age = (yield* Clock.currentTimeMillis) - entry.t
 
       if (age < ttlMs) {
         // Fresh - return immediately
@@ -195,6 +203,7 @@ export const cache = <V, E, R>(
               yield* storeInCache(freshValue)
             })
           )
+
           return entry.v
         }
 
@@ -247,7 +256,8 @@ export const cacheGet = <V>(
       return Option.none<V>()
     }
 
-    const entry = yield* Schema.decodeUnknownEffect(jsonSchema)(cached)
+    const entry = yield* Schema.decodeEffect(jsonSchema)(cached)
+
     return Option.some(entry.v)
   })
 
@@ -275,12 +285,14 @@ export const cacheSet = <V>(
 
     const effectiveKey = resolveKey(key, schema, options.version)
     const ttlMs = Duration.toMillis(Duration.fromInputUnsafe(options.ttl))
+
     const swrMs = options.swr
       ? Duration.toMillis(Duration.fromInputUnsafe(options.swr))
       : 0
+
     const totalTtlSeconds = Math.ceil((ttlMs + swrMs) / 1000)
 
-    const entry: CacheEntry<V> = { v: value, t: Date.now() }
+    const entry: CacheEntry<V> = { v: value, t: yield* Clock.currentTimeMillis }
     const serialized = yield* Schema.encodeEffect(jsonSchema)(entry)
 
     yield* cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
@@ -311,9 +323,11 @@ export const cacheInvalidate = <V = unknown>(
 ): Effect.Effect<void, CacheClientError, CacheService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
+
     const effectiveKey = options
       ? resolveKey(key, options.schema, options.version)
       : key
+
     yield* cacheService.delete(effectiveKey)
   })
 

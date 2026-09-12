@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 import { describe, expect, test } from 'bun:test'
 import { APIError, betterAuth } from 'better-auth'
 import { memoryAdapter, type MemoryDB } from 'better-auth/adapters/memory'
@@ -67,12 +68,14 @@ function getValidationError(
   exit: Exit.Exit<Response, unknown>
 ): ValidationError {
   expect(Exit.isFailure(exit)).toBe(true)
+
   if (Exit.isSuccess(exit)) {
     throw new Error('Expected the Better Auth action to fail')
   }
 
   const failure = Cause.findErrorOption(exit.cause)
   expect(Option.isSome(failure)).toBe(true)
+
   if (Option.isNone(failure) || !(failure.value instanceof ValidationError)) {
     throw new Error('Expected a ValidationError')
   }
@@ -90,6 +93,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       },
       handler: async (_request: Request) => new Response('OK'),
     }
+
     const authEffect = effectifyBetterAuth(auth)
 
     const result = await Effect.runPromise(
@@ -112,6 +116,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       },
       handler: async (_request: Request) => new Response('OK'),
     }
+
     const authEffect = effectifyBetterAuth(auth)
 
     const response = await Effect.runPromise(
@@ -129,6 +134,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       },
       handler: async (_request: Request) => new Response('OK'),
     }
+
     const authEffect = effectifyBetterAuth(auth)
 
     const result = await Effect.runPromise(authEffect.api.pluginEndpoint())
@@ -157,10 +163,12 @@ describe('betterAuthFormAction with Better Auth', () => {
           returnHeaders: true,
         }),
     })
+
     const request = createAuthRequest('http://localhost:3000/login', {
       email: 'test@example.com',
       password: 'wrong-password',
     })
+
     const layer = Layer.mergeAll(
       Layer.succeed(AuthService, auth),
       Layer.succeed(RequestService, request)
@@ -175,11 +183,13 @@ describe('betterAuthFormAction with Better Auth', () => {
 
   test('normalizes duplicate registration when a Request makes Better Auth return a Response', async () => {
     const auth = createTestAuth()
+
     const registration = {
       name: 'Test User',
       email: 'test@example.com',
       password: 'password123',
     }
+
     await auth.api.signUpEmail({ body: registration })
 
     const action = betterAuthFormAction({
@@ -193,7 +203,9 @@ describe('betterAuthFormAction with Better Auth', () => {
           returnHeaders: true,
         }),
     })
+
     const request = createAuthRequest('http://localhost:3000/register', registration)
+
     const layer = Layer.mergeAll(
       Layer.succeed(AuthService, auth),
       Layer.succeed(RequestService, request)
@@ -212,14 +224,17 @@ describe('betterAuthFormAction with Better Auth', () => {
     const auth = createTestAuth()
     const secretMessage = 'postgres://user:secret@database.example/internal'
     let errorMapperCalled = false
+
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
       errorComponent: 'Auth/Login',
       errorMapper: () => {
         errorMapperCalled = true
+
         return { form: 'This should not be rendered' }
       },
       call: async () => {
+        // oxlint-disable-next-line no-throw-literal, only-throw-error -- SAFETY: This unverified SDK-shaped rejection tests that the boundary never exposes its secret-bearing fields.
         throw {
           status: 400,
           message: secretMessage,
@@ -227,6 +242,7 @@ describe('betterAuthFormAction with Better Auth', () => {
         }
       },
     })
+
     const app = new Hono()
 
     app.use(
@@ -254,6 +270,7 @@ describe('betterAuthFormAction with Better Auth', () => {
         password: 'password123',
       }),
     })
+
     const body = await response.text()
 
     expect(response.status).toBe(502)
@@ -265,25 +282,24 @@ describe('betterAuthFormAction with Better Auth', () => {
 
   test('preserves cookies from a resolved Better Auth error response', async () => {
     const auth = createTestAuth()
+
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
       errorComponent: 'Auth/Login',
       call: async () =>
-        new Response(
-          JSON.stringify({
+        Response.json({
             code: 'INVALID_SESSION',
             message: 'Please sign in again.',
-          }),
-          {
+          }, {
             status: 401,
             headers: {
               'content-type': 'application/json',
               'set-cookie': 'better-auth.session_token=; Max-Age=0; Path=/',
               'x-auth-recovery': 'reauthenticate',
             },
-          }
-        ),
+          }),
     })
+
     const app = new Hono()
 
     app.use(
@@ -320,10 +336,12 @@ describe('betterAuthFormAction with Better Auth', () => {
 
   test('preserves Better Auth hidden headers from a thrown APIError', async () => {
     const auth = createTestAuth()
+
     const apiError = new APIError('UNAUTHORIZED', {
       code: 'INVALID_SESSION',
       message: 'Please sign in again.',
     })
+
     Reflect.set(
       apiError,
       Symbol.for('better-call:api-error-headers'),
@@ -332,6 +350,7 @@ describe('betterAuthFormAction with Better Auth', () => {
         'x-auth-recovery': 'reauthenticate',
       })
     )
+
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
       errorComponent: 'Auth/Login',
@@ -339,6 +358,7 @@ describe('betterAuthFormAction with Better Auth', () => {
         throw apiError
       },
     })
+
     const app = new Hono()
 
     app.use(
@@ -374,10 +394,12 @@ describe('betterAuthFormAction with Better Auth', () => {
 
   test('preserves thrown Better Auth redirects as redirect control flow', async () => {
     const auth = createTestAuth()
+
     const redirect = new APIError('FOUND', undefined, {
       Location: 'https://identity.example/continue',
       'Set-Cookie': 'oauth-state=verified; HttpOnly; Path=/',
     })
+
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
       errorComponent: 'Auth/Login',
@@ -385,6 +407,7 @@ describe('betterAuthFormAction with Better Auth', () => {
         throw redirect
       },
     })
+
     const app = new Hono()
 
     app.use(
@@ -427,6 +450,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       'set-cookie': 'spoofed=must-not-survive; Path=/',
       'x-spoofed-auth': 'true',
     })
+
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
       errorComponent: 'Auth/Login',
@@ -434,6 +458,7 @@ describe('betterAuthFormAction with Better Auth', () => {
         throw spoofedError
       },
     })
+
     const app = new Hono()
 
     app.use(
