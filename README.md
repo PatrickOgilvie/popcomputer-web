@@ -35,7 +35,7 @@ export const showProject = action(
 ## Installation
 
 ```bash
-bun add @popcomputer/web@next effect@4.0.0-rc.109 hono
+bun add @popcomputer/web effect@4.0.0-rc.109 hono
 ```
 
 Add only the optional integrations your application uses:
@@ -50,6 +50,16 @@ Effect and Hono are peer dependencies so an application owns one Effect runtime
 and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers.
 The package supports Effect 4 (`4.0.0-rc.109`), Better Auth 1.x, and Hono 4
 or newer.
+
+### Upgrading from 0.4
+
+`TestCaptureService.get` is now an Effect value. Replace
+`yield* capture.get()` with `yield* capture.get` in custom test layers and helpers.
+
+Numeric form values, numeric route bindings, and persisted cache timestamps
+reject non-finite numbers. `nullableString` accepts scalar values and rejects
+objects and arrays. `declined` now decodes `0`, `"0"`, `"false"`, `"no"`, and
+`"off"` to `false`.
 
 ## Quick start
 

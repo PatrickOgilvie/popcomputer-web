@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-12
+
+### Breaking
+
+- `TestCaptureService.get` is an Effect value instead of a zero-argument method. Use `yield* capture.get` instead of `yield* capture.get()`.
+- Numeric form coercion, numeric route bindings, and persisted cache timestamps reject non-finite numbers. `nullableString` continues to coerce scalars but rejects objects and arrays.
+
+### Changed
+
+- Cache freshness and timestamps use the Effect clock. Auth test fixtures also use the provided clock for session expiry, and `createRequestTracker` accepts a Clock service for deterministic request timestamps.
+- Database transaction and route-layer types preserve their inferred clients, service requirements, and typed failures more precisely.
+- Effect workflows use typed failures, Schema decoding, and simpler composition. Native Hono, SDK, CLI, and test-runner exceptions are documented in `LINTING.md`.
+- Cache and background-work tests use TestClock and Deferred to control time and completion.
+
+### Fixed
+
+- `declined` correctly decodes negative form values such as `0`, `"false"`, `"no"`, and `"off"` to `false`.
+- Migration tracking JSON is validated. Malformed tracking data and unexpected filesystem failures return errors instead of being accepted or treated as empty migration history.
+- CLI health checks reject unknown `--only` check names.
+- Structured error messages preserve literal replacement text and avoid coercing arbitrary object parameters into diagnostics.
+
 ## [0.4.0-rc.1] - 2026-08-15
 
 ### Added
