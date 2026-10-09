@@ -387,6 +387,23 @@ export function pluralize(word: string): string {
 }
 
 /**
+ * Load drizzle-orm, the optional peer behind route model binding.
+ *
+ * The import stays inside a try block on purpose: esbuild (which Wrangler
+ * uses) and Bun leave an unresolvable import there for runtime instead of
+ * failing the build, so apps without drizzle-orm still bundle. Apps that
+ * install it get it bundled as usual. Only route binding calls this.
+ */
+// oxlint-disable-next-line effecttsgo/async-function -- Route binding loads the optional Drizzle peer through a native import; a missing package rejects as a configuration error.
+export async function loadDrizzle(): Promise<typeof import('drizzle-orm')> {
+  try {
+    return await import('drizzle-orm')
+  } catch (cause) {
+    throw RouteConfigurationError.drizzleNotInstalled(cause)
+  }
+}
+
+/**
  * Information about a relation between tables.
  *
  * Both fields are JS property keys (e.g., 'workspaceId'), not SQL column
@@ -440,8 +457,7 @@ export async function findRelation<Schema extends object>(
   // SAFETY: Both schema entries were selected from the configured Drizzle schema and passed the object boundary check above.
   const parentDrizzleTable = parentTable as Table
 
-  // Dynamic import to avoid requiring drizzle-orm for non-binding users
-  const { getTableColumns, createTableRelationsHelpers } = await import('drizzle-orm')
+  const { getTableColumns, createTableRelationsHelpers } = await loadDrizzle()
 
   // Map a Drizzle column object back to its JS property key on a table.
   // Column objects carry only the SQL name; table objects and result rows are

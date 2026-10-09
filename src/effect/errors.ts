@@ -489,6 +489,7 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
   readonly table?: string
   readonly parent?: string
   readonly child?: string
+  readonly cause?: unknown
 }> implements StructuredErrorCapable {
   get httpStatus(): number {
     return 500
@@ -573,6 +574,16 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
       parent,
       child,
       code: ErrorCodes.RTE_603_RELATION_NOT_FOUND,
+    })
+  }
+
+  /** Create an error when route model binding runs without drizzle-orm installed. */
+  static drizzleNotInstalled(cause: unknown): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: 'Route model binding needs drizzle-orm, but it could not be loaded.',
+      hint: 'Install drizzle-orm in the app (bun add drizzle-orm). It is an optional peer of @popcomputer/web, needed only for route bindings.',
+      cause,
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
     })
   }
 

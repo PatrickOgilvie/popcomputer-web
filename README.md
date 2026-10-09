@@ -49,7 +49,10 @@ bun add @inertiajs/react react react-dom    # React client
 ```
 
 Effect and Hono are peer dependencies so an application owns one Effect runtime
-and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers.
+and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers:
+an app without them still bundles for Cloudflare Workers. Route model binding
+loads `drizzle-orm` when a bound route runs and reports a configuration error
+if it isn't installed.
 The package supports Effect 4 (`^4.0.0`, tested with 4.0.2), Better Auth 1.x,
 and Hono 4 or newer.
 
