@@ -3,6 +3,8 @@
  */
 
 import { describe, test, expect } from 'bun:test'
+import { Schema as S } from 'effect'
+import { digits, ipv4 } from '../../src/effect/schema.js'
 import {
   generateOpenApi,
   formatOpenApiOutput,
@@ -284,6 +286,58 @@ describe('generateOpenApi', () => {
       })
 
       expect(spec.paths['/projects']?.get?.requestBody).toBeUndefined()
+    })
+
+    test('documents body and response objects as closed', () => {
+      const registry = new RouteRegistry()
+      registry.register({
+        method: 'post',
+        path: '/contacts',
+        honoPath: '/contacts',
+        fullPath: '/contacts',
+        bindings: [],
+        prefix: '',
+        name: 'contacts.store',
+        bodySchema: S.Struct({ name: S.String }),
+        responseSchema: S.Struct({ id: S.String }),
+      })
+
+      const spec = generateOpenApi(registry, {
+        info: { title: 'Test API', version: '1.0.0' },
+      })
+      const operation = spec.paths['/contacts']?.post
+
+      expect(operation?.requestBody?.content['application/json']?.schema).toMatchObject({
+        type: 'object',
+        additionalProperties: false,
+      })
+      expect(JSON.stringify(operation?.responses)).toContain('"additionalProperties":false')
+    })
+
+    test('keeps built-in validator patterns in request bodies', () => {
+      const registry = new RouteRegistry()
+      registry.register({
+        method: 'post',
+        path: '/devices',
+        honoPath: '/devices',
+        fullPath: '/devices',
+        bindings: [],
+        prefix: '',
+        name: 'devices.store',
+        bodySchema: S.Struct({ pin: digits(6), address: ipv4 }),
+      })
+
+      const spec = generateOpenApi(registry, {
+        info: { title: 'Test API', version: '1.0.0' },
+      })
+      const schema = spec.paths['/devices']?.post?.requestBody?.content['application/json']?.schema
+
+      expect(schema).toMatchObject({
+        properties: {
+          pin: { pattern: '^\\d{6}$' },
+          address: { pattern: expect.stringContaining('25[0-5]') },
+        },
+      })
     })
 
     test('excludes request body for DELETE', () => {

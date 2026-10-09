@@ -35,7 +35,7 @@ export const showProject = action(
 ## Installation
 
 ```bash
-bun add @popcomputer/web effect@4.0.0-rc.109 hono
+bun add @popcomputer/web effect hono
 ```
 
 Add only the optional integrations your application uses:
@@ -48,8 +48,29 @@ bun add @inertiajs/react react react-dom    # React client
 
 Effect and Hono are peer dependencies so an application owns one Effect runtime
 and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers.
-The package supports Effect 4 (`4.0.0-rc.109`), Better Auth 1.x, and Hono 4
-or newer.
+The package supports Effect 4 (`^4.0.0`, tested with 4.0.2), Better Auth 1.x,
+and Hono 4 or newer.
+
+### Upgrading from 0.5
+
+Effect 4 is now stable, and the package requires it: the `effect` peer range is
+`^4.0.0`, which no longer accepts `4.0.0-rc.*` prereleases. Install
+`effect@^4.0.0` and apply Effect's own prerelease-to-stable renames in your
+application code (for example `SchemaTransformation.transformOrFail` became
+`transformEffect`, and `Schema.isLengthBetween` became `isBetweenLength`).
+
+`createTemplate` now renders `<title inertia>`, so `<Head title>` replaces the
+template title instead of adding a second `<title>`. Remove any client-side
+workaround that deletes the template title.
+
+`vite.script()` and `vite.hmrHead()` accept a dev-server origin as well as a
+port, for setups where a local proxy serves Vite under its own hostname:
+
+```ts
+const viteServer = 'https://vite.myapp.localhost'
+scripts: [vite.script('/src/main.tsx', viteServer)]
+head: vite.hmrHead(viteServer)
+```
 
 ### Upgrading from 0.4
 

@@ -55,6 +55,7 @@ export {
   serializePage,
   vite,
   type PageProps,
+  type ViteDevServer,
 } from './helpers.js'
 
 // =============================================================================

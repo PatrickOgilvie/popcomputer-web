@@ -108,7 +108,7 @@ export function createTemplate(
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${escapeHtml(title)}</title>
+    <title inertia>${escapeHtml(title)}</title>
     ${styleTags}
     ${head}
   </head>
@@ -165,42 +165,93 @@ export function createVersion(manifest: AssetManifest): string {
 }
 
 /**
+ * Where the Vite dev server listens: a port on `localhost`, or an exact
+ * HTTP(S) origin such as `https://vite.myapp.localhost` when a local proxy
+ * (for example portless) serves Vite under its own hostname.
+ */
+export type ViteDevServer = number | string | URL
+
+const DEFAULT_VITE_PORT = 5173
+
+const VitePort = S.Int.check(S.isBetween({ minimum: 1, maximum: 65_535 }))
+
+function viteOrigin(server: ViteDevServer): string {
+  if (S.is(S.Number)(server)) {
+    if (!S.is(VitePort)(server)) {
+      throw new HonertiaConfigurationError({
+        message: `Vite dev server port must be an integer from 1 to 65535, received ${String(server)}.`,
+        hint: 'vite.script(\'/src/main.tsx\', 5173)',
+      })
+    }
+    return `http://localhost:${server}`
+  }
+
+  let url: URL
+  try {
+    url = new URL(server)
+  } catch {
+    throw new HonertiaConfigurationError({
+      message: 'Vite dev server origin must be an absolute HTTP(S) URL.',
+      hint: "vite.script('/src/main.tsx', 'https://vite.myapp.localhost')",
+    })
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new HonertiaConfigurationError({
+      message: `Vite dev server origin must use http or https, received ${url.protocol}`,
+      hint: "vite.script('/src/main.tsx', 'https://vite.myapp.localhost')",
+    })
+  }
+
+  return url.origin
+}
+
+function viteAssetUrl(path: string, server: ViteDevServer): string {
+  return new URL(path, viteOrigin(server)).href
+}
+
+/**
  * Vite development configuration helpers.
  */
 export const vite = {
   /**
    * Returns the HMR (Hot Module Replacement) head scripts for Vite dev server.
-   * 
-   * @param port - Vite dev server port (default: 5173)
+   *
+   * @param server - Vite dev server port, or its origin (default: 5173)
    * @example
    * ```ts
    * head: isProd ? '' : vite.hmrHead()
+   * head: isProd ? '' : vite.hmrHead('https://vite.myapp.localhost')
    * ```
    */
-  hmrHead(port = 5173): string {
+  hmrHead(server: ViteDevServer = DEFAULT_VITE_PORT): string {
+    const refreshRuntime = JSON.stringify(viteAssetUrl('/@react-refresh', server))
+    const client = escapeHtml(viteAssetUrl('/@vite/client', server))
+
     return `
       <script type="module">
-        import RefreshRuntime from 'http://localhost:${port}/@react-refresh'
+        import RefreshRuntime from ${refreshRuntime}
         RefreshRuntime.injectIntoGlobalHook(window)
         window.$RefreshReg$ = () => {}
         window.$RefreshSig$ = () => (type) => type
         window.__vite_plugin_react_preamble_installed__ = true
       </script>
-      <script type="module" src="http://localhost:${port}/@vite/client"></script>
+      <script type="module" src="${client}"></script>
     `
   },
 
   /**
    * Returns the main entry script URL for Vite dev server.
-   * 
+   *
    * @param entry - Entry file path (default: '/src/main.tsx')
-   * @param port - Vite dev server port (default: 5173)
+   * @param server - Vite dev server port, or its origin (default: 5173)
    * @example
    * ```ts
    * scripts: isProd ? [manifest['src/main.tsx'].file] : [vite.script()]
+   * scripts: [vite.script('/src/main.tsx', 'https://vite.myapp.localhost')]
    * ```
    */
-  script(entry = '/src/main.tsx', port = 5173): string {
-    return `http://localhost:${port}${entry}`
+  script(entry = '/src/main.tsx', server: ViteDevServer = DEFAULT_VITE_PORT): string {
+    return viteAssetUrl(entry, server)
   },
 }

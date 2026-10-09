@@ -431,7 +431,7 @@ function buildParamsSchema(fields: FieldDefinition[]): string {
         schemaType = 'S.String.check(S.isUUID())'
         break
       case 'email':
-        schemaType = 'S.String.check(S.isPattern(/@/))'
+        schemaType = 'S.String.check(S.isPattern(/@/u))'
         break
       case 'url':
         schemaType = 'S.String'

@@ -148,7 +148,7 @@ function fieldTypeToSchema(type: FieldType): string {
     case 'email':
       return 'email'
     case 'url':
-      return 'S.String.check(S.isPattern(/^https?:\\/\\/.+/))'
+      return 'S.String.check(S.isPattern(/^https?:\\/\\/.+/u))'
     default:
       return 'S.String'
   }
