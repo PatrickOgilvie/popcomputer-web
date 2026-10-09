@@ -1,3 +1,5 @@
+<img src="assets/popcomputer.png" alt="Popcomputer" width="374" height="69">
+
 # @popcomputer/web
 
 Effect-native, server-driven web applications on Hono.
