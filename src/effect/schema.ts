@@ -36,7 +36,7 @@ export const trimmed = S.String.pipe(
 export const nullableString = S.Unknown.pipe(
   S.decodeTo(
     S.NullOr(S.String),
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value) => {
         if (value === undefined || value === null) return Effect.succeed(null)
 
@@ -104,7 +104,7 @@ export const required = (message = 'This field is required') =>
 export const coercedNumber = S.Unknown.pipe(
   S.decodeTo(
     S.Finite,
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value, options) => {
         if (S.is(S.Finite)(value)) return Effect.succeed(value)
 
@@ -219,7 +219,7 @@ export const checkbox = S.Unknown.pipe(
 export const coercedDate = S.Unknown.pipe(
   S.decodeTo(
     S.Date,
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value, options) => {
         if (S.is(S.Date)(value)) return Effect.succeed(value)
 
@@ -252,7 +252,7 @@ export const coercedDate = S.Unknown.pipe(
 export const nullableDate = S.Unknown.pipe(
   S.decodeTo(
     S.NullOr(S.Date),
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value, options) => {
         if (value === undefined || value === null || value === '') return Effect.succeed(null)
 
@@ -296,7 +296,7 @@ export const ensureArray = <InputSchema extends S.Constraint>(schema: InputSchem
   return S.Unknown.pipe(
     S.decodeTo(
       S.Array(S.toType(schema)),
-      SchemaTransformation.transformOrFail<
+      SchemaTransformation.transformEffect<
         ReadonlyArray<InputSchema['Type']>,
         unknown,
         InputSchema['DecodingServices'],
@@ -333,7 +333,7 @@ export const email = S.String.pipe(
       encode: (s) => s,
     })
   ),
-  S.check(S.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, { message: 'Invalid email address' }))
+  S.check(S.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u, { message: 'Invalid email address' }))
 )
 
 /**
@@ -342,7 +342,7 @@ export const email = S.String.pipe(
 export const nullableEmail = S.Unknown.pipe(
   S.decodeTo(
     S.NullOr(S.String),
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value, options) => {
         if (value === undefined || value === null) return Effect.succeed(null)
 
@@ -399,7 +399,7 @@ export const url = S.String.pipe(
 export const nullableUrl = S.Unknown.pipe(
   S.decodeTo(
     S.NullOr(S.String),
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value, options) => {
         if (value === undefined || value === null) return Effect.succeed(null)
 
@@ -443,7 +443,7 @@ export const alpha = S.String.pipe(
       encode: (s) => s,
     })
   ),
-  S.check(S.isPattern(/^[a-zA-Z]+$/, { message: 'Must contain only letters' }))
+  S.check(S.isPattern(/^[a-zA-Z]+$/u, { message: 'Must contain only letters' }))
 )
 
 /**
@@ -458,7 +458,7 @@ export const alphaDash = S.String.pipe(
     })
   ),
   S.check(
-    S.isPattern(/^[a-zA-Z0-9_-]+$/, {
+    S.isPattern(/^[a-zA-Z0-9_-]+$/u, {
       message: 'Must contain only letters, numbers, dashes, and underscores',
     })
   )
@@ -475,7 +475,7 @@ export const alphaNum = S.String.pipe(
       encode: (s) => s,
     })
   ),
-  S.check(S.isPattern(/^[a-zA-Z0-9]+$/, { message: 'Must contain only letters and numbers' }))
+  S.check(S.isPattern(/^[a-zA-Z0-9]+$/u, { message: 'Must contain only letters and numbers' }))
 )
 
 /**
@@ -543,7 +543,7 @@ export const between = (min: number, max: number, message?: string) =>
 export const digits = (length: number, message?: string) =>
   S.String.check(
     S.isPattern(
-      new RegExp(`^\\d{${length}}$`),
+      new RegExp(`^\\d{${length}}$`, 'u'),
       { message: message ?? `Must be exactly ${length} digits` }
     )
   )
@@ -554,7 +554,7 @@ export const digits = (length: number, message?: string) =>
 export const digitsBetween = (min: number, max: number, message?: string) =>
   S.String.check(
     S.isPattern(
-      new RegExp(`^\\d{${min},${max}}$`),
+      new RegExp(`^\\d{${min},${max}}$`, 'u'),
       { message: message ?? `Must be between ${min} and ${max} digits` }
     )
   )
@@ -644,7 +644,7 @@ export const uuid = S.String.check(S.isUUID())
 export const nullableUuid = S.Unknown.pipe(
   S.decodeTo(
     S.NullOr(uuid),
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value, options) => {
         if (value === undefined || value === null || value === '') return Effect.succeed(null)
 
@@ -664,7 +664,7 @@ export const nullableUuid = S.Unknown.pipe(
  */
 export const ipv4 = S.String.check(
   S.isPattern(
-    /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/,
+    /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/u,
     { message: 'Must be a valid IPv4 address' }
   )
 )
@@ -674,7 +674,7 @@ export const ipv4 = S.String.check(
  */
 export const ipv6 = S.String.check(
   S.isPattern(
-    /^(?:[a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}$|^::(?:[a-fA-F0-9]{1,4}:){0,5}[a-fA-F0-9]{1,4}$|^[a-fA-F0-9]{1,4}::(?:[a-fA-F0-9]{1,4}:){0,4}[a-fA-F0-9]{1,4}$|^(?:[a-fA-F0-9]{1,4}:){2}:(?:[a-fA-F0-9]{1,4}:){0,3}[a-fA-F0-9]{1,4}$|^(?:[a-fA-F0-9]{1,4}:){3}:(?:[a-fA-F0-9]{1,4}:){0,2}[a-fA-F0-9]{1,4}$|^(?:[a-fA-F0-9]{1,4}:){4}:(?:[a-fA-F0-9]{1,4}:)?[a-fA-F0-9]{1,4}$|^(?:[a-fA-F0-9]{1,4}:){5}:[a-fA-F0-9]{1,4}$|^(?:[a-fA-F0-9]{1,4}:){6}:$/,
+    /^(?:[a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}$|^::(?:[a-fA-F0-9]{1,4}:){0,5}[a-fA-F0-9]{1,4}$|^[a-fA-F0-9]{1,4}::(?:[a-fA-F0-9]{1,4}:){0,4}[a-fA-F0-9]{1,4}$|^(?:[a-fA-F0-9]{1,4}:){2}:(?:[a-fA-F0-9]{1,4}:){0,3}[a-fA-F0-9]{1,4}$|^(?:[a-fA-F0-9]{1,4}:){3}:(?:[a-fA-F0-9]{1,4}:){0,2}[a-fA-F0-9]{1,4}$|^(?:[a-fA-F0-9]{1,4}:){4}:(?:[a-fA-F0-9]{1,4}:)?[a-fA-F0-9]{1,4}$|^(?:[a-fA-F0-9]{1,4}:){5}:[a-fA-F0-9]{1,4}$|^(?:[a-fA-F0-9]{1,4}:){6}:$/u,
     { message: 'Must be a valid IPv6 address' }
   )
 )
@@ -696,7 +696,7 @@ export const ip = S.String.check(
  */
 export const macAddress = S.String.check(
   S.isPattern(
-    /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/,
+    /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/u,
     { message: 'Must be a valid MAC address' }
   )
 )
@@ -808,7 +808,7 @@ export const declined = S.Unknown.pipe(
  */
 export const size = (length: number, message?: string) =>
   S.String.check(
-    S.isLengthBetween(
+    S.isBetweenLength(
       length,
       length,
       { message: message ?? `Must be exactly ${length} characters` }
@@ -1018,7 +1018,7 @@ export const excludeIf = <InputSchema extends S.Constraint>(
   return S.Unknown.pipe(
     S.decodeTo(
       S.Union([S.toType(schema), S.Undefined]),
-      SchemaTransformation.transformOrFail({
+      SchemaTransformation.transformEffect({
         decode: (value, options) =>
           condition(value)
             // oxlint-disable-next-line effecttsgo/effect-succeed-with-void -- Schema transformations distinguish the undefined value from the wider void type.
@@ -1049,7 +1049,7 @@ export const nullable = <InputSchema extends S.Constraint>(schema: InputSchema) 
   return S.Unknown.pipe(
     S.decodeTo(
       S.NullOr(S.toType(schema)),
-      SchemaTransformation.transformOrFail({
+      SchemaTransformation.transformEffect({
         decode: (value, options) => {
           if (value === undefined || value === null) return Effect.succeed(null)
 
@@ -1079,7 +1079,7 @@ export const filled = <InputSchema extends S.Constraint>(
   return S.Unknown.pipe(
     S.decodeTo(
       S.toType(schema),
-      SchemaTransformation.transformOrFail({
+      SchemaTransformation.transformEffect({
         decode: (value, options) =>
           value === undefined || value === null || value === ''
             ? Effect.succeed(defaultValue)

@@ -189,7 +189,9 @@ function toOpenApiPath(path: string): string {
 }
 
 function toOpenApiSchema(schema: S.Constraint): OpenApiSchema {
-  const document = S.toJsonSchemaDocument(schema)
+  // Effect 4 leaves undeclared properties open by default. Keep documented
+  // objects closed, as generated contracts were before Effect 4.0.
+  const document = S.toJsonSchemaDocument(schema, { onExcessProperty: 'error' })
 
   if (Object.keys(document.definitions).length === 0) {
     return document.schema

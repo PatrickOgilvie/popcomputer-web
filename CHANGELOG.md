@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-09
+
+### Breaking
+
+- Effect 4 stable is required. The `effect` peer range is `^4.0.0` (tested with 4.0.2) and no longer accepts `4.0.0-rc.*` prereleases.
+
+### Added
+
+- `vite.script()` and `vite.hmrHead()` accept the dev server's origin (a string or `URL`) as well as a port, exported as the `ViteDevServer` type. Invalid ports and non-HTTP(S) origins fail with `HonertiaConfigurationError`.
+
+### Fixed
+
+- The package runs on Effect 4.0 stable. 0.5.0 declared `^4.0.0-rc.109`, which admitted Effect 4.0.x, but called `SchemaTransformation.transformOrFail` and `Schema.isLengthBetween`, which Effect renamed before 4.0.0, so importing it failed at runtime. Schema helpers now use `transformEffect` and `isBetweenLength`.
+- `generate:openapi` keeps documented request and response objects closed (`additionalProperties: false`). Effect 4.0 leaves undeclared properties open by default, which would otherwise loosen every generated contract on upgrade.
+- The built-in pattern validators (`digits`, `digitsBetween`, `ipv4`, `ipv6`, `macAddress`, `email`, `alpha`, `alphaDash`, `alphaNum`) and the patterns emitted by `generate:action` and `generate:feature` use Unicode (`u`) regular expressions. Effect 4.0 exports a JSON Schema `pattern` only for Unicode patterns, so these validators would otherwise disappear from generated OpenAPI documents. Matching is unchanged.
+- `popweb` runs when started through the `node_modules/.bin/popweb` symlink. The entrypoint check compared the symlink path with the module path, so installed projects got no output and exit code 0. Both paths are now compared after resolving symlinks.
+- `createTemplate` marks its `<title>` with Inertia's `inertia` attribute, so `<Head title>` replaces it. Previously the document had two titles and browsers showed the static one.
+- `bun run test` builds the package before running tests, so generated-code tests import the current `dist/` instead of a stale or missing build.
+
 ## [0.5.0] - 2026-09-12
 
 ### Breaking

@@ -5,7 +5,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { createTemplate, createVersion, serializePage } from '../src/helpers.js'
+import { createTemplate, createVersion, serializePage, vite } from '../src/helpers.js'
 import type { PageObject } from '../src/types.js'
 
 describe('createTemplate', () => {
@@ -39,7 +39,21 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      expect(html).toContain('<title>App</title>')
+      expect(html).toContain('<title inertia>App</title>')
+    })
+
+    test('marks the title for Inertia so <Head title> replaces it', () => {
+      const template = createTemplate({ title: 'Fallback' })
+
+      const html = template({
+        component: 'Home',
+        props: {},
+        url: '/',
+        version: '1.0.0',
+      })
+
+      expect(html.match(/<title[\s>]/g)).toHaveLength(1)
+      expect(html).toContain('<title inertia>Fallback</title>')
     })
 
     test('uses custom title', () => {
@@ -54,7 +68,7 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      expect(html).toContain('<title>My Application</title>')
+      expect(html).toContain('<title inertia>My Application</title>')
     })
 
     test('includes viewport meta tag', () => {
@@ -400,7 +414,7 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      expect(html).toContain('<title>日本語アプリ</title>')
+      expect(html).toContain('<title inertia>日本語アプリ</title>')
       expect(html).toContain('你好世界')
     })
 
@@ -580,7 +594,7 @@ describe('Template Integration', () => {
 
     // Check structure
     expect(html).toContain('<!DOCTYPE html>')
-    expect(html).toContain('<title>My Dashboard</title>')
+    expect(html).toContain('<title inertia>My Dashboard</title>')
     expect(html).toContain('id="root"')
     expect(html).toContain('<script data-page="root" type="application/json">')
     expect(html).toContain('<div id="root"></div>')
@@ -623,4 +637,47 @@ describe('serializePage', () => {
     expect(serialized).not.toContain('</script>')
     expect(JSON.parse(serialized)).toEqual(page)
   })
+})
+
+describe('vite', () => {
+  test('defaults to the localhost dev server on port 5173', () => {
+    expect(vite.script()).toBe('http://localhost:5173/src/main.tsx')
+    expect(vite.hmrHead()).toContain('import RefreshRuntime from "http://localhost:5173/@react-refresh"')
+    expect(vite.hmrHead()).toContain('src="http://localhost:5173/@vite/client"')
+  })
+
+  test('accepts a port', () => {
+    expect(vite.script('/src/app.tsx', 5174)).toBe('http://localhost:5174/src/app.tsx')
+    expect(vite.hmrHead(5174)).toContain('src="http://localhost:5174/@vite/client"')
+  })
+
+  test('accepts an origin served by a local proxy', () => {
+    const origin = 'https://vite.myapp.localhost'
+
+    expect(vite.script('/src/main.tsx', origin)).toBe('https://vite.myapp.localhost/src/main.tsx')
+    expect(vite.script('/src/main.tsx', new URL('http://vite.myapp.localhost:1355'))).toBe(
+      'http://vite.myapp.localhost:1355/src/main.tsx'
+    )
+    expect(vite.hmrHead(origin)).toContain(
+      'import RefreshRuntime from "https://vite.myapp.localhost/@react-refresh"'
+    )
+    expect(vite.hmrHead(origin)).toContain('src="https://vite.myapp.localhost/@vite/client"')
+  })
+
+  test('uses only the origin of a URL with a path', () => {
+    expect(vite.script('/src/main.tsx', 'https://vite.myapp.localhost/ignored/path?x=1')).toBe(
+      'https://vite.myapp.localhost/src/main.tsx'
+    )
+  })
+
+  test.each([0, 65_536, 5173.5, Number.NaN])('rejects the invalid port %p', (port) => {
+    expect(() => vite.script('/src/main.tsx', port)).toThrow('Vite dev server port')
+  })
+
+  test.each(['not a url', 'ftp://vite.myapp.localhost', 'javascript:alert(1)'])(
+    'rejects the invalid origin %p',
+    (origin) => {
+      expect(() => vite.hmrHead(origin)).toThrow('Vite dev server origin')
+    }
+  )
 })

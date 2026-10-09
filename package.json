@@ -1,6 +1,6 @@
 {
   "name": "@popcomputer/web",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Effect-native server-driven web applications on Hono",
   "type": "module",
   "main": "./dist/index.js",
@@ -47,7 +47,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc",
     "dev": "tsc --watch",
-    "test": "bun test && bun run test:types && bun run test:package",
+    "test": "bun run build && bun test && bun run test:types && bun run test:package",
     "test:package": "bun run build && node dist/cli/bin.js routes --app tests/fixtures/cli-package-app.ts --json",
     "test:types": "tsc -p tsconfig.type-tests.json",
     "test:watch": "bun test --watch",
@@ -79,7 +79,7 @@
     "tsx": "^4.23.11"
   },
   "peerDependencies": {
-    "effect": "^4.0.0-rc.109",
+    "effect": "^4.0.0",
     "hono": ">=4.0.0",
     "better-auth": ">=1.0.0 <2.0.0",
     "drizzle-orm": ">=0.30.0"
@@ -96,7 +96,7 @@
     "@types/bun": "^1.1.0",
     "better-auth": "1.6.25",
     "drizzle-orm": "^0.45.2",
-    "effect": "4.0.0-rc.109",
+    "effect": "4.0.2",
     "hono": "^4.6.0",
     "typescript": "^5.3.0"
   }

@@ -6,6 +6,7 @@
  * This powers the `popweb` executable distributed with the package.
  */
 
+import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runRoutes, routesHelp } from './index.js'
@@ -174,11 +175,31 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<vo
   }
 }
 
-const isMain = process.argv[1]
-  ? resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-  : false
+/**
+ * Whether the script Node was asked to run is this module. Package managers
+ * install `popweb` as a symlink (`node_modules/.bin/popweb`), so both paths are
+ * compared after resolving symlinks; a path that cannot be resolved is compared
+ * as written.
+ */
+export function isEntrypoint(
+  scriptPath: string | undefined,
+  moduleUrl: string,
+  realpath: (path: string) => string = realpathSync
+): boolean {
+  if (!scriptPath) return false
 
-if (isMain) {
+  const canonical = (path: string): string => {
+    try {
+      return realpath(path)
+    } catch {
+      return path
+    }
+  }
+
+  return canonical(resolve(scriptPath)) === canonical(fileURLToPath(moduleUrl))
+}
+
+if (isEntrypoint(process.argv[1], import.meta.url)) {
   // oxlint-disable-next-line popcomputer/no-unknown-parameters -- Promise rejection is an untrusted boundary; this callback classifies it before rendering the CLI error.
   runCli().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error))
