@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-09
+
 ### Breaking
 
 - Effect 4 stable is required. The `effect` peer range is `^4.0.0` (tested with 4.0.2) and no longer accepts `4.0.0-rc.*` prereleases.
