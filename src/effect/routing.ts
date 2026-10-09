@@ -57,6 +57,7 @@ import {
   decodeBindingParam,
   decodeBoundRow,
   inferParamsSchema,
+  loadDrizzle,
   type CompiledRouteBinding,
   type ParsedBinding,
 } from './binding.js'
@@ -416,8 +417,7 @@ export class EffectRouteBuilder<
       return new Map()
     }
 
-    // Dynamic import to avoid requiring drizzle-orm for non-binding users
-    const { eq, and } = await import('drizzle-orm')
+    const { eq, and } = await loadDrizzle()
 
     const models = new Map<string, S.Schema.Type<typeof S.Unknown>>()
     const rows = new Map<string, object>()
