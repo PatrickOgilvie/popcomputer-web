@@ -8,6 +8,7 @@ import type {
   DatabaseType,
 } from './effect/services.js'
 import type { WebInstance } from './types.js'
+import type { PageCacheState } from './page-cache.js'
 import type {
   BackgroundSupervisor,
   EffectBridgeConfig,
@@ -54,6 +55,8 @@ export interface WebRequestContext<E extends Env = Env> {
    * cookies) as private request state.
    */
   sessionCookies?: readonly string[]
+  /** pageCache() — present while a request may still be served from or stored in the page cache. */
+  pageCache?: PageCacheState
   /**
    * Test-only layer merged into the runtime by effectBridge. Injection
    * semantics are owned by @popcomputer/web/effect; carried here so the request path

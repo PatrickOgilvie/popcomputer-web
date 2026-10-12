@@ -48,6 +48,7 @@ export {
 export {
   ResponseCacheService,
   ResponseCachePurgeError,
+  PAGE_CACHE_TAG,
   deriveCacheTags,
   type ResponseCacheClient,
   type ResponseCachePurgeInput,

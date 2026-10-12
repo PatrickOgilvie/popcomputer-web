@@ -3,8 +3,9 @@
  * Workers Cache Integration Tests
  *
  * The `cache` route option makes Honertia emit correct Workers Cache headers
- * (Cache-Control / Cache-Tag / Vary) with Inertia-aware guard rails: HTML and
- * JSON page objects vary on X-Inertia, partial reloads are never stored,
+ * (Cache-Control / Cloudflare-CDN-Cache-Control / Cache-Tag / Vary) with Inertia-aware
+ * guard rails: HTML and JSON page objects vary on X-Inertia, pages are kept
+ * only by purgeable shared caches, partial reloads are never stored,
  * Set-Cookie and private request state are never publicly cached, and only
  * successful GET responses qualify.
  */
@@ -17,11 +18,13 @@ import { honertia } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import {
   createWorkersResponseCacheClient,
+  PAGE_CACHE_TAG,
   ResponseCachePurgeError,
   ResponseCacheService,
   type ResponseCachePurgeInput,
 } from '../../src/effect/response-cache.js'
 import { Redirect } from '../../src/effect/errors.js'
+import { render } from '../../src/effect/responses.js'
 
 const recordingCacheLayer = () => {
   const purges: ResponseCachePurgeInput[] = []
@@ -442,6 +445,64 @@ describe('cache route option', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBeNull()
     expect(res.headers.get('Cache-Tag')).toBeNull()
+  })
+
+  test('page documents are kept only at the edge and tagged', async () => {
+    const app = createApp()
+
+    effectRoutes(app).get('/pricing', render('Pricing'), {
+      cache: { maxAge: 300, staleWhileRevalidate: 3600, tags: ['marketing'] },
+    })
+
+    const res = await app.request('/pricing')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toContain('text/html')
+    // The document names this deploy's hashed assets; a browser copy could
+    // outlive them, so browsers revalidate and only Cloudflare keeps it.
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate')
+    expect(res.headers.get('Cloudflare-CDN-Cache-Control')).toBe(
+      'public, max-age=300, stale-while-revalidate=3600'
+    )
+    expect(res.headers.get('Cache-Tag')).toBe(`marketing,${PAGE_CACHE_TAG}`)
+    expect(res.headers.get('Vary')).toBe('X-Inertia')
+  })
+
+  test('Inertia page objects follow the same page policy', async () => {
+    const app = createApp()
+
+    effectRoutes(app).get('/pricing', render('Pricing'), {
+      cache: { maxAge: 300 },
+    })
+
+    const res = await app.request('/pricing', {
+      headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1.0.0' },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ component: 'Pricing' })
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate')
+    expect(res.headers.get('Cloudflare-CDN-Cache-Control')).toBe('public, max-age=300')
+    expect(res.headers.get('Cache-Tag')).toBe(PAGE_CACHE_TAG)
+  })
+
+  test('responses that are not pages stay cacheable by browsers', async () => {
+    const app = createApp()
+
+    effectRoutes(app).get('/api/plans', Effect.succeed(Response.json({ plans: [] })), {
+      cache: { maxAge: 300 },
+    })
+
+    const res = await app.request('/api/plans')
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=300')
+    expect(res.headers.get('Cloudflare-CDN-Cache-Control')).toBeNull()
+    expect(res.headers.get('Cache-Tag')).toBeNull()
+  })
+
+  test('the page tag is public API', async () => {
+    const effect = await import('../../src/effect/index.js')
+    const root = await import('../../src/index.js')
+
+    expect(effect.PAGE_CACHE_TAG).toBe('popweb:page')
+    expect(root.PAGE_CACHE_TAG).toBe('popweb:page')
   })
 
   test('routes without the cache option are untouched', async () => {

@@ -6,6 +6,15 @@
  * only successful GET/HEAD responses qualify, HTML and JSON page objects are
  * distinct variants (Vary: X-Inertia), and partial reloads are never stored.
  *
+ * Pages (HTML documents and Inertia page objects) belong to the deploy that
+ * rendered them: the document names that build's hashed assets and the page
+ * object carries its props. Browsers therefore revalidate pages on every use,
+ * only Cloudflare keeps them (Cloudflare-CDN-Cache-Control, which Cloudflare
+ * strips before the response reaches the client), and every cached page
+ * carries PAGE_CACHE_TAG. Workers Cache keys entries by Worker version, so a
+ * deploy starts from an empty cache; with `cross_version_cache` enabled,
+ * purge the tag after each deploy instead.
+ *
  * This is the response cache in FRONT of the Worker (zero CPU on hit) —
  * distinct from CacheService, the KV-backed data cache inside actions.
  */
@@ -17,11 +26,16 @@ import { pluralize, type ParsedBinding } from './binding.js'
 /**
  * Declarative caching for a route's responses via Workers Cache.
  * Applied to GET/HEAD responses with 2xx status only.
+ *
+ * Pages are kept only by Cloudflare (Cloudflare-CDN-Cache-Control) and are
+ * tagged with PAGE_CACHE_TAG. Browsers revalidate pages, so they never load
+ * assets a deploy removed. Other responses (JSON APIs, text) use these
+ * values in Cache-Control for every cache.
  */
 export interface RouteCacheOptions {
-  /** Cache-Control max-age in seconds. */
+  /** max-age in seconds. */
   maxAge: number
-  /** Cache-Control stale-while-revalidate in seconds. */
+  /** stale-while-revalidate in seconds. */
   staleWhileRevalidate?: number
   /**
    * Extra static Cache-Tag values. Binding-derived tags
@@ -30,6 +44,20 @@ export interface RouteCacheOptions {
    */
   tags?: readonly string[]
 }
+
+/**
+ * Cache-Tag carried by every page the `cache` route option stores. Workers
+ * Cache already starts each deploy from an empty cache; with
+ * `cross_version_cache` enabled, purge this tag after each deploy with
+ * ResponseCacheService.
+ */
+export const PAGE_CACHE_TAG = 'popweb:page'
+
+/**
+ * Cache-Control browsers receive for cached pages: revalidate on every use,
+ * because a page belongs to the deploy that rendered it.
+ */
+export const BROWSER_PAGE_CACHE_CONTROL = 'public, max-age=0, must-revalidate'
 
 const MAX_CACHE_TAG_LENGTH = 1024
 
@@ -205,6 +233,8 @@ export interface CachePolicyInput {
   readonly hasPrivateRequestState: boolean
   /** Existing Cache-Control header from the handler response, if any. */
   readonly existingCacheControl?: string | null
+  /** True when the response is a page (see isPageResponse). */
+  readonly isPage: boolean
   /** Binding-derived tags (see deriveCacheTags); static option tags append. */
   readonly derivedTags: readonly string[]
   readonly options: RouteCacheOptions
@@ -279,14 +309,24 @@ export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision 
     directives.push(`stale-while-revalidate=${input.options.staleWhileRevalidate}`)
   }
 
-  const headers: ResponseCacheHeaders = {
-    'Cache-Control': directives.join(', '),
-    Vary: HEADERS.HONERTIA,
-  }
+  // A page names one deploy's hashed assets (HTML) or carries its props
+  // (page object). A browser copy cannot be purged, so browsers revalidate
+  // every use and only shared caches, which a deploy can purge by tag, keep it.
+  const headers: ResponseCacheHeaders = input.isPage
+    ? {
+        'Cache-Control': BROWSER_PAGE_CACHE_CONTROL,
+        'Cloudflare-CDN-Cache-Control': directives.join(', '),
+        Vary: HEADERS.HONERTIA,
+      }
+    : {
+        'Cache-Control': directives.join(', '),
+        Vary: HEADERS.HONERTIA,
+      }
 
   const preparedTags = prepareCacheTags([
     ...input.derivedTags,
     ...(input.options.tags ?? []),
+    ...(input.isPage ? [PAGE_CACHE_TAG] : []),
   ])
 
   if (Predicate.isTagged(preparedTags, 'invalid')) {
@@ -356,6 +396,19 @@ export function hasSessionCookie(
       sessionCookieNames.some(
         (registered) => name === registered || name === `__Secure-${registered}`
       )
+  )
+}
+
+/**
+ * Whether a response is a page: an HTML document, or an Inertia page object
+ * (JSON marked with X-Inertia: true).
+ */
+export function isPageResponse(headers: Headers): boolean {
+  const contentType = headers.get('Content-Type')?.toLowerCase() ?? ''
+
+  return (
+    headers.get(HEADERS.HONERTIA) === 'true' ||
+    contentType.startsWith('text/html')
   )
 }
 
