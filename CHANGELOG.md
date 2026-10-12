@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Tested against Effect 4.0.3, Hono 4.13.13, Better Auth 1.7.7 and Drizzle ORM 0.45.4. Peer ranges are unchanged. Better Auth 1.7 requires an `issuer` column on the `account` table; apps upgrading Better Auth should apply its 1.7 schema migration.
+- The `hono` peer range is `^4.10.0` (was `>=4.0.0`) and the `drizzle-orm` peer range is `>=0.30.0 <1.0.0` (was `>=0.30.0`). Hono releases before 4.10 fail to type-check the package, and the open upper bounds admitted Hono 5 and Drizzle 1.0, which both break it: Hono 5 removes `c.req.routePath` and changes `app.onError`, and Drizzle 1.0 removes the relation helpers route model binding reads.
+- Tested against Effect 4.0.3, Hono 4.13.13, Better Auth 1.7.7 and Drizzle ORM 0.45.4. Better Auth 1.7 requires an `issuer` column on the `account` table; apps upgrading Better Auth should apply its 1.7 schema migration.
 - The package is built and type-tested with TypeScript 7. Emitted JavaScript is unchanged and declarations differ only in formatting, so applications on TypeScript 5.x keep working.
 
 ## [0.7.0] - 2026-10-12

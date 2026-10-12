@@ -53,8 +53,10 @@ and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers:
 an app without them still bundles for Cloudflare Workers. Route model binding
 loads `drizzle-orm` when a bound route runs and reports a configuration error
 if it isn't installed.
-The package supports Effect 4 (`^4.0.0`, tested with 4.0.3), Better Auth 1.x
-(tested with 1.7.7), and Hono 4 (tested with 4.13.13).
+The package supports Effect 4 (`^4.0.0`, tested with 4.0.3), Hono 4.10 or
+later 4.x (tested with 4.13.13), Better Auth 1.x (tested with 1.7.7), and
+Drizzle ORM 0.30 or later 0.x (tested with 0.45.4). Hono 5 and Drizzle 1.0 are
+not supported yet: both change APIs this package uses.
 
 ### Upgrading from 0.6
 
