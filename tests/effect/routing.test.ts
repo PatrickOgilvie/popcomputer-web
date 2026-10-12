@@ -248,6 +248,29 @@ describe('EffectRouteBuilder', () => {
       expect(await res.text()).toBe('Hello World')
     })
 
+    test('route registrations chain on the same builder', async () => {
+      const app = createApp()
+
+      effectRoutes(app)
+        .prefix('/chained')
+        .get('/first', Effect.succeed(new Response('first')))
+        .post('/second', Effect.succeed(new Response('second')))
+        .group((route) => {
+          route.put('/third', Effect.succeed(new Response('third')))
+        })
+        .delete('/fourth', Effect.succeed(new Response('fourth')))
+
+      const first = await app.request('/chained/first')
+      const second = await app.request('/chained/second', { method: 'POST' })
+      const third = await app.request('/chained/third', { method: 'PUT' })
+      const fourth = await app.request('/chained/fourth', { method: 'DELETE' })
+
+      expect(await first.text()).toBe('first')
+      expect(await second.text()).toBe('second')
+      expect(await third.text()).toBe('third')
+      expect(await fourth.text()).toBe('fourth')
+    })
+
     test('registers POST route', async () => {
       const app = createApp()
 

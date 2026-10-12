@@ -49,7 +49,7 @@
     "dev": "tsc --watch",
     "test": "bun run build && bun test && bun run test:types && bun run test:package",
     "test:package": "bun run build && node dist/cli/bin.js routes --app tests/fixtures/cli-package-app.ts --json",
-    "test:types": "tsc -p tsconfig.type-tests.json",
+    "test:types": "tsc -p tsconfig.type-tests.json && bun tests/readme/check-readme.ts",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
     "prepublishOnly": "bun run test"

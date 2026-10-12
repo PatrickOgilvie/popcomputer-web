@@ -370,10 +370,13 @@ export class EffectRouteBuilder<
   }
 
   /**
-   * Create a nested group with the same configuration.
+   * Register routes that share this builder's prefix, layers and middleware.
+   * Returns the builder so registrations can continue after the group.
    */
-  group(callback: (route: EffectRouteBuilder<E, ProvidedServices, CustomServices>) => void): void {
+  group(callback: (route: EffectRouteBuilder<E, ProvidedServices, CustomServices>) => void): this {
     callback(this)
+
+    return this
   }
 
   /**
@@ -821,8 +824,10 @@ export class EffectRouteBuilder<
     path: string,
     effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
-  ): void {
+  ): this {
     this.registerRoute('get', path, effect, options)
+
+    return this
   }
 
   /** Register a POST route. Supports Laravel-style route model binding: /projects/{project} */
@@ -830,8 +835,10 @@ export class EffectRouteBuilder<
     path: string,
     effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
-  ): void {
+  ): this {
     this.registerRoute('post', path, effect, options)
+
+    return this
   }
 
   /** Register a PUT route. Supports Laravel-style route model binding: /projects/{project} */
@@ -839,8 +846,10 @@ export class EffectRouteBuilder<
     path: string,
     effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
-  ): void {
+  ): this {
     this.registerRoute('put', path, effect, options)
+
+    return this
   }
 
   /** Register a PATCH route. Supports Laravel-style route model binding: /projects/{project} */
@@ -848,8 +857,10 @@ export class EffectRouteBuilder<
     path: string,
     effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
-  ): void {
+  ): this {
     this.registerRoute('patch', path, effect, options)
+
+    return this
   }
 
   /** Register a DELETE route. Supports Laravel-style route model binding: /projects/{project} */
@@ -857,8 +868,10 @@ export class EffectRouteBuilder<
     path: string,
     effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
-  ): void {
+  ): this {
     this.registerRoute('delete', path, effect, options)
+
+    return this
   }
 
   /** Register a route for all HTTP methods. Supports Laravel-style route model binding: /projects/{project} */
@@ -866,8 +879,10 @@ export class EffectRouteBuilder<
     path: string,
     effect: EffectHandler<R, AppError>,
     options?: EffectRouteOptions
-  ): void {
+  ): this {
     this.registerRoute('all', path, effect, options)
+
+    return this
   }
 
   /**

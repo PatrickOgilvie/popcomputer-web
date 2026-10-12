@@ -7,7 +7,6 @@
 
 import {
   Context,
-  Data,
   Effect,
   Schema as S,
   SchemaTransformation,
@@ -22,18 +21,6 @@ interface DrizzleColumn {
   columnType: string
   dataType: string
   name: string
-}
-
-/**
- * Error thrown when a bound model is not found in the BoundModels context.
- * This indicates a programming error - the binding key doesn't match any resolved model.
- */
-export class BoundModelNotFound extends Data.TaggedError('BoundModelNotFound')<{
-  readonly key: string
-}> {
-  get message() {
-    return `No bound model found for key: '${this.key}'. Ensure the route uses {${this.key}} binding syntax.`
-  }
 }
 
 /**
@@ -193,19 +180,20 @@ export type BoundModel<K extends string> =
 /**
  * Type-safe accessor for bound models.
  *
+ * Fails with `RouteConfigurationError` when the route path has no `{key}`
+ * placeholder or the app registered no binding schema.
+ *
  * @example
- * const showProject = Effect.gen(function* () {
- *   const project = yield* bound('project')
- *   return inertia('Projects/Show', { project })
- * })
+ * const showProject = action(
+ *   Effect.gen(function* () {
+ *     const project = yield* bound('project')
+ *     return yield* render('Projects/Show', { project })
+ *   })
+ * )
  */
 export const bound = <K extends string>(
   key: K
-): Effect.Effect<
-  BoundModel<K>,
-  BoundModelNotFound | RouteConfigurationError,
-  BoundModels
-> =>
+): Effect.Effect<BoundModel<K>, RouteConfigurationError, BoundModels> =>
   Effect.gen(function* () {
     const models = yield* BoundModels
 
@@ -217,7 +205,7 @@ export const bound = <K extends string>(
     const model = models.get(key)
 
     if (!model) {
-      return yield* new BoundModelNotFound({ key })
+      return yield* RouteConfigurationError.bindingNotInRoute(key)
     }
 
     // SAFETY: route execution stores the decoded output of the parser keyed by

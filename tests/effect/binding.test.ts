@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { Predicate, Effect, Schema as S } from 'effect'
+import { Effect, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { honertia } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
@@ -23,6 +23,7 @@ import {
   inferParamsSchema,
 } from '../../src/effect/binding.js'
 import { RouteConfigurationError } from '../../src/effect/errors.js'
+import { ErrorCodes } from '../../src/effect/error-catalog.js'
 import { registerErrorHandlers } from '../../src/setup.js'
 
 describe('parseBindings', () => {
@@ -418,7 +419,7 @@ describe('bound() accessor', () => {
     expect(result).toEqual({ id: '123', name: 'Test Project' })
   })
 
-  test('fails with BoundModelNotFound for missing binding', async () => {
+  test('fails with a route configuration error when the route does not bind the key', async () => {
     const models = new Map<string, unknown>()
 
     const effect = Effect.gen(function* () {
@@ -427,18 +428,14 @@ describe('bound() accessor', () => {
       return project
     })
 
-    const result = await Effect.runPromiseExit(
-      effect.pipe(Effect.provideService(BoundModels, models))
+    const error = await Effect.runPromise(
+      effect.pipe(Effect.provideService(BoundModels, models), Effect.flip)
     )
 
-    expect(result._tag).toBe('Failure')
-
-    if (Predicate.isTagged(result, 'Failure')) {
-      const error = result.cause
-      // The error should be a BoundModelNotFound
-      expect(String(error)).toContain('BoundModelNotFound')
-      expect(String(error)).toContain('project')
-    }
+    assert.ok(error instanceof RouteConfigurationError)
+    expect(error.binding).toBe('project')
+    expect(error.code).toBe(ErrorCodes.RTE_600_BINDING_NOT_FOUND)
+    expect(error.hint).toContain('{project}')
   })
 })
 

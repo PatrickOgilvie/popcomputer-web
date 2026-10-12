@@ -241,19 +241,26 @@ following examples are alternative configurations; choose the shape that
 matches the application. None require placeholders or explicit generics.
 
 ```ts
+const version = createVersion(manifest)
+const template = createTemplate({ title: 'Projects' })
+
 // Public application
-setupWeb(app, { version, render })
+setupWeb(app, { version, render: template })
 
 // Database without auth
-setupWeb(app, { version, render, database: (c) => createDb(c.env.DB) })
+setupWeb(app, {
+  version,
+  render: template,
+  database: (c) => createDb(c.env.DATABASE_URL),
+})
 
 // Stateless auth
 setupWeb(app, {
   version,
-  render,
+  render: template,
   auth: {
     client: (c, { backgroundTasks }) => createStatelessAuth({
-      secret: c.env.AUTH_SECRET,
+      secret: c.env.BETTER_AUTH_SECRET,
       advanced: { backgroundTasks },
     }),
   },
@@ -287,7 +294,7 @@ returns `{ app, routes }`. The middleware-only form remains available for
 manual Hono composition:
 
 ```ts
-app.use('*', setupWeb({ version, render }))
+app.use('*', setupWeb({ version, render: template }))
 ```
 
 ### 3. Write actions and register routes
@@ -315,6 +322,7 @@ export const showProject = action(
 ```ts
 // src/routes.ts
 import { effectRoutes } from '@popcomputer/web/effect'
+import app from './app'
 import { showProject } from './actions/projects/show'
 
 effectRoutes(app).get('/projects/{project}', showProject, {
@@ -445,7 +453,7 @@ succeeds:
 
 ```ts
 const auth = yield* authorize(
-  ({ user }) => user.role === 'admin'
+  ({ user }) => user.emailVerified
 )
 ```
 
@@ -503,10 +511,11 @@ With a `KV` binding, `CacheService` uses Cloudflare KV. Stale-while-revalidate
 uses the request execution context when available and refreshes inline in local
 environments without background execution.
 
-For runtime-owned work that must outlive a response:
+For runtime-owned work that must outlive a response, name the work and pass
+the Effect. The name identifies the work in error reports:
 
 ```ts
-yield* background(sendAuditEvent(event))
+yield* background('audit.send', sendAuditEvent(event))
 ```
 
 ### Page caching
@@ -556,7 +565,7 @@ config). The option emits Workers Cache headers and tags. It does not publicly
 cache authenticated, cookie-setting, partial, failed, or mutating responses.
 
 ```ts
-routes.get('/pricing', showPricing, {
+effectRoutes(app).get('/pricing', showPricing, {
   name: 'pricing.show',
   cache: { maxAge: 300, staleWhileRevalidate: 3600 },
 })
@@ -585,12 +594,30 @@ Most applications should use `setupWeb`. The lower-level APIs are available
 when another composition root owns part of the middleware stack:
 
 ```ts
-import { web, webContext, webServices } from '@popcomputer/web'
+// src/manual-app.ts
+import { Hono } from 'hono'
+import {
+  createTemplate,
+  createVersion,
+  web,
+  webContext,
+  webServices,
+} from '@popcomputer/web'
 import { effectBridge } from '@popcomputer/web/effect'
+import manifest from '../dist/manifest.json'
+import { createDb } from './db'
+import type { Bindings } from './web-types'
 
-app.use('*', web({ version, render }))
-app.use('*', webServices((c) => ({
-  db: createDb(c.env.DB),
+type Env = { Bindings: Bindings }
+
+const app = new Hono<Env>()
+
+app.use('*', web({
+  version: createVersion(manifest),
+  render: createTemplate({ title: 'Projects' }),
+}))
+app.use('*', webServices<Env>((c) => ({
+  db: createDb(c.env.DATABASE_URL),
 })))
 app.use('*', effectBridge())
 

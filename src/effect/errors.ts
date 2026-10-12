@@ -526,6 +526,16 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
     })
   }
 
+  /** Create an error for bound(key) in an action whose route has no {key} placeholder. */
+  static bindingNotInRoute(binding: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `bound('${binding}') was called, but this route does not bind "${binding}".`,
+      hint: `Add {${binding}} to the route path, for example /${binding}s/{${binding}}, or read the value another way.`,
+      binding,
+      code: ErrorCodes.RTE_600_BINDING_NOT_FOUND,
+    })
+  }
+
   /**
    * Create an error for missing table in schema.
    */

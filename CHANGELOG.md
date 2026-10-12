@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- `bound(key)` fails with `RouteConfigurationError` (code `RTE_600_BINDING_NOT_FOUND`, with a hint naming the missing `{key}` placeholder) when the route does not bind `key`. It failed with `BoundModelNotFound`, which no route accepted as a handler error, so `effectRoutes(app).get('/projects/{project}', showProject)` with an action that called `bound()` did not type-check. `BoundModelNotFound` is removed; replace `Effect.catchTag('BoundModelNotFound', ...)` with `Effect.catchTag('RouteConfigurationError', ...)`.
+
+### Fixed
+
+- Route builder methods (`get`, `post`, `put`, `patch`, `delete`, `all`, `group`) return the builder, so registrations chain as the README shows. They returned `undefined`, and a chained call threw a `TypeError`.
+- README examples type-check against the package, and `bun run test:types` checks every TypeScript example in the README. Corrected examples: the `background` call takes an operation name, Workers Cache routes register through `effectRoutes(app)`, `src/routes.ts` imports its app, alternative setups read bindings the `Bindings` type declares, `authorize` predicates use a field of the default user, and the lower-level composition example is a complete module that passes its `Env` to `webServices`.
+
 ### Changed
 
 - The `hono` peer range is `^4.10.0` (was `>=4.0.0`) and the `drizzle-orm` peer range is `>=0.30.0 <1.0.0` (was `>=0.30.0`). Hono releases before 4.10 fail to type-check the package, and the open upper bounds admitted Hono 5 and Drizzle 1.0, which both break it: Hono 5 removes `c.req.routePath` and changes `app.onError`, and Drizzle 1.0 removes the relation helpers route model binding reads.

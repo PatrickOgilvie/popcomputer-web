@@ -280,7 +280,6 @@ export {
 // Route Model Binding
 export {
   BoundModels,
-  BoundModelNotFound,
   bound,
   routeBinding,
   pluralize,
