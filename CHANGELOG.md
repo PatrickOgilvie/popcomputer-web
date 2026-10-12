@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-09
+
+### Fixed
+
+- Apps without `drizzle-orm` installed bundle for Cloudflare Workers again. Route model binding loaded the optional peer with `import('drizzle-orm')`, which esbuild (used by Wrangler) and Bun must resolve at build time, so every Worker build failed with `Could not resolve "drizzle-orm"` unless the package was installed. The import now sits in a `try` block, which those bundlers leave for runtime when the package is missing; apps that install `drizzle-orm` still bundle it. A binding route that runs without it fails with `RouteConfigurationError` (`HON_CFG_305_INVALID_CONFIG`) and an install hint.
+
 ## [0.6.0] - 2026-10-09
 
 ### Breaking
