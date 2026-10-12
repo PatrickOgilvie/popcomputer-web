@@ -170,21 +170,21 @@ setupWeb({
   },
 })
 
-// @ts-expect-error Database-backed auth requires a database factory.
 setupWeb({
   version: 'type-test',
   render: (page) => JSON.stringify(page),
   auth: {
+    // @ts-expect-error Database-backed auth requires a database factory.
     client: (_context: HonoContext<TestEnv>, { db }: { readonly db: TestDatabase }) => ({
       databaseName: db.name,
     }),
   },
 })
 
-// @ts-expect-error A configured database factory must return a database object.
 setupWeb({
   version: 'type-test',
   render: (page) => JSON.stringify(page),
+  // @ts-expect-error A configured database factory must return a database object.
   database: () => undefined,
 })
 

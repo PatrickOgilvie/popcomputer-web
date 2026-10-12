@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Tested against Effect 4.0.3, Hono 4.13.13, Better Auth 1.7.7 and Drizzle ORM 0.45.4. Peer ranges are unchanged. Better Auth 1.7 requires an `issuer` column on the `account` table; apps upgrading Better Auth should apply its 1.7 schema migration.
+- The package is built and type-tested with TypeScript 7. Emitted JavaScript is unchanged and declarations differ only in formatting, so applications on TypeScript 5.x keep working.
+
 ## [0.7.0] - 2026-10-12
 
 ### Added
