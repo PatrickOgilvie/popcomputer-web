@@ -49,9 +49,30 @@ bun add @inertiajs/react react react-dom    # React client
 ```
 
 Effect and Hono are peer dependencies so an application owns one Effect runtime
-and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers.
+and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers:
+an app without them still bundles for Cloudflare Workers. Route model binding
+loads `drizzle-orm` when a bound route runs and reports a configuration error
+if it isn't installed.
 The package supports Effect 4 (`^4.0.0`, tested with 4.0.2), Better Auth 1.x,
 and Hono 4 or newer.
+
+### Upgrading from 0.6
+
+Static pages are now cached at Cloudflare's edge by default; see
+[Page caching](#page-caching). Three things to check:
+
+- Bind version metadata in `wrangler.jsonc`
+  (`"version_metadata": { "binding": "CF_VERSION_METADATA" }`) so each deploy
+  starts from an empty cache.
+- Give `cache: false` to routes whose pages change without reading a binding or
+  request header, such as pages built from an external `fetch()` or the
+  current time.
+- Middleware that sets `Cache-Control` on every response, such as a blanket
+  `no-store`, now stops pages from being cached. Set it only when the response
+  has no `Cache-Control` yet.
+
+Workers builds no longer need `drizzle-orm` installed when the app has no
+route model binding.
 
 ### Upgrading from 0.5
 
