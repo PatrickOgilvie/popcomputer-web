@@ -31,6 +31,7 @@ import {
   decideCachePolicy,
   deriveCacheTags,
   hasSessionCookie,
+  isPageResponse,
   isPartialReloadRequest,
   prepareCachePurgeTags,
   ResponseCachePurgeError,
@@ -728,6 +729,7 @@ export class EffectRouteBuilder<
         setsCookie: response.headers.has('Set-Cookie'),
         hasPrivateRequestState: hasPrivateRequestState(c),
         existingCacheControl: response.headers.get('Cache-Control'),
+        isPage: isPageResponse(response.headers),
         derivedTags: deriveCacheTags(bindings, boundModels),
         options: options.cache,
       })

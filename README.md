@@ -490,6 +490,30 @@ The route cache option separately emits Workers Cache headers and tags. It does
 not publicly cache authenticated, cookie-setting, partial, failed, or mutating
 responses.
 
+```ts
+routes.get('/pricing', showPricing, {
+  name: 'pricing.show',
+  cache: { maxAge: 300, staleWhileRevalidate: 3600 },
+})
+```
+
+Pages, meaning HTML documents and Inertia page objects, belong to the deploy
+that rendered them: the HTML names that build's hashed assets. For pages the
+option sends `Cache-Control: public, max-age=0, must-revalidate`, so browsers
+revalidate every visit, and puts `maxAge` and `staleWhileRevalidate` in
+`CDN-Cache-Control` for Cloudflare's cache. Every cached page carries the
+`PAGE_CACHE_TAG` Cache-Tag (`popweb:page`). Purge it after each deploy, from
+the Worker with `ResponseCacheService` (for example in a protected route your
+deploy script calls) or with Cloudflare's purge-by-tag API:
+
+```ts
+const cache = yield* ResponseCacheService
+yield* cache.purge({ tags: [PAGE_CACHE_TAG] })
+```
+
+Other cached responses, such as JSON APIs and text, use `maxAge` and
+`staleWhileRevalidate` in `Cache-Control` for every cache.
+
 ## Lower-level composition
 
 Most applications should use `setupWeb`. The lower-level APIs are available

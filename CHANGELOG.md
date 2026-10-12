@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The `cache` route option no longer lets browsers keep pages. A cached HTML document names its deploy's hashed assets, which the next deploy removes, so a visitor returning within `maxAge` could load scripts that no longer exist and see a blank page. HTML documents and Inertia page objects now get `Cache-Control: public, max-age=0, must-revalidate`, and `maxAge` and `staleWhileRevalidate` move to `CDN-Cache-Control`, so only shared caches keep pages. Cached responses that are not pages, such as JSON APIs and text, are unchanged.
+
+### Added
+
+- `PAGE_CACHE_TAG` (`popweb:page`), a Cache-Tag on every page the `cache` route option stores. Purge it after each deploy so shared caches drop pages rendered by the previous build.
+
 ## [0.6.0] - 2026-10-09
 
 ### Breaking
