@@ -3,7 +3,7 @@
  * Workers Cache Integration Tests
  *
  * The `cache` route option makes Honertia emit correct Workers Cache headers
- * (Cache-Control / CDN-Cache-Control / Cache-Tag / Vary) with Inertia-aware
+ * (Cache-Control / Cloudflare-CDN-Cache-Control / Cache-Tag / Vary) with Inertia-aware
  * guard rails: HTML and JSON page objects vary on X-Inertia, pages are kept
  * only by purgeable shared caches, partial reloads are never stored,
  * Set-Cookie and private request state are never publicly cached, and only
@@ -447,7 +447,7 @@ describe('cache route option', () => {
     expect(res.headers.get('Cache-Tag')).toBeNull()
   })
 
-  test('page documents are kept by shared caches only and tagged for deploy purges', async () => {
+  test('page documents are kept only at the edge and tagged', async () => {
     const app = createApp()
 
     effectRoutes(app).get('/pricing', render('Pricing'), {
@@ -458,9 +458,9 @@ describe('cache route option', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toContain('text/html')
     // The document names this deploy's hashed assets; a browser copy could
-    // outlive them, so browsers revalidate and only purgeable caches keep it.
+    // outlive them, so browsers revalidate and only Cloudflare keeps it.
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate')
-    expect(res.headers.get('CDN-Cache-Control')).toBe(
+    expect(res.headers.get('Cloudflare-CDN-Cache-Control')).toBe(
       'public, max-age=300, stale-while-revalidate=3600'
     )
     expect(res.headers.get('Cache-Tag')).toBe(`marketing,${PAGE_CACHE_TAG}`)
@@ -480,7 +480,7 @@ describe('cache route option', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({ component: 'Pricing' })
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate')
-    expect(res.headers.get('CDN-Cache-Control')).toBe('public, max-age=300')
+    expect(res.headers.get('Cloudflare-CDN-Cache-Control')).toBe('public, max-age=300')
     expect(res.headers.get('Cache-Tag')).toBe(PAGE_CACHE_TAG)
   })
 
@@ -493,7 +493,7 @@ describe('cache route option', () => {
 
     const res = await app.request('/api/plans')
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=300')
-    expect(res.headers.get('CDN-Cache-Control')).toBeNull()
+    expect(res.headers.get('Cloudflare-CDN-Cache-Control')).toBeNull()
     expect(res.headers.get('Cache-Tag')).toBeNull()
   })
 

@@ -7,13 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- The `cache` route option no longer lets browsers keep pages. A cached HTML document names its deploy's hashed assets, which the next deploy removes, so a visitor returning within `maxAge` could load scripts that no longer exist and see a blank page. HTML documents and Inertia page objects now get `Cache-Control: public, max-age=0, must-revalidate`, and `maxAge` and `staleWhileRevalidate` move to `CDN-Cache-Control`, so only shared caches keep pages. Cached responses that are not pages, such as JSON APIs and text, are unchanged.
-
 ### Added
 
-- `PAGE_CACHE_TAG` (`popweb:page`), a Cache-Tag on every page the `cache` route option stores. Purge it after each deploy so shared caches drop pages rendered by the previous build.
+- Pages are cached at Cloudflare's edge by default. `setupWeb` serves a page from the Cache API, before database, auth or rendering work, when producing it read nothing request-specific: no binding on `c.env` (D1, KV, R2, Durable Objects, service bindings), no request header or request state through `RequestService`/`RequestStateService`, and no route model binding. Anything else renders on every request. Cached pages are keyed by deploy, via the `CF_VERSION_METADATA` version metadata binding when present or the asset version otherwise, and browsers always revalidate them. Signed-in requests, `Authorization`, app cookies, partial reloads, stale Inertia versions and development bypass the cache, and a page is stored only if the final response, after all middleware, sets no cookie and no other `Cache-Control`. The `X-Popweb-Cache` header reports `HIT`, `MISS`, `DYNAMIC` or `BYPASS`.
+- `cache: false` on a route always renders it fresh; `pageCache: false` in `setupWeb` turns the page cache off; `markPageDynamic(c)` marks a page dynamic from Hono middleware; `pageCache({ version })` adds the cache to lower-level compositions.
+- `PAGE_CACHE_TAG` (`popweb:page`), a Cache-Tag on every page the `cache` route option stores in Workers Cache.
+
+### Changed
+
+- Signed-in requests (a session cookie or `Authorization`) whose response sets no `Cache-Control` now get `Cache-Control: no-store`.
+
+### Fixed
+
+- The `cache` route option no longer lets browsers keep pages. A cached HTML document names its deploy's hashed assets, which the next deploy removes, so a visitor returning within `maxAge` could load scripts that no longer exist and see a blank page. HTML documents and Inertia page objects now get `Cache-Control: public, max-age=0, must-revalidate`, and `maxAge` and `staleWhileRevalidate` move to `Cloudflare-CDN-Cache-Control`, so only Cloudflare keeps pages. Cached responses that are not pages, such as JSON APIs and text, are unchanged.
 
 ## [0.6.0] - 2026-10-09
 

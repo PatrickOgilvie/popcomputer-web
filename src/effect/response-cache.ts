@@ -9,8 +9,11 @@
  * Pages (HTML documents and Inertia page objects) belong to the deploy that
  * rendered them: the document names that build's hashed assets and the page
  * object carries its props. Browsers therefore revalidate pages on every use,
- * only shared caches keep them (CDN-Cache-Control), and every cached page
- * carries PAGE_CACHE_TAG so a deploy can purge them all at once.
+ * only Cloudflare keeps them (Cloudflare-CDN-Cache-Control, which Cloudflare
+ * strips before the response reaches the client), and every cached page
+ * carries PAGE_CACHE_TAG. Workers Cache keys entries by Worker version, so a
+ * deploy starts from an empty cache; with `cross_version_cache` enabled,
+ * purge the tag after each deploy instead.
  *
  * This is the response cache in FRONT of the Worker (zero CPU on hit) —
  * distinct from CacheService, the KV-backed data cache inside actions.
@@ -24,10 +27,10 @@ import { pluralize, type ParsedBinding } from './binding.js'
  * Declarative caching for a route's responses via Workers Cache.
  * Applied to GET/HEAD responses with 2xx status only.
  *
- * Pages are cached only by shared caches (CDN-Cache-Control) and are tagged
- * with PAGE_CACHE_TAG; purge that tag after each deploy. Browsers revalidate
- * pages, so they never load assets a deploy removed. Other responses (JSON
- * APIs, text) use these values in Cache-Control for every cache.
+ * Pages are kept only by Cloudflare (Cloudflare-CDN-Cache-Control) and are
+ * tagged with PAGE_CACHE_TAG. Browsers revalidate pages, so they never load
+ * assets a deploy removed. Other responses (JSON APIs, text) use these
+ * values in Cache-Control for every cache.
  */
 export interface RouteCacheOptions {
   /** max-age in seconds. */
@@ -43,12 +46,18 @@ export interface RouteCacheOptions {
 }
 
 /**
- * Cache-Tag carried by every page the `cache` route option stores. Pages
- * belong to the deploy that rendered them, so purge this tag after each
- * deploy, from the Worker with ResponseCacheService or through the Cloudflare
- * purge-by-tag API.
+ * Cache-Tag carried by every page the `cache` route option stores. Workers
+ * Cache already starts each deploy from an empty cache; with
+ * `cross_version_cache` enabled, purge this tag after each deploy with
+ * ResponseCacheService.
  */
 export const PAGE_CACHE_TAG = 'popweb:page'
+
+/**
+ * Cache-Control browsers receive for cached pages: revalidate on every use,
+ * because a page belongs to the deploy that rendered it.
+ */
+export const BROWSER_PAGE_CACHE_CONTROL = 'public, max-age=0, must-revalidate'
 
 const MAX_CACHE_TAG_LENGTH = 1024
 
@@ -305,8 +314,8 @@ export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision 
   // every use and only shared caches, which a deploy can purge by tag, keep it.
   const headers: ResponseCacheHeaders = input.isPage
     ? {
-        'Cache-Control': 'public, max-age=0, must-revalidate',
-        'CDN-Cache-Control': directives.join(', '),
+        'Cache-Control': BROWSER_PAGE_CACHE_CONTROL,
+        'Cloudflare-CDN-Cache-Control': directives.join(', '),
         Vary: HEADERS.HONERTIA,
       }
     : {

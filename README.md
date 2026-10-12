@@ -486,9 +486,51 @@ For runtime-owned work that must outlive a response:
 yield* background(sendAuditEvent(event))
 ```
 
-The route cache option separately emits Workers Cache headers and tags. It does
-not publicly cache authenticated, cookie-setting, partial, failed, or mutating
-responses.
+### Page caching
+
+Pages are cached at Cloudflare's edge by default. `setupWeb` serves a page from
+Cloudflare's Cache API, skipping database, auth and rendering work, when
+producing it read nothing request-specific. A page becomes dynamic, and renders
+on every request, when it reads:
+
+- a binding on `c.env` (D1, KV, R2, Durable Objects, service bindings, AI,
+  Hyperdrive), which covers database queries however they are made;
+- a request header or request state through `RequestService` or
+  `RequestStateService`;
+- a route model binding.
+
+Cached pages are keyed by deploy. Bind the version metadata so each deploy
+starts from an empty cache:
+
+```jsonc
+// wrangler.jsonc
+"version_metadata": { "binding": "CF_VERSION_METADATA" }
+```
+
+Without it, pages are keyed by the asset version and expire after five minutes,
+so server-only changes still appear.
+
+- Signed-in requests, requests with `Authorization` or app cookies, partial
+  reloads, stale Inertia versions and development never use the cache. Analytics
+  and Cloudflare cookies such as `_ga` and `__cf_bm` don't count as app cookies.
+- Signed-in responses that set no `Cache-Control` get `no-store`.
+- Browsers always revalidate cached pages. A page is stored only if the final
+  response, after all middleware, still allows it: no `Set-Cookie`, and no
+  other `Cache-Control`.
+- The `X-Popweb-Cache` response header reports `HIT`, `MISS`, `DYNAMIC` or
+  `BYPASS`.
+
+The framework can't see data a page gets another way, such as an external
+`fetch()` or the current time. Give those routes `cache: false`, or call
+`markPageDynamic(c)` from Hono middleware. `pageCache: false` in `setupWeb`
+turns page caching off.
+
+### Time-based caching with Workers Cache
+
+To cache pages that do read data for a fixed time, set the route's `cache`
+option and enable Workers Cache (`"cache": { "enabled": true }` in Wrangler
+config). The option emits Workers Cache headers and tags. It does not publicly
+cache authenticated, cookie-setting, partial, failed, or mutating responses.
 
 ```ts
 routes.get('/pricing', showPricing, {
@@ -501,10 +543,10 @@ Pages, meaning HTML documents and Inertia page objects, belong to the deploy
 that rendered them: the HTML names that build's hashed assets. For pages the
 option sends `Cache-Control: public, max-age=0, must-revalidate`, so browsers
 revalidate every visit, and puts `maxAge` and `staleWhileRevalidate` in
-`CDN-Cache-Control` for Cloudflare's cache. Every cached page carries the
-`PAGE_CACHE_TAG` Cache-Tag (`popweb:page`). Purge it after each deploy, from
-the Worker with `ResponseCacheService` (for example in a protected route your
-deploy script calls) or with Cloudflare's purge-by-tag API:
+`Cloudflare-CDN-Cache-Control`, which only Cloudflare reads. Every cached page
+carries the `PAGE_CACHE_TAG` Cache-Tag (`popweb:page`). Workers Cache keys
+entries by Worker version, so each deploy starts from an empty cache. If you
+enable `cross_version_cache`, purge the tag after each deploy:
 
 ```ts
 const cache = yield* ResponseCacheService
@@ -535,6 +577,9 @@ app.use('/admin/*', async (c, next) => {
   await next()
 })
 ```
+
+Add `pageCache({ version })` before `webServices()` to keep the default page
+cache; on a hit it answers before database and auth setup.
 
 Plain Hono handlers can render through `c.var.web`:
 

@@ -26,6 +26,7 @@ import {
   ValidationError,
 } from './errors.js'
 import { openHonertiaContext } from '../request-context.js'
+import { allowDefaultPageCache } from '../page-cache.js'
 import {
   applyCachePolicy,
   decideCachePolicy,
@@ -157,12 +158,19 @@ export interface EffectRouteOptions {
    */
   parseOptions?: ParseOptions
   /**
-   * Cache this route's responses via Cloudflare Workers Cache.
-   * Applied to successful GET/HEAD responses only; partial reloads are
-   * marked no-store and HTML/JSON page objects vary on X-Inertia.
-   * Requires `"cache": { "enabled": true }` in wrangler config.
+   * Leave unset for the default page cache: a page that reads no bindings,
+   * headers or request state is cached at the edge until the next deploy.
+   *
+   * `false` always renders this route fresh, for pages whose output changes
+   * without the framework seeing it (external fetches, the current time).
+   *
+   * An object caches this route's responses for a fixed time via Cloudflare
+   * Workers Cache instead, data reads included. Applied to successful
+   * GET/HEAD responses only; partial reloads are marked no-store and
+   * HTML/JSON page objects vary on X-Inertia. Requires
+   * `"cache": { "enabled": true }` in wrangler config.
    */
-  cache?: RouteCacheOptions
+  cache?: RouteCacheOptions | false
   /**
    * After this route's effect succeeds (any Redirect, or a Response below
    * 400), purge these Workers Cache tags. `true` derives the tags from the
@@ -529,9 +537,17 @@ export class EffectRouteBuilder<
     // once per route (this handler closure), not once per request.
     let warnedIneffectiveCache = false
 
+    // A bound route reads its model from the database, and an explicit cache
+    // option owns this route's caching.
+    const allowsDefaultPageCache = options?.cache === undefined && bindings.length === 0
+
     // oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits request parsing and runtime completion, then maps the result to an HTTP response.
     return async (c) => {
       setEffectBridgeConfig(c, bridgeConfig)
+
+      if (allowsDefaultPageCache) {
+        allowDefaultPageCache(c)
+      }
 
       // Get schema from bridgeConfig or from context (set by setupHonertia/effectBridge)
       const schema = bridgeConfig?.schema ?? getEffectSchema(c)

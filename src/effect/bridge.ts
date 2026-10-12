@@ -9,6 +9,7 @@ import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { WebRequestContext } from '../request-context.js'
 import { openHonertiaContext } from '../request-context.js'
+import { markPageDynamic } from '../page-cache.js'
 import {
   ResponseCacheService,
   createWorkersResponseCacheClient,
@@ -97,7 +98,12 @@ function createRequestContext<E extends Env>(
   return {
     method: c.req.method,
     url: c.req.url,
-    headers: c.req.raw.headers,
+    // Headers are not part of the page-cache key, so reading them makes the page dynamic.
+    get headers() {
+      markPageDynamic(c)
+
+      return c.req.raw.headers
+    },
     env,
     param: (name: string) => c.req.param(name),
     params: () => {
@@ -108,7 +114,11 @@ function createRequestContext<E extends Env>(
     query: () => c.req.query(),
     json: <T>() => c.req.json<T>(),
     parseBody: () => c.req.parseBody(),
-    header: (name: string) => c.req.header(name),
+    header: (name: string) => {
+      markPageDynamic(c)
+
+      return c.req.header(name)
+    },
   }
 }
 
@@ -122,6 +132,9 @@ function createRequestStateClient<E extends Env>(c: HonoContext<E>): RequestStat
     // Arbitrary keys are not represented in Hono's ContextVariableMap typing,
     // so reads and writes go through the untyped context surface.
     get: <T>(key: string) => {
+      // Middleware may derive request state from cookies or headers.
+      markPageDynamic(c)
+
       // SAFETY: This client is the sole adapter for values written through the matching generic set method during the same request.
       return Object.getOwnPropertyDescriptor(c.var, key)?.value as T | undefined
     },

@@ -9,6 +9,7 @@ import { verifyOrigin, type VerifyOriginConfig } from './security.js'
 import type { PagePropValue, WebConfig } from './types.js'
 import { loadUser, shareAuthMiddleware } from './effect/auth.js'
 import { openHonertiaContext } from './request-context.js'
+import { pageCache } from './page-cache.js'
 import type {
   DatabaseType,
   AuthType,
@@ -164,6 +165,14 @@ interface HonertiaSetupOptions<
 
   /** Error component and environment policy for the shared error boundary. */
   errors?: ErrorHandlerConfig
+
+  /**
+   * Cache static pages at the edge (default `true`). Pages that read no
+   * bindings, headers or request state are served from Cloudflare's Cache API
+   * until the next deploy; everything else renders fresh. `false` turns the
+   * page cache off for the whole app.
+   */
+  pageCache?: boolean
 }
 
 /** Setup configuration whose auth factory receives a required database. */
@@ -562,6 +571,15 @@ function createSetupMiddleware<
     ...(config.security?.verifyOrigin
       ? [verifyOrigin<E>(config.security.verifyOrigin)]
       : []),
+    // A cached page is served before db/auth setup, session lookup or rendering.
+    ...(config.pageCache === false
+      ? []
+      : [
+          pageCache<E>({
+            version: configured.version,
+            sessionCookie: config.auth?.sessionCookie,
+          }),
+        ]),
     setupServices,
     web(webConfig),
     loadUser<E>({

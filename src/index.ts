@@ -39,6 +39,16 @@ export {
 // Security middleware (opt-in CSRF defense-in-depth)
 export { verifyOrigin, type VerifyOriginConfig } from './security.js'
 
+// Default edge page cache
+export {
+  pageCache,
+  markPageDynamic,
+  PAGE_CACHE_HEADER,
+  VERSION_METADATA_BINDING,
+  type PageCacheOptions,
+  type PageCacheStore,
+} from './page-cache.js'
+
 export type {
   PageObject,
   WebConfig,
