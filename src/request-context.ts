@@ -1,7 +1,7 @@
 /** The single owner of framework per-request state. */
 
 import type { Context, Env, MiddlewareHandler } from 'hono'
-import type { Layer, ManagedRuntime } from 'effect'
+import type { ManagedRuntime } from 'effect'
 import type {
   AuthType,
   AuthUser,
@@ -57,12 +57,6 @@ export interface WebRequestContext<E extends Env = Env> {
   sessionCookies?: readonly string[]
   /** pageCache() — present while a request may still be served from or stored in the page cache. */
   pageCache?: PageCacheState
-  /**
-   * Test-only layer merged into the runtime by effectBridge. Injection
-   * semantics are owned by @popcomputer/web/effect; carried here so the request path
-   * has a single context surface.
-   */
-  testLayer?: Layer.Layer<never, never, never>
 }
 
 /** @deprecated Use {@link WebRequestContext}. */

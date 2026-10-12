@@ -9,7 +9,6 @@ export {
   DatabaseService,
   AuthService,
   AuthUserService,
-  EmailService,
   PageService,
   HonertiaService,
   RequestService,
@@ -21,7 +20,6 @@ export {
   ExecutionContextService,
   authorize,
   type AuthUser,
-  type EmailClient,
   type PageRenderer,
   type HonertiaRenderer,
   type RequestContext,
@@ -254,28 +252,6 @@ export {
   type RouteMetadataJson,
   type FindRouteOptions,
 } from './route-registry.js'
-
-// Testing Utilities
-export {
-  describeRoute,
-  createRouteTester,
-  generateTestCases,
-  type TestUserType,
-  type TestUser,
-  type TestRequestOptions,
-  type TestExpectation,
-  type TestContext,
-  type TestCaseOptions,
-  type TestFn,
-  type TestAppConfig,
-} from './testing.js'
-
-// Test Layers
-export {
-  TestLayer,
-  TestCaptureService,
-  type TestCaptures,
-} from './test-layers.js'
 
 // Route Model Binding
 export {

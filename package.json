@@ -30,6 +30,10 @@
     "./cache": {
       "types": "./dist/cache.d.ts",
       "import": "./dist/cache.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
     }
   },
   "files": [

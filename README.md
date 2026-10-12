@@ -588,6 +588,58 @@ yield* cache.purge({ tags: [PAGE_CACHE_TAG] })
 Other cached responses, such as JSON APIs and text, use `maxAge` and
 `staleWhileRevalidate` in `Cache-Control` for every cache.
 
+## Testing
+
+Test routes through the application itself. `app.request` runs the real
+middleware, route and action; `testEnv(layer, bindings)` builds the request
+env. Services in the layer replace the ones the request would otherwise get, so
+`signedIn(user)` signs the request in without a session cookie and
+`Layer.succeed(Service, fake)` swaps a service the application provides. A layer
+a route registers with `.provide()` still takes precedence for that route.
+
+```ts
+// src/routes.test.ts
+import { describe, expect, test } from 'bun:test'
+import { signedIn, testEnv } from '@popcomputer/web/testing'
+import app from './app'
+import './routes'
+import { testBindings } from './test-bindings'
+
+describe('GET /projects/{project}', () => {
+  test('shows a project to its owner', async () => {
+    const res = await app.request(
+      '/projects/project-1',
+      { headers: { 'X-Inertia': 'true' } },
+      testEnv(signedIn({ id: 'user-1' }), testBindings)
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      component: 'Projects/Show',
+      props: { project: { id: 'project-1' } },
+    })
+  })
+
+  test('forbids other users', async () => {
+    const res = await app.request(
+      '/projects/project-1',
+      {},
+      testEnv(signedIn({ id: 'user-2' }), testBindings)
+    )
+
+    expect(res.status).toBe(403)
+  })
+})
+```
+
+`testBindings` is the application's test configuration: here, the URL of a
+migrated test database with `project-1` owned by `user-1`, an auth secret and a
+KV namespace. An `X-Inertia` request returns the page object as JSON, so tests
+assert on the component and props rather than HTML.
+
+An action is an Effect, so a test can also run it directly and provide the
+services it reads, for example `Effect.provide(signedIn({ id: 'user-1' }))`.
+
 ## Lower-level composition
 
 Most applications should use `setupWeb`. The lower-level APIs are available
@@ -718,12 +770,10 @@ install only one framework package in an application.
 - The package does not run database migrations. Use `drizzle-kit` or
   `wrangler d1 migrations` directly.
 
-## Testing
+## Developing this package
 
 ```bash
-bun test
-bun run test:types
-bun run test:package
+bun run test
 ```
 
 The repository verifies runtime behavior, strict TypeScript and module

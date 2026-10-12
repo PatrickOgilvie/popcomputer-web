@@ -1,10 +1,10 @@
-/** Shared utilities for testing @popcomputer/web applications. */
+/** Request helpers and fixtures shared by this repository's tests. */
 
 import { Hono } from 'hono'
 import { Clock, Effect } from 'effect'
-import { web, HEADERS } from './middleware.js'
-import { serializePage } from './helpers.js'
-import type { PageObject } from './types.js'
+import { web, HEADERS } from '../../src/middleware.js'
+import { serializePage } from '../../src/helpers.js'
+import type { PageObject } from '../../src/types.js'
 
 // =============================================================================
 // Types

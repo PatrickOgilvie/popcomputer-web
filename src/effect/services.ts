@@ -257,18 +257,6 @@ const AuthUserService_base: Context.ServiceClass<
 export class AuthUserService extends AuthUserService_base {}
 
 /**
- * Email Service - Outbound email delivery
- */
-export interface EmailClient {
-  send: (to: string, subject: string, body: string) => Effect.Effect<void, Error>
-}
-
-export class EmailService extends Context.Service<
-  EmailService,
-  EmailClient
->()('@popcomputer/web/Email') {}
-
-/**
  * Inertia-compatible page renderer.
  */
 export interface PageRenderer {

@@ -2,7 +2,6 @@
  * Route Registry
  *
  * Stores route metadata for introspection, CLI tooling, and test generation.
- * Enables `honertia routes` command and `describeRoute()` test helper.
  */
 
 import type { Schema as S } from 'effect'

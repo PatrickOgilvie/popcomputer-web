@@ -37,8 +37,7 @@ import {
   type ExecutionContextClient,
   type BindingsType,
 } from './services.js'
-import { TestCaptureService } from './test-layers.js'
-import { setResponseTestCaptures } from './test-capture-store.js'
+import { readTestLayer } from './test-env.js'
 import type { RouteBindingsConfig } from './binding.js'
 import { observeEffectErrorEvent } from './error-observer.js'
 
@@ -682,25 +681,13 @@ export function effectBridge<E extends Env, CustomServices = never>(
 ): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
   return async (c, next) => {
-    // SAFETY: test-layer injection seam used by @popcomputer/web/effect (see
-    // test-layers.ts). Deliberately untyped and unchanged for now; making it
-    // a construction-time config option is tracked as a follow-up.
-    const contextTestLayer = Object.getOwnPropertyDescriptor(c.var, '__testLayer')?.value
-
-    const envTestLayer = c.env instanceof Object
-      ? Object.getOwnPropertyDescriptor(c.env, '__testLayer')?.value
-      : undefined
-
-    const testLayer: Layer.Layer<never, never, never> | undefined = contextTestLayer ?? envTestLayer
-    const hasTestLayer = Layer.isLayer(contextTestLayer ?? envTestLayer)
     setEffectBridgeConfig(c, config)
-    let layer = buildContextLayer(c, config)
-
-    if (hasTestLayer && testLayer !== undefined) {
-      layer = Layer.merge(layer, testLayer)
-    }
-
-    const runtime = ManagedRuntime.make(layer)
+    const contextLayer = buildContextLayer(c, config)
+    // Services from testEnv (@popcomputer/web/testing) replace the request's own.
+    const testLayer = readTestLayer(c.env)
+    const runtime = ManagedRuntime.make(
+      testLayer === undefined ? contextLayer : Layer.merge(contextLayer, testLayer)
+    )
 
     // Store runtime and binding schema on the request context
     const requestCtx = openHonertiaContext(c)
@@ -717,25 +704,6 @@ export function effectBridge<E extends Env, CustomServices = never>(
     try {
       await next()
     } finally {
-      if (hasTestLayer) {
-        try {
-          const maybeCapture = await runtime.runPromise(
-            Effect.serviceOption(TestCaptureService)
-          )
-
-          if (Option.isSome(maybeCapture)) {
-            const captures = await runtime.runPromise(maybeCapture.value.get)
-            const response = c.res
-
-            if (response) {
-              setResponseTestCaptures(response, captures)
-            }
-          }
-        } catch {
-          // Ignore capture errors during tests
-        }
-      }
-
       await disposeRequestRuntime(c, runtime)
     }
 

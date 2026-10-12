@@ -211,7 +211,7 @@ async function main(): Promise<number> {
             '@popcomputer/web/auth': [src('auth.ts')],
             '@popcomputer/web/cache': [src('cache.ts')],
             '@popcomputer/web/react': [src('react.ts')],
-            '@popcomputer/web/cli': [src('cli/index.ts')],
+            '@popcomputer/web/testing': [src('testing.ts')],
           },
         },
         include: ['src/**/*'],

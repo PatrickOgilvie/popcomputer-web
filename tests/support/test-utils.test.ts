@@ -25,8 +25,8 @@ import {
   delay,
   lazyProp,
   createRequestTracker,
-} from '../src/test-utils.js'
-import { HEADERS } from '../src/types.js'
+} from './test-utils.js'
+import { HEADERS } from '../../src/types.js'
 
 describe('Test Utilities', () => {
   describe('createTestApp', () => {

@@ -10,6 +10,6 @@
     },
     "rootDir": "."
   },
-  "include": ["src/**/*", "tests/setup-types.ts"],
+  "include": ["src/**/*", "tests/setup-types.ts", "tests/testing.test.ts"],
   "exclude": ["node_modules", "dist"]
 }

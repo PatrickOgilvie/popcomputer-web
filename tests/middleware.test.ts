@@ -18,7 +18,7 @@ import {
   mockProjects,
   mockErrors,
   createRequestTracker,
-} from '../src/test-utils.js'
+} from './support/test-utils.js'
 
 // Create test app with honertia middleware
 const createApp = (version = '1.0.0') => {

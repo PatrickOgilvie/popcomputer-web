@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `check`: the type checker and the configuration errors raised at runtime.
   - `db`: `drizzle-kit` or `wrangler d1 migrations`. The CLI kept a separate `.popweb-applied.json` record of applied migrations that could disagree with the database.
   - `generate:openapi`: no replacement yet.
+- Test utilities move to `@popcomputer/web/testing`, which exports two functions:
+  - `testEnv(layer, bindings?)` builds a request env for `app.request` whose layer's services replace the request's own. It replaces passing a layer as `env.__testLayer`, which is no longer read: an env built from configuration could carry that string key, while `testEnv` attaches its layer where only the package can read it.
+  - `signedIn(user)` replaces `TestLayer.Auth.withUser(user)`.
+
+  `describeRoute`, `createRouteTester`, `generateTestCases`, `TestLayer`, `TestCaptureService` and `EmailService` are removed. `describeRoute`'s `as: 'user'` option never signed the request in, and `TestLayer.Database.inMemory` returned every row whatever the query's `where` condition. Assert on responses instead: an `X-Inertia` request returns the page object as JSON.
 - `bound(key)` fails with `RouteConfigurationError` (code `RTE_600_BINDING_NOT_FOUND`, with a hint naming the missing `{key}` placeholder) when the route does not bind `key`. It failed with `BoundModelNotFound`, which no route accepted as a handler error, so `effectRoutes(app).get('/projects/{project}', showProject)` with an action that called `bound()` did not type-check. `BoundModelNotFound` is removed; replace `Effect.catchTag('BoundModelNotFound', ...)` with `Effect.catchTag('RouteConfigurationError', ...)`.
 
 ### Fixed
