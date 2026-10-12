@@ -6,9 +6,6 @@
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "popweb": "dist/cli/bin.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -30,10 +27,6 @@
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js"
     },
-    "./cli": {
-      "types": "./dist/cli/index.d.ts",
-      "import": "./dist/cli/index.js"
-    },
     "./cache": {
       "types": "./dist/cache.d.ts",
       "import": "./dist/cache.js"
@@ -48,7 +41,7 @@
     "build": "rm -rf dist && tsc",
     "dev": "tsc --watch",
     "test": "bun run build && bun test && bun run test:types && bun run test:package",
-    "test:package": "bun run build && node dist/cli/bin.js routes --app tests/fixtures/cli-package-app.ts --json",
+    "test:package": "bun run build && node tests/package-imports.mjs",
     "test:types": "tsc -p tsconfig.type-tests.json && bun tests/readme/check-readme.ts",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
@@ -74,9 +67,6 @@
   "homepage": "https://github.com/patrickogilvie/popcomputer-web#readme",
   "bugs": {
     "url": "https://github.com/patrickogilvie/popcomputer-web/issues"
-  },
-  "dependencies": {
-    "tsx": "^4.23.15"
   },
   "peerDependencies": {
     "effect": "^4.0.0",

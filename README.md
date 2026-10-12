@@ -30,7 +30,7 @@ export const showProject = action(
   database rows, and cached values can all be checked with Effect Schema before
   application code relies on them.
 - Route metadata belongs to a configured Hono app rather than global process
-  state. CLI inspection therefore loads the app you explicitly select.
+  state. `setupWeb(app, config)` returns it as `routes`, a `RouteRegistry`.
 - The package keeps the standard Inertia wire protocol. Existing Inertia clients
   continue to use `X-Inertia`, partial reloads, asset versions, and redirects.
 
@@ -640,30 +640,6 @@ app.get('/', (c) => c.var.web.render('Home'))
 Effect actions normally use the higher-level `render` helper. The underlying
 service is available as `PageService` when direct composition is useful.
 
-## CLI
-
-The package exposes the `popweb` binary:
-
-```bash
-bunx @popcomputer/web routes --app src/app.ts --json
-bunx @popcomputer/web check --app src/app.ts --verbose
-bunx @popcomputer/web generate:action projects/create --method POST --path /projects
-bunx @popcomputer/web generate:crud projects
-bunx @popcomputer/web generate:feature projects/archive --method POST
-bunx @popcomputer/web generate:openapi --app src/app.ts --output openapi.json
-bunx @popcomputer/web db status
-bunx @popcomputer/web db:migrate --preview
-```
-
-Installed projects may call `popweb` directly from package scripts. Commands
-that inspect routes load the module passed with `--app`; it may export the Hono
-app, the `{ app, routes }` result from `setupWeb`, or a `RouteRegistry`.
-
-Migration state is written beside Drizzle migrations as
-`.popweb-applied.json`. The CLI also reads the former
-`.honertia-applied.json` filename so a package rename never causes an applied
-migration to run again.
-
 ## Version values
 
 Three different versions may appear around an application:
@@ -721,7 +697,6 @@ Public type and runtime names have direct replacements:
 | `HonertiaService` / `HonertiaRenderer` | `PageService` / `PageRenderer` |
 | `honertiaContext` / `honertiaServices` | `webContext` / `webServices` |
 | `honertia` middleware / `c.var.honertia` | `web` / `c.var.web` |
-| `honertia` CLI | `popweb` CLI |
 
 Deprecated aliases remain in `@popcomputer/web@0.3` to support an incremental
 source migration. New code should use the current names. The old `honertia` npm
@@ -740,9 +715,8 @@ install only one framework package in an application.
   binding queries.
 - Better Auth and Cloudflare-specific caching are optional integrations rather
   than hidden requirements.
-- CLI migration execution delegates to `drizzle-kit`; always inspect production
-  migration previews and use the database deployment process appropriate to
-  your environment.
+- The package does not run database migrations. Use `drizzle-kit` or
+  `wrangler d1 migrations` directly.
 
 ## Testing
 
@@ -752,9 +726,9 @@ bun run test:types
 bun run test:package
 ```
 
-The repository verifies runtime behavior, strict TypeScript/module augmentation
-contracts, generated action execution, CLI packaging, and a built-package route
-inspection fixture.
+The repository verifies runtime behavior, strict TypeScript and module
+augmentation contracts, that every TypeScript example in this README
+type-checks, and that each built entrypoint imports under plain Node.
 
 ## License
 

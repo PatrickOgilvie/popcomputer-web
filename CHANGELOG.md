@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- The `popweb` CLI and the `@popcomputer/web/cli` entrypoint are removed, along with the package's `tsx` dependency. The package now has no runtime dependencies. In place of each command:
+  - `generate:action`, `generate:crud`, `generate:feature`, `generate:tests-runner`: write actions and tests by hand from the README examples. The generators produced code that failed its own tests, wrote two files to `index.ts` for CRUD, and did not bundle for Workers.
+  - `routes`: `setupWeb(app, config)` returns `routes`, a `RouteRegistry`; `routes.toJson()` lists every route.
+  - `check`: the type checker and the configuration errors raised at runtime.
+  - `db`: `drizzle-kit` or `wrangler d1 migrations`. The CLI kept a separate `.popweb-applied.json` record of applied migrations that could disagree with the database.
+  - `generate:openapi`: no replacement yet.
 - `bound(key)` fails with `RouteConfigurationError` (code `RTE_600_BINDING_NOT_FOUND`, with a hint naming the missing `{key}` placeholder) when the route does not bind `key`. It failed with `BoundModelNotFound`, which no route accepted as a handler error, so `effectRoutes(app).get('/projects/{project}', showProject)` with an action that called `bound()` did not type-check. `BoundModelNotFound` is removed; replace `Effect.catchTag('BoundModelNotFound', ...)` with `Effect.catchTag('RouteConfigurationError', ...)`.
 
 ### Fixed
