@@ -936,6 +936,7 @@ endings, not statements to run in sequence:
 | Render a page | `return yield* render('Dashboard', { stats })` |
 | Redirect | `return yield* redirect(paths.project, { project: project.id })` |
 | Redirect to the page the request came from | `return yield* back(paths.projects)` |
+| Redirect from a helper or guard layer, ending the action | `yield* redirectNow(paths.dashboard)` |
 | Return JSON | `return yield* json({ projects })` |
 | Return JSON when requested, otherwise render a page | `return yield* jsonOrRender('Projects/Index', { projects })` |
 | Fail with `NotFoundError` | `return yield* notFound('Project', projectId)` |

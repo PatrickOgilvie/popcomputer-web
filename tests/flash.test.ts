@@ -8,11 +8,11 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { Effect, Schema as S } from 'effect'
+import { Effect, Layer, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
-import { back, flash, invalid, redirect, render } from '../src/effect/responses.js'
+import { back, flash, invalid, redirect, redirectNow, render } from '../src/effect/responses.js'
 import { positiveInt, requiredString } from '../src/effect/schema.js'
 import { validateRequest } from '../src/effect/validation.js'
 import { ValidationError } from '../src/effect/errors.js'
@@ -287,5 +287,47 @@ describe('followRedirect', () => {
     const res = await app.request('/projects', { headers: page })
 
     expect(followRedirect(app, res)).rejects.toThrow('Expected a redirect')
+  })
+})
+
+describe('redirectNow', () => {
+  function storeApp() {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+    // A helper that leaves for onboarding when the seller has no store.
+    const sellerStore = (storeId: string | null) =>
+      storeId === null
+        ? Effect.andThen(flash('notice', 'Set up your store first.'), redirectNow('/stores/new'))
+        : Effect.succeed(storeId)
+
+    routes
+      .get('/stores/new', action(render('Stores/New')))
+      .get('/dashboard', action(Effect.gen(function* () {
+        const store = yield* sellerStore(null)
+
+        return yield* render('Dashboard', { store })
+      })))
+      .provide(Layer.effectDiscard(redirectNow('/maintenance')))
+      .get('/admin', action(render('Admin')))
+
+    return app
+  }
+
+  test('leaves the action from a helper, with what it flashed', async () => {
+    const app = storeApp()
+    const res = await app.request('/dashboard', { headers: page })
+
+    expect(res.status).toBe(303)
+    expect(res.headers.get('Location')).toBe('/stores/new')
+
+    const next = await readPage(await followRedirect(app, res), 'Stores/New')
+    expect(next.flash).toEqual({ notice: 'Set up your store first.' })
+  })
+
+  test('leaves from a guard layer', async () => {
+    const res = await storeApp().request('/admin', { headers: page })
+
+    expect(res.status).toBe(303)
+    expect(res.headers.get('Location')).toBe('/maintenance')
   })
 })

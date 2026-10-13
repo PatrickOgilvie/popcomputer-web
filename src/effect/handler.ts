@@ -381,6 +381,11 @@ export async function errorToResponse<E extends Env>(
     return renderErrorResponse(error, c, openWebContext(c).errorBoundary)
   }
 
+  // redirectNow: leaving the action for another page is not an error.
+  if (error instanceof Redirect) {
+    return handleRedirect(error, c)
+  }
+
   const structured = toStructuredError(error, captureErrorContext(c))
 
   await observeEffectError(

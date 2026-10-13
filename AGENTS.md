@@ -42,7 +42,9 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
    `redirect(...)`, `back(...)`, `json(...)`, `jsonOrRender(...)`,
    `file(...)`, `notFound(...)`, `forbidden(...)`, `invalid(...)` or
    `httpError(...)`. `yield* flash(key, value)` before a redirect hands a
-   message to the next page. Expected failures are typed Effect failures:
+   message to the next page; a helper or guard layer that must send the
+   visitor elsewhere fails with `redirectNow(path, params)`. Expected
+   failures are typed Effect failures:
    turn a domain error into a response with `Effect.catchTags`, such as
    `invalid({ amount: error.message })` to show it beside its form field. A
    handler that ends differently per branch branches inside `Effect.gen`,

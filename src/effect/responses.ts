@@ -201,6 +201,26 @@ export const notFound = (resource: string, id?: string | number): Effect.Effect<
   Effect.fail(new NotFoundError({ resource, id }))
 
 /**
+ * Redirect (303) from anywhere in an action, such as a helper or a guard
+ * layer, by failing with the redirect: the rest of the action does not run,
+ * and the boundary answers with the redirect. The helper's type says it may
+ * leave. Values flashed before it reach the next page.
+ *
+ * @example
+ * const sellerStore = Effect.gen(function* () {
+ *   const auth = yield* authorize()
+ *
+ *   return auth.user.storeId ?? (yield* redirectNow(paths.newStore))
+ * })
+ */
+export function redirectNow<const Path extends string>(
+  path: Path,
+  ...args: PathArguments<Path>
+): Effect.Effect<never, Redirect, never> {
+  return Effect.fail(new Redirect({ url: href(path, ...args), status: 303 }))
+}
+
+/**
  * Fail the form with field errors, as `validateRequest` does: the form goes
  * back to its page, which receives them as `errors`, and a JSON client gets a
  * 422. Shows a domain error beside the field it concerns.

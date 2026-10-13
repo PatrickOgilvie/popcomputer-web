@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `redirectNow(path, params)` redirects from anywhere in an action, such as a helper or a guard layer, by failing with the redirect, which the boundary answers; values flashed before it reach the next page. `Redirect` is one of the package's errors.
 - `routes.run(effect, env, ctx)` runs an Effect with the application's services outside a request, from a Worker's `scheduled` or `queue` handler: the database, `services`, `Config` from the bindings, `background()` and the builder's provided layers work as in an action. It resolves with the Effect's value and rejects with its failure; an Effect needing a service the setup does not provide is a type error naming it.
 - `tableSchema(table)` from `@popcomputer/web/schema` is an Effect Schema struct of a Drizzle table's row, each column checked against its type, nullability and enum values, so page props and the signed-in user take their fields from the table: `tableSchema(schema.projects).mapFields(Struct.pick(['id', 'name']))`. Table route bindings check rows with it.
 - `betterAuthSession(user)` from `@popcomputer/web/auth` is setupWeb's `auth.session` with the given user schema, as in `betterAuthSession(tableSchema(schema.user))`, so the user's fields are declared once, in the table. `BetterAuthSessionRecord` is Better Auth's session record.

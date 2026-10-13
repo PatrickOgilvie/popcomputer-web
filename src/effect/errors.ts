@@ -768,6 +768,7 @@ export type AppError =
   | SessionLookupUnavailable
   | InvalidAuthSession
   | AuthRedirect
+  | Redirect
   | RouteConfigurationError
   | ConfigurationError
   | CacheError
