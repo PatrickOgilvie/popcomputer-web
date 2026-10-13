@@ -10,3 +10,8 @@ interface KVNamespace {
     cursor?: string
   }>
 }
+
+// Cloudflare's Workers Rate Limiting binding, as `ratelimits` in wrangler.jsonc declares it.
+interface RateLimit {
+  limit(options: { key: string }): Promise<{ success: boolean }>
+}

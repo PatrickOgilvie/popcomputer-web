@@ -4,6 +4,7 @@
  * Middleware that connects Hono's request handling to Effect's runtime.
  */
 
+import { SignInLimits } from './sign-in-limits.js'
 import { Cause, Config, ConfigProvider, Duration, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
 import { getCookie } from 'hono/cookie'
 import { serialize } from 'hono/utils/cookie'
@@ -624,6 +625,10 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
 
   if (requestCtx.auth !== undefined) {
     baseLayer = Layer.merge(baseLayer, Layer.succeed(AuthService, requestCtx.auth))
+  }
+
+  if (requestCtx.signInLimits !== undefined) {
+    baseLayer = Layer.merge(baseLayer, Layer.succeed(SignInLimits, requestCtx.signInLimits))
   }
 
   if (requestCtx.authUser !== undefined) {

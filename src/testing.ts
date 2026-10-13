@@ -679,3 +679,43 @@ export function testBatch(bodies: ReadonlyArray<unknown>, options: { readonly at
     retried: () => messages.filter((message) => message.outcome === 'retried').map((message) => message.body),
   }
 }
+
+/** A Rate Limiting binding a test hands the application, and how many calls it refused. */
+export interface TestRateLimiter {
+  limit(options: { readonly key: string }): Promise<{ readonly success: boolean }>
+  /** The keys of the calls it refused, in order. */
+  readonly refused: ReadonlyArray<string>
+}
+
+/**
+ * A Cloudflare Workers Rate Limiting binding for tests, as `wrangler.jsonc`'s
+ * `"simple": { "limit", "period" }` declares one: each key may make `limit`
+ * calls per `period` seconds. Give it in the test's bindings under the
+ * binding's name.
+ *
+ * @example
+ * const env = testEnv({ ...testBindings, SIGN_IN_LIMITER: testRateLimiter({ limit: 5 }) }, { database })
+ */
+export function testRateLimiter(options: { readonly limit?: number; readonly period?: number } = {}): TestRateLimiter {
+  const max = options.limit ?? 5
+  const periodMillis = (options.period ?? 60) * 1000
+  const windows = new Map<string, { start: number; count: number }>()
+  const refused: string[] = []
+
+  return {
+    refused,
+    limit: async ({ key }) => {
+      // oxlint-disable-next-line effecttsgo/global-date -- Cloudflare's binding counts in wall-clock periods, outside Effect's clock.
+      const now = Date.now()
+      const window = windows.get(key)
+      const current = window === undefined || now - window.start >= periodMillis ? { start: now, count: 0 } : window
+
+      current.count += 1
+      windows.set(key, current)
+
+      if (current.count > max) refused.push(key)
+
+      return { success: current.count <= max }
+    },
+  }
+}

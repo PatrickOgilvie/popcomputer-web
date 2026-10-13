@@ -15,7 +15,7 @@
  */
 import { Context, Effect, Layer, Schema as S, Struct } from 'effect'
 import { Hono } from 'hono'
-import { boolean, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+import { bigint, boolean, integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 import { betterAuthLogoutAction, betterAuthSession } from '@popcomputer/web/auth'
 import { tableSchema } from '@popcomputer/web/schema'
 import { setupWeb } from '@popcomputer/web'
@@ -98,7 +98,21 @@ interface AppDatabase {
 
 declare function createDb(region: string): AppDatabase
 
-type Env = { Bindings: { readonly REGION: string; readonly MAX_LINKS: string } }
+type Env = {
+  Bindings: {
+    readonly REGION: string
+    readonly MAX_LINKS: string
+    readonly SIGN_IN_LIMITER: { limit(options: { key: string }): Promise<{ success: boolean }> }
+  }
+}
+
+/** Better Auth's rate limit table, where failed sign-ins are counted. */
+const rateLimit = pgTable('rate_limit', {
+  id: text('id').primaryKey(),
+  key: text('key').notNull().unique(),
+  count: integer('count').notNull(),
+  lastRequest: bigint('last_request', { mode: 'number' }).notNull(),
+})
 
 /** A domain service that reads the database. */
 class Projects extends Context.Service<
@@ -131,7 +145,7 @@ export const web = setupWeb(new Hono<Env>(), {
   bindings: { project: Project, member: members },
   pages,
   paths,
-  auth: { session: MemberSession, share: PublicMember },
+  auth: { session: MemberSession, share: PublicMember, signInLimits: { limiter: 'SIGN_IN_LIMITER', table: rateLimit } },
   shared: S.Struct({ locale: S.String }),
   flash: S.Struct({ success: S.String }),
 })
@@ -154,6 +168,9 @@ const usesProjects = action(Effect.gen(function* () {
 routes.get(paths.project, usesProjects)
 // @ts-expect-error web.routes, from before the services, does not provide Projects.
 web.routes.get(paths.project, usesProjects)
+
+// @ts-expect-error REGION is a var, not a Rate Limiting binding.
+setupWeb(new Hono<Env>(), { auth: { signInLimits: { limiter: 'REGION', table: rateLimit } } })
 
 // @ts-expect-error The application's services go to web.services, not setupWeb.
 setupWeb(new Hono<Env>(), { services: { app: ProjectsLive } })

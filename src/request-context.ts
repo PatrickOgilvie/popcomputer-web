@@ -1,5 +1,6 @@
 /** The single owner of framework per-request state. */
 
+import type { ActiveSignInLimits } from './effect/sign-in-limits.js'
 import type { Context, Env, MiddlewareHandler } from 'hono'
 import type { Config, ManagedRuntime } from 'effect'
 import type {
@@ -54,6 +55,8 @@ export interface WebRequestContext<E extends Env = Env> {
   signInPath?: string
   /** setupWeb() — where a signed-in visitor goes from a page for guests. */
   homePath?: string
+  /** setupWeb() — the sign-in limits, with the request's Rate Limiting binding. */
+  signInLimits?: ActiveSignInLimits
   /**
    * loadUser() — custom session cookie names registered for this request.
    * The response-cache policy treats these (and better-auth's default

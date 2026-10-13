@@ -105,10 +105,14 @@ TypeScript example here and in the README type-checks against the package.
    Sign users in and up with an action that validates its form and returns
    `betterAuthRedirect('signInEmail', { body: input }, { redirectTo, errors })`
    from `@popcomputer/web/auth`, which sends the call through Better Auth's
-   handler so its rate limits apply; call Better Auth for a result the action
+   handler so the limits apply; call Better Auth for a result the action
    uses with `betterAuthCall(endpoint, { body })`. Never call `auth.api` from
-   an action: it skips Better Auth's rate limits. Turn them on in
-   `betterAuth({ rateLimit: { enabled: true, storage: 'database' } })`. A role a user
+   an action: it skips them. Limit password guessing with `setupWeb`'s
+   `auth.signInLimits: { limiter: 'SIGN_IN_LIMITER', table: schema.rateLimit }`
+   (a Workers Rate Limiting binding, and Better Auth's `rateLimit` table for
+   each account's failures), sweep the table with
+   `routes.scheduled(() => sweepSignInFailures)`, and keep
+   `betterAuth({ rateLimit: { enabled: true, storage: 'memory' } })`. A role a user
    holds per team or workspace lives on a membership row a guard layer
    reads, not on the user. Register a JSON
    API's routes on `routes.jsonApi()`, with their declared paths

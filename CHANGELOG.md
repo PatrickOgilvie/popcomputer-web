@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `setupWeb`'s `auth.signInLimits` slows password guessing whichever addresses it comes from. A Cloudflare Workers Rate Limiting binding counts each client address's sign-in, sign-up and password calls, and each account's sign-ins, at the edge. Better Auth's `rateLimit` table counts each account's failed sign-ins: after 10 in 15 minutes the account cools down for a minute, doubled by each further failure up to the window, and a sign-in during a cooldown is refused before its password is hashed. Only a failure writes a row, keyed by a hash of the account. `limiter` accepts only the bindings typed `RateLimit`. `sweepSignInFailures` from `@popcomputer/web/auth` deletes stale rows from a Cron Trigger, and `testRateLimiter()` from `@popcomputer/web/testing` stands in for the binding. Better Auth's own limits count only each address, so guesses spread across many addresses were never slowed, and with `storage: 'database'` every request to Better Auth wrote a row.
+
 ### Fixed
 
 - `betterAuthCall` and `betterAuthRedirect`'s `redirectTo` type an endpoint's result as the JSON Better Auth's handler answers, with dates as ISO strings: it was typed with `Date`s, so an endpoint whose success schema had `S.Date` failed after Better Auth had created the user. The bearer plugin's `set-auth-token` header reaches the response.
@@ -21,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The README's tests get a fresh PGlite database per test from a snapshot of the migrated one, `dumpDataDir` then `loadDataDir`: about 70 ms a test against about 450 ms to create and migrate even a one-table database. On D1, one Miniflare with a database per test is disposed in a `bunfig.toml` preload, since an undisposed one keeps `workerd` running after `bun test` exits. The first test example reads its page with `readPage`, and the README says why `readJson` beats `await res.json()`.
-- The README gives Better Auth's tables for Postgres and Cloudflare D1, including `rateLimit` for the setup's database-stored limits. Both were checked by signing up, signing in and being rate limited against them. Installation names the development tools and their versions (drizzle-kit, `@cloudflare/workers-types`, PGlite, Miniflare) and the module type `oxlint.config.ts` needs. The webhook example rejects a signature that is not 64 hex digits before verifying it.
+- The README gives Better Auth's tables for Postgres and Cloudflare D1, including `rateLimit`, where `auth.signInLimits` counts failed sign-ins; the setup keeps Better Auth's own limits in memory. Both were checked by signing up, signing in and being rate limited against them. Installation names the development tools and their versions (drizzle-kit, `@cloudflare/workers-types`, PGlite, Miniflare) and the module type `oxlint.config.ts` needs. The webhook example rejects a signature that is not 64 hex digits before verifying it.
 - Every response gets, unless it sets its own, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` and refused framing (`X-Frame-Options: DENY`, `frame-ancestors 'none'` added to its `Content-Security-Policy`), so another site cannot frame a page to trick a visitor into clicking. `security.headers` takes `{ frames: 'same-origin' }`, or `false` for none; `securityHeaders` from `@popcomputer/web` adds them to a lower-level composition.
 - `readMigrations(folder)` from `@popcomputer/web/testing` returns drizzle-kit's migrations as statements, for a database that runs many at once: a fresh D1 database migrates in one `batch`.
 - `setupWeb`'s `auth.homePath` names where a signed-in visitor goes from a page for guests; `RequireGuestLayer`, and `createGuestLayer` without its own destination, send them there instead of always to `/`.

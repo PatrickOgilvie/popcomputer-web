@@ -5,6 +5,7 @@ import type { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
 import type { Config, Layer, Schema as S } from 'effect'
 import { web } from './middleware.js'
+import { activeSignInLimits, type RateLimiterName, type SignInLimitsConfig } from './effect/sign-in-limits.js'
 import { originRefusal, securityHeaders, type SecurityHeadersConfig, type VerifyOriginConfig } from './security.js'
 import type { WebConfig } from './types.js'
 import { loadUserMiddleware, shareAuthMiddleware } from './effect/auth.js'
@@ -82,6 +83,16 @@ export interface WebAuthOptions<
    * sign-in page: `RequireGuestLayer` redirects here. Defaults to `/`.
    */
   readonly homePath?: SignInPath
+  /**
+   * Slow down password guessing: a Cloudflare Rate Limiting binding counts
+   * each client address's sign-in, sign-up and password calls and each
+   * account's sign-ins, and Better Auth's `rateLimit` table counts an
+   * account's failed sign-ins, cooling it down past `failures.max`.
+   *
+   * @example
+   * signInLimits: { limiter: 'SIGN_IN_LIMITER', table: schema.rateLimit }
+   */
+  readonly signInLimits?: SignInLimitsConfig<RateLimiterName<E extends { Bindings: infer Bindings } ? Bindings : never>>
 }
 
 interface WebSetupOptions<E extends Env> extends WebConfig {
@@ -430,6 +441,8 @@ function createSetupMiddleware<
     requestCtx.errorBoundary = config.errors
     requestCtx.signInPath = config.auth?.signInPath
     requestCtx.homePath = config.auth?.homePath
+    const signInLimits = config.auth?.signInLimits
+    requestCtx.signInLimits = signInLimits === undefined ? undefined : activeSignInLimits(signInLimits, c.env ?? {})
     const executionContext = getRequestExecutionContextClient(c)
 
     const backgroundTasks: AuthBackgroundTasks = {

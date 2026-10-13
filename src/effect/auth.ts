@@ -17,8 +17,10 @@ import {
   SessionLookupUnavailable,
   UnauthorizedError,
 } from './errors.js'
-import type { AuthRateLimitError, AuthRedirect, ValidationError } from './errors.js'
+import { AuthRateLimitError, type AuthRedirect, type ValidationError } from './errors.js'
+import { accountOf, clientAddress, isPasswordSignIn, withinSignInLimits } from './sign-in-limits.js'
 import {
+  inspectBetterAuthActionResult,
   runBetterAuthApiCall,
   toAuthActionError,
   type BetterAuthActionError,
@@ -480,6 +482,18 @@ function isBetterAuthInstance(auth: unknown): auth is BetterAuthInstance {
   return auth instanceof Object && Reflect.get(auth, 'api') instanceof Object && Reflect.get(auth, 'handler') instanceof Function
 }
 
+/** An endpoint on `auth.api`, by name, and its path under Better Auth's base path. */
+function endpointOf(auth: BetterAuthInstance, name: string): { readonly endpoint: object; readonly path: string } {
+  const endpoint: unknown = Reflect.get(auth.api, name)
+  const path: unknown = endpoint instanceof Object ? Reflect.get(endpoint, 'path') : undefined
+
+  if (!(endpoint instanceof Object) || typeof path !== 'string') {
+    throw new Error(`Better Auth has no endpoint named '${name}' on auth.api; a plugin's endpoint needs the plugin in betterAuth({ plugins }).`)
+  }
+
+  return { endpoint, path }
+}
+
 /** The headers of the request that reach Better Auth: its cookies, client address and origin, not its body's. */
 const BODY_HEADERS = ['content-length', 'content-type', 'content-encoding', 'transfer-encoding']
 
@@ -498,13 +512,7 @@ async function sendThroughHandler(
     throw new Error('Better Auth is not configured: setupWeb has no auth.client, or it returned something that is not a Better Auth instance.')
   }
 
-  const endpoint: unknown = Reflect.get(auth.api, name)
-  const path: unknown = endpoint instanceof Object ? Reflect.get(endpoint, 'path') : undefined
-
-  if (!(endpoint instanceof Object) || typeof path !== 'string') {
-    throw new Error(`Better Auth has no endpoint named '${name}' on auth.api; a plugin's endpoint needs the plugin in betterAuth({ plugins }).`)
-  }
-
+  const { endpoint, path } = endpointOf(auth, name)
   const endpointOptions: unknown = Reflect.get(endpoint, 'options')
   const declared: unknown = endpointOptions instanceof Object ? Reflect.get(endpointOptions, 'method') : undefined
   const methods = (Array.isArray(declared) ? declared : [declared]).filter((method): method is string => typeof method === 'string')
@@ -559,9 +567,21 @@ function callEndpoint(
   return Effect.gen(function* () {
     const auth = yield* AuthService
     const request = yield* RequestService
+    const raw = request.raw()
 
-    const response = yield* runBetterAuthApiCall(() => sendThroughHandler(auth, request.raw(), name, input)).pipe(
-      Effect.mapError((failure) => toAuthActionError(failure, errors))
+    if (!isBetterAuthInstance(auth)) {
+      return yield* Effect.die(new Error('Better Auth is not configured: setupWeb has no auth.client, or it returned something that is not a Better Auth instance.'))
+    }
+
+    const { path } = yield* Effect.try({ try: () => endpointOf(auth, name), catch: (cause) => cause }).pipe(Effect.orDie)
+    const attempt = { path, address: clientAddress(raw.headers), account: accountOf(input.body) }
+
+    const response = yield* withinSignInLimits(
+      attempt,
+      runBetterAuthApiCall(() => sendThroughHandler(auth, raw, name, input), { inspectResult: false })
+    ).pipe(
+      Effect.flatMap(inspectBetterAuthActionResult),
+      Effect.mapError((failure) => failure instanceof AuthRateLimitError ? failure : toAuthActionError(failure, errors))
     )
 
     // Once Better Auth has signed the visitor in, its session cookie reaches
@@ -678,23 +698,54 @@ export function betterAuthCall<const Name extends BetterAuthEndpoint>(
  * A server-rendered app that signs users in with `betterAuthRedirect` does
  * not need it.
  */
-export const betterAuthHandler: Effect.Effect<Response, HttpError, RequestService | AuthService> =
+export const betterAuthHandler: Effect.Effect<Response, HttpError | AuthRateLimitError, RequestService | AuthService> =
   Effect.gen(function* () {
     const auth = yield* AuthService
     const request = yield* RequestService
-    const handler: unknown = auth instanceof Object
-      ? Object.getOwnPropertyDescriptor(auth, 'handler')?.value
-      : undefined
 
-    if (!(handler instanceof Function)) {
+    if (!isBetterAuthInstance(auth)) {
       return yield* new HttpError({ status: 500, message: 'Better Auth is not configured: setupWeb has no auth.client.' })
     }
 
-    return yield* Effect.tryPromise({
-      try: (): Promise<Response> => Promise.resolve(handler.call(auth, request.raw())),
-      catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
-    })
+    const raw = request.raw()
+    const path = yield* Effect.promise(() => handlerPath(auth, raw))
+    // A password sign-in's account, from its body, which the handler then reads itself.
+    const account = isPasswordSignIn(path) ? accountOf(yield* Effect.promise(() => bodyOf(raw))) : undefined
+
+    return yield* withinSignInLimits(
+      { path, address: clientAddress(raw.headers), account },
+      Effect.tryPromise({
+        try: (): Promise<Response> => Promise.resolve(auth.handler(raw)),
+        catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
+      })
+    )
   })
+
+/** The request's path under Better Auth's base path, as its endpoints name theirs. */
+async function handlerPath(auth: BetterAuthInstance, request: Request): Promise<string> {
+  const context = auth.$context === undefined ? undefined : await auth.$context
+  const base = context?.baseURL !== undefined && context.baseURL !== ''
+    ? new URL(context.baseURL).pathname
+    : auth.options?.basePath ?? '/api/auth'
+  const pathname = new URL(request.url).pathname
+  const prefix = base.replace(/\/$/, '')
+
+  return pathname.startsWith(`${prefix}/`) ? pathname.slice(prefix.length) : pathname
+}
+
+/** A JSON or form body, read from a copy, or none. */
+async function bodyOf(request: Request): Promise<unknown> {
+  const type = request.headers.get('content-type') ?? ''
+
+  try {
+    if (type.includes('application/json')) return await request.clone().json()
+    if (type.includes('form')) return Object.fromEntries(await request.clone().formData())
+  } catch {
+    // A body the handler will refuse itself.
+  }
+
+  return undefined
+}
 
 /**
  * Config for better-auth logout actions.

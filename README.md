@@ -158,6 +158,7 @@ export type Bindings = {
   PAYMENT_WEBHOOK_SECRET: string
   TIME_ZONE?: string
   KV: KVNamespace
+  SIGN_IN_LIMITER: RateLimit
 }
 
 export type Env = { Bindings: Bindings }
@@ -311,6 +312,9 @@ export const web = setupWeb(new Hono<Env>(), {
     }),
     // The user's fields are the user table's; pages see only `share`'s.
     session: betterAuthSession(tableSchema(schema.user)),
+    // Slow password guessing: the binding wrangler.jsonc declares, and
+    // Better Auth's rateLimit table, where failed sign-ins are counted.
+    signInLimits: { limiter: 'SIGN_IN_LIMITER', table: schema.rateLimit },
     share: tableSchema(schema.user).mapFields(Struct.pick(['id', 'name', 'image'])),
   },
   shared: S.Struct({ unreadCount: S.Number }),
@@ -400,10 +404,11 @@ export function createAuth(options: CreateAuthOptions) {
     secret: options.secret,
     baseURL: options.baseURL,
     emailAndPassword: { enabled: true },
-    // Limit signing in and up per client, counted in the database so every
-    // Worker isolate shares the count. Better Auth turns its limits on only
-    // when NODE_ENV is 'production', which a Worker does not set.
-    rateLimit: { enabled: true, storage: 'database' },
+    // Signing in, up and every password call are limited by setupWeb's
+    // auth.signInLimits. Better Auth's own limits, on by default only when
+    // NODE_ENV is 'production', stay on in memory for its other endpoints,
+    // writing nothing.
+    rateLimit: { enabled: true, storage: 'memory' },
     advanced: {
       ...options.advanced,
       ipAddress: { ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for'], ...options.advanced?.ipAddress },
@@ -424,7 +429,7 @@ export function createStatelessAuth(options: CreateStatelessAuthOptions) {
 
 Better Auth reads and writes five tables, which the application's schema
 declares beside its own: `user`, `session`, `account`, `verification`, and
-`rateLimit`, where the setup above keeps its rate limits.
+`rateLimit`, where `auth.signInLimits` counts each account's failed sign-ins.
 `npx @better-auth/cli generate` writes them from the configuration; these
 are the tables Better Auth 1.7 needs for it, in a module `src/schema.ts`
 re-exports with `export * from './auth-schema'`. Their keys in the schema are
@@ -497,7 +502,7 @@ export const verification = pgTable(
   (table) => [index('verification_identifier_idx').on(table.identifier)]
 )
 
-// Better Auth's request counts, when rateLimit.storage is 'database'.
+// Each account's failed sign-ins, which auth.signInLimits counts.
 export const rateLimit = pgTable('rate_limit', {
   id: text('id').primaryKey(),
   key: text('key').notNull().unique(),
@@ -576,7 +581,7 @@ export const verification = sqliteTable(
   (table) => [index('verification_identifier_idx').on(table.identifier)]
 )
 
-// Better Auth's request counts, when rateLimit.storage is 'database'.
+// Each account's failed sign-ins, which auth.signInLimits counts.
 export const rateLimit = sqliteTable('rate_limit', {
   id: text('id').primaryKey(),
   key: text('key').notNull().unique(),
@@ -1079,6 +1084,7 @@ and the lint rules name it where an action reaches for something else.
 | Return to the page the visitor wanted | `intendedUrl(fallback)` | [Signing in and out](#signing-in-and-out) |
 | Call Better Auth for a result | `betterAuthCall('enableTwoFactor', { body }, { errors })` | [Signing in and out](#signing-in-and-out) |
 | Sign out | `betterAuthLogoutAction({ redirectTo, clear })` | [Signing in and out](#signing-in-and-out) |
+| Limit password guessing | `auth.signInLimits`, `sweepSignInFailures` | [Limiting password guessing](#limiting-password-guessing) |
 | Add a field to the user | a column on the user table, with `betterAuthFields` | [Auth](#auth) |
 | Authenticate an API key | a layer failing with `new UnauthorizedError({ message, challenge: 'Bearer' })` | [Caching an API](#caching-an-api-that-authenticates-each-request) |
 
@@ -1699,6 +1705,53 @@ An application that authenticates some other way, such as API keys, provides
 its own user service through a layer that fails with `UnauthorizedError`:
 `routes.provide(ApiKeyAuth)` runs it before the action, so every route
 registered through it can read the service.
+
+### Limiting password guessing
+
+Better Auth's own limits count each client address, so guesses at one
+account's password spread across a botnet's addresses are never slowed, and
+each one costs a password hash. `setupWeb`'s `auth.signInLimits` limits both,
+cheapest first:
+
+- A Cloudflare Workers Rate Limiting binding counts each client address's
+  sign-in, sign-up and password calls, and each account's sign-ins, at
+  Cloudflare's edge, writing nothing. `limiter` names it, and accepts only the
+  bindings `src/env.ts` types `RateLimit`. Declare it in `wrangler.jsonc`; its
+  `period` is 10 or 60 seconds:
+
+  ```jsonc
+  "ratelimits": [{ "name": "SIGN_IN_LIMITER", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } }]
+  ```
+
+- `table`, Better Auth's `rateLimit` table, counts each account's failed
+  sign-ins over `failures.window`, 15 minutes by default. Past
+  `failures.max`, 10, the account cools down for `failures.cooldown`, a
+  minute, doubled by each further failure up to the window. A sign-in during
+  a cooldown is refused before its password is hashed. It is a cooldown, not
+  a lock: someone who knows an address can slow its owner down, never shut
+  them out. Only a failure writes a row, a successful sign-in deletes it, and
+  the row's key is a hash of the account, not its address.
+
+`betterAuthRedirect`, `betterAuthCall` and `betterAuthHandler` all apply the
+limits. A refused call fails with `AuthRateLimitError`, whose
+`retryAfterSeconds` the 429 sends as `Retry-After`. Rows for accounts nobody
+tries again stay until a sweep deletes them; run `sweepSignInFailures` from
+`@popcomputer/web/auth` from a Cron Trigger:
+
+```ts
+import { sweepSignInFailures } from '@popcomputer/web/auth'
+
+export default {
+  fetch: app.fetch,
+  scheduled: routes.scheduled(() => sweepSignInFailures),
+}
+```
+
+In tests, give the binding `testRateLimiter({ limit, period })` from
+`@popcomputer/web/testing` among the bindings, and read the keys it refused
+from its `refused`. It counts by the wall clock, as Cloudflare's does, not by
+`testClock`, so a test of cooldowns gives it a limit the test never reaches.
+A request whose bindings lack the limiter fails with a message naming it.
 
 ## Responses and failures
 
@@ -2547,8 +2600,8 @@ describe('GET /projects/{project}', () => {
 ```
 
 `testBindings` is the application's test configuration: here, the URL of a
-migrated test database with `project-1` owned by `user-1`, an auth secret and a
-KV namespace. An `X-Inertia` request returns the page object as JSON, so tests
+migrated test database with `project-1` owned by `user-1`, an auth secret, a
+KV namespace and `testRateLimiter()` as the sign-in limiter. An `X-Inertia` request returns the page object as JSON, so tests
 assert on the component and props rather than HTML.
 
 An action is an Effect, so a test can also run it directly and provide the
