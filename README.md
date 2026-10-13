@@ -766,6 +766,52 @@ void createInertiaApp({
 bundler; `createVersion(manifest)` changes with every build, so a visitor on
 an old build reloads into the new one.
 
+### 6. Wire the Worker
+
+A route is registered when the module that registers it runs, so the
+Worker's entry imports every module of registrations. A module nothing
+imports leaves its routes answering 404, with no error to say why. Point
+Wrangler's `main` at the entry, `"main": "src/worker.ts"` in
+`wrangler.jsonc`:
+
+```ts
+// src/worker.ts
+import { app } from './app'
+import './routes'
+import './auth-routes'
+import './api-routes'
+
+export default app
+```
+
+A Worker that also runs Cron Triggers or a Queue consumer exports their
+handlers beside `fetch`, as [Scheduled and queued work](#scheduled-and-queued-work)
+shows. A test imports the same modules, or the entry itself, before its first
+request.
+
+Each file of the application declares one thing, and the rest reads it:
+
+| File | Declares | Read by |
+| --- | --- | --- |
+| `src/env.ts` | the Worker's bindings | `new Hono<Env>()`, `config`, `testEnv`'s bindings |
+| `src/schema.ts` | the Drizzle tables | `bindings`, `tableSchema`, `columnsOf`, cache tags, Better Auth |
+| `src/db.ts`, `src/auth.ts` | the database and Better Auth clients | `setupWeb`'s `database` and `auth.client` |
+| `src/paths.ts` | every route's path | `routes`, `redirect`, `back`, `href`, endpoint contracts |
+| `src/pages.ts` | each page's props | `render`, `WebPage`, `readPage` |
+| `src/forms.ts` | each form's fields | `validateRequest` in actions, `FormInput` in React |
+| `src/endpoints.ts` | each JSON endpoint's contract | `action(endpoint, ...)`, `routes.endpoint`, `call`, `openApi` |
+| `src/services.ts` | application services and their layers | `setupWeb`'s `services` |
+| `src/app.ts` | `setupWeb(...)` and its registration | every type above |
+| `src/routes.ts` and other route modules | the registrations | `src/worker.ts` |
+| `src/actions/**` | one action per route | the route modules |
+| `src/pages/**`, `src/main.tsx` | the React pages and the page map | the browser bundle |
+
+The browser bundle may import `src/paths.ts`, `src/forms.ts` and
+`src/endpoints.ts`, which import only `effect`, the validators and the paths.
+Everything else is server code: a React page reads its props through
+`WebPage`, which takes them from the registration, never by importing
+`src/pages.ts`, which reads the tables.
+
 ## Which API for which task
 
 Each task has one API. When the one you need is not here, the type checker
