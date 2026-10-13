@@ -23,6 +23,7 @@
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
+import { rules as lintRules } from '../../src/lint/index.js'
 
 const repoRoot = join(import.meta.dir, '..', '..')
 const documents = ['README.md', 'AGENTS.md']
@@ -265,7 +266,7 @@ async function main(): Promise<number> {
 
   if (result.status === 0) {
     console.log(`${documents.join(', ')}: ${fences.length} TypeScript examples type-check.`)
-    return 0
+    return lintExamples(sourceMaps)
   }
 
   // Rewrite `src/file.ts(line,col): message` to point at the document.
@@ -284,6 +285,53 @@ async function main(): Promise<number> {
 
   console.error(rewritten.join('\n'))
   console.error(`\nDocumentation examples failed to type-check. Generated sources: ${relative(repoRoot, outDir)}`)
+  return 1
+}
+
+/**
+ * Lint the examples with the package's own rules: the code agents copy must
+ * follow the rules the package asks them to run.
+ */
+function lintExamples(sourceMaps: ReadonlyMap<string, ReadonlyArray<OutputLine>>): number {
+  const config = join(outDir, 'oxlintrc.json')
+  const rules = Object.fromEntries(Object.keys(lintRules).map((name) => [`popcomputer-web/${name}`, 'error']))
+
+  writeFileSync(config, JSON.stringify({
+    categories: { correctness: 'off' },
+    jsPlugins: [{ name: 'popcomputer-web', specifier: dist('lint/index', '.js') }],
+    rules,
+  }))
+
+  const oxlint = join(repoRoot, 'node_modules', '.bin', 'oxlint')
+  // Named one by one: Oxlint skips the files of a hidden directory it walks.
+  const files = [...sourceMaps.keys()].filter((file) => /\.tsx?$/.test(file))
+  const result = spawnSync(oxlint, ['--disable-nested-config', '--no-ignore', '--config', config, '--format', 'json', ...files], {
+    cwd: outDir,
+    encoding: 'utf8',
+  })
+  const report: { diagnostics?: ReadonlyArray<{ code: string; message: string; filename: string; labels: ReadonlyArray<{ span: { line: number } }> }> } =
+    JSON.parse(result.stdout || '{}')
+  const diagnostics = report.diagnostics ?? []
+
+  if (report.diagnostics === undefined && result.status !== 0) {
+    console.error(result.stderr)
+    return 1
+  }
+
+  if (diagnostics.length === 0) {
+    console.log(`${documents.join(', ')}: examples follow the package's lint rules.`)
+    return 0
+  }
+
+  for (const diagnostic of diagnostics) {
+    const line = diagnostic.labels[0]?.span.line ?? 0
+    const source = sourceMaps.get(diagnostic.filename)?.[line - 1]?.source
+    const where = source === undefined ? `${diagnostic.filename}:${line}` : `${source.document}:${source.line}`
+
+    console.error(`${where}: ${diagnostic.code}: ${diagnostic.message}`)
+  }
+
+  console.error(`\nDocumentation examples break the package's lint rules. Generated sources: ${relative(repoRoot, outDir)}`)
   return 1
 }
 

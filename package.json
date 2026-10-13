@@ -42,6 +42,11 @@
       "import": "./dist/endpoint.js",
       "default": "./dist/endpoint.js"
     },
+    "./lint": {
+      "types": "./dist/lint/index.d.ts",
+      "import": "./dist/lint/index.js",
+      "default": "./dist/lint/index.js"
+    },
     "./drizzle": {
       "types": "./dist/drizzle.d.ts",
       "import": "./dist/drizzle.js",
@@ -126,6 +131,7 @@
     "effect": "4.0.3",
     "esbuild": "^0.28.2",
     "hono": "^4.13.13",
+    "oxlint": "1.82.0",
     "postgres": "^3.4.9",
     "typescript": "^7.0.2"
   }

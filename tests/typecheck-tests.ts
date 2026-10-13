@@ -22,7 +22,8 @@ const requested = process.argv.slice(2)
 const files = requested.length > 0
   ? requested
   : (await Array.fromAsync(new Bun.Glob('tests/**/*.ts').scan({ cwd: repoRoot })))
-      .filter((file) => !file.startsWith('tests/docs/') && !file.startsWith('tests/.'))
+      // Lint fixtures are source text for the lint rules, not programs.
+      .filter((file) => !file.startsWith('tests/docs/') && !file.startsWith('tests/.') && !file.startsWith('tests/lint/fixtures/'))
       .sort()
 
 function check(file: string): Promise<{ file: string; ok: boolean; output: string }> {

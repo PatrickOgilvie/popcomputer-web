@@ -170,6 +170,7 @@ responses, pages, the database, services and errors;
 Better Auth integration; `@popcomputer/web/cache` for the KV cache;
 `@popcomputer/web/drizzle` for `rowOf`; `@popcomputer/web/endpoint` for
 `endpoint`, `call` and `openApi`, on the server and in clients alike;
+`@popcomputer/web/lint` for `webLint`, in `oxlint.config.ts`;
 `@popcomputer/web/react` for page component types; `@popcomputer/web/paths`
 for `href`, in React and actions alike; `@popcomputer/web/testing` in tests.
 
@@ -241,7 +242,12 @@ has `errors.name` (a JSON request gets a `422`).
 
 ## Before finishing
 
-Run the application's type check (`tsc --noEmit`) and `bun test`. A type error
+Run the application's type check (`tsc --noEmit`), the package's lint rules
+(`bunx oxlint`, with `oxlint.config.ts` exporting
+`defineConfig(webLint())` from `@popcomputer/web/lint`) and `bun test`. Each
+lint message names the API to use instead; fix the code rather than
+disabling the rule, and when a line breaks one on purpose, say why in the
+disable comment. A type error
 at `routes.get(...)` names the problem: `missingServices` lists services the
 setup does not provide (configure them in `setupWeb`, or `routes.provide(layer)`),
 `unhandledErrors` lists failures that are not the package's errors (handle
