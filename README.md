@@ -2412,10 +2412,10 @@ so server-only changes still appear.
 - Signed-in requests, requests with `Authorization` or app cookies, partial
   reloads, stale Inertia versions and development never use the cache. Analytics
   and Cloudflare cookies such as `_ga` and `__cf_bm` don't count as app cookies.
-- Signed-in responses that set no `Cache-Control` get `no-store`, and every
-  other response that sets none gets `private, no-cache`: Workers Cache, once
-  enabled, would otherwise keep a page rendered per request and serve it to
-  other visitors.
+- A response that sets no `Cache-Control` gets `no-store` when it is signed
+  in or sets a cookie, such as a sign-in's, and `private, no-cache`
+  otherwise: Workers Cache, once enabled, would otherwise keep a page
+  rendered per request and serve it to other visitors.
 - Browsers always revalidate cached pages. A page is stored only if the final
   response, after all middleware, still allows it: no `Set-Cookie`, and no
   other `Cache-Control`.
@@ -3959,8 +3959,9 @@ application and its tests:
   is absent reads `This field is required` rather than `Missing key`.
 - **Caching is stricter.** Cached responses vary on `Cookie`, so a visitor
   with any cookie renders afresh; a response without `Cache-Control` gets
-  `private, no-cache`; and `purges: true` on a route without a `{param}`
-  throws at registration.
+  `no-store` when it is signed in or sets a cookie and `private, no-cache`
+  otherwise; and `purges: true` on a route without a `{param}` throws at
+  registration.
 - **Production errors say less.** Production JSON errors no longer include
   `fixes`, every 404 has the same message, and a client that matches error
   codes reads `WEB_` instead of `HON_`. Expected 4xx failures are no longer
