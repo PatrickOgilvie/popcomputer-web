@@ -44,10 +44,13 @@ TypeScript example here and in the README type-checks against the package.
    page in `shared`, computed when a page renders by
    `routes.provide(shareProps(effect))`, and flash values in `flash`.
 4. **End every branch with a response helper:** `return yield* render(...)`,
-   `redirect(...)`, `json(...)`, `jsonOrRender(...)`, `file(...)`,
-   `notFound(...)`, `forbidden(...)` or `httpError(...)`. `yield* flash(key, value)` before a
-   redirect hands a message to the next page. Expected failures are typed
-   Effect failures. Do not `throw` in an action.
+   `redirect(...)`, `back(...)`, `json(...)`, `jsonOrRender(...)`,
+   `file(...)`, `notFound(...)`, `forbidden(...)`, `invalid(...)` or
+   `httpError(...)`. `yield* flash(key, value)` before a redirect hands a
+   message to the next page. Expected failures are typed Effect failures:
+   turn a domain error into a response with `Effect.catchTags`, such as
+   `invalid({ amount: error.message })` to show it beside its form field. Do
+   not `throw` in an action.
 5. **Read request input only through `validateRequest(Schema)`.** Build schemas
    from `@popcomputer/web/schema` validators (`requiredString`,
    `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, ...), which
@@ -77,7 +80,10 @@ TypeScript example here and in the README type-checks against the package.
    `dbTransaction(Effect.gen(...))` (Postgres, MySQL, libsql); on Cloudflare
    D1, put the writes in one `dbBatch` and enforce limits inside the write
    statement. Write only validated input and values the server derives, and
-   scope `where` clauses with bound models. Pipe a write through
+   scope `where` clauses with bound models. State an invariant concurrent
+   requests could break as a database constraint (`CHECK (stock >= 0)`, a
+   unique idempotency key or webhook event id) and handle
+   `DatabaseConstraintViolation` by its `constraint`. Pipe a write through
    `uniqueFieldErrors({ column: 'message' })` to show a duplicate as a field
    error.
 9. **Provide application services in `setupWeb`'s `services`:** `app` for
@@ -98,7 +104,10 @@ TypeScript example here and in the README type-checks against the package.
     `signedIn(user)` signs the request in, and `readPage(res, 'Name')` reads
     an `X-Inertia` response typed by the page registry. Test against the
     production database family: PGlite for Postgres (`testEnv`'s `database`),
-    Miniflare's D1 for D1, migrated with `applyMigrations`.
+    Miniflare's D1 for D1, migrated with `applyMigrations`. Replace a service
+    that reaches another system with `Layer.succeed(Service, fake)` in the
+    layer, and move time with `testClock()`, which works when rules read the
+    time through Effect's `Clock` or `DateTime.now`.
 
 Every name has one entrypoint: `@popcomputer/web` for `setupWeb`, template
 helpers and Hono middleware; `@popcomputer/web/effect` for actions, routes,

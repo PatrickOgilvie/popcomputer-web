@@ -4,6 +4,7 @@
  * Wraps Effect computations into Hono handlers.
  */
 
+import { sameOriginReferer } from './referer.js'
 import { Option, Effect, Exit, Cause, ManagedRuntime, Result } from 'effect'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
@@ -268,17 +269,7 @@ function signInUrl<E extends Env>(c: HonoContext<E>): string {
 
 /** The same-origin page the request came from, or the home page. */
 function previousUrl<E extends Env>(c: HonoContext<E>): string {
-  const referer = c.req.header('Referer')
-
-  if (!referer) return '/'
-
-  try {
-    const previous = new URL(referer)
-
-    return previous.origin === new URL(c.req.url).origin ? `${previous.pathname}${previous.search}` : '/'
-  } catch {
-    return '/'
-  }
+  return sameOriginReferer(c.req.header('Referer'), c.req.url) ?? '/'
 }
 
 function appendVerifiedErrorHeaders(

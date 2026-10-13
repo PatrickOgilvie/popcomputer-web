@@ -11,7 +11,8 @@ import {
   ResponseFactoryService,
   RequestService,
 } from './services.js'
-import { Redirect, NotFoundError, ForbiddenError, HttpError } from './errors.js'
+import { Redirect, NotFoundError, ForbiddenError, HttpError, ValidationError } from './errors.js'
+import { sameOriginReferer } from './referer.js'
 import type { PagePropValue } from '../types.js'
 import {
   encodeDeclaredField,
@@ -198,6 +199,35 @@ function withHeaders(response: Response, init: ResponseOptions): Response {
  */
 export const notFound = (resource: string, id?: string | number): Effect.Effect<never, NotFoundError, never> =>
   Effect.fail(new NotFoundError({ resource, id }))
+
+/**
+ * Fail the form with field errors, as `validateRequest` does: the form goes
+ * back to its page, which receives them as `errors`, and a JSON client gets a
+ * 422. Shows a domain error beside the field it concerns.
+ *
+ * @example
+ * yield* placeOffer(input).pipe(
+ *   Effect.catchTag('OfferTooLow', (error) => invalid({ amount: error.message }))
+ * )
+ */
+export const invalid = (errors: Readonly<Record<string, string>>): Effect.Effect<never, ValidationError, never> =>
+  Effect.fail(new ValidationError({ errors }))
+
+/**
+ * Redirect (303) back to the page the request came from, as a failed form
+ * does, or to `fallback` when it came from another site or none.
+ *
+ * @example
+ * Effect.catchTag('ListingNotOpen', (error) =>
+ *   Effect.andThen(flash('error', error.message), back(paths.search))
+ * )
+ */
+export const back = (fallback = '/'): Effect.Effect<Redirect, never, RequestService> =>
+  Effect.gen(function* () {
+    const request = yield* RequestService
+
+    return new Redirect({ url: sameOriginReferer(request.header('Referer'), request.url) ?? fallback, status: 303 })
+  })
 
 /**
  * Fail with a forbidden error.

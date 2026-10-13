@@ -899,10 +899,12 @@ endings, not statements to run in sequence:
 |---|---|
 | Render a page | `return yield* render('Dashboard', { stats })` |
 | Redirect | `return yield* redirect(paths.project, { project: project.id })` |
+| Redirect to the page the request came from | `return yield* back(paths.projects)` |
 | Return JSON | `return yield* json({ projects })` |
 | Return JSON when requested, otherwise render a page | `return yield* jsonOrRender('Projects/Index', { projects })` |
 | Fail with `NotFoundError` | `return yield* notFound('Project', projectId)` |
 | Fail with `ForbiddenError` | `return yield* forbidden('You cannot edit this project')` |
+| Send a form back with field errors | `return yield* invalid({ name: 'That name is taken.' })` |
 
 `yield* flash('success', 'Project saved.')` before any of them hands a value to
 the next page the user sees, as Inertia's page `flash` field: the page a
@@ -1148,6 +1150,42 @@ const page = await readPage(res, 'Projects/Show')
 page.props.project.createdAt // a string: the JSON the browser receives
 ```
 
+Replace a service that reaches another system, such as a mailer or a payment
+provider, with a fake that records what it was asked to do, and give it to
+`testEnv` with the signed-in user:
+
+```ts
+import { Context, Effect, Layer } from 'effect'
+import { signedIn, testEnv } from '@popcomputer/web/testing'
+
+class Mailer extends Context.Service<Mailer, {
+  readonly send: (to: string, subject: string) => Effect.Effect<void>
+}>()('app/Mailer') {}
+
+const sent: Array<{ readonly to: string; readonly subject: string }> = []
+const FakeMailer = Layer.succeed(Mailer, Mailer.of({
+  send: (to, subject) => Effect.sync(() => { sent.push({ to, subject }) }),
+}))
+
+const env = testEnv(Layer.merge(signedIn({ id: 'user-1' }), FakeMailer), testBindings)
+```
+
+Rules that depend on the time, such as an invitation that expires after seven
+days, read it from Effect's `Clock` (`DateTime.now`, `Clock.currentTimeMillis`)
+rather than `new Date()`. `testClock(start)` gives a test one clock that every
+request it makes reads, and the test moves it between requests:
+
+```ts
+import { Layer } from 'effect'
+import { signedIn, testClock, testEnv } from '@popcomputer/web/testing'
+
+const time = await testClock(new Date('2026-03-01T09:00:00Z'))
+const env = testEnv(Layer.merge(signedIn({ id: 'user-1' }), time.layer), testBindings)
+
+await time.advance('8 days')
+const expired = await app.request('/invites/abc', {}, env)
+```
+
 ### A database for tests
 
 Test against the database family production uses, so transactions, batches
@@ -1193,6 +1231,241 @@ to test the production error page. `services.app` is built once per test
 process, from the first request's bindings: replace an application service in
 a test with a layer in `testEnv` rather than different bindings. A failed
 build is retried by the next request.
+
+## Patterns from real applications
+
+These patterns come from applications built on the package, most of them by
+coding agents. Each replaces a first attempt that compiled and then
+misbehaved.
+
+### Rules live in services; actions decide what a failure means
+
+Put a business rule in an Effect service whose methods fail with
+`Schema.TaggedError` errors, and let the action turn each failure into a
+response with `Effect.catchTags`: `invalid(...)` for an error that belongs
+beside a form field, `notFound(...)` or `forbidden(...)` for access, and
+`flash(...)` then `back(...)` for a refusal the visitor should read. A failure
+the action leaves unhandled is a type error at its registration, naming it in
+`unhandledErrors`.
+
+A limit checked by counting and then inserting lets two concurrent requests
+both pass the count. Inside `dbTransaction`, lock the row the limit belongs to
+first (`for('update')` on Postgres), so the second request counts after the
+first one writes.
+
+```ts
+import { count, eq } from 'drizzle-orm'
+import type { DatabaseWriteError } from '@popcomputer/web/effect'
+import { requiredString } from '@popcomputer/web/schema'
+import { tasks } from '../schema'
+
+export class TaskLimitReached extends S.TaggedError<TaskLimitReached>()('TaskLimitReached', {
+  limit: S.Number,
+}) {}
+
+export class Tasks extends Context.Service<Tasks, {
+  readonly add: (
+    projectId: string,
+    title: string
+  ) => Effect.Effect<void, TaskLimitReached | DatabaseWriteError, DatabaseService>
+}>()('app/Tasks') {}
+
+export const TasksLive: Layer.Layer<Tasks> = Layer.succeed(Tasks, Tasks.of({
+  add: (projectId, title) =>
+    dbTransaction(Effect.gen(function* () {
+      yield* dbQuery((db) => db.select().from(projects).where(eq(projects.id, projectId)).for('update'))
+      const [row] = yield* dbQuery((db) =>
+        db.select({ tasks: count() }).from(tasks).where(eq(tasks.projectId, projectId))
+      )
+
+      if ((row?.tasks ?? 0) >= 100) return yield* new TaskLimitReached({ limit: 100 })
+
+      yield* dbMutation((db) => db.insert(tasks).values({ id: crypto.randomUUID(), projectId, title }))
+    })),
+}))
+
+export const addTask = action(Effect.gen(function* () {
+  const auth = yield* authorize()
+  const project = yield* bound('project')
+
+  if (project.userId !== auth.user.id) return yield* notFound('Project')
+
+  const input = yield* validateRequest(S.Struct({ title: requiredString }))
+  const service = yield* Tasks
+
+  return yield* service.add(project.id, input.title).pipe(
+    Effect.andThen(redirect(paths.project, { project: project.id })),
+    Effect.catchTags({
+      TaskLimitReached: (error) => invalid({ title: `A project holds at most ${error.limit} tasks.` }),
+    })
+  )
+}))
+```
+
+### Constraints keep invariants that concurrent requests would break
+
+A rule the database can state is safest stated there: a `CHECK (stock >= 0)`
+on the stock column, a unique index on an order's idempotency key, a unique
+event id for a webhook. A write that would break one fails with
+`DatabaseConstraintViolation`, whose `constraint` says which kind
+(`'unique'`, `'check'`, `'foreign-key'`, `'not-null'`), and the whole
+`dbTransaction`, or the whole `dbBatch` on Cloudflare D1, is undone. The same
+action works on both, with no count-then-write race:
+
+```ts
+import { eq, sql } from 'drizzle-orm'
+import { positiveInt, requiredString } from '@popcomputer/web/schema'
+import { orders, products } from '../schema'
+
+const Order = S.Struct({ productId: requiredString, quantity: positiveInt })
+
+export const placeOrder = action(Effect.gen(function* () {
+  const auth = yield* authorize()
+  const request = yield* RequestService
+  const input = yield* validateRequest(Order)
+  // The client sends one key per checkout, so a double submit repeats it.
+  const idempotencyKey = request.header('Idempotency-Key') ?? crypto.randomUUID()
+
+  return yield* dbTransaction(Effect.gen(function* () {
+    yield* dbMutation((db) => db.insert(orders).values({
+      id: crypto.randomUUID(),
+      userId: auth.user.id,
+      idempotencyKey,
+      ...input,
+    }))
+    yield* dbMutation((db) =>
+      db.update(products)
+        .set({ stock: sql`${products.stock} - ${input.quantity}` })
+        .where(eq(products.id, input.productId))
+    )
+  })).pipe(
+    Effect.andThen(flash('success', 'Order placed.')),
+    Effect.andThen(redirect(paths.dashboard)),
+    Effect.catchTag('DatabaseConstraintViolation', (violation) => Effect.gen(function* () {
+      if (violation.constraint === 'check') {
+        return yield* invalid({ quantity: 'There are not that many left.' })
+      }
+
+      // The first submit already placed this order.
+      if (violation.constraint === 'unique') return yield* redirect(paths.dashboard)
+
+      return yield* violation
+    }))
+  )
+}))
+```
+
+A handler whose branches end differently, as this one does, branches inside
+`Effect.gen`: TypeScript combines the branches of one generator, but not a
+plain function that returns a different Effect from each branch.
+
+On D1, write the same statements as one `dbBatch((db) => [...])`. When a limit
+cannot be a constraint, put it in the write's own `WHERE` clause, such as
+`UPDATE ... WHERE (SELECT count(*) ...) < 100`, and treat a statement that
+changed no row (`meta.changes === 0`) as the limit refusing it.
+
+### A layer guards a group of routes
+
+A rule every route in a group shares, such as "only the project's owner", is a
+layer that fails, provided to the routes it guards. It runs before each
+action, may read the route's models with `bound()`, and answers the way the
+action would have. A record the visitor may not see answers 404, so its
+existence stays private:
+
+```ts
+const OwnProject = Layer.effectDiscard(Effect.gen(function* () {
+  const auth = yield* authorize()
+  const project = yield* bound('project')
+
+  if (project.userId !== auth.user.id) return yield* notFound('Project')
+}))
+
+routes.provide(OwnProject).get(paths.project, showProject)
+```
+
+### Webhooks verify the raw body, then record the event once
+
+A webhook's signature covers the exact bytes sent, so read the raw body with
+`RequestService`'s `raw()` rather than `validateRequest`, verify it with Web
+Crypto (`crypto.subtle.verify` compares in constant time), and only then decode
+it. Read the secret with `Config.Redacted`, which reads the Worker's binding
+and keeps it out of logs. Providers retry, so record each event id under a
+unique key and treat a duplicate as already handled:
+
+```ts
+import { eq } from 'drizzle-orm'
+import { Config, DateTime, Redacted } from 'effect'
+import { orders, webhookEvents } from '../schema'
+
+const PaymentEvent = S.Struct({ id: S.String, orderId: S.String })
+
+async function verifySignature(secret: string, body: string, signature: string) {
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey(
+    'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']
+  )
+  const bytes = Uint8Array.from(signature.match(/../g) ?? [], (pair) => parseInt(pair, 16))
+
+  return crypto.subtle.verify('HMAC', key, bytes, encoder.encode(body))
+}
+
+export const paymentWebhook = action(Effect.gen(function* () {
+  const request = yield* RequestService
+  const secret = yield* Config.Redacted('PAYMENT_WEBHOOK_SECRET')
+  const body = yield* Effect.promise(() => request.raw().text())
+  const signature = request.header('X-Signature') ?? ''
+
+  if (!(yield* Effect.promise(() => verifySignature(Redacted.value(secret), body, signature)))) {
+    return yield* json({ error: 'Invalid signature' }, 401)
+  }
+
+  const event = yield* S.decodeUnknownEffect(S.fromJsonString(PaymentEvent))(body).pipe(
+    Effect.mapError(() => new HttpError({ status: 400, message: 'Malformed event' }))
+  )
+
+  const paidAt = DateTime.toDateUtc(yield* DateTime.now)
+
+  return yield* dbTransaction(Effect.gen(function* () {
+    yield* dbMutation((db) => db.insert(webhookEvents).values(event))
+    yield* dbMutation((db) => db.update(orders).set({ paidAt }).where(eq(orders.id, event.orderId)))
+  })).pipe(
+    Effect.andThen(json({ received: true })),
+    Effect.catchTag('DatabaseConstraintViolation', (violation) => Effect.gen(function* () {
+      if (violation.constraint !== 'unique') return yield* violation
+
+      return yield* json({ received: true })
+    }))
+  )
+}))
+```
+
+### Other patterns
+
+- **Several forms on one page**, such as approve and reject on each row of an
+  inbox: give each Inertia form its own error bag (`useForm` with
+  `errorBag: 'reject'`). The request carries `X-Inertia-Error-Bag`, and the
+  failed form's errors arrive under `errors.reject`, so only that form shows
+  them.
+- **Lists in forms**: decode a list with `S.Array(Item)`; a failing item's
+  errors are keyed by its path, as `items.2.amount`. A step of a wizard that
+  fails on another step's data fails with
+  `new ValidationError({ errors, redirectTo })` to send the visitor to that
+  step.
+- **Cursor pagination**: decode the cursor and filters from the query with
+  `validateRequest` (`coercedNumber`, `S.optional(...)`), so a malformed
+  cursor is a 422 rather than a database error, and render the next cursor
+  as a prop.
+- **Counts in the header**, such as unread messages: declare them in
+  `shared` and compute them with `shareProps`, which runs only when a page
+  renders.
+- **Public pages that read data**: the `cache` route option, with
+  `purges: true` on the routes that change their records and the table's name
+  in an index page's `tags`. Signed-in visitors render their own page, so the
+  same route serves both.
+- **Work after the response**, such as a confirmation email:
+  `background('order-email', mailer.send(...))`. Its failure is reported, not
+  shown to the visitor, so it must not be the only record of something the
+  visitor needs.
 
 ## Lower-level composition
 

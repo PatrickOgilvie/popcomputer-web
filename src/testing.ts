@@ -9,7 +9,8 @@
  * @example
  * const res = await app.request('/projects', {}, testEnv(signedIn({ id: 'user-1' })))
  */
-import { DateTime, Effect, Layer, Redacted } from 'effect'
+import { Clock, DateTime, Effect, Layer, Redacted, Scope, type Duration } from 'effect'
+import { TestClock } from 'effect/testing'
 import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser } from './effect/services.js'
 import type { Registered } from './effect/register.js'
 import { attachTestDatabase, attachTestLayer } from './effect/test-env.js'
@@ -218,4 +219,47 @@ export async function readPage<Component extends PageName>(
   // SAFETY: the page is the registered component, whose props render encoded
   // through its schema, which PagePropsFor mirrors.
   return page as TestPage<Component>
+}
+
+/** One clock a test moves, which every request the test makes reads. */
+export interface TestTime {
+  /** The clock, for `testEnv`: `testEnv(Layer.merge(signedIn(user), time.layer))`. */
+  readonly layer: Layer.Layer<never>
+  /** The clock's current time. */
+  now(): Date
+  /** Move the clock to a time. */
+  set(time: Date | number): Promise<void>
+  /** Move the clock forward, as `advance('7 days')` or `advance(Duration.hours(2))`. */
+  advance(duration: Duration.Input): Promise<void>
+}
+
+/**
+ * A clock for testing time-dependent rules, such as an invitation that
+ * expires: requests given its layer read `Clock` (and `DateTime.now`) from
+ * it, and the test moves it between requests. It starts at `start`, by
+ * default 2026-01-01T00:00:00Z. An `Effect.sleep` in a request waits until
+ * the test advances the clock past it.
+ *
+ * @example
+ * const time = await testClock(new Date('2026-03-01T09:00:00Z'))
+ * const env = testEnv(Layer.merge(signedIn({ id: 'user-1' }), time.layer))
+ *
+ * await time.advance('8 days')
+ * const res = await app.request('/invites/abc', {}, env)
+ */
+export async function testClock(start: Date | number = Date.UTC(2026, 0, 1)): Promise<TestTime> {
+  // The clock lives as long as the test process: tests share it across requests.
+  const scope = Effect.runSync(Scope.make())
+  const clock = await Effect.runPromise(TestClock.make().pipe(Scope.provide(scope)))
+  const set = (time: Date | number) =>
+    Effect.runPromise(clock.setTime(time instanceof Date ? time.getTime() : time))
+
+  await set(start)
+
+  return {
+    layer: Layer.succeed(Clock.Clock, clock),
+    now: () => new Date(clock.currentTimeMillisUnsafe()),
+    set,
+    advance: (duration) => Effect.runPromise(clock.adjust(duration)),
+  }
 }

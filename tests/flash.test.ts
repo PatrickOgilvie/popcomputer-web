@@ -12,7 +12,7 @@ import { Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
-import { flash, redirect, render } from '../src/effect/responses.js'
+import { back, flash, invalid, redirect, render } from '../src/effect/responses.js'
 import { positiveInt, requiredString } from '../src/effect/schema.js'
 import { validateRequest } from '../src/effect/validation.js'
 import { ValidationError } from '../src/effect/errors.js'
@@ -188,5 +188,70 @@ describe('invalid query parameters on a page visit', () => {
 
     expect(res.status).toBe(422)
     expect(await res.json()).toMatchObject({ component: 'Error', props: { status: 422 } })
+  })
+})
+
+describe('domain failures on a form', () => {
+  class OfferTooLow extends S.TaggedError<OfferTooLow>()('OfferTooLow', { minimum: S.Number }) {}
+  class ListingClosed extends S.TaggedError<ListingClosed>()('ListingClosed', {}) {}
+
+  function offersApp() {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+    const placeOffer = (amount: number): Effect.Effect<void, OfferTooLow | ListingClosed> =>
+      amount < 0 ? Effect.fail(new ListingClosed()) : amount < 10 ? Effect.fail(new OfferTooLow({ minimum: 10 })) : Effect.void
+
+    routes
+      .get('/listings/1', action(render('Listings/Show')))
+      .post('/listings/1/offers', action(Effect.gen(function* () {
+        const { amount } = yield* validateRequest(S.Struct({ amount: S.Number }))
+
+        return yield* placeOffer(amount).pipe(
+          Effect.andThen(redirect('/listings/1')),
+          Effect.catchTags({
+            OfferTooLow: (error) => invalid({ amount: `Offers start at ${error.minimum}.` }),
+            ListingClosed: () => Effect.andThen(flash('notice', 'This listing has closed.'), back('/listings')),
+          })
+        )
+      })))
+
+    return app
+  }
+
+  const offer = (app: Hono, amount: number, headers: Record<string, string> = {}) =>
+    app.request('/listings/1/offers', {
+      method: 'POST',
+      headers: { ...page, 'Content-Type': 'application/json', Referer: 'http://localhost/listings/1', ...headers },
+      body: JSON.stringify({ amount }),
+    })
+
+  test('invalid() shows a domain error beside its field', async () => {
+    const app = offersApp()
+    const failed = await offer(app, 5)
+
+    expect(failed.status).toBe(303)
+    expect(failed.headers.get('Location')).toBe('/listings/1')
+
+    const form = await app.request('/listings/1', { headers: { ...page, Cookie: flashCookie(failed) } })
+    expect((await form.json()).props.errors).toEqual({ amount: 'Offers start at 10.' })
+  })
+
+  test('invalid() answers a JSON client with 422', async () => {
+    const res = await offer(offersApp(), 5, { 'X-Inertia': '', Accept: 'application/json' })
+
+    expect(res.status).toBe(422)
+  })
+
+  test('back() returns to the page the request came from', async () => {
+    const res = await offer(offersApp(), -1)
+
+    expect(res.status).toBe(303)
+    expect(res.headers.get('Location')).toBe('/listings/1')
+  })
+
+  test('back() uses its fallback for another site\'s page', async () => {
+    const res = await offer(offersApp(), -1, { Referer: 'https://elsewhere.example/listings/1' })
+
+    expect(res.headers.get('Location')).toBe('/listings')
   })
 })

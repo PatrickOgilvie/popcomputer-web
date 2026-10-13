@@ -1,6 +1,7 @@
 // Drizzle tables the README examples refer to as `./schema`. The examples'
 // database is Postgres, as `src/db.ts` in the README creates it.
-import { pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import { check, integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 
 export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
@@ -15,4 +16,30 @@ export const tasks = pgTable('tasks', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),
   title: text('title').notNull(),
+})
+
+// The README's patterns: stock a CHECK constraint keeps from going negative,
+// orders with a unique idempotency key, and webhook events seen once.
+export const products = pgTable(
+  'products',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    stock: integer('stock').notNull(),
+  },
+  (table) => [check('stock_not_negative', sql`${table.stock} >= 0`)]
+)
+
+export const orders = pgTable('orders', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull(),
+  productId: text('product_id').notNull(),
+  quantity: integer('quantity').notNull(),
+  idempotencyKey: text('idempotency_key').notNull().unique(),
+  paidAt: timestamp('paid_at'),
+})
+
+export const webhookEvents = pgTable('webhook_events', {
+  id: text('id').primaryKey(),
+  orderId: text('order_id').notNull(),
 })

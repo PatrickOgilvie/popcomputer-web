@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 import { describe, expect, test } from 'bun:test'
-import { Context, Effect, Layer, Schema as S } from 'effect'
+import { Clock, Context, DateTime, Effect, Layer, Schema as S } from 'effect'
 import { TestClock } from 'effect/testing'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
@@ -8,7 +8,7 @@ import { action } from '../src/effect/action.js'
 import { authorize, AuthUserService, DatabaseService } from '../src/effect/services.js'
 import { flash, json, notFound, redirect, render } from '../src/effect/responses.js'
 import { effectRoutes } from '../src/effect/routing.js'
-import { applyMigrations, signedIn, testEnv } from '../src/testing.js'
+import { applyMigrations, signedIn, testClock, testEnv } from '../src/testing.js'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -299,5 +299,54 @@ describe('the README route test', () => {
     const { res } = await update({ name: '  ' }, 'user-1')
 
     expect(res.status).toBe(422)
+  })
+})
+
+describe('testClock', () => {
+  function clockApp() {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    routes.get('/now', action(Effect.gen(function* () {
+      const now = yield* DateTime.now
+
+      return yield* json({ now: DateTime.formatIso(now), millis: yield* Clock.currentTimeMillis })
+    })))
+
+    return app
+  }
+
+  test('every request reads the time the test sets', async () => {
+    const time = await testClock(new Date('2026-03-01T09:00:00Z'))
+    const app = clockApp()
+    const env = testEnv(time.layer)
+
+    expect(await (await app.request('/now', {}, env)).json()).toEqual({
+      now: '2026-03-01T09:00:00.000Z',
+      millis: Date.parse('2026-03-01T09:00:00Z'),
+    })
+
+    await time.advance('8 days')
+    expect((await (await app.request('/now', {}, env)).json()).now).toBe('2026-03-09T09:00:00.000Z')
+    expect(time.now()).toEqual(new Date('2026-03-09T09:00:00Z'))
+
+    await time.set(Date.parse('2027-01-01T00:00:00Z'))
+    expect((await (await app.request('/now', {}, env)).json()).now).toBe('2027-01-01T00:00:00.000Z')
+  })
+
+  test('combines with a signed-in user', async () => {
+    const time = await testClock()
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    routes.get('/me', action(Effect.gen(function* () {
+      const auth = yield* authorize()
+
+      return yield* json({ id: auth.user.id, at: yield* Clock.currentTimeMillis })
+    })))
+
+    const res = await app.request('/me', {}, testEnv(Layer.merge(signedIn({ id: 'user-1' }), time.layer)))
+
+    expect(await res.json()).toEqual({ id: 'user-1', at: Date.UTC(2026, 0, 1) })
   })
 })

@@ -67,6 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `invalid({ field: message })` sends a form back with field errors, as `validateRequest` does, to show a domain error beside its field: `Effect.catchTag('OfferTooLow', (error) => invalid({ amount: error.message }))`. `back(fallback)` redirects to the same-origin page the request came from.
+- `testClock(start)` from `@popcomputer/web/testing` gives a test one clock that every request it makes reads (`Clock`, `DateTime.now`), moved with `await time.advance('8 days')` or `time.set(date)`.
+- The README's "Patterns from real applications" collects what building applications taught: rules in services with failures mapped at the action, constraints for invariants under concurrency, guard layers, webhooks, several forms on a page, list fields, cursor pagination, header counts, cached public pages and background work.
 - `setupWeb`'s `paths` takes the application's route paths, as `src/paths.ts` declares them, and `routes` then registers only on those paths: a path that is not declared is a type error at its registration. A builder under `.prefix()` takes relative paths and is not checked.
 - A route binding can name its Drizzle table: `bindings: { project: schema.projects }`. `bound('project')` is the table's row type, each loaded row is checked against the table's columns (types, nullability and enum values), and the parameter name need not match the table (`{ author: schema.users }`). An Effect Schema still parses a row differently, such as a column narrowed with `$type<...>()`.
 - `shareProps(effect)` computes props every page shares, such as a header's unread count, when a page renders: `routes.provide(shareProps(Effect.gen(...)))`. It returns any of setupWeb's `shared` props, encoded through their schema, and never runs for a redirect or a JSON response.
