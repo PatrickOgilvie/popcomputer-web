@@ -36,6 +36,7 @@ import {
 } from './effect/handler.js'
 import { NotFoundError } from './effect/errors.js'
 import type { RouteBindingsConfig } from './effect/binding.js'
+import type { PagesOption } from './effect/pages.js'
 
 /** Default Hono environment derived from the application's bindings augmentation. */
 type DefaultEnv = {
@@ -157,7 +158,7 @@ export interface WebSetupConfig<
   Auth = never,
   AppServices = never,
   RequestServices = never,
-> extends WebSetupOptions<E, AppServices, RequestServices> {
+> extends WebSetupOptions<E, AppServices, RequestServices>, WebPagesOption {
   /**
    * Database factory function. Creates the database client for each request.
    * Leave it out for applications without persistence or with stateless auth.
@@ -172,6 +173,13 @@ export interface WebSetupConfig<
   // NoInfer: DB comes from `database` alone, never from the client's parameters.
   auth?: WebAuthOptions<E, Auth, AuthClientServices<NoInfer<DB>>>
 }
+
+/**
+ * Each page component's props schema, which `render` checks and encodes props
+ * with. Required once the application augments WebPagesType, and then the
+ * same registry.
+ */
+type WebPagesOption = PagesOption
 
 /** What the auth client factory receives: the database when one is configured. */
 type AuthClientServices<DB> = [DB] extends [never]
@@ -304,6 +312,7 @@ function createSetupMiddleware<
     services: config.services?.request,
     schema: config.schema,
     bindings: config.bindings,
+    pages: config.pages,
   }
 
   const middlewares: MiddlewareHandler<E>[] = [

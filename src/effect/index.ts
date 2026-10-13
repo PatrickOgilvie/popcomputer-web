@@ -119,6 +119,17 @@ export {
   share,
 } from './responses.js'
 
+// Pages
+export {
+  type WebPagesType,
+  type PageName,
+  type PagePropsOf,
+  type ClientPageProps,
+  type Jsonify,
+  type PageSchema,
+  type PageSchemas,
+} from './pages.js'
+
 // Routing
 export {
   EffectRouteBuilder,

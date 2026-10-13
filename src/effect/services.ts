@@ -3,6 +3,7 @@
 import { Context, Effect, Option, type Redacted, type Schema as S } from 'effect'
 import { CacheError, UnauthorizedError, ForbiddenError } from './errors.js'
 import type { PageProps, PagePropValue } from '../types.js'
+import type { PageSchemas } from './pages.js'
 
 /**
  * Augmentable interface for database type.
@@ -253,6 +254,8 @@ export class AuthUserService extends AuthUserService_base {}
  * Inertia-compatible page renderer.
  */
 export interface PageRenderer {
+  /** setupWeb's `pages` registry, when the application registered its pages. */
+  readonly pages?: PageSchemas
   render<T extends PageProps>(
     component: string,
     props?: T

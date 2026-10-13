@@ -11,6 +11,9 @@
  * Run: bun run build && tsc -p tests/consumer-types
  */
 import { Effect, Schema as S } from 'effect'
+import { Hono } from 'hono'
+import { setupWeb } from '@popcomputer/web'
+import type { WebPage } from '@popcomputer/web/react'
 import {
   AuthUserService,
   authorize,
@@ -19,12 +22,16 @@ import {
   dbBatch,
   dbQuery,
   dbTransaction,
+  render,
   type DefaultAuthUser,
 } from '@popcomputer/web/effect'
 import { signedIn } from '@popcomputer/web/testing'
 
 const Project = S.Struct({ id: S.String, userId: S.String })
 const routeBindings = { project: Project }
+const pages = {
+  'Projects/Show': S.Struct({ project: S.Struct({ id: S.String, createdAt: S.Date }) }),
+}
 
 interface Member {
   readonly user: DefaultAuthUser['user'] & {
@@ -60,6 +67,10 @@ declare module '@popcomputer/web/effect' {
   interface WebAuthUserType {
     type: Member
   }
+
+  interface WebPagesType {
+    type: typeof pages
+  }
 }
 
 type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
@@ -90,6 +101,17 @@ export const augmentedTypes = Effect.gen(function* () {
   const [first, second] = yield* dbBatch((db) => [db.findProject('a'), db.findProject('b')])
   expectType<Equals<[typeof first, typeof second], [ProjectRow, ProjectRow]>>()
 })
+
+// Registered pages type render and the React component.
+export const showProject = render('Projects/Show', { project: { id: 'p1', createdAt: new Date() } })
+// @ts-expect-error 'Projects/Edit' is not a registered page
+render('Projects/Edit', {})
+expectType<Equals<Parameters<WebPage<'Projects/Show'>>[0]['project']['createdAt'], string>>()
+
+// Once the application registers its pages, setupWeb requires the registry.
+export const configured = setupWeb(new Hono(), { version: '1', render: () => '', pages, auth: { session: S.Any } })
+// @ts-expect-error pages is required
+setupWeb(new Hono(), { version: '1', render: () => '', auth: { session: S.Any } })
 
 // Fields an application adds have no test default, so signedIn requires them.
 signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' })

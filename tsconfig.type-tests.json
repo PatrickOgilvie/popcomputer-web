@@ -22,6 +22,9 @@
       ],
       "@popcomputer/web/testing": [
         "./src/testing.ts"
+      ],
+      "@popcomputer/web/react": [
+        "./src/react.ts"
       ]
     },
     "rootDir": "."

@@ -36,6 +36,7 @@ import {
 } from './services.js'
 import { readTestLayer } from './test-env.js'
 import type { RouteBindingsConfig } from './binding.js'
+import type { PageSchemas } from './pages.js'
 import { observeEffectErrorEvent } from './error-observer.js'
 
 /**
@@ -79,6 +80,8 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
   schema?: object
   /** Row parsers and optional scope metadata for route-model bindings. */
   bindings?: RouteBindingsConfig
+  /** Each page component's props schema, which `render` checks and encodes props with. */
+  pages?: PageSchemas
 }
 
 // Unconfigured services are simply not provided to the Effect layer. When a
@@ -441,7 +444,7 @@ export function getRequestExecutionContextClient<E extends Env>(
 /**
  * Create a PageRenderer from Hono context.
  */
-function createPageRenderer<E extends Env>(c: HonoContext<E>): PageRenderer {
+function createPageRenderer<E extends Env>(c: HonoContext<E>, pages: PageSchemas | undefined): PageRenderer {
   const requestContext = openWebContext(c)
   const page = requestContext.web
 
@@ -455,6 +458,7 @@ function createPageRenderer<E extends Env>(c: HonoContext<E>): PageRenderer {
   }
 
   return {
+    pages,
     render: (component, props) => Promise.resolve(page.render(component, props)),
     share: (key, value) => page.share(key, value),
     flash: (key, value) => requestContext.flash?.set(key, value),
@@ -489,7 +493,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   )
 
   const responseLayer = Layer.succeed(ResponseFactoryService, createResponseFactory(c))
-  const pageLayer = Layer.succeed(PageService, createPageRenderer(c))
+  const pageLayer = Layer.succeed(PageService, createPageRenderer(c, config?.pages))
 
   // Bindings layer - always available, typed via module augmentation
   // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.

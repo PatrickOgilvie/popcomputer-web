@@ -52,6 +52,7 @@ const ENTRYPOINTS: Readonly<Record<string, string>> = {
   '@popcomputer/web/auth': 'auth',
   '@popcomputer/web/cache': 'cache',
   '@popcomputer/web/testing': 'testing',
+  '@popcomputer/web/react': 'react',
 }
 const dist = (module: string, extension: '.js' | '.d.ts') => join(repoRoot, 'dist', `${module}${extension}`)
 const TS_LANGS = new Set(['ts', 'tsx', 'typescript'])

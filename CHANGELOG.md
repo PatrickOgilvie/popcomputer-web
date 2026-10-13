@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- `WebPage<Props>` includes the shared props and `errors`, so `WithSharedProps` is removed; augment `SharedProps` for the props the application shares. The `PageProps` exported from `@popcomputer/web` and `@popcomputer/web/react`, a second type of that name, is removed.
+- `jsonOrRender` responses vary on `Accept` as well as `X-Inertia`, so a cache no longer serves a page's JSON to a visit or its HTML to an API client.
 - A form submission that fails validation redirects back (303) to the page it came from, which receives the field errors as `errors` on its next render, as Inertia expects. The page renders with all of its own props; `errorComponent` re-rendered the form with only `errors`, so an edit page lost the record it edits. `validateRequest`'s `errorComponent` option, `betterAuthFormAction`'s `errorComponent`, `ValidationError.component` and `renderWithErrors` are removed. Errors go under the form's error bag when Inertia sends `X-Inertia-Error-Bag`. Invalid query parameters on a page visit render the error page with 422, and JSON clients get a 422 as before.
 - `PageService` has `flash(key, value)` in place of `setErrors`.
 - Database operations read the request's client from `DatabaseService` and give their callback the application's Drizzle client with its own types: `dbMutation(db, input, (tx, values) => ...)` is `dbMutation((db) => ...)`, and `dbTransaction(db, ...)` is `dbTransaction(async (tx) => ...)`. The `SafeTx` wrapper that required `asTrusted` or validated values erased the table type of `insert`, `update` and `delete`, so `.returning()` rows were `{ [x: string]: any }` and `.values()` and `.set()` checked no columns. Drizzle's own types now check every column, and `validateRequest`, the only way an action reads request input, removes undeclared keys. `asTrusted`, `Trusted`, `Validated`, `SafeTx`, `MutationInput` and `mergeMutationInput` are removed, and `validateRequest` returns the decoded value unbranded.
@@ -51,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A page registry: each page component's props as an Effect Schema, passed as setupWeb's `pages` and mirrored by augmenting `WebPagesType`. `render` and `jsonOrRender` then accept only registered pages and check props against the schema, and encode them as JSON through it, so a `Date` reaches the client as an ISO string. `WebPage<'Projects/Show'>` types the React component with the JSON form of the same props (`Jsonify`). setupWeb requires `pages` once `WebPagesType` is augmented.
+- `render` and `jsonOrRender` run in a `Web.render` span naming the component.
+- `ErrorPageProps` from `@popcomputer/web/react` types the error page component.
 - `flash(key, value)` hands a value to the next page the user sees, as Inertia 3's page `flash` field: the page a redirect renders, or the page the same request renders. Flash data and failed-form errors travel in a short-lived `HttpOnly` cookie (`__Host-` over HTTPS) that the next visit reads and clears; Inertia prefetches leave it for the visit.
 - `dbQuery((db) => ...)` for reads, failing with `DatabaseError`.
 - `dbBatch((db) => [...statements])` applies statements atomically on drivers with batches (Cloudflare D1, libsql, Neon HTTP) and returns each statement's typed result.

@@ -11,7 +11,8 @@ import {
   RequestService,
 } from './services.js'
 import { Redirect, NotFoundError, ForbiddenError, HttpError } from './errors.js'
-import type { PageProps, PagePropValue } from '../types.js'
+import type { PagePropValue } from '../types.js'
+import { encodePageProps, type PageName, type PagePropsArgument } from './pages.js'
 
 /**
  * Create a redirect response.
@@ -26,18 +27,32 @@ export const redirect = (url: string, status: 302 | 303 = 303): Effect.Effect<Re
 /**
  * Render a page component.
  *
+ * Once the application registers its pages (setupWeb's `pages`), the
+ * component must be a registered page and `props` must match its schema,
+ * which encodes them as JSON for the client.
+ *
  * @example
- * return yield* render('Dashboard/Index', { projects })
+ * return yield* render('Projects/Show', { project, canEdit })
  */
-export const render = <T extends PageProps>(
-  component: string,
-  props?: T
-): Effect.Effect<Response, never, PageService> =>
-  Effect.gen(function* () {
-    const page = yield* PageService
+export function render<Component extends PageName>(
+  component: Component,
+  ...args: PagePropsArgument<Component>
+): Effect.Effect<Response, never, PageService> {
+  return renderPage(component, args[0])
+}
 
-    return yield* Effect.promise(() => page.render(component, props))
-  })
+/**
+ * Render a page by a name only known at runtime, such as a configured login
+ * page. A name the registry lacks, or props its schema rejects, is a defect.
+ */
+export function renderPage(component: string, props?: object): Effect.Effect<Response, never, PageService> {
+  return Effect.gen(function* () {
+    const page = yield* PageService
+    const encoded = yield* encodePageProps(page.pages, component, props)
+
+    return yield* Effect.promise(() => page.render(component, encoded))
+  }).pipe(Effect.withSpan('Web.render', { attributes: { component } }))
+}
 
 /**
  * Hand a value to the page the user sees next, as Inertia's page `flash`.
@@ -125,21 +140,43 @@ export const prefersJson: Effect.Effect<boolean, never, RequestService> =
   })
 
 /**
- * Return JSON if the client prefers it, otherwise render a page component.
+ * Answer a JSON client with the page's props as JSON, and a page visit with
+ * the rendered page. Both are encoded through the page's schema, and the
+ * response varies on `Accept`, so a cache keeps the two apart.
+ *
+ * @example
+ * return yield* jsonOrRender('Pages/Index', { pages, total })
  */
-export const jsonOrRender = <T extends PageProps>(
-  component: string,
-  data: T
-): Effect.Effect<Response, never, RequestService | PageService | ResponseFactoryService> =>
-  Effect.gen(function* () {
+export function jsonOrRender<Component extends PageName>(
+  component: Component,
+  ...args: PagePropsArgument<Component>
+): Effect.Effect<Response, never, RequestService | PageService | ResponseFactoryService> {
+  return Effect.gen(function* () {
     const wantsJson = yield* prefersJson
 
-    if (wantsJson) {
-      return yield* json(data)
+    if (!wantsJson) {
+      return varyOnAccept(yield* render(component, ...args))
     }
 
-    return yield* render(component, data)
+    const page = yield* PageService
+    const props = yield* encodePageProps(page.pages, component, args[0])
+
+    return varyOnAccept(yield* json(props ?? {}))
   })
+}
+
+function varyOnAccept(response: Response): Response {
+  const headers = new Headers(response.headers)
+  const vary = headers.get('Vary')
+
+  headers.set('Vary', vary ? `${vary}, Accept` : 'Accept')
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
 
 /**
  * Share data with all page responses.

@@ -27,7 +27,7 @@ import {
 import { effectRoutes, type EffectHandler } from './routing.js'
 import { openWebContext } from '../request-context.js'
 import type { PagePropValue, PageProps } from '../types.js'
-import { render } from './responses.js'
+import { renderPage } from './responses.js'
 import { validateRequest } from './validation.js'
 
 
@@ -389,10 +389,10 @@ export function effectAuthRoutes<E extends Env>(
   const guestRoutes = routes.provide(guestLayer)
 
   // Login page - uses custom guestLayer or RequireGuestLayer
-  guestRoutes.get(loginPath, render(loginComponent))
+  guestRoutes.get(loginPath, renderPage(loginComponent))
 
   // Register page - uses custom guestLayer or RequireGuestLayer
-  guestRoutes.get(registerPath, render(registerComponent))
+  guestRoutes.get(registerPath, renderPage(registerComponent))
 
   // Login action (POST) - uses custom guestLayer
   if (config.loginAction) {

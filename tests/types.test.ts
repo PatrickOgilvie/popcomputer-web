@@ -10,10 +10,7 @@ import type {
   WebConfig,
   RenderOptions,
 } from '../src/types.js'
-import type {
-  SharedProps,
-  WithSharedProps,
-} from '../src/react.js'
+import type { PagePropsFor } from '../src/react.js'
 
 describe('HEADERS Constant', () => {
   test('all header names follow X-Inertia convention', () => {
@@ -140,47 +137,14 @@ describe('Type Definitions', () => {
   })
 })
 
-describe('React Type Utilities', () => {
-  describe('SharedProps', () => {
-    test('includes optional errors', () => {
-      const props: SharedProps = {
-        errors: { field: 'error message' },
-      }
+describe('React page props', () => {
+  test('a page typed by its own props also receives field errors', () => {
+    const props: PagePropsFor<{ title: string }> = {
+      title: 'Test',
+      errors: { title: 'Required', createProject: { name: 'Required' } },
+    }
 
-      expect(props.errors?.field).toBe('error message')
-    })
-
-    test('allows empty object', () => {
-      const props: SharedProps = {}
-      expect(props.errors).toBeUndefined()
-    })
-  })
-
-  describe('WithSharedProps', () => {
-    test('merges custom props with shared props', () => {
-      interface MyProps {
-        title: string
-        count: number
-      }
-
-      const props: WithSharedProps<MyProps> = {
-        title: 'Test',
-        count: 42,
-        errors: { title: 'Required' },
-      }
-
-      expect(props.title).toBe('Test')
-      expect(props.count).toBe(42)
-      expect(props.errors?.title).toBe('Required')
-    })
-
-    test('works with empty custom props', () => {
-      const props: WithSharedProps = {
-        errors: {},
-      }
-
-      expect(props.errors).toEqual({})
-    })
+    expect(props.title).toBe('Test')
   })
 })
 

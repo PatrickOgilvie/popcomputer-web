@@ -5,10 +5,6 @@ import { Schema as S } from 'effect'
 import type { PageObject } from './types.js'
 import { ConfigurationError } from './effect/errors.js'
 
-export interface PageProps {
-  errors?: Record<string, string>
-}
-
 export interface AssetManifestEntry {
   file?: string
   css?: string[]

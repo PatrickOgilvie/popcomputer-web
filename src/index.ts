@@ -59,6 +59,5 @@ export {
   createTemplate,
   createVersion,
   vite,
-  type PageProps,
   type ViteDevServer,
 } from './helpers.js'
