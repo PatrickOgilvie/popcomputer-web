@@ -48,7 +48,7 @@ export type EndpointSchema = S.Codec<unknown, unknown, never, never>
 
 /**
  * A failure an endpoint declares: a tagged schema, such as a
- * `Schema.TaggedErrorClass`, so the action fails with it and a client tells it
+ * `S.TaggedError`, so the action fails with it and a client tells it
  * apart by its `_tag`.
  */
 export type EndpointErrorSchema = S.Codec<{ readonly _tag: string }, unknown, never, never>
