@@ -188,13 +188,7 @@ export async function renderErrorResponse<E extends Env>(
   }
 
   if (error instanceof ValidationError) {
-    const isInertia = c.req.header('X-Inertia') === 'true'
-
-    const prefersJson =
-      c.req.header('Accept')?.includes('application/json') === true ||
-      c.req.header('Content-Type')?.includes('application/json') === true
-
-    if ((prefersJson && !isInertia) || format === 'json') {
+    if (format === 'json') {
       return finalize(c.json(formatter.json.format(structured), 422))
     }
 

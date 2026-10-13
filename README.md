@@ -1002,9 +1002,14 @@ configured error boundary. Use `EffectErrorObserverService` as the integration
 point for Sentry, PostHog, or another reporting system; observation does not
 change the failure channel.
 
-A JSON client, one that sends `Accept: application/json` or a JSON body, gets
-every failure in one envelope, whatever its status; an API's clients send that
-header. An `HttpError` adds its `headers` to the response, as
+A JSON client gets every failure in one envelope, whatever its status: a
+request that asks for JSON or sends a JSON body, or one that asks for no HTML
+while it sends an `Accept` header, as `fetch` does with `*/*`, or an
+`Authorization` header, as an API client with a bearer token does. Browsers ask
+for HTML on every visit and form post, so they get pages, a signed-out visitor
+goes to sign in, and a failed form goes back to the form. A signed-out JSON
+client gets a 401 instead. `prefersJson` and `jsonOrRender` decide the same
+way. An `HttpError` adds its `headers` to the response, as
 `HttpError.rateLimited(30)` adds `Retry-After`.
 
 ```json

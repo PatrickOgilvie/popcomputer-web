@@ -7,6 +7,7 @@
  * - Inertia for browser rendering
  */
 
+import { wantsJson } from './negotiation.js'
 import type {
   StructuredError,
   ValidationErrorData,
@@ -424,23 +425,12 @@ export function detectOutputFormat<Environment>(
     return 'json'
   }
 
-  // Check Accept header
-  const accept = request.header('Accept') ?? ''
-
-  if (accept.includes('application/json')) {
+  if (wantsJson((name) => request.header(name))) {
     return 'json'
   }
 
-  // Check for Inertia request
   if (request.header('X-Inertia') === 'true') {
     return 'inertia'
-  }
-
-  // Check Content-Type for API requests
-  const contentType = request.header('Content-Type') ?? ''
-
-  if (contentType.includes('application/json')) {
-    return 'json'
   }
 
   // Development mode defaults to terminal-style logging.

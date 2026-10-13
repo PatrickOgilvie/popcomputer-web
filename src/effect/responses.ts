@@ -4,6 +4,7 @@
  * Utility functions for creating responses within Effect computations.
  */
 
+import { wantsJson } from './negotiation.js'
 import { Cause, Context, Effect, Layer, Option, Schema as S, Stream } from 'effect'
 import { observeOrLog } from './error-observer.js'
 import { href, type PathArguments, type PathTarget } from '../paths.js'
@@ -309,22 +310,16 @@ export const httpError = (
   Effect.fail(new HttpError({ status, message, body }))
 
 /**
- * Check if the request prefers JSON response.
+ * Whether the request comes from a client that reads JSON rather than pages:
+ * it asks for or sends JSON, or it asks for no HTML while sending an `Accept`
+ * header (`fetch`'s `*\/*`) or an `Authorization` header. Inertia visits and
+ * browsers, which ask for HTML, read pages.
  */
 export const prefersJson: Effect.Effect<boolean, never, RequestService> =
   Effect.gen(function* () {
     const request = yield* RequestService
-    const isInertia = request.header('X-Inertia') === 'true'
 
-    if (isInertia) return false
-
-    const accept = request.header('Accept') ?? ''
-
-    if (accept.includes('application/json')) return true
-
-    const contentType = request.header('Content-Type') ?? ''
-
-    return contentType.includes('application/json')
+    return wantsJson((name) => request.header(name))
   })
 
 /**
