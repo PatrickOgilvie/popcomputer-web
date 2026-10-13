@@ -834,8 +834,8 @@ Each file of the application declares one thing, and the rest reads it:
 | `src/pages.ts` | each page's props | `render`, `WebPage`, `readPage` |
 | `src/forms.ts` | each form's fields | `validateRequest` in actions, `FormInput` in React |
 | `src/endpoints.ts` | each JSON endpoint's contract | `action(endpoint, ...)`, `routes.endpoint`, `call`, `openApi` |
-| `src/services.ts` | application services and their layers | `setupWeb`'s `services` |
-| `src/app.ts` | `setupWeb(...)` and its registration | every type above |
+| `src/services.ts` | application services and their layers | `web.services(...)` in `src/app.ts` |
+| `src/app.ts` | `setupWeb(...)`, its registration, and `web.services(...)` | every type above, and the routes |
 | `src/routes.ts` and other route modules | the registrations | `src/worker.ts` |
 | `src/actions/**` | one action per route | the route modules |
 | `src/pages/**`, `src/main.tsx` | the React pages and the page map | the browser bundle |
@@ -919,11 +919,11 @@ and the lint rules name it where an action reaches for something else.
 
 | Task | Use | See |
 | --- | --- | --- |
-| Provide a service | `services: { app, request }` in `setupWeb` | [Application services](#application-services) |
+| Provide a service | `web.services({ app, request })`, after registering `web` | [Application services](#application-services) |
 | Read a var or a secret | `config.string('NAME')`, `config.redacted('KEY')` | [Application services](#application-services) |
 | Work after the response | `background('name', effect)` | [Caching and background work](#caching-and-background-work) |
 | Run a Cron Trigger or a Queue consumer | `routes.scheduled(job)`, `routes.queue(Schema, handle)` | [Scheduled and queued work](#scheduled-and-queued-work) |
-| Cache computed data | `cache(key, effect, Schema, { ttl, tags })`, with `kvCache` in `services` | [Caching and background work](#caching-and-background-work) |
+| Cache computed data | `cache(key, effect, Schema, { ttl, tags })`, with `kvCache` in `web.services` | [Caching and background work](#caching-and-background-work) |
 | Cache a public page for a time | the route's `cache` option | [Workers Cache](#time-based-caching-with-workers-cache) |
 | Refresh cached pages and data after a write | `purges: true`, `purgeCache(recordCacheTag(table, id))` | [Workers Cache](#time-based-caching-with-workers-cache) |
 | Tag a cached page with records it read | `tagCache(recordCacheTag(table, id))` | [Workers Cache](#time-based-caching-with-workers-cache) |
@@ -960,7 +960,7 @@ TypeScript give up on the types that later errors are about.
 | `Effect.catchTag('X', ...)`, `not assignable to parameter of type 'readonly [never, ...never[]]'` | The Effect no longer fails with `X` | Remove the handler |
 | `Effect.catchTags({ X: ... })`, `not assignable to type '{ X: never; }'` | The same, for one of the handlers | Remove that handler |
 | A `catchTag` in a helper written apart from its Effect, `{ readonly _tag: unknown }` not assignable | TypeScript cannot see the errors the helper handles | Write it inside `.pipe(...)`, or use `Effect.catchIf((error) => error instanceof X, ...)` |
-| `export const web = setupWeb(...)`, `'web' implicitly has type 'any'` (TS7022) | A layer in `services` has no type and uses a type `setupWeb` declares, such as `dbQuery`'s | Give the layer its type, as [Application services](#application-services) shows |
+| `setupWeb(...)` given `services` | Services are given after the registration | Move them to `export const { app, routes } = web.services({ app, request })`, after the `Register` declaration |
 | Inside `setupWeb(...)`, many errors naming `DatabaseNotConfigured`, or `(c) => never` at `database` | One value in the configuration has a type error, so TypeScript infers none of its types | Fix the first error inside the `setupWeb` call |
 | A database result, `This result's type is any` | The driver's types name Cloudflare's global types, which the program cannot find | Add `@cloudflare/workers-types`, or the file `wrangler types` writes, to `compilerOptions.types` |
 | `dbTransaction(...)`, `Use dbBatch for atomic writes, or a driver with transactions.` | The database has no interactive transactions: Cloudflare D1, or a synchronous driver such as `bun:sqlite` | Write the statements as one `dbBatch` |
@@ -1035,26 +1035,25 @@ export const { app, routes } = web.services({
 })
 ```
 
-`services.app` is built once, on the first request an isolate serves, and
+The `app` layer is built once, on the first request an isolate serves, and
 shared by every later request: configuration, clients that open no connection
 until used, in-memory caches. `config` from `@popcomputer/web/effect` is
 Effect `Config` named by the bindings `src/env.ts` declares, so a misspelled
 name is a type error: it reads the Worker's bindings in both kinds of service
 and in actions, and `config.redacted('PAYMENT_WEBHOOK_SECRET')` reads a
 secret. A missing binding fails the request with a configuration error that
-names it in development. `services.request` is built for each request from
+names it in development. The `request` layer is built for each request from
 its context and bindings. Anything holding a request's I/O, such as a D1, KV or
-Hyperdrive binding, belongs in `services.request`: Workers forbid using it from
+Hyperdrive binding, belongs in `request`: Workers forbid using it from
 another request. A request service replaces an application service with the
 same tag. For services only some routes need, use `routes.provide(layer)`.
 
-Give every layer passed to `services` its type. `setupWeb`'s type includes its
-services, and the types `dbQuery`, `config` and `bound` read come from
-`setupWeb`, so a layer whose inferred type depends on them refers to itself and
-TypeScript reports `'web' implicitly has type 'any' because it ... is
-referenced directly or indirectly in its own initializer` (TS7022), at `web`
-rather than at the layer. A layer passed to `routes.provide` is outside
-`setupWeb`'s type and needs no annotation.
+A layer's type is inferred, even when it reads the database, `config` or
+`bound`: `web.services` comes after the registration, so the types those read
+do not depend on the layer. A service that queries the database keeps
+`DatabaseService` in its methods' requirements rather than providing it
+itself, so a method called inside `dbTransaction` takes part in the
+transaction:
 
 ```ts
 import { eq } from 'drizzle-orm'
@@ -1067,7 +1066,7 @@ export class Projects extends Context.Service<Projects, {
   ) => Effect.Effect<ReadonlyArray<Project>, DatabaseError, DatabaseService>
 }>()('app/Projects') {}
 
-export const ProjectsLive: Layer.Layer<Projects> = Layer.succeed(Projects, Projects.of({
+export const ProjectsLive = Layer.succeed(Projects, Projects.of({
   ownedBy: (userId) =>
     dbQuery((db) => db.select().from(projects).where(eq(projects.userId, userId))),
 }))
@@ -1969,7 +1968,7 @@ The README's and AGENTS.md's examples pass them.
 | `no-effect-runner-in-action` | `Effect.runPromise` and the other runners | `yield*` the Effect |
 | `no-catch-all-in-action` | `Effect.catch`, `orDie`, `ignore` and the like over the database, `authorize()`, `bound()` or `validateRequest`, called or piped | `Effect.catchTag` for the failures the action answers |
 | `no-raw-response-in-action` | `new Response(...)` | `json`, `text`, `file` (which serves uploads with `nosniff`), `noContent` |
-| `no-provision-in-action` | `Effect.provide` in an action module | `services` in `setupWeb`, or `routes.provide(layer)` |
+| `no-provision-in-action` | `Effect.provide` in an action module | `web.services(...)`, or `routes.provide(layer)` |
 | `require-background` | `waitUntil(...)` | `background('name', effect)` |
 | `no-validation-in-endpoint` | `validateRequest` or `json` in an endpoint's action | The handler's argument, and the returned value |
 | `prefer-checked-config` | Effect's `Config.String('NAME')` and its siblings in an application of the framework | `config.string('NAME')`, which checks the name against the Worker's bindings |
@@ -1986,7 +1985,8 @@ A line that breaks a rule on purpose says why, as
 ### The data cache
 
 The data cache keeps computed values in a store, checked against an Effect
-Schema when read. Provide a store with `kvCache` in `services.request`; KV
+Schema when read. Provide a store with `kvCache` as a `request` layer of
+`web.services`; KV
 keeps an entry at least 60 seconds, its shortest expiry, and `cache` still
 treats it as fresh only for its `ttl`:
 
@@ -2083,7 +2083,8 @@ effects but not a race between them; pass an execution context as
 ### Scheduled and queued work
 
 A Cron Trigger's and a Queue consumer's work runs with the application's
-services, as an action does: the database, `services`, `Config` and
+services, as an action does: the database, the layers given to
+`web.services`, `Config` and
 `background()`, and the layers a builder was given with `provide`.
 `routes.scheduled(job)` and `routes.queue(Schema, handle)` return the Worker's
 `scheduled` and `queue` handlers, and type-check the job as a registration
@@ -2466,10 +2467,10 @@ const RecordPurges = Layer.succeed(ResponseCacheService, {
 const env = testEnv(Layer.merge(signedIn({ id: 'user-1' }), RecordPurges), testBindings)
 ```
 
-The application's own `services` are still built, so the test bindings
+The layers given to `web.services` are still built, so the test bindings
 include the vars and secrets those layers read even when a fake replaces
 them. Effect `Config` reads the request's bindings, so a test sets a var or
-secret in `testEnv`'s bindings. `services.app` is built once per test
+secret in `testEnv`'s bindings. The `app` layer is built once per test
 process, from the first request's bindings: a test that needs another value
 for an application service gives it a layer in `testEnv` instead.
 
@@ -2568,8 +2569,8 @@ does, needs no layer: `testEnv(testBindings, { database: testDb })`.
 
 A request built with `testEnv` renders failures with their development
 details unless its bindings set `ENVIRONMENT`; pass `ENVIRONMENT: 'production'`
-to test the production error page. `services.app` is built once per test
-process, from the first request's bindings: replace an application service in
+to test the production error page. The `app` layer of `web.services` is
+built once per test process, from the first request's bindings: replace an application service in
 a test with a layer in `testEnv` rather than different bindings. A failed
 build is retried by the next request.
 
@@ -3412,8 +3413,8 @@ restated now come from the values `setupWeb` takes, and `setupWeb`'s
 + export default app
 ```
 
-A layer passed to `services` that reads the database, `config` or `bound`
-states its type, as [Application services](#application-services) shows.
+An application with services of its own takes its routes from
+`web.services(...)` instead of `web`, as step 5 shows.
 
 **3. Declare the user, shared props and flash as schemas.** The signed-in
 user comes from the user table, and pages receive only the fields `share`
@@ -3463,19 +3464,30 @@ bindings name their tables, and each page's props are a schema in
 
 `redirect` always answers 303; its status argument is gone.
 
-**5. Move services and the data cache.** `services.request` replaces
-`effect.services`, `services.app` holds services built once, and the data
-cache's store is provided rather than found in a binding named `KV`:
+**5. Give services after registering.** `setupWeb`'s `effect.services`
+moves to `web.services(...)`, called after the `Register` declaration, which
+returns the routes. Its `request` layer is built for each request and its
+`app` layer once per isolate, and the data cache's store is provided rather
+than found in a binding named `KV`. The layers need no type annotations:
 
 ```diff
-- effect: {
--   services: (c) => auditLogFor(c.env.KV),
-- },
-+ services: {
+  export const web = setupWeb(new Hono<Env>(), {
+    ...,
+-   effect: {
+-     services: (c) => auditLogFor(c.env.KV),
+-   },
+  })
+
+- export const { app, routes } = web
++ export const { app, routes } = web.services({
 +   app: ClockLive,
 +   request: (c) => Layer.merge(auditLogFor(c.env.KV), kvCache(c.env.KV)),
-+ },
++ })
 ```
+
+An application on a `1.0.0-next` pre-release that passed `services` to
+`setupWeb` moves them the same way, and can drop the layers' type
+annotations.
 
 Read vars and secrets with `config.string('NAME')` and
 `config.redacted('KEY')`, whose names are checked against the bindings type.
@@ -3795,9 +3807,6 @@ framework package in an application.
   with analytics cookies render it afresh; the default page cache, which runs
   in the Worker, ignores those cookies but caches only pages that read no
   data.
-- The service-layer cycle: `setupWeb`'s type includes its services and the
-  types `dbQuery` and `config` read come from `setupWeb`, so every layer in
-  `services` needs an explicit type.
 
 ## Developing this package
 
