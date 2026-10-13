@@ -83,4 +83,4 @@ export {
 } from './effect/schema.js'
 
 // Schemas of Drizzle tables' rows
-export { tableSchema, type TableFields } from './effect/table-schema.js'
+export { columnsOf, tableSchema, type ColumnsOf, type TableFields } from './effect/table-schema.js'

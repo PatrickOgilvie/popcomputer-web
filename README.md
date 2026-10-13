@@ -269,6 +269,23 @@ export default Show
 A renamed prop, a missing page or a `Date` used as a `Date` in the browser is a
 type error on the side that drifted.
 
+A query reads exactly the columns a page shows with `columnsOf`, which takes
+them from the page's schema, beside any values it computes:
+
+```ts
+import { count, eq } from 'drizzle-orm'
+import { columnsOf } from '@popcomputer/web/schema'
+import { ProjectCard } from '../pages'
+import { tasks } from '../schema'
+
+const projectCards = dbQuery((db) =>
+  db.select({ ...columnsOf(projects, ProjectCard), openTasks: count(tasks.id) })
+    .from(projects)
+    .leftJoin(tasks, eq(tasks.projectId, projects.id))
+    .groupBy(projects.id)
+)
+```
+
 ### 3. Configure the application once, and register it
 
 ```ts

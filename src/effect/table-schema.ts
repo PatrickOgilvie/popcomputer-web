@@ -80,3 +80,39 @@ function columnValueSchema(
       return S.Unknown
   }
 }
+
+/** The table's columns that a schema's fields name. */
+export type ColumnsOf<T extends Table, Fields> = {
+  readonly [Key in keyof Fields & keyof T['_']['columns']]: T['_']['columns'][Key]
+}
+
+/**
+ * The table's columns a schema's fields name, for a query's `select`: the
+ * page schema decides what the query reads, so the two never drift. Add
+ * computed values beside them.
+ *
+ * @example
+ * yield* dbQuery((db) =>
+ *   db.select({ ...columnsOf(schema.projects, ProjectCard), openTasks: count(schema.tasks.id) })
+ *     .from(schema.projects)
+ * )
+ */
+export function columnsOf<T extends Table, Fields extends S.Struct.Fields>(
+  table: T,
+  schema: S.Struct<Fields>
+): ColumnsOf<T, Fields> {
+  const columns: unknown = Reflect.get(table, DRIZZLE_COLUMNS)
+  const picked: Record<string, unknown> = {}
+
+  if (columns instanceof Object) {
+    for (const key of Object.keys(schema.fields)) {
+      const column: unknown = Reflect.get(columns, key)
+
+      if (isColumn(column)) picked[key] = column
+    }
+  }
+
+  // SAFETY: picked holds exactly the table's columns whose keys the schema's
+  // fields name, which ColumnsOf maps from the table's own column types.
+  return picked as ColumnsOf<T, Fields>
+}
