@@ -6,7 +6,7 @@ import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
 import { authorize, AuthUserService } from '../src/effect/services.js'
-import { json, render } from '../src/effect/responses.js'
+import { flash, json, notFound, redirect, render } from '../src/effect/responses.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import { signedIn, testEnv } from '../src/testing.js'
 import { Database } from 'bun:sqlite'
@@ -15,7 +15,6 @@ import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite'
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { bound } from '../src/effect/binding.js'
 import { dbMutation } from '../src/effect/database.js'
-import { redirect } from '../src/effect/responses.js'
 import { nullableString, requiredString } from '../src/effect/schema.js'
 import { validateRequest } from '../src/effect/validation.js'
 
@@ -167,23 +166,29 @@ describe('the README route test', () => {
       errors: { component: 'Error' },
     })
 
+    // README.md "Write actions and register routes".
     effectRoutes(app).get('/projects/{project}', action(Effect.gen(function* () {
+      const auth = yield* authorize()
       const project = yield* bound('project')
-      yield* authorize((auth) => auth.user.id === project.userId)
+
+      if (project.userId !== auth.user.id) return yield* notFound('Project')
 
       return yield* render('Projects/Show', { project })
     })))
 
     // AGENTS.md "A complete action".
     effectRoutes(app).put('/projects/{project}', action(Effect.gen(function* () {
+      const auth = yield* authorize()
       const project = yield* bound('project')
-      yield* authorize((auth) => auth.user.id === project.userId)
+
+      if (project.userId !== auth.user.id) return yield* notFound('Project')
 
       const input = yield* validateRequest(UpdateProject)
 
       yield* dbMutation((db) =>
         db.update(projects).set(input).where(eq(projects.id, project.id))
       )
+      yield* flash('success', 'Project saved.')
 
       return yield* redirect(`/projects/${project.id}`)
     })))
@@ -206,7 +211,7 @@ describe('the README route test', () => {
     })
   })
 
-  test('forbids other users', async () => {
+  test("answers 404 for another member's project", async () => {
     const { app, testBindings } = await createProjectsApp()
     const res = await app.request(
       '/projects/project-1',
@@ -214,7 +219,7 @@ describe('the README route test', () => {
       testEnv(signedIn({ id: 'user-2' }), testBindings)
     )
 
-    expect(res.status).toBe(403)
+    expect(res.status).toBe(404)
   })
 
   const update = (body: unknown, userId: string) =>
@@ -236,15 +241,16 @@ describe('the README route test', () => {
 
     expect(res.status).toBe(303)
     expect(res.headers.get('location')).toBe('/projects/project-1')
+    expect(res.headers.getSetCookie().some((cookie) => cookie.startsWith('popweb-flash='))).toBe(true)
     expect(db.select().from(projects).all()).toEqual([
       { id: 'project-1', name: 'Renamed', description: null, userId: 'user-1' },
     ])
   })
 
-  test('the AGENTS.md update action forbids other users', async () => {
+  test("the AGENTS.md update action answers 404 for another member's project", async () => {
     const { res } = await update({ name: 'Renamed' }, 'user-2')
 
-    expect(res.status).toBe(403)
+    expect(res.status).toBe(404)
   })
 
   test('the AGENTS.md update action rejects an empty name', async () => {

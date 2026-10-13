@@ -15,7 +15,6 @@
  */
 
 import type { ClientPageProps, PageName } from './effect/pages.js'
-import type { PageErrors } from './types.js'
 
 type ReactRenderable = string | number | boolean | null | undefined | object
 
@@ -37,9 +36,13 @@ type ComponentType<P> = (props: P) => ReactRenderable
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface SharedProps {}
 
-/** Props the framework gives every page: field errors from a failed form. */
+/**
+ * Props the framework gives every page: the field errors of a failed form,
+ * by field. A form that names an error bag gets its errors under the bag's
+ * name instead.
+ */
 export interface FrameworkProps {
-  readonly errors: PageErrors
+  readonly errors: Readonly<Record<string, string>>
 }
 
 /** A page's props: the registered props of a page name, or the props given. */

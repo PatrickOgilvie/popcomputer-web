@@ -90,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `AGENTS.md` and the README describe the page registry, flash and failed-form redirects, the database operations, Effect `Config` and the auth routes. The canonical action calls `authorize()` before `bound()` and answers another member's record with 404, so its existence stays private. React page examples are type-checked with the package's React types.
 - `testEnv(layer, bindings)` takes any of the bindings the application declares in `WebBindingsType`, with their declared types, so a misspelled or mistyped binding is a type error.
 - `validateRequest` and `validateUnknown` report every invalid field (`errors: 'all'`) instead of the first, so a form shows all of its errors at once. Pass `parseOptions: { errors: 'first' }` for the previous behavior.
 - Public operations run in spans named after them: `Web.authorize`, `Web.validateUnknown`, `Web.validateRequest`, `Web.bound`, `Web.background`, `Web.dbMutation`, `Web.dbTransaction`, `Web.cache`, `Web.cacheGet`, `Web.cacheSet`, `Web.cacheInvalidate` and `Web.cacheInvalidatePrefix`. An application that installs an Effect tracer, such as an OpenTelemetry exporter, sees where request time goes.

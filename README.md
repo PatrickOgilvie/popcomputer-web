@@ -13,8 +13,11 @@ failures.
 ```ts
 export const showProject = action(
   Effect.gen(function* () {
+    const auth = yield* authorize()
     const project = yield* bound('project')
-    yield* authorize((auth) => auth.user.id === project.userId)
+
+    if (project.userId !== auth.user.id) return yield* notFound('Project')
+
     return yield* render('Projects/Show', { project })
   })
 )
@@ -153,7 +156,62 @@ This gives `BindingsService`, `DatabaseService`, and `AuthService` their
 application-specific types without passing generic parameters through every
 action.
 
-### 2. Configure the application once
+### 2. Describe the pages
+
+Each page component's props are an Effect Schema, registered once:
+
+```ts
+// src/pages.ts
+import { Schema as S } from 'effect'
+
+export const Project = S.Struct({
+  id: S.String,
+  name: S.String,
+  userId: S.String,
+  createdAt: S.Date,
+})
+
+export const ProjectSummary = S.Struct({ id: S.String, name: S.String })
+
+export const pages = {
+  'Projects/Index': S.Struct({ projects: S.Array(ProjectSummary) }),
+  'Projects/Show': S.Struct({ project: Project }),
+  'Auth/Login': S.Struct({}),
+  Dashboard: S.Struct({}),
+}
+
+declare module '@popcomputer/web/effect' {
+  interface WebPagesType {
+    type: typeof pages
+  }
+}
+```
+
+`render('Projects/Show', props)` then accepts only a registered page and props
+matching its schema, and encodes the props as JSON through it, so `createdAt`
+reaches the browser as an ISO string. The React component takes its props from
+the same schema:
+
+```tsx
+// src/pages/Projects/Show.tsx
+import type { WebPage } from '@popcomputer/web/react'
+
+const Show: WebPage<'Projects/Show'> = ({ project, errors }) => (
+  <main>
+    <h1>{project.name}</h1>
+    <p>Created {new Date(project.createdAt).toLocaleDateString()}</p>
+    {errors.name && <p role="alert">{errors.name}</p>}
+  </main>
+)
+
+export default Show
+```
+
+A renamed prop, a missing page or a `Date` used as a `Date` in the browser is a
+type error on the side that drifted. Props shared with every page are typed by
+augmenting `SharedProps` from `@popcomputer/web/react`.
+
+### 3. Configure the application once
 
 ```ts
 // src/app.ts
@@ -167,16 +225,11 @@ import {
 import { createAuth } from './auth'
 import { createDb } from './db'
 import manifest from '../dist/manifest.json'
+import { pages, Project } from './pages'
 import * as schema from './schema'
 import type { Bindings } from './web-types'
 
 type Env = { Bindings: Bindings }
-
-const Project = S.Struct({
-  id: S.String,
-  name: S.String,
-  userId: S.String,
-})
 
 const routeBindings = { project: Project }
 
@@ -216,6 +269,7 @@ export const { app, routes } = setupWeb(new Hono<Env>(), {
   database: (c) => createDb(c.env.DATABASE_URL),
   schema,
   bindings: routeBindings,
+  pages,
   auth: {
     client: (c, { db, backgroundTasks }) => createAuth({
       db,
@@ -248,12 +302,13 @@ const version = createVersion(manifest)
 const template = createTemplate({ title: 'Projects' })
 
 // Public application
-setupWeb(app, { version, render: template })
+setupWeb(app, { version, render: template, pages })
 
 // Database without auth
 setupWeb(app, {
   version,
   render: template,
+  pages,
   database: (c) => createDb(c.env.DATABASE_URL),
 })
 
@@ -261,6 +316,7 @@ setupWeb(app, {
 setupWeb(app, {
   version,
   render: template,
+  pages,
   auth: {
     client: (c, { backgroundTasks }) => createStatelessAuth({
       secret: c.env.BETTER_AUTH_SECRET,
@@ -296,7 +352,7 @@ can lose precision when mirrored through the Effect mapped type; use
 and returns `{ app, routes }`. For manual Hono composition, see
 [Lower-level composition](#lower-level-composition).
 
-### 3. Write actions and register routes
+### 4. Write actions and register routes
 
 ```ts
 // src/actions/projects/show.ts
@@ -305,13 +361,17 @@ import {
   action,
   authorize,
   bound,
+  notFound,
   render,
 } from '@popcomputer/web/effect'
 
 export const showProject = action(
   Effect.gen(function* () {
+    const auth = yield* authorize()
     const project = yield* bound('project')
-    yield* authorize((auth) => auth.user.id === project.userId)
+
+    // Another member's project answers 404, so its existence stays private.
+    if (project.userId !== auth.user.id) return yield* notFound('Project')
 
     return yield* render('Projects/Show', { project })
   })
@@ -394,6 +454,7 @@ export const auditLogFor = (kv: KVNamespace) => Layer.succeed(AuditLog, AuditLog
 setupWeb(app, {
   version,
   render: template,
+  pages,
   services: {
     app: ClockLive,
     request: (c) => auditLogFor(c.env.KV),
@@ -634,6 +695,18 @@ endings, not statements to run in sequence:
 | Fail with `NotFoundError` | `return yield* notFound('Project', projectId)` |
 | Fail with `ForbiddenError` | `return yield* forbidden('You cannot edit this project')` |
 
+`yield* flash('success', 'Project saved.')` before any of them hands a value to
+the next page the user sees, as Inertia's page `flash` field: the page a
+redirect renders, or the page the same request renders.
+
+A form submission that fails validation, whether in `validateRequest` or as a
+`ValidationError` the action fails with, redirects back (303) to the page it
+came from. That page renders with all of its own props and the field errors as
+`errors`; a form that names an Inertia error bag gets them under its name.
+Errors and flash values travel in a short-lived `HttpOnly` cookie that the
+next visit reads and clears. A JSON client gets a 422 instead, and invalid
+query parameters on a page visit render the error page with 422.
+
 Typed failures, defects, Hono exceptions, and not-found responses share the
 configured error boundary. Use `EffectErrorObserverService` as the integration
 point for Sentry, PostHog, or another reporting system; observation does not
@@ -650,6 +723,7 @@ import { kvCache } from '@popcomputer/web/cache'
 setupWeb(app, {
   version,
   render: template,
+  pages,
   services: { request: (c) => kvCache(c.env.KV) },
 })
 ```
@@ -791,14 +865,14 @@ describe('GET /projects/{project}', () => {
     })
   })
 
-  test('forbids other users', async () => {
+  test("answers 404 for another member's project", async () => {
     const res = await app.request(
       '/projects/project-1',
       {},
       testEnv(signedIn({ id: 'user-2' }), testBindings)
     )
 
-    expect(res.status).toBe(403)
+    expect(res.status).toBe(404)
   })
 })
 ```
@@ -948,6 +1022,12 @@ framework package in an application.
   than hidden requirements.
 - The package does not run database migrations. Use `drizzle-kit` or
   `wrangler d1 migrations` directly.
+- Cloudflare D1 has no interactive transactions. `dbBatch` applies several
+  writes atomically there; `dbTransaction` needs Postgres, MySQL or libsql,
+  and is a type error for synchronous drivers such as `bun:sqlite`.
+- Page props cross to the browser as JSON. `Jsonify` describes the result
+  (dates and bigints become strings); page schemas should describe plain
+  data rather than classes or Effect data types.
 
 ## Developing this package
 

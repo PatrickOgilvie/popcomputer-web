@@ -141,7 +141,7 @@ describe('React page props', () => {
   test('a page typed by its own props also receives field errors', () => {
     const props: PagePropsFor<{ title: string }> = {
       title: 'Test',
-      errors: { title: 'Required', createProject: { name: 'Required' } },
+      errors: { title: 'Required' },
     }
 
     expect(props.title).toBe('Test')

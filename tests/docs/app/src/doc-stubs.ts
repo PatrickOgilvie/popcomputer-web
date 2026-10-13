@@ -7,6 +7,7 @@ import { json } from '@popcomputer/web/effect'
 import manifest from '../dist/manifest.json'
 import { createAuth, createStatelessAuth } from './auth'
 import { createDb } from './db'
+import { pages, ProjectSummary } from './pages'
 import { projects } from './schema'
 
 export { createAuth, createDb, createStatelessAuth, manifest, projects }
@@ -22,7 +23,7 @@ export const auth = createAuth({
 export declare const headers: Headers
 
 export declare const userId: string
-export const ProjectSummary = S.Struct({ id: S.String, name: S.String })
+export { pages, ProjectSummary }
 export declare function loadProjects(
   userId: string
 ): Promise<ReadonlyArray<typeof ProjectSummary.Type>>

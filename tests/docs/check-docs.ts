@@ -241,6 +241,7 @@ async function main(): Promise<number> {
         compilerOptions: {
           noEmit: true,
           declaration: false,
+          jsx: 'react-jsx',
           rootDir: repoRoot,
           paths: Object.fromEntries(
             Object.entries(ENTRYPOINTS).map(([entrypoint, module]) => [entrypoint, [dist(module, '.d.ts')]])
