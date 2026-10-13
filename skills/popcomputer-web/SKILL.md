@@ -49,8 +49,9 @@ TypeScript example here and in the README type-checks against the package.
    `httpError(...)`. `yield* flash(key, value)` before a redirect hands a
    message to the next page. Expected failures are typed Effect failures:
    turn a domain error into a response with `Effect.catchTags`, such as
-   `invalid({ amount: error.message })` to show it beside its form field. Do
-   not `throw` in an action.
+   `invalid({ amount: error.message })` to show it beside its form field. A
+   handler that ends differently per branch branches inside `Effect.gen`,
+   whose branches TypeScript combines. Do not `throw` in an action.
 5. **Read request input only through `validateRequest(Schema)`.** Build schemas
    from `@popcomputer/web/schema` validators (`requiredString`,
    `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, ...), which
