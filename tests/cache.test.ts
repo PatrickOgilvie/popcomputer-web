@@ -5,7 +5,7 @@ import { describe, it, expect } from 'bun:test'
 import { Clock, Deferred, Predicate, Effect, Layer, Option, Schema as S, Duration } from 'effect'
 import {
   CacheService,
-  CacheClientError,
+  CacheError,
   cache,
   cacheGet,
   cacheSet,
@@ -14,6 +14,7 @@ import {
   type CacheClient,
 } from '../src/cache.js'
 import { ExecutionContextService, type ExecutionContextClient } from '../src/effect/index.js'
+import { EffectErrorObserverService } from '../src/effect/error-observer.js'
 
 // ============================================================================
 // Test ExecutionContext Layer
@@ -196,18 +197,18 @@ describe('cache', () => {
   })
 
   describe('cache()', () => {
-    it('rejects a non-finite persisted cache timestamp', async () => {
+    it('reads an entry with a non-finite timestamp as absent', async () => {
       const { layer, store } = makeTestCache()
       store.set('user:1', {
         value: '{"v":{"id":"1","name":"Test","email":"test@example.com"},"t":1e999}',
         expiresAt: 3_600_000,
       })
 
-      const result = await Effect.runPromiseExit(cacheGet('user:1', UserSchema).pipe(
+      const result = await Effect.runPromise(cacheGet('user:1', UserSchema).pipe(
         Effect.provide(layer),
       ))
 
-      expect(result._tag).toBe('Failure')
+      expect(Option.isNone(result)).toBe(true)
     })
 
     it('computes and caches value on first call', async () => {
@@ -275,7 +276,7 @@ describe('cache', () => {
       const { layer } = makeTestCache()
 
       const result = await Effect.gen(function* () {
-        const failure = new CacheClientError('Database connection failed')
+        const failure = new CacheError({ reason: 'Database connection failed' })
         const compute = Effect.fail(failure)
 
         return yield* cache('user:1', compute, UserSchema, { ttl: Duration.hours(1) })
@@ -284,15 +285,15 @@ describe('cache', () => {
       expect(result._tag).toBe('Failure')
 
       if (Predicate.isTagged(result, 'Failure')) {
-        expect(result.failure).toBeInstanceOf(CacheClientError)
+        expect(result.failure).toBeInstanceOf(CacheError)
 
-        if (result.failure instanceof CacheClientError) {
+        if (result.failure instanceof CacheError) {
           expect(result.failure.reason).toBe('Database connection failed')
         }
       }
     })
 
-    it('handles schema decode errors for invalid cached data', async () => {
+    it('recomputes and replaces an entry that no longer matches the schema', async () => {
       const { layer, store } = makeTestCache()
 
       // Pre-populate cache with invalid data (missing required fields in value)
@@ -309,9 +310,10 @@ describe('cache', () => {
         }))
 
         return yield* cache('user:1', compute, UserSchema, { ttl: Duration.hours(1) })
-      }).pipe(Effect.provide(layer), Effect.result, Effect.runPromise)
+      }).pipe(Effect.provide(layer), Effect.runPromise)
 
-      expect(result._tag).toBe('Failure')
+      expect(result).toEqual({ id: '1', name: 'Test User', email: 'test@example.com' })
+      expect(JSON.parse(store.get('user:1')?.value ?? 'null').v).toEqual(result)
     })
 
     it('caches complex nested objects', async () => {
@@ -621,14 +623,14 @@ describe('cache', () => {
   })
 
   describe('error handling', () => {
-    it('wraps cache client errors in CacheClientError', async () => {
-      const failingClient: CacheClient = {
-        get: () => Effect.fail(new CacheClientError('Connection failed', new Error('ECONNREFUSED'))),
-        put: () => Effect.fail(new CacheClientError('Connection failed')),
-        delete: () => Effect.fail(new CacheClientError('Connection failed')),
-        list: () => Effect.fail(new CacheClientError('Connection failed')),
-      }
+    const failingClient: CacheClient = {
+      get: () => Effect.fail(new CacheError({ reason: 'Connection failed', cause: new Error('ECONNREFUSED') })),
+      put: () => Effect.fail(new CacheError({ reason: 'Connection failed' })),
+      delete: () => Effect.fail(new CacheError({ reason: 'Connection failed' })),
+      list: () => Effect.fail(new CacheError({ reason: 'Connection failed' })),
+    }
 
+    it('explicit reads fail with CacheError when the store fails', async () => {
       const failingLayer = Layer.succeed(CacheService, failingClient)
 
       const result = await cacheGet('key', UserSchema).pipe(Effect.provide(failingLayer), Effect.result, Effect.runPromise)
@@ -636,12 +638,32 @@ describe('cache', () => {
       expect(result._tag).toBe('Failure')
 
       if (Predicate.isTagged(result, 'Failure')) {
-        expect(result.failure).toBeInstanceOf(CacheClientError)
-
-        if (result.failure instanceof CacheClientError) {
-          expect(result.failure.reason).toBe('Connection failed')
-        }
+        expect(result.failure).toBeInstanceOf(CacheError)
+        expect(result.failure.reason).toBe('Connection failed')
       }
+    })
+
+    it('cache() computes the value when the store fails, and reports the failure', async () => {
+      const observed: string[] = []
+
+      const observer = Layer.succeed(EffectErrorObserverService, {
+        observe: (event) => Effect.sync(() => {
+          observed.push(String(event.metadata?.operation))
+        }),
+      })
+
+      const value = await cache(
+        'user:1',
+        Effect.succeed({ id: '1', name: 'Ada', email: 'ada@example.com' }),
+        UserSchema,
+        { ttl: Duration.hours(1) }
+      ).pipe(
+        Effect.provide(Layer.mergeAll(Layer.succeed(CacheService, failingClient), observer, makeTestExecutionContext().layer)),
+        Effect.runPromise
+      )
+
+      expect(value.name).toBe('Ada')
+      expect(observed).toEqual(['cache.get', 'cache.put'])
     })
   })
 

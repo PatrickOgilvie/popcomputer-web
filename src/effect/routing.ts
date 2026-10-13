@@ -42,7 +42,6 @@ import {
 import type {
   DatabaseService,
   AuthService,
-  CacheService,
   ExecutionContextService,
   PageService,
   RequestService,
@@ -94,7 +93,6 @@ export type CoreServices =
   | BindingsService
   | BoundModels
   | ExecutionContextService
-  | CacheService
 
 /**
  * Every service the framework can provide to a route: the core services plus

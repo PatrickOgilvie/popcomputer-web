@@ -5,7 +5,7 @@
  * All errors support conversion to structured format via toStructured().
  */
 
-import { Data } from 'effect'
+import { Data, Schema } from 'effect'
 import type {
   ErrorContext,
   StructuredError,
@@ -728,6 +728,29 @@ export type AppError =
   | AuthRedirect
   | RouteConfigurationError
   | ConfigurationError
+  | CacheError
+
+/**
+ * Cache Error - The cache store failed an explicit cache operation.
+ *
+ * `cache()` never fails with it: a cache that cannot be read or written
+ * computes the value instead. `cacheGet`, `cacheSet` and the invalidation
+ * helpers fail with it, which the boundary renders as 503.
+ */
+export class CacheError extends Schema.TaggedError<CacheError>()('CacheError', {
+  reason: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) implements StructuredErrorCapable {
+  get httpStatus(): number {
+    return 503
+  }
+
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
+    return structured(ErrorCodes.SVC_702_CACHE_UNAVAILABLE, { reason: this.reason }, context, {
+      message: this.reason,
+    })
+  }
+}
 
 /**
  * Check if an error supports structured conversion.

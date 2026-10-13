@@ -26,14 +26,11 @@ import {
   RequestStateService,
   ResponseFactoryService,
   BindingsService,
-  CacheService,
-  CacheClientError,
   ExecutionContextService,
   type RequestContext,
   type RequestStateClient,
   type ResponseFactory,
   type PageRenderer,
-  type CacheClient,
   type ExecutionContextClient,
   type BindingsType,
 } from './services.js'
@@ -164,64 +161,6 @@ function createResponseFactory<E extends Env>(c: HonoContext<E>): ResponseFactor
     json: <T>(data: T, status = 200) => c.json(data, status as ContentfulStatusCode),
     text: (data: string, status = 200) => c.text(data, status as ContentfulStatusCode),
     notFound: () => c.notFound(),
-  }
-}
-
-/**
- * Cloudflare KV Namespace interface (subset of the full API).
- */
-interface KVNamespace {
-  get(key: string, options?: { type?: 'text' }): Promise<string | null>
-  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>
-  delete(key: string): Promise<void>
-  list(options?: { prefix?: string; cursor?: string }): Promise<{
-    keys: Array<{ name: string }>
-    list_complete: boolean
-    cursor?: string
-  }>
-}
-
-/**
- * Create a CacheClient from Cloudflare KV binding.
- */
-function createKVCacheClient(kv: KVNamespace): CacheClient {
-  return {
-    get: (key) =>
-      Effect.tryPromise({
-        try: () => kv.get(key),
-        catch: (e) => new CacheClientError('Failed to get from cache', e),
-      }),
-    put: (key, value, options) =>
-      Effect.tryPromise({
-        try: () => kv.put(key, value, options),
-        catch: (e) => new CacheClientError('Failed to set cache', e),
-      }),
-    delete: (key) =>
-      Effect.tryPromise({
-        try: () => kv.delete(key),
-        catch: (e) => new CacheClientError('Failed to delete from cache', e),
-      }),
-    list: (options) =>
-      Effect.tryPromise({
-        try: () => kv.list(options),
-        catch: (e) => new CacheClientError('Failed to list cache keys', e),
-      }),
-  }
-}
-
-/**
- * Create a no-op CacheClient that fails with helpful errors when KV is not configured.
- */
-function createUnconfiguredCacheClient(): CacheClient {
-  const error = new CacheClientError(
-    'CacheService requires KV binding. Add KV to your wrangler.toml and ensure it is available in c.env.KV'
-  )
-
-  return {
-    get: () => Effect.fail(error),
-    put: () => Effect.fail(error),
-    delete: () => Effect.fail(error),
-    list: () => Effect.fail(error),
   }
 }
 
@@ -537,7 +476,6 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   | AuthService
   | AuthUserService
   | BindingsService
-  | CacheService
   | ExecutionContextService
   | CustomServices,
   never,
@@ -558,16 +496,6 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   const bindingsLayer = Layer.succeed(
     BindingsService,
     (c.env ?? {}) as BindingsType
-  )
-
-  // Cache layer - backed by KV if available, otherwise unconfigured client
-  // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
-  // oxlint-disable-next-line typescript/no-unnecessary-type-assertion -- TypeScript 5 needs the binding shape to retain KVNamespace through Hono's generic environment.
-  const kv = (c.env as { KV?: KVNamespace } | undefined)?.KV
-
-  const cacheLayer = Layer.succeed(
-    CacheService,
-    kv ? createKVCacheClient(kv) : createUnconfiguredCacheClient()
   )
 
   // Database and auth come from the typed request context (written by
@@ -605,7 +533,6 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     responseLayer,
     pageLayer,
     bindingsLayer,
-    cacheLayer,
     executionContextLayer,
     responseCacheLayer
   )
@@ -638,7 +565,6 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     | ResponseFactoryService
     | PageService
     | BindingsService
-    | CacheService
     | ExecutionContextService
     | DatabaseService
     | AuthService

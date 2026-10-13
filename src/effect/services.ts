@@ -1,7 +1,7 @@
 /** Effect services exposed by @popcomputer/web. */
 
 import { Context, Effect, Option, type Redacted } from 'effect'
-import { UnauthorizedError, ForbiddenError } from './errors.js'
+import { CacheError, UnauthorizedError, ForbiddenError } from './errors.js'
 import type { PageProps, PagePropValue } from '../types.js'
 
 /**
@@ -328,7 +328,7 @@ export class ResponseFactoryService extends Context.Service<
 /**
  * Cache Service - KV-backed caching for expensive operations
  *
- * Automatically provided by setupWeb when a KV binding is available.
+ * Provide it with `kvCache(kv)` from `@popcomputer/web/cache` in setupWeb's `services`.
  * Falls back to a no-op implementation if KV is not configured.
  *
  * @example
@@ -339,25 +339,14 @@ export class ResponseFactoryService extends Context.Service<
  * ```
  */
 export interface CacheClient {
-  get(key: string): Effect.Effect<string | null, CacheClientError>
-  put(key: string, value: string, options?: { expirationTtl?: number }): Effect.Effect<void, CacheClientError>
-  delete(key: string): Effect.Effect<void, CacheClientError>
+  get(key: string): Effect.Effect<string | null, CacheError>
+  put(key: string, value: string, options?: { expirationTtl?: number }): Effect.Effect<void, CacheError>
+  delete(key: string): Effect.Effect<void, CacheError>
   list(options?: { prefix?: string; cursor?: string }): Effect.Effect<{
     keys: Array<{ name: string }>
     list_complete: boolean
     cursor?: string
-  }, CacheClientError>
-}
-
-/**
- * Error from cache client operations.
- */
-export class CacheClientError {
-  readonly _tag = 'CacheClientError'
-  constructor(
-    readonly reason: string,
-    readonly cause?: unknown
-  ) {}
+  }, CacheError>
 }
 
 export class CacheService extends Context.Service<

@@ -551,27 +551,46 @@ change the failure channel.
 
 ## Caching and background work
 
-The data cache validates serialized values with Effect Schema:
+The data cache keeps computed values in a store, checked against an Effect
+Schema when read. Provide a store with `kvCache` in `services.request`:
+
+```ts
+import { kvCache } from '@popcomputer/web/cache'
+
+setupWeb(app, {
+  version,
+  render: template,
+  services: { request: (c) => kvCache(c.env.KV) },
+})
+```
+
+Then wrap a computation in `cache`:
 
 ```ts
 import { Duration, Effect, Schema as S } from 'effect'
+import { action, authorize, render } from '@popcomputer/web/effect'
 import { cache } from '@popcomputer/web/cache'
 
-const projects = yield* cache(
-  `users:${userId}:projects`,
-  Effect.tryPromise(() => loadProjects(userId)),
-  S.Array(ProjectSummary),
-  {
-    ttl: Duration.minutes(5),
-    swr: Duration.minutes(1),
-    version: true,
-  }
-)
+export const listProjects = action(Effect.gen(function* () {
+  const auth = yield* authorize()
+
+  const projects = yield* cache(
+    `users:${auth.user.id}:projects`,
+    Effect.promise(() => loadProjects(auth.user.id)),
+    S.Array(ProjectSummary),
+    { ttl: Duration.minutes(5), swr: Duration.minutes(1), version: true }
+  )
+
+  return yield* render('Projects/Index', { projects })
+}))
 ```
 
-With a `KV` binding, `CacheService` uses Cloudflare KV. Stale-while-revalidate
-uses the request execution context when available and refreshes inline in local
-environments without background execution.
+`cache` never fails because of the store: an unreachable store or an entry that
+no longer matches the schema computes the value instead, and the failure goes
+to `EffectErrorObserverService`. `cacheGet`, `cacheSet`, `cacheInvalidate` and
+`cacheInvalidatePrefix` fail with `CacheError`, which renders as 503.
+Stale-while-revalidate refreshes in the background when the request has an
+execution context and inline otherwise.
 
 For runtime-owned work that must outlive a response, name the work and pass
 the Effect. The name identifies the work in error reports:

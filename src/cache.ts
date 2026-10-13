@@ -1,16 +1,17 @@
 /**
- * Cache Module
+ * `@popcomputer/web/cache`: a schema-checked data cache.
  *
- * Simple cache abstraction for storing expensive DB operations.
- * Uses CacheService which is automatically provided and backed by Cloudflare KV by default.
- * Can be swapped for Redis, Memcached, or any other implementation.
- *
- * Supports stale-while-revalidate (SWR) pattern for improved latency and resilience.
+ * Provide a store with `kvCache(c.env.KV)` in setupWeb's `services.request`,
+ * or any other CacheClient through CacheService. `cache()` wraps a
+ * computation, with stale-while-revalidate, and never fails because of the
+ * store: an unreachable store or an unreadable entry computes the value
+ * instead, and the failure is reported to EffectErrorObserverService.
  */
 
-import { Clock, Duration, Effect, Option, Schema } from 'effect'
-import type { CacheClientError } from './effect/services.js'
-import { CacheService, ExecutionContextService } from './effect/services.js'
+import { Clock, Duration, Effect, Layer, Option, Schema } from 'effect'
+import { CacheService, ExecutionContextService, type CacheClient } from './effect/services.js'
+import { CacheError } from './effect/errors.js'
+import { observeEffectErrorEvent } from './effect/error-observer.js'
 
 // ============================================================================
 // Types
@@ -42,15 +43,6 @@ export type CacheGetOptions = {
    */
   version?: string | boolean
 }
-
-// ============================================================================
-// Errors
-// ============================================================================
-
-export class CacheError extends Schema.TaggedError<CacheError>()('CacheError', {
-  reason: Schema.String,
-  cause: Schema.optional(Schema.Unknown),
-}) {}
 
 // ============================================================================
 // Internal
@@ -110,6 +102,56 @@ const resolveKey = <V>(
   return key
 }
 
+/** Report a store failure the cache recovered from. */
+const reportStoreFailure = (operation: string) => (error: CacheError | Schema.SchemaError) =>
+  observeEffectErrorEvent({
+    source: 'framework',
+    handling: 'handled',
+    kind: 'failure',
+    error,
+    metadata: { operation },
+  })
+
+/** A failure to encode or decode an entry, as the CacheError explicit operations fail with. */
+const entryError = (reason: string) => (cause: Schema.SchemaError) =>
+  new CacheError({ reason, cause })
+
+// ============================================================================
+// Stores
+// ============================================================================
+
+/** The part of Cloudflare's KVNamespace the cache uses. */
+export interface KVNamespaceLike {
+  get(key: string): Promise<string | null>
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>
+  delete(key: string): Promise<void>
+  list(options?: { prefix?: string; cursor?: string }): Promise<{
+    keys: Array<{ name: string }>
+    list_complete: boolean
+    cursor?: string
+  }>
+}
+
+/**
+ * Provide CacheService backed by a Workers KV namespace.
+ *
+ * @example
+ * setupWeb(app, { version, render, services: { request: (c) => kvCache(c.env.KV) } })
+ */
+export function kvCache(kv: KVNamespaceLike): Layer.Layer<CacheService> {
+  const attempt = <A>(reason: string, run: () => Promise<A>) =>
+    Effect.tryPromise({ try: run, catch: (cause) => new CacheError({ reason, cause }) })
+
+  const client: CacheClient = {
+    get: (key) => attempt('Could not read from the cache.', () => kv.get(key)),
+    put: (key, value, options) => attempt('Could not write to the cache.', () => kv.put(key, value, options)),
+    delete: (key) => attempt('Could not delete from the cache.', () => kv.delete(key)),
+    list: (options) => attempt('Could not list cache keys.', () => kv.list(options)),
+  }
+
+  return Layer.succeed(CacheService, client)
+}
+
 // ============================================================================
 // Composable API
 // ============================================================================
@@ -158,7 +200,7 @@ export const cache = <V, E, R>(
   compute: Effect.Effect<V, E, R>,
   schema: Schema.Codec<V>,
   options: CacheOptions
-): Effect.Effect<V, E | CacheError | CacheClientError | Schema.SchemaError, R | CacheService | ExecutionContextService> =>
+): Effect.Effect<V, E, R | CacheService | ExecutionContextService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
     const executionContext = yield* ExecutionContextService
@@ -174,19 +216,26 @@ export const cache = <V, E, R>(
 
     const totalTtlSeconds = Math.ceil((ttlMs + swrMs) / 1000)
 
-    // Helper to store a value in cache
+    // Store a computed value; a failed write leaves the value uncached.
     const storeInCache = (value: V) =>
       Effect.gen(function* () {
         const newEntry: CacheEntry<V> = { v: value, t: yield* Clock.currentTimeMillis }
         const serialized = yield* Schema.encodeEffect(jsonSchema)(newEntry)
         yield* cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
-      })
+      }).pipe(Effect.catch(reportStoreFailure('cache.put')))
 
-    // Check cache first
-    const cached = yield* cacheService.get(effectiveKey)
+    // An unreadable store or entry is a miss.
+    const cached = yield* cacheService.get(effectiveKey).pipe(
+      Effect.catch((error) => Effect.as(reportStoreFailure('cache.get')(error), null))
+    )
 
-    if (cached !== null) {
-      const entry = yield* Schema.decodeEffect(jsonSchema)(cached)
+    const entry = cached === null
+      ? undefined
+      : yield* Schema.decodeEffect(jsonSchema)(cached).pipe(
+          Effect.catch((error) => Effect.as(reportStoreFailure('cache.decode')(error), undefined))
+        )
+
+    if (entry !== undefined) {
       const age = (yield* Clock.currentTimeMillis) - entry.t
 
       if (age < ttlMs) {
@@ -243,7 +292,7 @@ export const cacheGet = <V>(
   key: string,
   schema: Schema.Codec<V>,
   options?: CacheGetOptions
-): Effect.Effect<Option.Option<V>, CacheError | CacheClientError | Schema.SchemaError, CacheService> =>
+): Effect.Effect<Option.Option<V>, CacheError, CacheService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
     const entrySchema = CacheEntrySchema(schema)
@@ -256,9 +305,12 @@ export const cacheGet = <V>(
       return Option.none<V>()
     }
 
-    const entry = yield* Schema.decodeEffect(jsonSchema)(cached)
+    // An entry that no longer matches the schema reads as absent.
+    const entry = yield* Schema.decodeEffect(jsonSchema)(cached).pipe(
+      Effect.catch((error) => Effect.as(reportStoreFailure('cacheGet.decode')(error), undefined))
+    )
 
-    return Option.some(entry.v)
+    return entry === undefined ? Option.none<V>() : Option.some(entry.v)
   })
 
 /**
@@ -277,7 +329,7 @@ export const cacheSet = <V>(
   value: V,
   schema: Schema.Codec<V>,
   options: CacheOptions
-): Effect.Effect<void, CacheError | CacheClientError | Schema.SchemaError, CacheService> =>
+): Effect.Effect<void, CacheError, CacheService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
     const entrySchema = CacheEntrySchema(schema)
@@ -293,7 +345,9 @@ export const cacheSet = <V>(
     const totalTtlSeconds = Math.ceil((ttlMs + swrMs) / 1000)
 
     const entry: CacheEntry<V> = { v: value, t: yield* Clock.currentTimeMillis }
-    const serialized = yield* Schema.encodeEffect(jsonSchema)(entry)
+    const serialized = yield* Schema.encodeEffect(jsonSchema)(entry).pipe(
+      Effect.mapError(entryError('The value does not match the cache schema.'))
+    )
 
     yield* cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
   })
@@ -320,7 +374,7 @@ export type CacheInvalidateOptions<V> = {
 export const cacheInvalidate = <V = unknown>(
   key: string,
   options?: CacheInvalidateOptions<V>
-): Effect.Effect<void, CacheClientError, CacheService> =>
+): Effect.Effect<void, CacheError, CacheService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
 
@@ -341,7 +395,7 @@ export const cacheInvalidate = <V = unknown>(
  */
 export const cacheInvalidatePrefix = (
   prefix: string
-): Effect.Effect<void, CacheClientError, CacheService> =>
+): Effect.Effect<void, CacheError, CacheService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
     let cursor: string | undefined = undefined
@@ -367,4 +421,5 @@ export const cacheInvalidatePrefix = (
     }
   })
 
-export { CacheService, CacheClientError, type CacheClient } from './effect/services.js'
+export { CacheService, type CacheClient } from './effect/services.js'
+export { CacheError }

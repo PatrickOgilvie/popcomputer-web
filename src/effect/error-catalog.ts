@@ -86,6 +86,7 @@ export const ErrorCodes = {
   // Service Errors (SVC)
   SVC_700_SERVICE_UNAVAILABLE: 'WEB_SVC_700_SERVICE_UNAVAILABLE',
   SVC_701_SERVICE_ERROR: 'WEB_SVC_701_SERVICE_ERROR',
+  SVC_702_CACHE_UNAVAILABLE: 'WEB_SVC_702_CACHE_UNAVAILABLE',
 
   // Internal Errors (INT)
   INT_800_UNEXPECTED: 'WEB_INT_800_UNEXPECTED',
@@ -429,6 +430,16 @@ export const ErrorCatalog = {
     title: 'Service Error',
     messageTemplate: 'The "{service}" service encountered an error: {reason}',
     httpStatus: 500,
+    defaultFixes: [],
+  },
+
+  [ErrorCodes.SVC_702_CACHE_UNAVAILABLE]: {
+    code: ErrorCodes.SVC_702_CACHE_UNAVAILABLE,
+    tag: 'CacheError',
+    category: 'service',
+    title: 'Cache Unavailable',
+    messageTemplate: 'The cache store failed: {reason}',
+    httpStatus: 503,
     defaultFixes: [],
   },
 

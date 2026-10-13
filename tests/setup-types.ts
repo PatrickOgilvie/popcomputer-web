@@ -9,6 +9,7 @@
 import { Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono, type Context as HonoContext } from 'hono'
 import { setupWeb } from '@popcomputer/web'
+import { cache, kvCache } from '@popcomputer/web/cache'
 import {
   action,
   AuthService,
@@ -347,4 +348,33 @@ const failsWithPackageError = action(Effect.gen(function* () {
   routes.get('/database', usesDatabase)
   // @ts-expect-error A database alone does not configure auth.
   routes.get('/auth', usesAuthService)
+}
+
+// The data cache is a service the setup provides, and it never adds failures.
+declare const kv: Parameters<typeof kvCache>[0]
+
+const usesCache = action(Effect.gen(function* () {
+  const count = yield* cache('count', Effect.succeed(1), S.Number, { ttl: '1 minute' })
+
+  return yield* json({ count })
+}))
+
+{
+  const { routes } = setupWeb(new Hono<TestEnv>(), {
+    version: 'type-test',
+    render: (page) => JSON.stringify(page),
+  })
+
+  // @ts-expect-error Nothing provides CacheService.
+  routes.get('/count', usesCache)
+}
+
+{
+  const { routes } = setupWeb(new Hono<TestEnv>(), {
+    version: 'type-test',
+    render: (page) => JSON.stringify(page),
+    services: { request: () => kvCache(kv) },
+  })
+
+  routes.get('/count', usesCache)
 }
