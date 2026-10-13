@@ -18,9 +18,10 @@ import {
   DatabaseService,
   json,
   NotFoundError,
+  validateRequest,
 } from '@popcomputer/web/effect'
 import {
-  betterAuthFormAction,
+  betterAuthRedirect,
   effectifyBetterAuth,
   type BetterAuthBoundaryFailure,
 } from '@popcomputer/web/auth'
@@ -216,27 +217,33 @@ setupWeb(new Hono<TestEnv>(), {
   database: () => undefined,
 })
 
-const typedAuthAction = betterAuthFormAction({
-  schema: S.Struct({ email: S.String }),
-  errorMapper: (error) => {
-    const status: number | undefined = error.status
-    const code: string | undefined = error.code
-    const message: string = error.message
-    void status
-    void code
+const typedAuthAction = Effect.gen(function* () {
+  const input = yield* validateRequest(S.Struct({ email: S.String }))
 
-    return { email: message }
-  },
-  call: async (auth, input, request) => {
-    const configuredAuth: TestAuth = auth
-    const email: string = input.email
-    const originalRequest: Request = request
-    void configuredAuth
-    void email
-    void originalRequest
+  return yield* betterAuthRedirect(
+    async (auth, request) => {
+      const configuredAuth: TestAuth = auth
+      const email: string = input.email
+      const originalRequest: Request = request
+      void configuredAuth
+      void email
+      void originalRequest
 
-    return new Headers()
-  },
+      return new Headers()
+    },
+    {
+      redirectTo: '/',
+      errors: (error) => {
+        const status: number | undefined = error.status
+        const code: string | undefined = error.code
+        const message: string = error.message
+        void status
+        void code
+
+        return { email: message }
+      },
+    }
+  )
 })
 
 void typedAuthAction

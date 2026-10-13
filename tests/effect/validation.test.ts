@@ -64,6 +64,7 @@ const createMockRequest = (options: {
     params: () => params,
     query: () => query,
     json: () => Response.json(body).json(),
+    raw: () => new Request('http://localhost/'),
     parseBody,
     header: (name: string) => headers[name] || (name.toLowerCase() === 'content-type' ? contentType : undefined),
   }
@@ -591,6 +592,7 @@ describe('validateRequest', () => {
       params: () => ({}),
       query: () => ({}),
       json: async () => { throw new SyntaxError('Unexpected token') },
+      raw: () => new Request('http://localhost/'),
       parseBody: async () => ({}),
       header: (name: string) => name.toLowerCase() === 'content-type' ? 'application/json' : undefined,
     }
@@ -821,6 +823,7 @@ describe('validateRequest', () => {
       params: () => ({}),
       query: () => ({}),
       json: async () => { throw new SyntaxError('Unexpected token') },
+      raw: () => new Request('http://localhost/'),
       parseBody: async () => ({}),
       header: (name: string) => name.toLowerCase() === 'content-type' ? 'application/vnd.api+json' : undefined,
     }
@@ -854,6 +857,7 @@ describe('validateRequest', () => {
       params: () => ({}),
       query: () => ({}),
       json: async () => { throw new Error('json parser should not be used') },
+      raw: () => new Request('http://localhost/'),
       parseBody: async () => ({ name: 'from-parse-body' }),
       header: (name: string) => name.toLowerCase() === 'content-type' ? 'application/json-seq' : undefined,
     }

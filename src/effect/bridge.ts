@@ -120,6 +120,7 @@ function createRequestContext<E extends Env>(
     },
     query: () => c.req.query(),
     json: (): Promise<unknown> => c.req.json(),
+    raw: () => c.req.raw,
     parseBody: () => c.req.parseBody(),
     header: (name: string) => {
       markPageDynamic(c)

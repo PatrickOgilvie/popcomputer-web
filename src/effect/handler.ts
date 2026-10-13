@@ -203,7 +203,7 @@ export async function renderErrorResponse<E extends Env>(
     }
 
     return finalize(c.redirect(
-      error.redirectTo ?? '/login',
+      error.redirectTo ?? openWebContext(c).signInPath ?? '/login',
       c.req.header('X-Inertia') === 'true' ? 303 : 302
     ))
   }

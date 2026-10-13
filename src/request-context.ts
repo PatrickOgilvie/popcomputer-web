@@ -50,6 +50,8 @@ export interface WebRequestContext<E extends Env = Env> {
   bindings?: RouteBindingsConfig
   /** setupWeb() — response policy shared by every error entrypoint. */
   errorBoundary?: ErrorBoundaryConfig
+  /** setupWeb() — where a signed-out visitor goes when a route needs a user. */
+  signInPath?: string
   /**
    * loadUser() — custom session cookie names registered for this request.
    * The response-cache policy treats these (and better-auth's default

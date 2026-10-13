@@ -5,8 +5,7 @@
  */
 
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
-import type { Hono, MiddlewareHandler, Env } from 'hono'
-import type { DatabaseService } from './services.js'
+import type { MiddlewareHandler, Env } from 'hono'
 import { AuthUserService, AuthService, PageService, RequestService, type AuthType, type AuthUser, type SessionParserOption, type WebAuthUserType } from './services.js'
 import {
   InvalidAuthSession,
@@ -14,21 +13,15 @@ import {
   SessionLookupUnavailable,
   UnauthorizedError,
 } from './errors.js'
-import type {
-  AppError, AuthRateLimitError, ValidationError,
-  AuthRedirect
-} from './errors.js'
+import type { AuthRateLimitError, AuthRedirect, ValidationError } from './errors.js'
 import {
   runBetterAuthApiCall,
   toAuthActionError,
   type BetterAuthActionError,
   type BetterAuthActionResult,
 } from './better-auth-boundary.js'
-import { effectRoutes, type EffectHandler } from './routing.js'
 import { openWebContext } from '../request-context.js'
 import type { PagePropValue, PageProps } from '../types.js'
-import { renderPage } from './responses.js'
-import { validateRequest } from './validation.js'
 
 
 /**
@@ -47,10 +40,7 @@ export const RequireAuthLayer = Layer.effect(
     const maybeUser = yield* Effect.serviceOption(AuthUserService)
 
     if (Option.isNone(maybeUser)) {
-      return yield* new UnauthorizedError({
-        message: 'Authentication required',
-        redirectTo: '/login',
-      })
+      return yield* new UnauthorizedError({ message: 'Authentication required' })
     }
 
     return maybeUser.value
@@ -269,238 +259,6 @@ export function shareAuthMiddleware<E extends Env>(
 }
 
 /**
- * An auth action effect that returns a Response.
- * Used for loginAction, registerAction, logoutAction, and guestActions.
- *
- * The default service requirement is `RequestService | AuthService` because
- * that's what the factory functions (betterAuthFormAction, betterAuthLogoutAction)
- * return, and effectAuthRoutes provides these services automatically.
- */
-export type AuthActionEffect<
-  R = RequestService | AuthService | DatabaseService,
-  E extends AppError = AppError
-> = EffectHandler<R, E>
-
-/**
- * Configuration for auth routes.
- */
-export interface AuthRoutesConfig {
-  loginPath?: string
-  registerPath?: string
-  logoutPath?: string
-  apiPath?: string
-  logoutRedirect?: string
-  /**
-   * Redirect path for authenticated users hitting login/register pages.
-   */
-  loginRedirect?: string
-  loginComponent?: string
-  registerComponent?: string
-  sessionCookie?: string
-  /**
-   * CORS configuration for auth API routes.
-   * If provided, adds CORS headers to `/api/auth/*` routes.
-   */
-  cors?: {
-    origin: string | string[] | ((origin: string) => string | undefined | null)
-    credentials?: boolean
-  }
-  /**
-   * Custom layer for guest-only routes (login, register, guestActions).
-   *
-   * By default, uses `RequireGuestLayer` which blocks ALL authenticated users.
-   * Use `createGuestLayer` to allow certain users through (e.g., anonymous users
-   * who should be able to access login/register to upgrade their accounts).
-   *
-   * @example
-   * // Allow anonymous users to access login/register pages
-   * effectAuthRoutes(app, {
-   *   guestLayer: createGuestLayer((authUser) => authUser.user.isAnonymous),
-   *   loginComponent: 'Auth/Login',
-   *   registerComponent: 'Auth/Register',
-   * })
-   */
-  guestLayer?: Layer.Layer<never, UnauthorizedError, never>
-  /**
-   * POST handler for login form submission.
-   * Automatically wrapped with guestLayer (or RequireGuestLayer if not specified).
-   * Use betterAuthFormAction to create this.
-   */
-  loginAction?: AuthActionEffect
-  /**
-   * POST handler for registration form submission.
-   * Automatically wrapped with guestLayer (or RequireGuestLayer if not specified).
-   * Use betterAuthFormAction to create this.
-   */
-  registerAction?: AuthActionEffect
-  /**
-   * POST handler for logout.
-   * If not provided, uses a default handler that calls auth.api.signOut.
-   * Use betterAuthLogoutAction to create this.
-   */
-  logoutAction?: AuthActionEffect
-  /**
-   * Additional guest-only POST routes for extended auth flows.
-   * Keys are paths (e.g., '/forgot-password'), values are Effect handlers.
-   * All routes are wrapped with guestLayer (or RequireGuestLayer if not specified).
-   *
-   * @example
-   * guestActions: {
-   *   '/forgot-password': forgotPasswordAction,
-   *   '/reset-password': resetPasswordAction,
-   *   '/login/2fa': verify2FAAction,
-   * }
-   */
-  guestActions?: Record<string, AuthActionEffect>
-}
-
-/**
- * Register standard auth routes.
- *
- * @example
- * effectAuthRoutes(app, {
- *   loginComponent: 'Auth/Login',
- *   registerComponent: 'Auth/Register',
- *   loginAction: loginUser,
- *   registerAction: registerUser,
- * })
- */
-export function effectAuthRoutes<E extends Env>(
-  app: Hono<E>,
-  config: AuthRoutesConfig = {}
-): void {
-  const {
-    loginPath = '/login',
-    registerPath = '/register',
-    logoutPath = '/logout',
-    apiPath = '/api/auth',
-    logoutRedirect = '/login',
-    loginRedirect = '/',
-    loginComponent = 'Auth/Login',
-    registerComponent = 'Auth/Register',
-  } = config
-
-  // Use custom guestLayer or create default that respects loginRedirect
-  const guestLayer = config.guestLayer ?? createGuestLayer(() => false, loginRedirect)
-
-  const routes = effectRoutes(app)
-
-  // Guest-only routes builder (login, register pages and actions)
-  const guestRoutes = routes.provide(guestLayer)
-
-  // Login page - uses custom guestLayer or RequireGuestLayer
-  guestRoutes.get(loginPath, renderPage(loginComponent))
-
-  // Register page - uses custom guestLayer or RequireGuestLayer
-  guestRoutes.get(registerPath, renderPage(registerComponent))
-
-  // Login action (POST) - uses custom guestLayer
-  if (config.loginAction) {
-    guestRoutes.post(loginPath, config.loginAction)
-  }
-
-  // Register action (POST) - uses custom guestLayer
-  if (config.registerAction) {
-    guestRoutes.post(registerPath, config.registerAction)
-  }
-
-  // Logout (POST) - use provided action or default
-  if (config.logoutAction) {
-    routes.post(logoutPath, config.logoutAction)
-  } else {
-    routes.post(
-      logoutPath,
-      Effect.gen(function* () {
-        const auth = yield* AuthService
-        const request = yield* RequestService
-
-        // Revoke session server-side
-        yield* runBetterAuthApiCall(() =>
-          callBetterAuthSignOut(auth, {
-            headers: request.headers,
-          })
-        ).pipe(
-          Effect.mapError((cause) =>
-            new HttpError({
-              status: 502,
-              message: 'Authentication service failed.',
-              cause,
-            })
-          )
-        )
-
-        // Clear cookie(s) and redirect. Clear both the plain and the
-        // `__Secure-` prefixed variant so HTTPS sessions are also revoked.
-        const sessionCookie = config.sessionCookie ?? 'better-auth.session_token'
-        const headers = new Headers({ Location: logoutRedirect })
-        appendLogoutCookies(headers, [sessionCookie])
-
-        return new Response(null, { status: 303, headers })
-      })
-    )
-  }
-
-  // Additional guest-only actions (2FA, forgot password, etc.)
-  if (config.guestActions) {
-    for (const [path, action] of Object.entries(config.guestActions)) {
-      guestRoutes.post(path, action)
-    }
-  }
-
-  // Better-auth API handler (handles sign-in, sign-up, etc.)
-  // Apply CORS if configured
-  if (config.cors) {
-    const corsConfig = config.cors
-    // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
-    app.use(`${apiPath}/*`, async (c, next) => {
-      const origin = c.req.header('Origin')
-
-      // Determine allowed origin
-      let allowedOrigin: string | null = null
-
-      if (corsConfig.origin instanceof Function) {
-        allowedOrigin = origin ? corsConfig.origin(origin) ?? null : null
-      } else if (Array.isArray(corsConfig.origin)) {
-        allowedOrigin = origin && corsConfig.origin.includes(origin) ? origin : null
-      } else {
-        allowedOrigin = corsConfig.origin
-      }
-
-      if (allowedOrigin) {
-        c.header('Access-Control-Allow-Origin', allowedOrigin)
-
-        if (corsConfig.credentials) {
-          c.header('Access-Control-Allow-Credentials', 'true')
-        }
-      }
-
-      // Handle preflight
-      if (c.req.method === 'OPTIONS') {
-        c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-        c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        c.header('Access-Control-Max-Age', '86400')
-
-        return c.body(null, 204)
-      }
-
-      await next()
-    })
-  }
-
-  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
-  app.all(`${apiPath}/*`, async (c) => {
-    // SAFETY: The Better Auth boundary validated this representation before exposing the narrower adapter contract.
-    const auth = openWebContext(c).auth as { handler?: (req: Request) => Response | Promise<Response> } | undefined
-
-    if (!auth?.handler) {
-      return c.json({ error: 'Auth not configured' }, 500)
-    }
-
-    return auth.handler(c.req.raw)
-  })
-}
-
-/**
  * Middleware to load the authenticated user, for applications that compose
  * middleware by hand. setupWeb installs it.
  *
@@ -642,26 +400,37 @@ export {
   type BetterAuthEffectClient,
 } from './better-auth-boundary.js'
 
-/**
- * Config for better-auth form actions (login/register).
- */
-export interface BetterAuthFormActionConfig<A, I> {
-  readonly schema: S.Codec<A, I, never, never>
-  /** Call Better Auth through the application's client (WebAuthType). */
-  readonly call: (auth: AuthType, input: A, request: Request) => Promise<BetterAuthActionResult>
-  readonly errorMapper?: (error: BetterAuthActionError) => Record<string, string>
-  readonly redirectTo?: string | ((input: A, result: BetterAuthActionResult) => string)
+/** Options for {@link betterAuthRedirect}. */
+export interface BetterAuthRedirectOptions {
+  /** Where to send the user once Better Auth accepts the call. */
+  readonly redirectTo: string
+  /** Field errors for a rejected call, such as wrong credentials, keyed by the form's fields. */
+  readonly errors?: (error: BetterAuthActionError) => Record<string, string>
 }
 
 /**
- * Create a Better Auth form action that answers with pages, redirects and typed errors.
+ * Call Better Auth and answer with a 303 redirect that carries the cookies
+ * it sets, such as the session after signing in or up.
  *
- * Copies Set-Cookie headers from better-auth and redirects with 303.
- * Maps expected Better Auth request rejections into ValidationError, rate
- * limits into AuthRateLimitError, and dependency failures into HttpError.
+ * Run it in an action after `validateRequest`, so the action decides what to
+ * validate and what else to do. A rejection, such as wrong credentials or a
+ * registered email, fails with ValidationError, so the form shows it; a rate
+ * limit fails with AuthRateLimitError, and a Better Auth failure with
+ * HttpError.
+ *
+ * @example
+ * export const signIn = action(Effect.gen(function* () {
+ *   const input = yield* validateRequest(SignIn)
+ *
+ *   return yield* betterAuthRedirect(
+ *     (auth, request) => auth.api.signInEmail({ body: input, headers: request.headers, asResponse: true }),
+ *     { redirectTo: '/projects' }
+ *   )
+ * }))
  */
-export function betterAuthFormAction<A, I>(
-  config: BetterAuthFormActionConfig<A, I>
+export function betterAuthRedirect(
+  call: (auth: AuthType, request: Request) => Promise<BetterAuthActionResult>,
+  options: BetterAuthRedirectOptions
 ): Effect.Effect<
   Response,
   AuthRedirect | ValidationError | AuthRateLimitError | HttpError,
@@ -671,30 +440,52 @@ export function betterAuthFormAction<A, I>(
     const auth = yield* AuthService
     const request = yield* RequestService
 
-    const input = yield* validateRequest(config.schema)
-
-    const result = yield* runBetterAuthApiCall(() =>
-      config.call(auth, input, buildAuthRequest(request))
-    ).pipe(
-      Effect.mapError((failure) =>
-        toAuthActionError(failure, config.errorMapper)
-      )
+    const result = yield* runBetterAuthApiCall(() => call(auth, buildAuthRequest(request))).pipe(
+      Effect.mapError((failure) => toAuthActionError(failure, options.errors))
     )
 
-    const redirectTo = resolveRedirect(config.redirectTo, input, result)
-    const responseHeaders = new Headers({ Location: redirectTo })
+    const responseHeaders = new Headers({ Location: options.redirectTo })
     const resultHeaders = getHeaders(result)
 
     if (resultHeaders) {
       appendSetCookies(responseHeaders, resultHeaders)
     }
 
-    return new Response(null, {
-      status: 303,
-      headers: responseHeaders,
+    return new Response(null, { status: 303, headers: responseHeaders })
+  }).pipe(Effect.withSpan('Web.betterAuthRedirect'))
+}
+
+/**
+ * Forward the request to Better Auth's own API, for browser code that calls
+ * it directly (Better Auth's client SDK, OAuth callbacks). Register it under
+ * Better Auth's base path:
+ *
+ * ```ts
+ * routes.all('/api/auth/*', betterAuthHandler)
+ * ```
+ *
+ * It exposes every endpoint Better Auth and its plugins define, including
+ * sign-up: user fields declared with `input: true` become settable by anyone.
+ * A server-rendered app that signs users in with `betterAuthRedirect` does
+ * not need it.
+ */
+export const betterAuthHandler: Effect.Effect<Response, HttpError, RequestService | AuthService> =
+  Effect.gen(function* () {
+    const auth = yield* AuthService
+    const request = yield* RequestService
+    const handler: unknown = auth instanceof Object
+      ? Object.getOwnPropertyDescriptor(auth, 'handler')?.value
+      : undefined
+
+    if (!(handler instanceof Function)) {
+      return yield* new HttpError({ status: 500, message: 'Better Auth is not configured: setupWeb has no auth.client.' })
+    }
+
+    return yield* Effect.tryPromise({
+      try: (): Promise<Response> => Promise.resolve(handler.call(auth, request.raw())),
+      catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
     })
   })
-}
 
 /**
  * Config for better-auth logout actions.
@@ -723,7 +514,7 @@ export function betterAuthLogoutAction(
     ).pipe(Effect.orElseSucceed(() => undefined))
 
     const responseHeaders = new Headers({
-      Location: config.redirectTo ?? '/login',
+      Location: config.redirectTo ?? '/',
     })
 
     const resultHeaders = getHeaders(result)
@@ -779,18 +570,6 @@ function callBetterAuthSignOut<Auth>(
   }
 
   return Promise.resolve(signOut.apply(api, [input]))
-}
-
-function resolveRedirect<A>(
-  target: string | ((input: A, result: BetterAuthActionResult) => string) | undefined,
-  input: A,
-  result: BetterAuthActionResult
-): string {
-  if (target instanceof Function) {
-    return target(input, result)
-  }
-
-  return target ?? '/'
 }
 
 function getHeaders(result: BetterAuthActionResult | undefined): Headers | undefined {

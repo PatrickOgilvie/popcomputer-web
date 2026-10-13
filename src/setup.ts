@@ -55,6 +55,11 @@ interface WebAuthBaseOptions<E extends Env, Auth, ClientServices> {
   /** Explicit public projection placed at `auth.user` in page props. */
   share?: (auth: AuthUser) => PagePropValue
   readonly sessionCookie?: string
+  /**
+   * Where a signed-out visitor goes when a route needs a user: `authorize()`
+   * and `RequireAuthLayer` redirect here. Defaults to `/login`.
+   */
+  readonly signInPath?: string
 }
 
 interface WebAuthOptionsWithDefaultUser<E extends Env, Auth, ClientServices>
@@ -274,6 +279,7 @@ function createSetupMiddleware<
   const setupServices: MiddlewareHandler<E> = createMiddleware<E>(async (c, next) => {
     const requestCtx = openWebContext(c)
     requestCtx.errorBoundary = config.errors
+    requestCtx.signInPath = config.auth?.signInPath
     const executionContext = getRequestExecutionContextClient(c)
 
     const backgroundTasks: AuthBackgroundTasks = {

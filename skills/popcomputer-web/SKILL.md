@@ -45,7 +45,10 @@ TypeScript example here and in the README type-checks against the package.
    needs a signed-in user: models load on the first `bound()` call, and a
    missing row is a 404.
 6. **Authorize with `authorize()` or `authorize((auth) => rule)`.** Use
-   `currentUser` when signing in is optional.
+   `currentUser` when signing in is optional. Guard a group of routes with
+   `routes.provide(RequireAuthLayer)` or `routes.provide(RequireGuestLayer)`.
+   Sign users in and up with an action that validates its form and returns
+   `betterAuthRedirect(...)` from `@popcomputer/web/auth`.
 7. **Use the database only through `dbQuery`, `dbMutation`, `dbTransaction`
    and `dbBatch`:** `yield* dbQuery((db) => db.select()...)` to read,
    `dbMutation((db) => db.insert(...))` to write. Several writes that must

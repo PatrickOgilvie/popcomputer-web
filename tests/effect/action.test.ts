@@ -109,6 +109,7 @@ const createMockRequest = (options: {
   params: () => options.params ?? {},
   query: () => options.query ?? {},
   json: async <T>() => (options.body ?? {}) as T,
+  raw: () => new Request('http://localhost/'),
   parseBody: async () => options.body ?? {},
   header: (name: string) =>
     name.toLowerCase() === 'content-type' ? 'application/json' : undefined,
@@ -287,7 +288,8 @@ describe('authorize', () => {
         expect(error._tag).toBe('UnauthorizedError')
 
         if (Predicate.isTagged(error, 'UnauthorizedError')) {
-          expect(error.redirectTo).toBe('/login')
+          // The boundary sends the visitor to setupWeb's auth.signInPath.
+          expect(error.redirectTo).toBeUndefined()
         }
       }
     }

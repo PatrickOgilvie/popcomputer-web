@@ -8,7 +8,7 @@ import { APIError } from 'better-auth'
 import { Predicate, Effect, Layer, Exit, Cause, Option, Redacted, Schema as S } from 'effect'
 import type { PageProps } from '../../src/types.js'
 import {
-  betterAuthFormAction,
+  betterAuthRedirect,
   betterAuthLogoutAction,
   RequireAuthLayer,
   RequireGuestLayer,
@@ -31,6 +31,29 @@ import {
   ValidationError,
 } from '../../src/effect/errors.js'
 import type { BetterAuthActionError, BetterAuthActionResult } from '../../src/effect/auth.js'
+import { validateRequest } from '../../src/effect/validation.js'
+import type { AuthType } from '../../src/effect/services.js'
+
+/**
+ * A sign-in form action: validate the form, then call Better Auth with the
+ * input and redirect with the cookies it sets.
+ */
+function formAction<A, I>(config: {
+  readonly schema: S.Codec<A, I, never, never>
+  readonly call: (auth: AuthType, input: A, request: Request) => Promise<BetterAuthActionResult>
+  readonly errorMapper?: (error: BetterAuthActionError) => Record<string, string>
+  readonly redirectTo?: string | ((input: A) => string)
+}) {
+  return Effect.gen(function* () {
+    const input = yield* validateRequest(config.schema)
+    const redirectTo = config.redirectTo instanceof Function ? config.redirectTo(input) : config.redirectTo ?? '/'
+
+    return yield* betterAuthRedirect(
+      (auth, request) => config.call(auth, input, request),
+      { redirectTo, errors: config.errorMapper }
+    )
+  })
+}
 
 /** The input Better Auth's email endpoints receive. */
 interface EmailCredentialsInput {
@@ -149,7 +172,8 @@ describe('RequireAuthLayer', () => {
       if (Option.isSome(option)) {
         const error = option.value
         expect(error._tag).toBe('UnauthorizedError')
-        expect(error.redirectTo).toBe('/login')
+        // The boundary sends the visitor to setupWeb's auth.signInPath.
+        expect(error.redirectTo).toBeUndefined()
       }
     }
   })
@@ -267,7 +291,7 @@ describe('shareAuth', () => {
   })
 })
 
-describe('betterAuthFormAction', () => {
+describe('betterAuthRedirect in a form action', () => {
   // Helper to create a mock request context for auth actions
   // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   const createAuthRequest = (options: {
@@ -287,6 +311,7 @@ describe('betterAuthFormAction', () => {
     params: () => ({}),
     query: () => ({}),
     json: async <T>() => options.body as T,
+    raw: () => new Request('http://localhost/'),
     parseBody: async () => options.body ?? {},
     header: (name: string) =>
       name.toLowerCase() === 'content-type' ? 'application/json' : undefined,
@@ -332,7 +357,7 @@ describe('betterAuthFormAction', () => {
       password: S.String,
     })
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       redirectTo: '/dashboard',
       call: (auth, input, request) =>
@@ -376,7 +401,7 @@ describe('betterAuthFormAction', () => {
     const mockHeaders = new Headers()
     mockHeaders.set('set-cookie', sessionCookie)
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       redirectTo: '/',
       call: async () => ({ headers: mockHeaders }),
@@ -410,7 +435,7 @@ describe('betterAuthFormAction', () => {
       password: S.String.check(S.isMinLength(8)),
     })
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       redirectTo: '/',
       call: async () => ({ headers: new Headers() }),
@@ -462,7 +487,7 @@ describe('betterAuthFormAction', () => {
       }
     }
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       redirectTo: '/',
       errorMapper,
@@ -509,7 +534,7 @@ describe('betterAuthFormAction', () => {
       password: S.String,
     })
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       redirectTo: '/',
       // No errorMapper provided - should use default
@@ -557,7 +582,7 @@ describe('betterAuthFormAction', () => {
 
     let errorMapperCalled = false
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       errorMapper: () => {
         errorMapperCalled = true
@@ -614,7 +639,7 @@ describe('betterAuthFormAction', () => {
 
     let errorMapperCalled = false
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       errorMapper: () => {
         errorMapperCalled = true
@@ -669,7 +694,7 @@ describe('betterAuthFormAction', () => {
       returnTo: S.optional(S.String),
     })
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       redirectTo: (input: { returnTo?: string }) => input.returnTo ?? '/home',
       call: async () => ({ headers: new Headers() }),
@@ -703,7 +728,7 @@ describe('betterAuthFormAction', () => {
       password: S.String,
     })
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       redirectTo: '/',
       call: async () => {
@@ -745,7 +770,7 @@ describe('betterAuthFormAction', () => {
 
     let mappedError: BetterAuthActionError | undefined
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       redirectTo: '/dashboard',
       errorMapper: (error) => {
@@ -804,7 +829,7 @@ describe('betterAuthFormAction', () => {
 
     let errorMapperCalled = false
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       errorMapper: () => {
         errorMapperCalled = true
@@ -858,7 +883,7 @@ describe('betterAuthFormAction', () => {
 
     let errorMapperCalled = false
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       errorMapper: () => {
         errorMapperCalled = true
@@ -912,7 +937,7 @@ describe('betterAuthFormAction', () => {
       password: S.String,
     })
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: LoginSchema,
       redirectTo: '/',
       call: async () => {
@@ -961,6 +986,7 @@ describe('betterAuthLogoutAction', () => {
     params: () => ({}),
     query: () => ({}),
     json: async <T>() => ({} as T),
+    raw: () => new Request('http://localhost/'),
     parseBody: async () => ({}),
     header: (name: string) => {
       if (name.toLowerCase() === 'cookie') return 'better-auth.session_token=abc123'
@@ -1002,7 +1028,7 @@ describe('betterAuthLogoutAction', () => {
     }
   })
 
-  test('defaults to /login redirect when not specified', async () => {
+  test('redirects to the home page when not configured', async () => {
     const action = betterAuthLogoutAction({})
 
     const mockAuth = createMockAuthForLogout()
@@ -1020,7 +1046,7 @@ describe('betterAuthLogoutAction', () => {
     if (Exit.isSuccess(exit)) {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const response = exit.value
-      expect(response.headers.get('Location')).toBe('/login')
+      expect(response.headers.get('Location')).toBe('/')
     }
   })
 

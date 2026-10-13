@@ -5,7 +5,7 @@ import { memoryAdapter, type MemoryDB } from 'better-auth/adapters/memory'
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import {
-  betterAuthFormAction,
+  betterAuthRedirect,
   effectifyBetterAuth,
 } from '../../src/effect/auth.js'
 import { effectRoutes } from '../../src/effect/routing.js'
@@ -16,6 +16,30 @@ import {
   type RequestContext,
 } from '../../src/effect/services.js'
 import { setupWeb } from '../../src/setup.js'
+import { validateRequest } from '../../src/effect/validation.js'
+import type { BetterAuthActionError, BetterAuthActionResult } from '../../src/effect/auth.js'
+import type { AuthType } from '../../src/effect/services.js'
+
+/**
+ * A sign-in form action: validate the form, then call Better Auth with the
+ * input and redirect with the cookies it sets.
+ */
+function formAction<A, I>(config: {
+  readonly schema: S.Codec<A, I, never, never>
+  readonly call: (auth: AuthType, input: A, request: Request) => Promise<BetterAuthActionResult>
+  readonly errorMapper?: (error: BetterAuthActionError) => Record<string, string>
+  readonly redirectTo?: string | ((input: A) => string)
+}) {
+  return Effect.gen(function* () {
+    const input = yield* validateRequest(config.schema)
+    const redirectTo = config.redirectTo instanceof Function ? config.redirectTo(input) : config.redirectTo ?? '/'
+
+    return yield* betterAuthRedirect(
+      (auth, request) => config.call(auth, input, request),
+      { redirectTo, errors: config.errorMapper }
+    )
+  })
+}
 
 const CredentialsSchema = S.Struct({
   email: S.String,
@@ -67,6 +91,7 @@ function createAuthRequest(
     // unconstrained generic. This fixture owns the exact body supplied to the
     // action and mirrors that established boundary contract.
     json: async <A>() => body as A,
+    raw: () => new Request('http://localhost/'),
     parseBody: async () => body,
     header: (name: string) =>
       name.toLowerCase() === 'content-type' ? 'application/json' : undefined,
@@ -92,7 +117,7 @@ function getValidationError(
   return failure.value
 }
 
-describe('betterAuthFormAction with Better Auth', () => {
+describe('betterAuthRedirect in a form action with Better Auth', () => {
   test('retains custom endpoint types and values through the Effect façade', async () => {
     const auth = {
       api: {
@@ -161,7 +186,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       },
     })
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: CredentialsSchema,
       errorMapper: ({ code }) => ({ email: code ?? 'MISSING_ERROR_CODE' }),
       call: (authClient: typeof auth, input, request) =>
@@ -199,7 +224,7 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     await auth.api.signUpEmail({ body: registration })
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: RegistrationSchema,
       errorMapper: ({ code }) => ({ email: code ?? 'MISSING_ERROR_CODE' }),
       call: (authClient: typeof auth, input, request) =>
@@ -230,7 +255,7 @@ describe('betterAuthFormAction with Better Auth', () => {
     const secretMessage = 'postgres://user:secret@database.example/internal'
     let errorMapperCalled = false
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: CredentialsSchema,
       errorMapper: () => {
         errorMapperCalled = true
@@ -282,7 +307,7 @@ describe('betterAuthFormAction with Better Auth', () => {
   test('preserves cookies from a resolved Better Auth error response', async () => {
     const auth = createTestAuth()
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: CredentialsSchema,
       call: async () =>
         Response.json({
@@ -344,7 +369,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       })
     )
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: CredentialsSchema,
       call: async () => {
         throw apiError
@@ -387,7 +412,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       'Set-Cookie': 'oauth-state=verified; HttpOnly; Path=/',
     })
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: CredentialsSchema,
       call: async () => {
         throw redirect
@@ -432,7 +457,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       'x-spoofed-auth': 'true',
     })
 
-    const action = betterAuthFormAction({
+    const action = formAction({
       schema: CredentialsSchema,
       call: async () => {
         throw spoofedError

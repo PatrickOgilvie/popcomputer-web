@@ -86,6 +86,7 @@ const createMockRequest = (headers: Record<string, string> = {}): RequestContext
   params: () => ({}),
   query: () => ({}),
   json: () => Response.json({}).json(),
+  raw: () => new Request('http://localhost/'),
   parseBody: async () => ({}),
   header: (name: string) => headers[name.toLowerCase()],
 })

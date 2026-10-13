@@ -38,19 +38,11 @@ export function render<Component extends PageName>(
   component: Component,
   ...args: PagePropsArgument<Component>
 ): Effect.Effect<Response, never, PageService> {
-  return renderPage(component, args[0])
-}
-
-/**
- * Render a page by a name only known at runtime, such as a configured login
- * page. A name the registry lacks, or props its schema rejects, is a defect.
- */
-export function renderPage(component: string, props?: object): Effect.Effect<Response, never, PageService> {
   return Effect.gen(function* () {
     const page = yield* PageService
-    const encoded = yield* encodePageProps(page.pages, component, props)
+    const props = yield* encodePageProps(page.pages, component, args[0])
 
-    return yield* Effect.promise(() => page.render(component, encoded))
+    return yield* Effect.promise(() => page.render(component, props))
   }).pipe(Effect.withSpan('Web.render', { attributes: { component } }))
 }
 

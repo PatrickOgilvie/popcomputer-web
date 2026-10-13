@@ -553,9 +553,72 @@ is `Redacted`, so serializing the auth user never exposes it; read it with
 `Redacted.value` where it is needed. Use `auth.share` to deliberately choose the
 fields serialized into page props.
 
-For form endpoints, `betterAuthFormAction` maps validated Better Auth 4xx
-responses into form errors while keeping rate limits and dependency failures as
-separate typed errors.
+### Signing in and out
+
+Sign-in, sign-up and sign-out are ordinary routes on the `routes` setupWeb
+returns. `routes.provide(layer)` guards every route registered through it:
+`RequireGuestLayer` sends a signed-in member home, and `RequireAuthLayer`
+sends a signed-out visitor to `auth.signInPath` (default `/login`), as
+`authorize()` does. A sign-in action validates its form like any action, then
+calls Better Auth through `betterAuthRedirect`, which answers with a redirect
+carrying the session cookie:
+
+```ts
+// src/actions/auth.ts
+import { Effect, Schema as S } from 'effect'
+import { action, validateRequest } from '@popcomputer/web/effect'
+import { betterAuthRedirect } from '@popcomputer/web/auth'
+import { email, requiredString } from '@popcomputer/web/schema'
+
+const SignIn = S.Struct({ email, password: requiredString })
+
+export const signIn = action(
+  Effect.gen(function* () {
+    const input = yield* validateRequest(SignIn)
+
+    return yield* betterAuthRedirect(
+      (auth, request) =>
+        auth.api.signInEmail({ body: input, headers: request.headers, asResponse: true }),
+      { redirectTo: '/projects', errors: (error) => ({ email: error.message }) }
+    )
+  })
+)
+```
+
+```ts
+// src/auth-routes.ts
+import { action, render, RequireAuthLayer, RequireGuestLayer } from '@popcomputer/web/effect'
+import { betterAuthLogoutAction } from '@popcomputer/web/auth'
+import { routes } from './app'
+import { signIn } from './actions/auth'
+import { showDashboard } from './actions/dashboard'
+
+routes
+  .provide(RequireGuestLayer)
+  .get('/login', action(render('Auth/Login')))
+  .post('/login', signIn)
+
+routes.provide(RequireAuthLayer).get('/dashboard', showDashboard)
+
+routes.post('/logout', betterAuthLogoutAction({ redirectTo: '/login' }))
+```
+
+A rejection, such as a wrong password or a registered email, goes back to the
+form with the field errors `errors` returns; rate limits and Better Auth
+failures stay separate typed errors. Sign-up works the same way with
+`auth.api.signUpEmail`, after whatever else the action does with the input.
+
+`betterAuthHandler` forwards a request to Better Auth's own API, for browser
+code that calls it directly (Better Auth's client SDK, OAuth callbacks):
+`routes.all('/api/auth/*', betterAuthHandler)`. Register it only if the
+application needs it: it exposes every endpoint Better Auth and its plugins
+define, so user fields declared with `input: true` become settable by anyone
+who signs up.
+
+An application that authenticates some other way, such as API keys, provides
+its own user service through a layer that fails with `UnauthorizedError`:
+`routes.provide(ApiKeyAuth)` runs it before the action, so every route
+registered through it can read the service.
 
 ## Responses and failures
 

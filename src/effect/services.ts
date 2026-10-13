@@ -286,6 +286,8 @@ export interface RequestContext<Bindings extends object = object> {
   query(): Record<string, string>
   /** The parsed JSON body. Decode it with a schema, as `validateRequest` does. */
   json(): Promise<unknown>
+  /** The request itself, for adapters that forward it, such as `betterAuthHandler`. */
+  raw(): Request
   parseBody(): Promise<Record<string, string | File>>
   header(name: string): string | undefined
 }
@@ -483,10 +485,7 @@ export const authorize: (
   const maybeUser = yield* Effect.serviceOption(AuthUserService)
 
   if (Option.isNone(maybeUser)) {
-    return yield* new UnauthorizedError({
-      message: 'Authentication required',
-      redirectTo: '/login',
-    })
+    return yield* new UnauthorizedError({ message: 'Authentication required' })
   }
 
   const user: AuthUser = maybeUser.value

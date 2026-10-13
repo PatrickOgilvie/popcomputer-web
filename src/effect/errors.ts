@@ -133,14 +133,14 @@ export class ValidationError extends Schema.TaggedError<ValidationError>()('Vali
 }
 
 /**
- * Unauthorized Error - Authentication required
+ * Unauthorized Error - Authentication required.
+ *
+ * A page visit goes to `redirectTo`, or to setupWeb's `auth.signInPath`
+ * (default `/login`); a JSON client gets a 401.
  *
  * @example
  * ```ts
- * yield* new UnauthorizedError({
- *   message: 'Please log in to continue',
- *   redirectTo: '/login',
- * })
+ * yield* new UnauthorizedError({ message: 'Please sign in to continue' })
  * ```
  */
 export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()('UnauthorizedError', {
@@ -159,9 +159,9 @@ export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()('
   }
 
   /**
-   * Create an unauthenticated error with redirect.
+   * Create an unauthenticated error, redirecting to `redirectTo` or the sign-in path.
    */
-  static unauthenticated(redirectTo = '/login'): UnauthorizedError {
+  static unauthenticated(redirectTo?: string): UnauthorizedError {
     return new UnauthorizedError({
       message: 'You must be logged in to access this resource.',
       redirectTo,
@@ -172,7 +172,7 @@ export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()('
   /**
    * Create a session expired error.
    */
-  static sessionExpired(redirectTo = '/login'): UnauthorizedError {
+  static sessionExpired(redirectTo?: string): UnauthorizedError {
     return new UnauthorizedError({
       message: 'Your session has expired. Please log in again.',
       redirectTo,
