@@ -1073,10 +1073,18 @@ export interface UploadOptions {
 const isEmptyFileInput = (value: unknown): boolean =>
   value instanceof File && value.size === 0 && !value.name
 
-const acceptsType = (types: ReadonlyArray<string>, type: string): boolean =>
-  types.some((accepted) =>
-    accepted.endsWith('/*') ? type.startsWith(accepted.slice(0, -1)) : type === accepted
-  )
+/** A media type without its parameters, lowercased: `text/plain;charset=utf-8` is `text/plain`. */
+const essence = (type: string): string => type.split(';', 1)[0].trim().toLowerCase()
+
+const acceptsType = (types: ReadonlyArray<string>, type: string): boolean => {
+  const sent = essence(type)
+
+  return types.some((accepted) => {
+    const expected = essence(accepted)
+
+    return expected.endsWith('/*') ? sent.startsWith(expected.slice(0, -1)) : sent === expected
+  })
+}
 
 const formatBytes = (bytes: number): string =>
   bytes >= 1024 * 1024 ? `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`

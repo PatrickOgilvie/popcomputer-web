@@ -21,6 +21,8 @@ import {
   uniqueFieldErrors,
 } from '../../src/effect/database.js'
 import { DatabaseService } from '../../src/effect/services.js'
+import { DatabaseError } from '../../src/effect/errors.js'
+import assert from 'node:assert/strict'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
 const workspaces = sqliteTable('workspaces', {
@@ -130,6 +132,20 @@ describe('dbQuery', () => {
     )
 
     expect(failureOf(exit)).toMatchObject({ value: { _tag: 'DatabaseError', operation: 'query' } })
+  })
+
+  test('names the driver\'s reason in the structured message, for development pages and logs', async () => {
+    const { layer, sqlite } = openDatabase()
+    sqlite.run('DROP TABLE pages')
+
+    const exit = await Effect.runPromiseExit(
+      dbQuery((db) => db.select().from(pages)).pipe(Effect.provide(layer))
+    )
+    const failure = Option.getOrThrow(failureOf(exit))
+
+    assert(failure instanceof DatabaseError)
+    expect(failure.toStructured().message).toStartWith('Database query failed. ')
+    expect(failure.toStructured().message).toContain('no such table: pages')
   })
 })
 

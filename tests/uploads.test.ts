@@ -59,3 +59,17 @@ describe('uploads', () => {
     expect(res.headers.get('Location')).toBe('/posts/new')
   })
 })
+
+describe('upload types', () => {
+  const decode = S.decodeUnknownExit(upload({ types: ['text/plain', 'image/*'] }))
+
+  test('compare the media type without its parameters, in any case', () => {
+    expect(decode(new File(['x'], 'notes.txt', { type: 'text/plain;charset=utf-8' }))._tag).toBe('Success')
+    expect(decode(new File(['x'], 'notes.txt', { type: 'Text/Plain; charset=UTF-8' }))._tag).toBe('Success')
+    expect(decode(new File(['x'], 'photo.png', { type: 'image/png' }))._tag).toBe('Success')
+  })
+
+  test('reject other types', () => {
+    expect(decode(new File(['x'], 'page.html', { type: 'text/html;charset=utf-8' }))._tag).toBe('Failure')
+  })
+})

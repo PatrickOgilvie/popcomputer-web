@@ -402,13 +402,38 @@ export class DatabaseError extends Schema.TaggedError<DatabaseError>()('Database
   }
 
   toStructured(context: ErrorContext = emptyContext()): StructuredError {
+    const cause = describeCause(this.cause)
+
+    // Database messages are sensitive: production replaces them, so the
+    // driver's own words reach only development pages and logs.
     return structured(
       ErrorCodes.DB_501_OPERATION_FAILED,
       { operation: this.operation },
       context,
-      { message: this.message }
+      { message: cause ? `${this.message} ${cause}` : this.message }
     )
   }
+}
+
+/**
+ * The messages along an error's cause chain, such as Drizzle's failed query
+ * and the driver's reason beneath it, each once and in order.
+ */
+function describeCause(cause: unknown): string {
+  const messages: string[] = []
+  let current: unknown = cause
+
+  for (let depth = 0; depth < 5 && current instanceof Error; depth += 1) {
+    const message = current.message.trim()
+
+    if (message && !messages.some((seen) => seen.includes(message))) {
+      messages.push(message.length > 500 ? `${message.slice(0, 500)}...` : message)
+    }
+
+    current = current.cause
+  }
+
+  return messages.join(' Caused by: ')
 }
 
 /**

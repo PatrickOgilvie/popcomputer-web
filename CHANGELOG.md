@@ -96,6 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `DatabaseError`'s message on development pages and in logs names the driver's reason, along its cause chain (Drizzle's failed query, then the driver's error), so a failed batch no longer reads only "Database batch failed and was rolled back." Production still replaces database messages with a generic one.
+- `upload({ types })` compares a file's media type without its parameters and in any case, so `text/plain;charset=utf-8`, which Bun and browsers send for text files, is a `text/plain` file.
 - A request `testEnv(signedIn(user))` signs in gets the signed-in cache policy (`no-store`, `X-Popweb-Cache: BYPASS`) where no Cache API exists, as in tests, as a session cookie does; it got `private, no-cache`.
 - `readPage(...).props.errors` reads a field's message as `string | Readonly<Record<string, string>>` (`TestFieldErrors`), so `expect(page.props.errors.name).toBe('...')` type-checks; Inertia's intersection type made it `string & Record<string, string>`.
 - A page rendered for a user signed in without a session cookie, as `testEnv(signedIn(...))` signs a test request in, gets the signed-in cache policy (`BYPASS`, `no-store`), so tests can check it.
