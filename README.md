@@ -941,6 +941,7 @@ endings, not statements to run in sequence:
 | Redirect to the page the request came from | `return yield* back(paths.projects)` |
 | Redirect from a helper or guard layer, ending the action | `yield* redirectNow(paths.dashboard)` |
 | Return JSON | `return yield* json({ projects })` |
+| Return JSON declared by a schema, encoded as page props are | `return yield* json(ProjectList, { projects })` |
 | Return JSON when requested, otherwise render a page | `return yield* jsonOrRender('Projects/Index', { projects })` |
 | Fail with `NotFoundError` | `return yield* notFound('Project', projectId)` |
 | Fail with `ForbiddenError` | `return yield* forbidden('You cannot edit this project')` |
@@ -980,6 +981,12 @@ A JSON client gets every failure in one envelope, whatever its status:
   "errors": { "name": "This field is required" }
 }
 ```
+
+A JSON API declares each response as an Effect Schema and answers with
+`json(Schema, value)`: the value is checked against the schema and encoded
+through its JSON form, so a `Date` leaves as an ISO string, and a test reads
+it back with `readJson(res, Schema)` from `@popcomputer/web/testing`. A client
+decodes it with the same schema, so the shape is declared once.
 
 `errors` names each invalid field's message, as a form's page receives them.
 `ErrorResponseBody` from `@popcomputer/web/effect` types the envelope, and

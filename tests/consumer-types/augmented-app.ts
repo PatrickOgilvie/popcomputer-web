@@ -207,6 +207,12 @@ web.routes
     )
   )
 
+// A JSON response declared by a schema takes values of its type.
+const Evaluation = S.Struct({ flag: S.String, enabled: S.Boolean })
+export const evaluated = json(Evaluation, { flag: 'beta', enabled: true })
+// @ts-expect-error enabled is a boolean
+json(Evaluation, { flag: 'beta', enabled: 'yes' })
+
 // Config names are the bindings the Hono app declares.
 export const region = config.string('REGION')
 // @ts-expect-error REGOIN is not a binding

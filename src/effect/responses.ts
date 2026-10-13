@@ -4,7 +4,7 @@
  * Utility functions for creating responses within Effect computations.
  */
 
-import { Cause, Context, Effect, Layer, Option, Stream } from 'effect'
+import { Cause, Context, Effect, Layer, Option, Schema as S, Stream } from 'effect'
 import { observeOrLog } from './error-observer.js'
 import { href, type PathArguments } from '../paths.js'
 import {
@@ -92,19 +92,44 @@ export function flash<Key extends FlashKey>(key: Key, value: FlashValue<Key>): E
 export type ResponseOptions = number | { readonly status?: number; readonly headers?: HeadersInit }
 
 /**
- * Return a JSON response.
+ * Return a JSON response. Given a schema first, the value is checked against
+ * it and encoded through its JSON form, as a page's props are, so the
+ * response's shape is declared once: the action, a client and a test
+ * (`readJson(res, Schema)`) use the same schema.
  *
  * @example
  * return yield* json({ success: true })
  * return yield* json({ error: 'Not found' }, 404)
- * return yield* json(page, { headers: { 'Cache-Control': 'private, max-age=60' } })
+ * return yield* json(FlagsResponse, { flags, evaluatedAt: new Date() })
  */
-export const json = <T>(data: T, init: ResponseOptions = 200): Effect.Effect<Response, never, ResponseFactoryService> =>
-  Effect.gen(function* () {
+export function json<A, I>(
+  schema: S.Codec<A, I, never, never>,
+  data: NoInfer<A>,
+  init?: ResponseOptions
+): Effect.Effect<Response, never, ResponseFactoryService>
+export function json<T>(data: T, init?: ResponseOptions): Effect.Effect<Response, never, ResponseFactoryService>
+export function json(
+  first: unknown,
+  second?: unknown,
+  third?: ResponseOptions
+): Effect.Effect<Response, never, ResponseFactoryService> {
+  const declared = S.isSchema(first)
+  // SAFETY: the overloads put the options second when no schema comes first.
+  const init: ResponseOptions = (declared ? third : (second as ResponseOptions | undefined)) ?? 200
+
+  return Effect.gen(function* () {
     const factory = yield* ResponseFactoryService
+    const data = declared
+      // SAFETY: the schema overload takes only schemas without services.
+      ? yield* S.encodeUnknownEffect(S.toCodecJson(first as S.Codec<unknown, unknown, never, never>))(second).pipe(
+          Effect.mapError((issue) => new Error(`The JSON response does not match its schema: ${issue.message}`)),
+          Effect.orDie
+        )
+      : first
 
     return withHeaders(factory.json(data, statusOf(init)), init)
   })
+}
 
 /**
  * Return a text response.

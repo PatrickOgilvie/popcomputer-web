@@ -50,7 +50,7 @@ TypeScript example here and in the README type-checks against the package.
    page in `shared`, computed when a page renders by
    `routes.provide(shareProps(effect))`, and flash values in `flash`.
 4. **End every branch with a response helper:** `return yield* render(...)`,
-   `redirect(...)`, `back(...)`, `json(...)`, `jsonOrRender(...)`,
+   `redirect(...)`, `back(...)`, `json(Schema, value)`, `jsonOrRender(...)`,
    `file(...)`, `notFound(...)`, `forbidden(...)`, `invalid(...)` or
    `httpError(...)`. `yield* flash(key, value)` before a redirect hands a
    message to the next page; a helper or guard layer that must send the

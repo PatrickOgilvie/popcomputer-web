@@ -9,7 +9,7 @@
  * @example
  * const res = await app.request('/projects', {}, testEnv(signedIn({ id: 'user-1' })))
  */
-import { Clock, DateTime, Effect, Layer, Redacted, Scope, type Duration } from 'effect'
+import { Clock, DateTime, Effect, Layer, Redacted, Schema as S, Scope, type Duration } from 'effect'
 import { TestClock } from 'effect/testing'
 import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser } from './effect/services.js'
 import type { Registered } from './effect/register.js'
@@ -187,6 +187,15 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
  * expect(error.errors).toEqual({ code: 'This field is required' })
  */
 export async function readError(response: Response): Promise<ErrorResponseBody> {
+  const contentType = response.headers.get('Content-Type') ?? ''
+
+  if (!contentType.includes('application/json')) {
+    throw new Error(
+      `Expected a JSON error, but the response is ${response.status} ${contentType}. ` +
+        'Send Accept: application/json for the JSON envelope.'
+    )
+  }
+
   const body: unknown = response.status >= 400 ? await response.json() : undefined
 
   if (!(body instanceof Object) || typeof Reflect.get(body, 'code') !== 'string') {
@@ -196,6 +205,31 @@ export async function readError(response: Response): Promise<ErrorResponseBody> 
   // SAFETY: the boundary answers every JSON client's failure with this
   // envelope, which carries a string code; the check above found one.
   return body as ErrorResponseBody
+}
+
+/**
+ * Read a JSON response through the schema the action answered with
+ * (`json(Schema, value)`), decoded from its JSON form. Rejects when the
+ * response is not JSON or does not match the schema.
+ *
+ * @example
+ * const flags = await readJson(res, FlagsResponse)
+ * expect(flags.flags[0].enabled).toBe(true)
+ */
+export async function readJson<A, I>(response: Response, schema: S.Codec<A, I, never, never>): Promise<A> {
+  const contentType = response.headers.get('Content-Type') ?? ''
+
+  if (!contentType.includes('application/json')) {
+    throw new Error(`Expected JSON, but the response is ${response.status} ${contentType}.`)
+  }
+
+  const body: unknown = await response.json()
+
+  return Effect.runPromise(
+    S.decodeUnknownEffect(S.toCodecJson(schema))(body).pipe(
+      Effect.mapError((issue) => new Error(`The JSON response (${response.status}) does not match its schema: ${issue.message}`))
+    )
+  )
 }
 
 /** An application a test sends requests to: the Hono app setupWeb configured. */
