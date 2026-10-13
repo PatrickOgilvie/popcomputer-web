@@ -1047,12 +1047,18 @@ export const addToCart = action(Effect.gen(function* () {
 }))
 ```
 
-A value the browser sends that the schema rejects reads as none. Reading a
-cookie renders the page afresh for each request, and a cached page whose path
-a cookie covers is rendered afresh for every visitor carrying it, so scope a
-cookie to the paths that read it (`path: '/r'` covers `/r/cart`, not the
-menu at `/menu`). Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` over
-HTTPS.
+A value the browser sends that the schema rejects reads as none, and setting
+one the schema rejects is a defect naming the cookie, so check limits first.
+A value whose JSON form is a string, such as a token, is stored as it is, so a
+cookie written by hand before reads the same. Reading a cookie renders the
+page afresh for each request, and a cached page whose path a cookie covers is
+rendered afresh for every visitor carrying it, so scope a cookie to the paths
+that read it: `path: '/r/{restaurant}/'` takes its placeholder from the route
+that sets it, and covers `/r/acme/cart` but not the menu at `/r/acme`.
+Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS. A cookie set
+before the action fails is still sent with the failure's response. A test
+reads the value a response set with `readCookie(res, cartCookie)` from
+`@popcomputer/web/testing`.
 
 `file(body, { contentType, filename })` answers with a file, such as an export
 or a feed: text, bytes, or an Effect `Stream` sent as it is produced. A
@@ -1060,7 +1066,9 @@ or a feed: text, bytes, or an Effect `Stream` sent as it is produced. A
 `{ status, headers }` as well as a status, and an `etag` naming the version of
 what they hold, such as a counter the writes bump: a client polling with
 `If-None-Match` gets `304 Not Modified` with no body until it changes,
-``json(KitchenOrders, orders, { etag: `orders-${version}` })``.
+``json(KitchenOrders, orders, { etag: `orders-${version}` })``. When building
+the body costs a query, `ifChanged(etag, response)` answers the 304 before
+running the response's Effect at all.
 
 Typed failures, defects, Hono exceptions, and not-found responses share the
 configured error boundary. Use `EffectErrorObserverService` as the integration

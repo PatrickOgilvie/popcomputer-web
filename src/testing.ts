@@ -9,7 +9,8 @@
  * @example
  * const res = await app.request('/projects', {}, testEnv(signedIn({ id: 'user-1' })))
  */
-import { Clock, DateTime, Duration, Effect, Layer, Redacted, Schema as S, Scope } from 'effect'
+import { Clock, DateTime, Duration, Effect, Layer, Option, Redacted, Schema as S, Scope } from 'effect'
+import type { Cookie } from './effect/cookies.js'
 import { TestClock } from 'effect/testing'
 import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser } from './effect/services.js'
 import type { Registered } from './effect/register.js'
@@ -254,6 +255,23 @@ export async function readError(
   )
 
   return { ...envelope, errors: envelope.errors ?? {} }
+}
+
+/**
+ * The value a response set for a declared cookie: none when it set none or
+ * cleared it, or the value decoded through the cookie's schema.
+ *
+ * @example
+ * const cart = await readCookie(res, cartCookie)
+ * expect(Option.getOrNull(cart)).toEqual({ id: 'cart-1' })
+ */
+export function readCookie<A>(response: Response, declared: Cookie<A>): Option.Option<A> {
+  const prefix = `${declared.name}=`
+  const written = response.headers.getSetCookie().filter((header) => header.startsWith(prefix)).pop()
+
+  if (written === undefined || /;\s*Max-Age=0\b/i.test(written)) return Option.none()
+
+  return declared.parse(decodeURIComponent(written.slice(prefix.length).split(';', 1)[0]))
 }
 
 /** The JSON error a test reads: the envelope, with `errors` empty when no field failed. */

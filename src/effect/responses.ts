@@ -235,6 +235,30 @@ function statusOf(init: ResponseOptions): number {
   return typeof init === 'number' ? init : init.status ?? 200
 }
 
+/** An entity tag as a header carries it: quoted, and weak when marked `W/`. */
+const quotedETag = (etag: string): string => (/^(?:W\/)?"[^"]*"$/.test(etag) ? etag : `"${etag}"`)
+
+/** Whether the request's `If-None-Match` names the entity tag, so its copy is current. */
+const clientHas = (etag: string): Effect.Effect<boolean> =>
+  Effect.map(Effect.serviceOption(RequestService), (request) => {
+    const sent = Option.match(request, { onNone: () => undefined, onSome: (client) => client.header('If-None-Match') })
+
+    return sent !== undefined && sent.split(',').some((tag) => {
+      const candidate = tag.trim()
+
+      return candidate === '*' || candidate.replace(/^W\//, '') === etag.replace(/^W\//, '')
+    })
+  })
+
+/** `304 Not Modified` for a response the client already has, with its headers and no body. */
+function notModifiedFrom(headers: Headers): Response {
+  const kept = new Headers(headers)
+  kept.delete('Content-Type')
+  kept.delete('Content-Length')
+
+  return new Response(null, { status: 304, headers: kept })
+}
+
 /**
  * The response with its `ETag`, or `304 Not Modified` when the request's
  * `If-None-Match` names it.
@@ -242,24 +266,45 @@ function statusOf(init: ResponseOptions): number {
 function conditional(response: Response, init: ResponseOptions): Effect.Effect<Response> {
   if (typeof init === 'number' || init.etag === undefined || response.status !== 200) return Effect.succeed(response)
 
-  const etag = /^(?:W\/)?"[^"]*"$/.test(init.etag) ? init.etag : `"${init.etag}"`
+  const etag = quotedETag(init.etag)
   const headers = new Headers(response.headers)
   headers.set('ETag', etag)
 
-  return Effect.map(Effect.serviceOption(RequestService), (request) => {
-    const sent = Option.match(request, { onNone: () => undefined, onSome: (client) => client.header('If-None-Match') })
-    const matches = sent !== undefined && sent.split(',').some((tag) => {
-      const candidate = tag.trim()
+  return Effect.map(clientHas(etag), (current) =>
+    current
+      ? notModifiedFrom(headers)
+      : new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+  )
+}
 
-      return candidate === '*' || candidate.replace(/^W\//, '') === etag.replace(/^W\//, '')
+/**
+ * Answer `304 Not Modified` when the client already has `etag`, the version
+ * of what the response holds, without running `response`; otherwise run it
+ * and give its response that `ETag`. Use it when building the body costs a
+ * query, so a client polling for changes costs only the version check.
+ *
+ * @example
+ * return yield* ifChanged(`orders-${restaurant.ordersVersion}`, Effect.gen(function* () {
+ *   const orders = yield* dbQuery((db) => ...)
+ *   return yield* json(KitchenOrders, { orders })
+ * }))
+ */
+export function ifChanged<E, R>(etag: string, response: Effect.Effect<Response, E, R>): Effect.Effect<Response, E, R> {
+  const tag = quotedETag(etag)
+
+  return Effect.flatMap(clientHas(tag), (current) => {
+    if (current) {
+      return Effect.succeed(notModifiedFrom(new Headers({ ETag: tag })))
+    }
+
+    return Effect.map(response, (built) => {
+      if (built.status !== 200) return built
+
+      const headers = new Headers(built.headers)
+      headers.set('ETag', tag)
+
+      return new Response(built.body, { status: built.status, statusText: built.statusText, headers })
     })
-
-    if (!matches) return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
-
-    headers.delete('Content-Type')
-    headers.delete('Content-Length')
-
-    return new Response(null, { status: 304, headers })
   })
 }
 

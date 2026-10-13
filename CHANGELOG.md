@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ifChanged(etag, response)` answers `304 Not Modified` before running the response's Effect, for a body that costs a query to build.
+- `readCookie(response, cookie)` from `@popcomputer/web/testing` reads the value a response set for a declared cookie.
+- A cookie's `path` takes `{param}` placeholders, filled from the route that sets it.
+
+### Fixed
+
+- A cookie whose value's JSON form is a string is stored as it is, so a cookie an application wrote by hand reads the same after it adopts `cookie()`; one stored as a JSON string by 0.8.0-next.3 reads too. Setting a value the schema rejects is a defect naming the cookie.
+- `WWW-Authenticate: Bearer` accompanies a JSON 401 only when the request sent a bearer token.
+
 ## [0.8.0-next.3] - 2026-10-13
 
 Changes since 0.8.0-next.2.

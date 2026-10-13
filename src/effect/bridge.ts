@@ -159,11 +159,23 @@ function createCookieJar<E extends Env>(c: HonoContext<E>): CookieJar {
     set: ({ name, value, options }) => {
       const context = openWebContext(c)
       const maxAge = options.maxAge === undefined ? undefined : Math.floor(Duration.toSeconds(Duration.fromInputUnsafe(options.maxAge)))
+      const routeParams = c.req.param()
+      const params: Readonly<Record<string, string>> = S.is(S.String)(routeParams) ? {} : routeParams
+      // A declared path's placeholders are filled from the route setting it.
+      const path = (options.path ?? '/').replace(/\{(\w+)\}/g, (_placeholder, param: string) => {
+        const filled = params[param]
+
+        if (filled === undefined) {
+          throw new Error(`Cookie '${name}' has the path ${options.path}, but this route has no {${param}} to fill it.`)
+        }
+
+        return encodeURIComponent(filled)
+      })
 
       context.responseCookies = [
         ...(context.responseCookies ?? []),
         serialize(name, value, {
-          path: options.path ?? '/',
+          path,
           httpOnly: options.httpOnly ?? true,
           secure,
           sameSite: options.sameSite ?? 'Lax',

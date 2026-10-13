@@ -20,7 +20,8 @@ export interface CookieOptions {
   /**
    * The paths it is sent to, by default `/`. A cached page whose path the
    * cookie covers is rendered afresh for every visitor carrying it, so scope a
-   * cookie such as a cart to the paths that read it.
+   * cookie such as a cart to the paths that read it. A `{param}` placeholder
+   * is filled from the route that sets the cookie, as `/r/{restaurant}/`.
    */
   readonly path?: string
   /** Default `Lax`; `Strict` keeps it off every request another site starts. */
@@ -51,6 +52,8 @@ export interface Cookie<A> {
   readonly name: string
   /** The value the request carries, or none when it is absent or does not match the schema. */
   readonly read: Effect.Effect<Option.Option<A>, never, CookieService>
+  /** A value as the browser sends it, decoded, or none when the schema rejects it. */
+  parse(raw: string): Option.Option<A>
   /** Set the cookie on the response. */
   set(value: A): Effect.Effect<void, never, CookieService>
   /** Clear the cookie in the browser. */
@@ -64,18 +67,34 @@ export interface Cookie<A> {
  * the schema rejects reads as none.
  */
 export function cookie<A, I>(name: string, schema: S.Codec<A, I, never, never>, options: CookieOptions = {}): Cookie<A> {
-  const codec = S.fromJsonString(S.toCodecJson(schema))
-  const decode = S.decodeUnknownOption(codec)
-  const encode = S.encodeSync(codec)
+  const json = S.toCodecJson(schema)
+  const decodeJson = S.decodeUnknownOption(S.fromJsonString(json))
+  const decodeValue = S.decodeUnknownOption(json)
+  const encode = S.encodeEffect(json)
+
+  // A value whose JSON form is a string, such as an id, is stored as it is,
+  // so a cookie an application wrote by hand reads the same; one stored as a
+  // JSON string reads too.
+  const parse = (raw: string): Option.Option<A> =>
+    raw.startsWith('"')
+      ? Option.orElse(decodeJson(raw), () => decodeValue(raw))
+      : Option.orElse(decodeValue(raw), () => decodeJson(raw))
 
   return {
     name,
+    parse,
     read: Effect.map(CookieService, (jar) => {
       const raw = jar.get(name)
 
-      return raw === undefined ? Option.none() : decode(raw)
+      return raw === undefined ? Option.none() : parse(raw)
     }),
-    set: (value) => Effect.map(CookieService, (jar) => jar.set({ name, value: encode(value), options })),
+    set: (value) => Effect.flatMap(CookieService, (jar) =>
+      encode(value).pipe(
+        Effect.mapError((issue) => new Error(`The value for cookie '${name}' does not match its schema: ${issue.message}`)),
+        Effect.orDie,
+        Effect.map((encoded) => jar.set({ name, value: typeof encoded === 'string' ? encoded : JSON.stringify(encoded), options }))
+      )
+    ),
     clear: Effect.map(CookieService, (jar) => jar.set({ name, value: '', options: { ...options, maxAge: 0 } })),
   }
 }

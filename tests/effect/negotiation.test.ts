@@ -97,7 +97,9 @@ describe('routes.jsonApi()', () => {
 
     expect(signedOut.status).toBe(401)
     expect(signedOut.headers.get('Content-Type')).toContain('application/json')
-    expect(signedOut.headers.get('WWW-Authenticate')).toBe('Bearer')
+    // It sent no bearer token, so it is told of none.
+    expect(signedOut.headers.get('WWW-Authenticate')).toBeNull()
+    expect((await app.request('/api/v1/me', { headers: { Authorization: 'Bearer stale' } }, env)).headers.get('WWW-Authenticate')).toBe('Bearer')
     expect(invalid.status).toBe(422)
     expect((await readError(invalid)).errors).toHaveProperty('sku')
   })

@@ -11,7 +11,7 @@ import { Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
-import { httpError, json } from '../src/effect/responses.js'
+import { httpError, ifChanged, json } from '../src/effect/responses.js'
 import { HttpError } from '../src/effect/errors.js'
 import { readError, readJson } from '../src/testing.js'
 import { errorResponseWith } from '../src/schema.js'
@@ -94,6 +94,27 @@ describe('httpError headers', () => {
     expect(res.status).toBe(429)
     expect(res.headers.get('Retry-After')).toBe('30')
     expect((await readError(res, S.Struct({ retryAfter: S.Number }))).body).toEqual({ retryAfter: 30 })
+  })
+})
+
+describe('ifChanged', () => {
+  test('answers 304 without building the body when the client has the version', async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+    let builds = 0
+
+    routes.get('/api/kitchen', action(ifChanged('orders-7', Effect.gen(function* () {
+      builds += 1
+
+      return yield* json({ orders: [] })
+    }))))
+
+    const first = await app.request('/api/kitchen')
+    const again = await app.request('/api/kitchen', { headers: { 'If-None-Match': '"orders-7"' } })
+
+    expect(first.headers.get('ETag')).toBe('"orders-7"')
+    expect(again.status).toBe(304)
+    expect(builds).toBe(1)
   })
 })
 

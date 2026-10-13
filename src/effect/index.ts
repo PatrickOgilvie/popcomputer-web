@@ -127,6 +127,7 @@ export {
   forbidden,
   httpError,
   type HttpErrorOptions,
+  ifChanged,
   prefersJson,
   jsonOrRender,
   share,

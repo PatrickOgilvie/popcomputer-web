@@ -10,8 +10,11 @@ import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { flash, json, redirect } from '../../src/effect/responses.js'
 import { cookie } from '../../src/effect/cookies.js'
+import { readCookie } from '../../src/testing.js'
 
 const cartCookie = cookie('cart', S.Struct({ id: S.String, items: S.Number }), { maxAge: '30 days', path: '/r' })
+// A token stored as it is, scoped to one restaurant's guest pages.
+const guestCookie = cookie('guest', S.String, { path: '/r/{restaurant}/' })
 
 function createApp() {
   const app = new Hono()
@@ -28,6 +31,14 @@ function createApp() {
       const cart = yield* cartCookie.read
 
       return yield* json({ cart: Option.getOrNull(cart) })
+    })))
+    .post('/r/{restaurant}/visit', action(Effect.gen(function* () {
+      yield* guestCookie.set('tok-123')
+
+      return yield* json({ visited: true })
+    })))
+    .get('/r/{restaurant}/visit', action(Effect.gen(function* () {
+      return yield* json({ guest: Option.getOrNull(yield* guestCookie.read) })
     })))
     .delete('/r/cart', action(Effect.gen(function* () {
       yield* cartCookie.clear
@@ -72,5 +83,29 @@ describe('cookie', () => {
 
     expect(cleared).toContain('Max-Age=0')
     expect(cleared).toContain('Path=/r')
+  })
+})
+
+describe('cookie values and paths', () => {
+  test('a string is stored as it is, and one stored as a JSON string reads too', async () => {
+    const app = createApp()
+    const set = await app.request('/r/acme/visit', { method: 'POST' })
+
+    expect(set.headers.getSetCookie().find((value) => value.startsWith('guest='))).toStartWith('guest=tok-123;')
+    expect(Option.getOrNull(readCookie(set, guestCookie))).toBe('tok-123')
+    expect(await (await app.request('/r/acme/visit', { headers: { Cookie: 'guest=%22tok-9%22' } })).json()).toEqual({ guest: 'tok-9' })
+  })
+
+  test('a path placeholder is filled from the route that sets the cookie', async () => {
+    const set = await createApp().request('/r/acme/visit', { method: 'POST' })
+
+    expect(set.headers.getSetCookie().find((value) => value.startsWith('guest='))).toContain('Path=/r/acme/')
+  })
+
+  test('readCookie reads the value a response set, and none once cleared', async () => {
+    const app = createApp()
+
+    expect(Option.getOrNull(readCookie(await app.request('/r/cart', { method: 'POST' }), cartCookie))).toEqual({ id: 'cart-1', items: 2 })
+    expect(Option.isNone(readCookie(await app.request('/r/cart', { method: 'DELETE' }), cartCookie))).toBe(true)
   })
 })
