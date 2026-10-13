@@ -28,6 +28,9 @@
       ],
       "@popcomputer/web/paths": [
         "../../dist/paths.d.ts"
+      ],
+      "@popcomputer/web/endpoint": [
+        "../../dist/endpoint.d.ts"
       ]
     },
     "jsx": "react-jsx"

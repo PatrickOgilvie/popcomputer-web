@@ -28,6 +28,12 @@
       ],
       "@popcomputer/web/paths": [
         "./src/paths.ts"
+      ],
+      "@popcomputer/web/endpoint": [
+        "./src/endpoint.ts"
+      ],
+      "@popcomputer/web/drizzle": [
+        "./src/drizzle.ts"
       ]
     },
     "rootDir": "."

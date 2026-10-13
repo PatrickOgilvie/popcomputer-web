@@ -55,8 +55,10 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
    turn a domain error into a response with `Effect.catchTags`, such as
    `invalid({ amount: error.message })` to show it beside its form field. A
    handler that ends differently per branch branches inside `Effect.gen`,
-   whose branches TypeScript combines. Do not `throw` in an action.
-5. **Read request input only through `validateRequest(Schema)`.** Build schemas
+   whose branches TypeScript combines. Do not `throw` in an action. An
+   endpoint's action (rule 13) returns its success value instead.
+5. **Read request input only through `validateRequest(Schema)`,** or, in an
+   endpoint's action, through its contract (rule 13). Build schemas
    from `@popcomputer/web/schema` validators (`requiredString`,
    `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, ...), which
    accept form posts as well as JSON (an API rejects undeclared query
@@ -148,13 +150,26 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
     layer, and move time with `testClock()`, which works when rules read the
     time through Effect's `Clock` or `DateTime.now`; `time.settle(request)`
     runs a request whose retries wait on the clock.
+13. **Declare every JSON endpoint once, as a contract,** in `src/endpoints.ts`:
+    `endpoint.post(paths.apiProjects, { body, success, status: 201, errors:
+    { 409: SlugTaken } })` from `@popcomputer/web/endpoint`, with `query`,
+    `body` and `headers` schemas for its input, `success` for its body and
+    each failure a client tells apart as an `S.TaggedError` under its status.
+    Implement it with `action(endpoints.createProject, ({ params, body }) =>
+    Effect.gen(...))`, which receives the input decoded and returns the
+    success value, and register it with `routes.endpoint(createProject)`,
+    which takes the method and path from the contract. Do not call
+    `validateRequest` or `json` in it. Test it with `call(endpoints.x, input,
+    { fetch: (request) => app.request(request, undefined, env) })`, and
+    publish `openApi(endpoints, info)`. Pages' forms stay ordinary actions.
 
 Every name has one entrypoint: `@popcomputer/web` for `setupWeb`, template
 helpers and Hono middleware; `@popcomputer/web/effect` for actions, routes,
 responses, pages, the database, services and errors;
 `@popcomputer/web/schema` for validators; `@popcomputer/web/auth` for the
 Better Auth integration; `@popcomputer/web/cache` for the KV cache;
-`@popcomputer/web/drizzle` for `rowOf`;
+`@popcomputer/web/drizzle` for `rowOf`; `@popcomputer/web/endpoint` for
+`endpoint`, `call` and `openApi`, on the server and in clients alike;
 `@popcomputer/web/react` for page component types; `@popcomputer/web/paths`
 for `href`, in React and actions alike; `@popcomputer/web/testing` in tests.
 

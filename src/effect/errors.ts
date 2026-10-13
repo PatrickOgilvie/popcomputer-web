@@ -325,6 +325,11 @@ export class HttpError extends Schema.TaggedError<HttpError>()('HttpError', {
   code: OptionalErrorCode,
   cause: Schema.optional(Schema.Unknown),
   headers: OptionalHeaders,
+  /**
+   * The `tag` the JSON envelope reports in place of `HttpError`: the `_tag`
+   * of a failure an endpoint declares, so a client tells its failures apart.
+   */
+  tag: Schema.optional(Schema.String),
 }) implements StructuredErrorCapable {
   get httpStatus(): number {
     return this.status
@@ -337,6 +342,8 @@ export class HttpError extends Schema.TaggedError<HttpError>()('HttpError', {
       httpStatus: this.status,
       message: this.message,
     })
+
+    if (this.tag !== undefined) result.tag = this.tag
 
     if (this.body !== undefined) {
       // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
@@ -605,6 +612,15 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     return new RouteConfigurationError({
       message: `Route '${path}' has purges: true, but its path has no {param} that binds a model whose record it could purge.`,
       hint: "List the tags it changes instead, such as purges: ['posts'] for the table a create route writes.",
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
+  /** Create an error for an endpoint registered on routes with a prefix. */
+  static endpointUnderPrefix(path: string, prefix: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `The endpoint on ${path} is registered under the prefix '${prefix}', but an endpoint's path is the whole path its contract declares.`,
+      hint: 'Register endpoints on routes without .prefix(...); group them with .provide(...) or .jsonApi() instead.',
       code: ErrorCodes.CFG_305_INVALID_CONFIG,
     })
   }

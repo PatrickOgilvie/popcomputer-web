@@ -37,6 +37,11 @@
       "import": "./dist/paths.js",
       "default": "./dist/paths.js"
     },
+    "./endpoint": {
+      "types": "./dist/endpoint.d.ts",
+      "import": "./dist/endpoint.js",
+      "default": "./dist/endpoint.js"
+    },
     "./drizzle": {
       "types": "./dist/drizzle.d.ts",
       "import": "./dist/drizzle.js",

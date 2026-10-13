@@ -45,6 +45,7 @@ import {
 } from '@popcomputer/web/effect'
 import { readPage, signedIn, testEnv } from '@popcomputer/web/testing'
 import { href } from '@popcomputer/web/paths'
+import { call, endpoint } from '@popcomputer/web/endpoint'
 
 const Project = S.Struct({ id: S.String, userId: S.String })
 
@@ -273,6 +274,13 @@ betterAuthLogoutAction({ redirectTo: '/logn' })
 // Routes register only on declared paths.
 // @ts-expect-error '/projets/{project}' is not a declared path
 web.routes.get('/projets/{project}', action(json({})))
+
+// An endpoint's contract names a declared path, and its action and route derive from it.
+const projectEndpoint = endpoint.get(paths.project, { success: S.Struct({ id: S.String }) })
+// @ts-expect-error '/projets/{project}' is not a declared path
+endpoint.get('/projets/{project}', {})
+web.routes.endpoint(action(projectEndpoint, ({ params }) => Effect.succeed({ id: params.project })))
+export const projectCall = call(projectEndpoint, { params: { project: 'p1' } })
 
 // Registered pages type render and the React component.
 export const showProject = render('Projects/Show', { project: { id: 'p1', createdAt: new Date() } })

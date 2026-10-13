@@ -26,7 +26,7 @@ export const showProject = action(
 ## Contents
 
 - [Why this shape](#why-this-shape) · [Installation](#installation) · [Quick start](#quick-start)
-- Building: [Application services](#application-services) · [Validation and the database](#validation-and-the-database) · [Route model binding](#route-model-binding) · [Auth](#auth) · [Responses and failures](#responses-and-failures)
+- Building: [Application services](#application-services) · [Validation and the database](#validation-and-the-database) · [Route model binding](#route-model-binding) · [Auth](#auth) · [Responses and failures](#responses-and-failures) · [JSON endpoints](#json-endpoints)
 - Running: [Caching and background work](#caching-and-background-work) · [Scheduled and queued work](#scheduled-and-queued-work) · [Page caching](#page-caching)
 - [Testing](#testing) · [Patterns from real applications](#patterns-from-real-applications) · [User input in, files out](#user-input-in-files-out)
 - Reference: [Lower-level composition](#lower-level-composition) · [Version values](#version-values) · [Upgrading](#upgrading) · [Migrating from `honertia`](#migrating-from-honertia) · [Tradeoffs and current limits](#tradeoffs-and-current-limits)
@@ -466,6 +466,9 @@ export const paths = {
   project: '/projects/{project}',
   projectBySlug: '/p/{project:slug}',
   task: '/projects/{project}/tasks/{task}',
+  apiProjects: '/api/projects',
+  apiProject: '/api/projects/{project}',
+  apiDescription: '/api/openapi.json',
 } as const
 ```
 
@@ -1139,7 +1142,10 @@ parameters from counting as excess. `Jsonify<typeof Schema.Type>` from
 }
 ```
 
-A JSON API declares each response as an Effect Schema and answers with
+A JSON API declares each endpoint as a contract, as
+[JSON endpoints](#json-endpoints) shows, and its actions return values the
+contract encodes. An ordinary action that answers JSON, such as a page's
+`jsonOrRender`, declares its response as an Effect Schema and answers with
 `json(Schema, value)`: the value is checked against the schema and encoded
 through its JSON form, so a `Date` leaves as an ISO string, and a test reads
 it back with `readJson(res, Schema)` from `@popcomputer/web/testing`. A client
@@ -1175,6 +1181,222 @@ The error page is rendered by the boundary, after the action, so it receives
 its layout defaults for them. A value a guard layer `share()`s before the
 action does reach it, so a banner every page must show, such as "viewing as
 Ada", is shared there.
+
+## JSON endpoints
+
+A JSON API declares each endpoint once, as a contract: its method, its path
+from `src/paths.ts`, the query, body and headers it reads, the body of a
+success with its status, and the failures it declares, each with the status
+it answers. Everything else derives from the contract, so nothing about an
+endpoint is written twice: the action receives its input decoded and returns
+the success value, the route takes its method and path from it, a client or a
+test calls it with typed input and reads a typed result, and `openApi`
+describes every endpoint for a published reference. The module imports only
+`effect`, the validators and the paths, so a React bundle or a separate
+client imports it without the server.
+
+```ts
+// src/endpoints.ts
+import { Schema as S } from 'effect'
+import { endpoint } from '@popcomputer/web/endpoint'
+import { alphaDash, coercedNumber, nullableString, requiredString } from '@popcomputer/web/schema'
+import { paths } from './paths'
+
+export const ApiProject = S.Struct({
+  id: S.String,
+  name: S.String,
+  slug: S.String,
+  createdAt: S.Date,
+})
+
+export class SlugTaken extends S.TaggedError<SlugTaken>()('SlugTaken', {
+  slug: S.String,
+  message: S.String,
+}) {}
+
+export const endpoints = {
+  listProjects: endpoint.get(paths.apiProjects, {
+    summary: 'List your projects, newest first.',
+    query: S.Struct({ limit: coercedNumber, q: nullableString }),
+    success: S.Struct({ data: S.Array(ApiProject) }),
+  }),
+  createProject: endpoint.post(paths.apiProjects, {
+    summary: 'Create a project.',
+    body: S.Struct({ name: requiredString, slug: alphaDash }),
+    success: ApiProject,
+    status: 201,
+    errors: { 409: SlugTaken },
+  }),
+  showProject: endpoint.get(paths.apiProject, { success: ApiProject }),
+  deleteProject: endpoint.delete(paths.apiProject),
+}
+```
+
+`action(endpoint, handler)` implements one. The handler receives `params`
+(the path's placeholders) and the `query`, `body` and `headers` the contract
+declares, already decoded: input that does not decode is answered `422`, with
+each invalid field's message in `errors`, before the handler runs. It returns
+the success value, which the response encodes through the `success` schema,
+so only the fields the schema declares leave the server, whatever the row
+holds; an endpoint without `success` answers `204`. A failure the contract
+declares is answered with its status in the error envelope, its `tag` the
+failure's `_tag` and its fields in `body`. The package's own failures,
+`notFound`, `forbidden`, `authorize()`'s 401 and the rest, are answered as
+everywhere else, and every response of an endpoint is JSON, failures
+included. `bound('project')` loads the model a placeholder in the contract's
+path names, as in any action, and `responseHeader` adds a header such as a
+created record's `Location`.
+
+```ts
+// src/actions/api/projects.ts
+import { and, desc, eq, ilike } from 'drizzle-orm'
+import { Effect } from 'effect'
+import {
+  action,
+  authorize,
+  bound,
+  dbMutation,
+  dbQuery,
+  notFound,
+  responseHeader,
+} from '@popcomputer/web/effect'
+import { href } from '@popcomputer/web/paths'
+import { endpoints, SlugTaken } from '../../endpoints'
+import { paths } from '../../paths'
+import { projects } from '../../schema'
+
+export const listProjects = action(endpoints.listProjects, ({ query }) =>
+  Effect.gen(function* () {
+    const auth = yield* authorize()
+    const data = yield* dbQuery((db) =>
+      db.select().from(projects)
+        .where(and(eq(projects.userId, auth.user.id), query.q === null ? undefined : ilike(projects.name, `%${query.q}%`)))
+        .orderBy(desc(projects.createdAt))
+        .limit(Math.min(query.limit, 100))
+    )
+
+    return { data }
+  })
+)
+
+export const createProject = action(endpoints.createProject, ({ body }) =>
+  Effect.gen(function* () {
+    const auth = yield* authorize()
+    const [project] = yield* dbMutation((db) =>
+      db.insert(projects)
+        .values({ id: crypto.randomUUID(), name: body.name, slug: body.slug, userId: auth.user.id })
+        .returning()
+    ).pipe(
+      Effect.catchTag('DatabaseConstraintViolation', (violation) =>
+        Effect.fail(violation.constraint === 'unique'
+          ? new SlugTaken({ slug: body.slug, message: `The slug ${body.slug} is taken.` })
+          : violation)
+      )
+    )
+
+    yield* responseHeader('Location', href(paths.apiProject, { project: project.id }))
+
+    return project
+  })
+)
+
+export const showProject = action(endpoints.showProject, () =>
+  Effect.gen(function* () {
+    const auth = yield* authorize()
+    const project = yield* bound('project')
+
+    if (project.userId !== auth.user.id) return yield* notFound('Project')
+
+    return project
+  })
+)
+
+export const deleteProject = action(endpoints.deleteProject, () =>
+  Effect.gen(function* () {
+    const auth = yield* authorize()
+    const project = yield* bound('project')
+
+    if (project.userId !== auth.user.id) return yield* notFound('Project')
+
+    yield* dbMutation((db) => db.delete(projects).where(eq(projects.id, project.id)))
+  })
+)
+```
+
+`routes.endpoint(action)` registers it on the method and path its contract
+declares, with the route options other registrations take. A failure the
+contract does not declare is an `unhandledErrors` type error at the
+registration, as for any action, so the contract lists every failure a client
+can tell apart. Endpoints register on `routes` without `.prefix()`, since the
+contract's path is the whole path; group them with `.provide(...)`.
+
+```ts
+// src/api-routes.ts
+import { openApi } from '@popcomputer/web/endpoint'
+import { action, json, RequireAuthLayer } from '@popcomputer/web/effect'
+import { routes } from './app'
+import { createProject, deleteProject, listProjects, showProject } from './actions/api/projects'
+import { endpoints } from './endpoints'
+import { paths } from './paths'
+
+routes.provide(RequireAuthLayer)
+  .endpoint(listProjects)
+  .endpoint(createProject, { name: 'api.projects.store' })
+  .endpoint(showProject)
+  .endpoint(deleteProject, { purges: true })
+
+routes.get(paths.apiDescription, action(json(openApi(endpoints, { title: 'Projects API', version: '1' }))))
+```
+
+`openApi(endpoints, info)` is an OpenAPI 3.1 document: each endpoint named
+by its key, with its path and query parameters, headers, body, success and
+declared failures, and the `422` of an endpoint that reads input. A
+validator that accepts form posts as well as JSON, such as `coercedNumber`, is
+described as the JSON a client sends, a number. Serve it from a route, as
+above, or write it to a file in a build step.
+
+`call(endpoint, input, options)` sends a request built from the contract and
+reads the answer: `{ ok: true, value }` with the success decoded, so dates
+are `Date`s again, or `{ ok: false, error }`, where `error` is a declared
+failure, decoded as the failure itself, or an `EndpointFailure` holding the
+envelope, such as a 422's `errors`. Both narrow on `_tag`. In the browser it
+uses `fetch` and the page's origin; a test passes the application as `fetch`,
+so the test reads as a client does:
+
+```ts
+// src/api.test.ts
+import { expect, test } from 'bun:test'
+import { call } from '@popcomputer/web/endpoint'
+import { signedIn, testEnv } from '@popcomputer/web/testing'
+import app from './app'
+import './api-routes'
+import { endpoints } from './endpoints'
+import { testBindings } from './test-bindings'
+
+const as = (id: string) => ({
+  fetch: (request: Request) => app.request(request, undefined, testEnv(signedIn({ id }), testBindings)),
+})
+
+test('a slug is taken once', async () => {
+  const created = await call(endpoints.createProject, { body: { name: 'Launch', slug: 'launch' } }, as('user-1'))
+  const again = await call(endpoints.createProject, { body: { name: 'Again', slug: 'launch' } }, as('user-1'))
+
+  expect(created.ok && created.value.slug).toBe('launch')
+  expect(!again.ok && again.error._tag).toBe('SlugTaken')
+})
+
+test("another member's project is not found", async () => {
+  const shown = await call(endpoints.showProject, { params: { project: 'project-1' } }, as('user-2'))
+
+  expect(shown.status).toBe(404)
+})
+```
+
+The input is encoded through the contract's schemas without their checks, so
+a form that calls an endpoint shows the server's messages for each invalid
+field. A page's form posts stay ordinary actions with `validateRequest`; an
+endpoint serves a client that reads JSON, such as a search box, a mobile app
+or another service.
 
 ## Caching and background work
 

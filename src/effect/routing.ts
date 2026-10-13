@@ -28,6 +28,8 @@ import {
 import { openWebContext } from '../request-context.js'
 import { invalidateCacheTags } from '../cache.js'
 import type { CookieService } from './cookies.js'
+import type { Endpoint } from '../endpoint.js'
+import type { EndpointAction } from './endpoint-action.js'
 import type { ResponseHeaders } from './response-headers.js'
 import { allowDefaultPageCache } from '../page-cache.js'
 import {
@@ -151,7 +153,7 @@ export type RouteActionCheck<R, Err, Services> = [ModelName<Exclude<R, Services>
       ? unknown
       : {
           readonly unhandledErrors: ErrorTag<Exclude<Err, AppError>>
-          readonly fix: 'Handle these errors in the action (Effect.catchTag), or fail with one of the package errors such as HttpError.'
+          readonly fix: "Handle these errors in the action (Effect.catchTag), declare them in the endpoint's errors, or fail with one of the package errors such as HttpError."
         }
     : {
         readonly missingServices: ServiceKey<Exclude<R, Services>>
@@ -1211,6 +1213,34 @@ export class EffectRouteBuilder<
     options?: EffectRouteOptions
   ): this {
     this.registerRoute('all', path, checkedAction(effect), options)
+
+    return this
+  }
+
+  /**
+   * Register the action implementing an endpoint on the endpoint's method and
+   * path, which its contract declares. It answers JSON, failures included,
+   * as `jsonApi()` routes do.
+   *
+   * @example
+   * routes.provide(RequireAuthLayer)
+   *   .endpoint(listPlaces)
+   *   .endpoint(createPlace, { name: 'places.store', purges: ['places'] })
+   */
+  endpoint<Ep extends Endpoint, R, Err>(
+    action: EndpointAction<Ep, Err, R> & RouteActionCheck<R | Needs, Err, Services | PathModels<Ep['path']>>,
+    options?: EffectRouteOptions
+  ): this {
+    if (this.pathPrefix !== '') {
+      throw RouteConfigurationError.endpointUnderPrefix(action.endpoint.path, this.pathPrefix).atStartup()
+    }
+
+    // SAFETY: RouteActionCheck rejects, at the call site, an action whose
+    // failures are not AppError, as checkedAction does.
+    const effect = action.effect as Effect.Effect<Response, AppError, R>
+    const json = this.answersJson ? this : this.jsonApi()
+
+    json.registerRoute(action.endpoint.method, action.endpoint.path, effect, options)
 
     return this
   }

@@ -90,6 +90,7 @@ export { effectBridge, type EffectBridgeConfig } from './bridge.js'
 
 // Actions
 export { action } from './action.js'
+export type { EndpointAction } from './endpoint-action.js'
 
 // Database operations
 export {
