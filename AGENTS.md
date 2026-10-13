@@ -77,10 +77,12 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
    `currentUser` when signing in is optional. Guard a group of routes with
    `routes.provide(RequireAuthLayer)` or `routes.provide(RequireGuestLayer)`.
    Sign users in and up with an action that validates its form and returns
-   `betterAuthRedirect(...)` from `@popcomputer/web/auth`. Group a JSON API's
-   routes with `routes.prefix('/api/v1').jsonApi()`, so every failure there
-   answers JSON (a 401, not a redirect to sign in), and authenticate its keys
-   in a layer that fails with `UnauthorizedError`.
+   `betterAuthRedirect(...)` from `@popcomputer/web/auth`. Register a JSON
+   API's routes on `routes.jsonApi()`, with their declared paths
+   (`routes.jsonApi().provide(KeyAuth).get(paths.apiInvoices, ...)`), so every
+   failure there answers JSON (a 401, not a redirect to sign in), and
+   authenticate its keys in a layer that fails with
+   `new UnauthorizedError({ message })`.
 8. **Use the database only through `dbQuery`, `dbMutation`, `dbTransaction`
    and `dbBatch`:** `yield* dbQuery((db) => db.select()...)` to read,
    `dbMutation((db) => db.insert(...))` to write. Operations that must

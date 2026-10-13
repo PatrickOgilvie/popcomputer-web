@@ -536,7 +536,7 @@ export const cacheInvalidatePrefix = (
  * store failure is reported and the entries stay until they expire; without
  * a cache store it does nothing.
  */
-export const invalidateCacheTags = (tags: ReadonlyArray<string>): Effect.Effect<void> =>
+export const invalidateCacheTags = (tags: ReadonlyArray<CacheTag>): Effect.Effect<void> =>
   Effect.flatMap(Effect.serviceOption(CacheService), (store) => {
     if (Option.isNone(store) || tags.length === 0) return Effect.void
 

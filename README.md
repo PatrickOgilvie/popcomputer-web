@@ -1035,7 +1035,8 @@ for HTML on every visit and form post, so they get pages, a signed-out visitor
 goes to sign in, and a failed form goes back to the form. A signed-out JSON
 client gets a 401 instead. `prefersJson` and `jsonOrRender` decide the same
 way. An API whose clients may send neither header, such as a scanner that
-forgot its key, declares its routes with `routes.prefix('/api/v1').jsonApi()`:
+forgot its key, registers its routes on `routes.jsonApi()`, with their
+declared paths, `routes.jsonApi().provide(ApiKeyAuth).get(paths.apiInvoices, listInvoices)`:
 every request to them is a JSON client. An `HttpError` adds its `headers` to the response, as
 `HttpError.rateLimited(30)` adds `Retry-After`.
 
@@ -1322,6 +1323,12 @@ routes
   .put(paths.project, updateProject, { purges: true })
 ```
 
+A list of one parent's records, such as a workspace's templates, tags itself
+with the child table and the parent, `` `templates:workspace-${workspace.id}` ``,
+and the routes that write templates purge that tag with `purgeCache`. Tagging
+it with the parent's record instead purges it on every write under the
+parent, and with the table on every write to any parent's templates.
+
 `purges: true` names only the route's own records, which for a route that
 creates a record under its parent, such as `POST /threads/{thread}/posts`,
 are the parent and its table (`threads`), not the new post's. When an action
@@ -1351,7 +1358,9 @@ project's tag.
 
 ```ts
 export const projectTasks = action(Effect.gen(function* () {
-  const project = yield* apiKeyProject // the API key's project, or a 401
+  // The key's project, or new UnauthorizedError({ message: 'This API key is not valid.' }),
+  // which a JSON client receives as a 401 with WWW-Authenticate: Bearer.
+  const project = yield* apiKeyProject
 
   const tasks = yield* cache(
     `projects:${project.id}:tasks`,

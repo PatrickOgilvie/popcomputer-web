@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A blank number or date input, which a form sends as an empty string, reads `This field is required`, as a missing one does, rather than `Expected a number`.
+- A JSON 401 for a request with a bearer token, or on a `jsonApi()` route, carries `WWW-Authenticate: Bearer`.
+- `invalidateCacheTags` takes `CacheTag`s, as the other tag APIs do.
+
 ## [0.8.0-next.2] - 2026-10-13
 
 Changes since 0.8.0-next.1.

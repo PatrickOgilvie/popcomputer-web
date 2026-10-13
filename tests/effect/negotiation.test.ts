@@ -97,6 +97,7 @@ describe('routes.jsonApi()', () => {
 
     expect(signedOut.status).toBe(401)
     expect(signedOut.headers.get('Content-Type')).toContain('application/json')
+    expect(signedOut.headers.get('WWW-Authenticate')).toBe('Bearer')
     expect(invalid.status).toBe(422)
     expect((await readError(invalid)).errors).toHaveProperty('sku')
   })

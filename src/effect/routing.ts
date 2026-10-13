@@ -554,7 +554,7 @@ export class EffectRouteBuilder<
    * for an API whose clients may send neither `Accept` nor `Authorization`.
    *
    * @example
-   * const api = routes.prefix('/api/v1').jsonApi().provide(TillKeyAuth)
+   * routes.jsonApi().provide(TillKeyAuth).post(paths.apiSales, recordSale)
    */
   jsonApi(): EffectRouteBuilder<E, Services, Path, Needs> {
     return new EffectRouteBuilder<E, Services, Path, Needs>(

@@ -19,7 +19,7 @@ import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { json } from '../../src/effect/responses.js'
 import { effectRoutes } from '../../src/effect/routing.js'
-import { coercedNumber, ensureArray, nullable, nullableString, required, requiredString } from '../../src/effect/schema.js'
+import { coercedDate, coercedNumber, ensureArray, nullable, nullableString, required, requiredString } from '../../src/effect/schema.js'
 import type { RequestData } from '../../src/effect/validation.js'
 
 // Helper to create a mock request context
@@ -951,6 +951,15 @@ describe('field messages a form shows', () => {
 
     expect(await errorsOf(Answer, {})).toEqual({ answer: 'Answer this question.' })
     expect(await errorsOf(Answer, { answer: '  ' })).toEqual({ answer: 'Answer this question.' })
+  })
+
+  test('a blank number or date input reads as missing, as a form sends it', async () => {
+    const Order = S.Struct({ quantity: coercedNumber, pickupAt: coercedDate })
+
+    expect(await errorsOf(Order, { quantity: '', pickupAt: ' ' }))
+      .toEqual({ quantity: 'This field is required', pickupAt: 'This field is required' })
+    expect(await errorsOf(Order, { quantity: 'two', pickupAt: 'soon' }))
+      .toEqual({ quantity: 'Expected a number', pickupAt: 'Expected a valid date' })
   })
 
   test('ensureArray reports a failing item under its index', async () => {

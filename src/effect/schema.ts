@@ -12,6 +12,7 @@ import {
   SchemaParser,
   SchemaTransformation,
 } from 'effect'
+import type { ParseOptions } from 'effect/SchemaAST'
 
 // =============================================================================
 // String Types
@@ -99,12 +100,20 @@ export const required = (message = 'This field is required') =>
 /**
  * Coerces a value to a finite number.
  */
+/** A form input left blank, which a browser sends as an empty string. */
+const isBlankInput = (value: unknown): boolean => typeof value === 'string' && value.trim() === ''
+
+/** The failure for a blank input to a required field: the message a missing field gets. */
+const blankInput = (value: unknown, options: ParseOptions) =>
+  Effect.fail(new SchemaIssue.InvalidValue({ message: 'This field is required' }, value, options))
+
 export const coercedNumber = S.Unknown.pipe(
   S.decodeTo(
     S.Finite,
     SchemaTransformation.transformEffect({
       decode: (value, options) => {
         if (S.is(S.Finite)(value)) return Effect.succeed(value)
+        if (isBlankInput(value)) return blankInput(value, options)
 
         if (S.is(S.String)(value)) {
           const parsed = parseFloat(value)
@@ -220,6 +229,7 @@ export const coercedDate = S.Unknown.pipe(
     SchemaTransformation.transformEffect({
       decode: (value, options) => {
         if (S.is(S.Date)(value)) return Effect.succeed(value)
+        if (isBlankInput(value)) return blankInput(value, options)
 
         if (S.is(S.String)(value)) {
           // oxlint-disable-next-line effecttsgo/global-date -- This codec accepts or returns native Date values; parsing this supplied value does not read the clock.

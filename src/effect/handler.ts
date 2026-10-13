@@ -205,6 +205,11 @@ export async function renderErrorResponse<E extends Env>(
 
   if (error instanceof UnauthorizedError) {
     if (format === 'json') {
+      // A client that authenticates with a token is told which scheme to use.
+      const bearer = openWebContext(c).jsonApi === true || /^Bearer\b/i.test(c.req.header('Authorization') ?? '')
+
+      if (bearer) c.header('WWW-Authenticate', 'Bearer')
+
       return finalize(c.json(formatter.json.format(structured), 401))
     }
 
