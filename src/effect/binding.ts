@@ -288,6 +288,16 @@ export interface RouteModel<K extends string> {
   readonly '~popcomputer/web/RouteModel': K
 }
 
+/**
+ * What an Effect that reads route models with `bound()` requires, for a
+ * helper whose type is written out: the loaded models, and a route whose
+ * path binds each of them.
+ *
+ * @example
+ * const ownProject: Effect.Effect<Project, BoundModelError | NotFoundError, BoundRequirements<'project'>> = ...
+ */
+export type BoundRequirements<K extends BoundKey> = BoundModels | RouteModel<K>
+
 /** The keys `bound` accepts: the registered bindings, or any key before the application registers them. */
 export type BoundKey = [ConfiguredRouteBindings] extends [never] ? string : keyof ConfiguredRouteBindings & string
 

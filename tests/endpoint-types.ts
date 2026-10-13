@@ -8,7 +8,7 @@ import { Context, Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
-import { bound } from '../src/effect/binding.js'
+import { bound, type BoundModelError, type BoundRequirements } from '../src/effect/binding.js'
 import { call, endpoint, type EndpointInput } from '../src/endpoint.js'
 import { coercedNumber, requiredString } from '../src/effect/schema.js'
 
@@ -111,3 +111,7 @@ const secured = endpoint.post('/places/{place}/name', { auth: true, body: S.Stru
 action(secured, ({ auth, params }) => Effect.succeed({ id: params.place, name: auth.user.id }))
 // @ts-expect-error The contract does not require a user.
 action(endpoints.showPlace, ({ auth }) => Effect.succeed({ id: String(auth), name: 'x' }))
+
+// A helper reading a model states it once, as BoundRequirements.
+const readsPlace: Effect.Effect<unknown, BoundModelError, BoundRequirements<'place'>> = bound('place')
+void readsPlace

@@ -185,6 +185,7 @@ export {
   type BoundModel,
   type BoundModelError,
   type BoundKey,
+  type BoundRequirements,
   type RouteBindingScope,
   type RouteBindingOptions,
   type RouteBindingDefinition,
