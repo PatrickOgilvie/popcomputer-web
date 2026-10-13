@@ -34,6 +34,8 @@ export {
   ResponseCacheService,
   ResponseCachePurgeError,
   PAGE_CACHE_TAG,
+  recordCacheTag,
+  type TableName,
   type ResponseCacheClient,
   type ResponseCachePurgeInput,
   type RouteCacheOptions,

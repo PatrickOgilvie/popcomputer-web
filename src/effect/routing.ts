@@ -4,7 +4,7 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Predicate, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import { Predicate, Context, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
 import type { Context as HonoContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { runEffectWithRuntime } from './handler.js'
 import {
@@ -30,7 +30,6 @@ import { allowDefaultPageCache } from '../page-cache.js'
 import {
   applyCachePolicy,
   decideCachePolicy,
-  deriveCacheTags,
   hasSessionCookie,
   isPageResponse,
   isPartialReloadRequest,
@@ -38,6 +37,7 @@ import {
   ResponseCachePurgeError,
   ResponseCachePurgeFailure,
   ResponseCacheService,
+  formatRecordTag,
   type RouteCacheOptions,
 } from './response-cache.js'
 import { DatabaseService } from './services.js'
@@ -54,6 +54,7 @@ import {
   parseBindings,
   toHonoPath,
   BoundModels,
+  bindingTableName,
   compileBindingPlan,
   decodeBindingParam,
   decodeBoundRow,
@@ -192,18 +193,31 @@ export interface EffectRouteOptions {
   cache?: RouteCacheOptions | false
   /**
    * After this route's effect succeeds (any Redirect, or a Response below
-   * 400), purge these Workers Cache tags. `true` derives the tags from the
-   * route's bindings with the same scheme used for Cache-Tag on reads, so
-   * PUT /projects/{project} purges `project:{id}` and `projects`.
+   * 400), purge these Workers Cache tags. `true` purges the record of each
+   * of the route's bindings, the tag every cached page that reads it carries
+   * (see recordCacheTag), and the table of the record it writes:
+   * PUT /projects/{project} purges `projects:{id}` and `projects`.
    */
   purges?: true | readonly string[]
 }
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
 
+/** The Cache-Tag of each record a route's bindings name. Internal to routing. */
+class RouteRecords extends Context.Service<
+  RouteRecords,
+  { readonly tags: Effect.Effect<readonly string[], BoundModelError> }
+>()('@popcomputer/web/RouteRecords') {}
+
+/** A route's models, and the Cache-Tag of each one's record. */
+interface LoadedModels {
+  readonly models: ReadonlyMap<string, unknown>
+  readonly recordTags: readonly string[]
+}
+
 /** The result of loading a route's models. */
 type BindingLoadOutcome =
-  | { readonly models: ReadonlyMap<string, unknown> }
+  | LoadedModels
   | { readonly missing: string }
   | { readonly failure: RouteConfigurationError }
 
@@ -410,13 +424,14 @@ export class EffectRouteBuilder<
     db: Database,
   ): Promise<BindingLoadOutcome> {
     if (plan.length === 0) {
-      return { models: new Map() }
+      return { models: new Map(), recordTags: [] }
     }
 
     const { eq, and } = await loadDrizzle()
 
     const models = new Map<string, S.Schema.Type<typeof S.Unknown>>()
     const rows = new Map<string, object>()
+    const recordTags: string[] = []
 
     for (const binding of plan) {
       const rawParam = c.req.param(binding.param)
@@ -507,9 +522,10 @@ export class EffectRouteBuilder<
       // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
       rows.set(binding.param, result)
       models.set(binding.param, await decodeBoundRow(binding, result))
+      recordTags.push(formatRecordTag(binding.tableName, Object.getOwnPropertyDescriptor(result, binding.primaryKey)?.value))
     }
 
-    return { models }
+    return { models, recordTags }
   }
 
   private createHandler<R>(
@@ -588,37 +604,16 @@ export class EffectRouteBuilder<
         }
       }
 
-      // Cache tags name a binding by its decoded route parameter, which equals
-      // the bound row's lookup column, so tagging and purging need no query.
-      // oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits the compiled binding plan and native decoders before running the request Effect.
-      const deriveBindingTags = async (): Promise<readonly string[]> => {
-        const values = new Map<string, unknown>()
-
-        if (schema && configuredBindings) {
-          try {
-            bindingPlanPromise ??= compileBindingPlan(bindings, schema, configuredBindings)
-
-            for (const binding of await bindingPlanPromise) {
-              const raw = c.req.param(binding.param)
-              const value = raw === undefined ? undefined : await decodeBindingParam(binding, raw)
-
-              if (value !== undefined) values.set(binding.param, value)
-            }
-          } catch (cause) {
-            // bound() reports misconfigured bindings; tags fall back to collections.
-            if (!(cause instanceof RouteConfigurationError)) throw cause
-          }
-        }
-
-        return deriveCacheTags(bindings, values)
-      }
-
       // Models load through the request's DatabaseService, so a database a
       // test provides with testEnv serves bound() as it serves dbQuery.
       const loadAllModels = (
         database: Option.Option<object>
-      ): Effect.Effect<ReadonlyMap<string, unknown>, BoundModelError> =>
+      ): Effect.Effect<LoadedModels, BoundModelError> =>
         Effect.gen(function* () {
+          if (bindings.length === 0) {
+            return { models: new Map(), recordTags: [] }
+          }
+
           if (!configuredBindings) {
             return yield* RouteConfigurationError.bindingParserNotConfigured(bindings[0].param)
           }
@@ -639,17 +634,16 @@ export class EffectRouteBuilder<
             return yield* new NotFoundError({ resource: outcome.missing })
           }
 
-          return outcome.models
+          return outcome
         })
 
-      const boundModelsLayer = Layer.effect(
-        BoundModels,
+      // bound() and the route's cache tags read the same models, loaded once.
+      const boundModelsLayer = Layer.effectContext(
         Effect.gen(function* () {
           const database = yield* Effect.serviceOption(DatabaseService)
+          const load = yield* Effect.cached(loadAllModels(database))
 
-          return yield* Effect.cached(loadAllModels(database))
-        }).pipe(Effect.map((load) =>
-          BoundModels.of({
+          const models = BoundModels.of({
             get: (key) => {
               if (!bindings.some((binding) => binding.param === key)) {
                 return Effect.fail(RouteConfigurationError.bindingNotInRoute(key))
@@ -659,10 +653,21 @@ export class EffectRouteBuilder<
                 return Effect.fail(RouteConfigurationError.schemaNotConfigured(key))
               }
 
-              return Effect.map(load, (models) => models.get(key))
+              return Effect.map(load, (loaded) => loaded.models.get(key))
             },
           })
-        ))
+
+          // A record the action removed, or never loaded and no longer
+          // exists, names no cached page.
+          const records = RouteRecords.of({
+            tags: load.pipe(
+              Effect.map((loaded) => loaded.recordTags),
+              Effect.catchTag('NotFoundError', () => Effect.succeed([]))
+            ),
+          })
+
+          return Context.make(BoundModels, models).pipe(Context.add(RouteRecords, records))
+        })
       )
 
       let fullLayer: Layer.Layer<never, AppError, never> = Layer.provideMerge(boundModelsLayer, contextLayer)
@@ -671,20 +676,47 @@ export class EffectRouteBuilder<
         fullLayer = Layer.provideMerge(layer, fullLayer)
       }
 
+      let handlerEffect: Effect.Effect<
+        Response | Redirect,
+        AppError | ResponseCachePurgeError,
+        R | ResponseCacheService | RouteRecords
+      > = effect
+
+      // A cacheable page is tagged with the records its route read, so a
+      // write to any of them purges it.
+      let recordTags: readonly string[] = []
+      const cacheOption = options?.cache
+
+      if (cacheOption && bindings.length > 0 && BODYLESS_METHODS.has(c.req.method)) {
+        handlerEffect = handlerEffect.pipe(
+          Effect.tap((result) =>
+            result instanceof Response && result.status >= 200 && result.status < 300
+              ? Effect.flatMap(RouteRecords, (records) => records.tags).pipe(
+                  Effect.map((tags) => {
+                    recordTags = tags
+                  })
+                )
+              : Effect.void
+          )
+        )
+      }
+
       // After a successful mutation, purge the declared Workers Cache tags.
       // Runs inside the effect so a failed purge surfaces in the typed error
       // channel instead of leaving stale entries silently.
       const purges = options?.purges
 
-      const bindingTags =
-        bindings.length > 0 && (purges === true || (options?.cache !== undefined && options.cache !== false))
-          ? await deriveBindingTags()
-          : deriveCacheTags(bindings, new Map())
-
-      let handlerEffect: Effect.Effect<Response | Redirect, AppError | ResponseCachePurgeError, R | ResponseCacheService> =
-        effect
-
       if (purges) {
+        const writtenTable = bindings.length > 0
+          ? [bindingTableName(bindings[bindings.length - 1], configuredBindings)]
+          : []
+
+        const purgeTags: Effect.Effect<readonly string[], BoundModelError, RouteRecords> = purges === true
+          ? Effect.flatMap(RouteRecords, (records) => records.tags).pipe(
+              Effect.map((tags) => [...tags, ...writtenTable])
+            )
+          : Effect.succeed(purges)
+
         handlerEffect = handlerEffect.pipe(
           Effect.tap((result) => {
             const succeeded =
@@ -693,27 +725,26 @@ export class EffectRouteBuilder<
 
             if (!succeeded) return Effect.void
 
-            const tags =
-              purges === true ? bindingTags : purges
+            return Effect.flatMap(purgeTags, (tags) => {
+              if (tags.length === 0) return Effect.void
 
-            if (tags.length === 0) return Effect.void
+              const preparedTags = prepareCachePurgeTags(tags)
 
-            const preparedTags = prepareCachePurgeTags(tags)
+              if (Predicate.isTagged(preparedTags, 'invalid')) {
+                return Effect.fail(
+                  new ResponseCachePurgeError({
+                    input: { tags },
+                    cause: ResponseCachePurgeFailure.InvalidCacheTags({
+                      reason: preparedTags.reason,
+                    }),
+                  })
+                )
+              }
 
-            if (Predicate.isTagged(preparedTags, 'invalid')) {
-              return Effect.fail(
-                new ResponseCachePurgeError({
-                  input: { tags },
-                  cause: ResponseCachePurgeFailure.InvalidCacheTags({
-                    reason: preparedTags.reason,
-                  }),
-                })
+              return Effect.flatMap(ResponseCacheService, (cache) =>
+                cache.purge({ tags: preparedTags.tags })
               )
-            }
-
-            return Effect.flatMap(ResponseCacheService, (cache) =>
-              cache.purge({ tags: preparedTags.tags })
-            )
+            })
           })
         )
       }
@@ -726,7 +757,7 @@ export class EffectRouteBuilder<
       // AppError. effectRoutes(app) assumes every framework service, so an
       // unconfigured one is still reported at runtime as a configuration error.
       const routeRuntime = ManagedRuntime.make(
-        fullLayer as Layer.Layer<R | ResponseCacheService, AppError>
+        fullLayer as Layer.Layer<R | ResponseCacheService | RouteRecords, AppError>
       )
 
       let response: Response
@@ -749,7 +780,7 @@ export class EffectRouteBuilder<
         hasPrivateRequestState: hasPrivateRequestState(c),
         existingCacheControl: response.headers.get('Cache-Control'),
         isPage: isPageResponse(response.headers),
-        derivedTags: bindingTags,
+        derivedTags: recordTags,
         options: options.cache,
       })
 

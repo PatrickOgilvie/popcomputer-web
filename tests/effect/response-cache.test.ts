@@ -366,7 +366,7 @@ describe('cache route option', () => {
     expect(res.headers.get('Vary')).toBeNull()
   })
 
-  test('bound routes derive Cache-Tag from their bindings', async () => {
+  test('bound routes are tagged with the records they read', async () => {
     const { Database } = await import('bun:sqlite')
     const { drizzle } = await import('drizzle-orm/bun-sqlite')
     const { sqliteTable, text } = await import('drizzle-orm/sqlite-core')
@@ -408,7 +408,7 @@ describe('cache route option', () => {
     const res = await app.request('/workspaces/ws-1')
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=300')
-    expect(res.headers.get('Cache-Tag')).toBe('workspace:ws-1,workspaces,marketing')
+    expect(res.headers.get('Cache-Tag')).toBe('workspaces:ws-1,marketing')
   })
 
   test('percent-encodes Cache-Tag characters Cloudflare cannot represent', async () => {
@@ -516,7 +516,7 @@ describe('cache route option', () => {
 })
 
 describe('purges route option', () => {
-  test('successful mutation purges binding-derived tags', async () => {
+  test('successful mutation purges its records and the table it writes', async () => {
     const { Database } = await import('bun:sqlite')
     const { drizzle } = await import('drizzle-orm/bun-sqlite')
     const { sqliteTable, text } = await import('drizzle-orm/sqlite-core')
@@ -555,7 +555,60 @@ describe('purges route option', () => {
     const res = await app.request('/workspaces/ws-1', { method: 'PUT' })
 
     expect(res.status).toBe(303)
-    expect(purges).toEqual([{ tags: ['workspace:ws-1', 'workspaces'] }])
+    expect(purges).toEqual([{ tags: ['workspaces:ws-1', 'workspaces'] }])
+  })
+
+  test('a page read by slug is purged by a write by id', async () => {
+    const { Database } = await import('bun:sqlite')
+    const { drizzle } = await import('drizzle-orm/bun-sqlite')
+    const { sqliteTable, text } = await import('drizzle-orm/sqlite-core')
+    const { webServices } = await import('../../src/request-context.js')
+    const { bound } = await import('../../src/effect/binding.js')
+
+    const posts = sqliteTable('posts', {
+      id: text('id').primaryKey(),
+      slug: text('slug').notNull(),
+    })
+
+    const schema = { posts }
+    const bindings = { post: S.Struct({ id: S.String, slug: S.String }) }
+
+    const sqlite = new Database(':memory:')
+    sqlite.run(`CREATE TABLE posts (id TEXT PRIMARY KEY, slug TEXT NOT NULL)`)
+    const db = drizzle(sqlite, { schema })
+    db.insert(posts).values({ id: 'post-1', slug: 'hello-world' }).run()
+
+    const { purges, layer } = recordingCacheLayer()
+
+    const app = new Hono()
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+    app.use('*', webServices(() => ({ db: db as never })))
+    app.use('*', effectBridge({ schema, bindings }))
+
+    effectRoutes(app, { schema, bindings, services: () => layer })
+      .get(
+        '/blog/{post:slug}',
+        Effect.map(bound('post'), (post) => Response.json(post)),
+        { cache: { maxAge: 300 } }
+      )
+      .delete(
+        '/posts/{post}',
+        Effect.gen(function* () {
+          yield* bound('post')
+          sqlite.run('DELETE FROM posts')
+
+          return new Redirect({ url: '/blog', status: 303 })
+        }),
+        { purges: true }
+      )
+
+    const read = await app.request('/blog/hello-world')
+    const write = await app.request('/posts/post-1', { method: 'DELETE' })
+
+    expect(read.headers.get('Cache-Tag')).toBe('posts:post-1')
+    expect(write.status).toBe(303)
+    expect(purges).toEqual([{ tags: ['posts:post-1', 'posts'] }])
   })
 
   test('static purge tags are used verbatim', async () => {

@@ -86,6 +86,12 @@ export interface CompiledRouteBinding {
   readonly column: string
   readonly tableName: string
   readonly table: Table
+  /**
+   * The property key of the table's primary key column, or of the lookup
+   * column when the table has no single-column primary key. Cache tags name a
+   * record by it, whichever column the route looks the record up by.
+   */
+  readonly primaryKey: string
   readonly paramSchema: S.Codec<RouteBindingParam, string>
   readonly rowSchema: S.Codec<unknown, unknown, never, never>
   readonly parent?: {
@@ -274,7 +280,7 @@ export async function compileBindingPlan<Schema extends object>(
       ? config
       : { schema: config }
 
-    const tableName = definition.table ?? pluralize(binding.param)
+    const tableName = bindingTableName(binding, configured)
     const table = Object.getOwnPropertyDescriptor(schema, tableName)?.value
 
     if (!(table instanceof Object)) {
@@ -331,6 +337,7 @@ export async function compileBindingPlan<Schema extends object>(
       column: binding.column,
       tableName,
       table: table as Table,
+      primaryKey: await primaryKeyOf(table as Table, binding.column),
       paramSchema: columnTypeToSchema(column.columnType),
       rowSchema: definition.schema,
       parent,
@@ -338,6 +345,21 @@ export async function compileBindingPlan<Schema extends object>(
   }
 
   return plan
+}
+
+/** The table's single primary key column, else the column the route looks rows up by. */
+async function primaryKeyOf(table: Table, lookupColumn: string): Promise<string> {
+  const { getTableColumns } = await loadDrizzle()
+  const primary = Object.entries(getTableColumns(table) ?? {}).filter(([, column]) => column.primary)
+
+  return primary.length === 1 ? primary[0][0] : lookupColumn
+}
+
+/** The table a binding loads its model from: its `table` option, else its plural name. */
+export function bindingTableName(binding: ParsedBinding, configured: RouteBindingsConfig | undefined): string {
+  const config = configured?.[binding.param]
+
+  return (config && isBindingDefinition(config) ? config.table : undefined) ?? pluralize(binding.param)
 }
 
 /** Decode one route parameter through its compiled column parser. */

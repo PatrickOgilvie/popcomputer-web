@@ -923,17 +923,26 @@ member, and a form that redirects back to it loses its flashed errors on a hit.
 A page with per-visitor parts belongs on the default page cache, which checks
 cookies first, or renders per request.
 
-`purges` removes cached entries after a successful write. `purges: true`
-derives the tags from the route's own parameters: a write route bound by
-`{post}` (an id) purges `post:<id>`, which matches pages tagged by the same
-column but not a page read by `{post:slug}`. Use the same binding column on
-the read and write routes, or purge explicit tags, computed from the record,
-with `ResponseCacheService` after the write:
+A bound route's cached page carries the Cache-Tag of each record it reads,
+`recordCacheTag(table, primaryKey)` such as `projects:project-1`, whichever
+column the route looks the record up by. `purges` removes cached entries after
+a successful write. `purges: true` purges the records the route's bindings name
+and the table of the record it writes, so a write by id purges the page read by
+slug, and the table's tag purges an index that declares it:
 
 ```ts
-const project = yield* bound('project')
+routes
+  .get('/explore', showPricing, { cache: { maxAge: 300, tags: ['projects'] } })
+  .get('/p/{project:slug}', showProjectBySlug, { cache: { maxAge: 300 } })
+  .put('/projects/{project}', updateProject, { purges: true })
+```
+
+When a record changes outside its routes, such as in a queue consumer, purge
+its tag yourself:
+
+```ts
 const responseCache = yield* ResponseCacheService
-yield* responseCache.purge({ tags: [`project:${project.id}`, 'projects'] })
+yield* responseCache.purge({ tags: [recordCacheTag('projects', 'project-1')] })
 ```
 
 ## Testing

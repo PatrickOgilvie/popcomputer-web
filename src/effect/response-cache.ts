@@ -21,10 +21,10 @@
 
 import { Predicate, Context, Data, Effect, Option, Schema as S } from 'effect'
 import { HEADERS } from '../types.js'
-import { pluralize, type ParsedBinding } from './binding.js'
 import { createStructuredError, ErrorCodes } from './error-catalog.js'
 import { emptyContext } from './error-context.js'
 import type { ErrorContext, StructuredError } from './error-types.js'
+import type { Registered } from './register.js'
 
 /**
  * Declarative caching for a route's responses via Workers Cache.
@@ -41,9 +41,10 @@ export interface RouteCacheOptions {
   /** stale-while-revalidate in seconds. */
   staleWhileRevalidate?: number
   /**
-   * Extra static Cache-Tag values. Binding-derived tags
-   * (`{param}:{value}` and `{pluralized-param}`) are always included on
-   * bound routes; these append after them.
+   * Cache-Tag values for what the page reads besides its route's records,
+   * such as `['posts']` for an index the posts' routes purge. A bound route
+   * is always tagged with each of its records (see recordCacheTag); these
+   * append after them.
    */
   tags?: readonly string[]
 }
@@ -181,37 +182,28 @@ export function prepareCachePurgeTags(
   })
 }
 
+type DeclaredSchema = Registered<'schema', never>
+
+/** A table of the application's registered Drizzle schema. */
+export type TableName = [DeclaredSchema] extends [never] ? string : Extract<keyof DeclaredSchema, string>
+
 /**
- * Derive Cache-Tag values from a route's bindings: one `{param}:{value}` tag
- * per binding (value = the route parameter decoded by the binding's lookup
- * column, which is the bound row's value for that column) and one
- * `{pluralized-param}` collection tag per binding. The same derivation feeds
- * tagging on reads and purging on mutations, so the two can never drift, and
- * it needs no database read: a DELETE still purges its row's tag.
+ * The Cache-Tag that names one database record: `{table}:{primary key}`. A
+ * cached page tags itself with the record of each of its route's bindings,
+ * and `purges: true` purges the records its route's bindings name, so a page
+ * read through `/posts/{post:slug}` is purged by `PUT /posts/{post}`. Purge
+ * it yourself when a record changes elsewhere, such as in a queue consumer.
+ *
+ * @example
+ * yield* cache.purge({ tags: [recordCacheTag('posts', post.id)] })
  */
-export function deriveCacheTags(
-  bindings: readonly ParsedBinding[],
-  values: ReadonlyMap<string, unknown>
-): readonly string[] {
-  const tags: string[] = []
+export function recordCacheTag(table: TableName, key: string | number | bigint): string {
+  return formatRecordTag(table, key)
+}
 
-  for (const binding of bindings) {
-    const value = values.get(binding.param)
-
-    if (value !== undefined && value !== null) {
-      tags.push(`${binding.param}:${String(value)}`)
-    }
-  }
-
-  for (const binding of bindings) {
-    const collection = pluralize(binding.param)
-
-    if (!tags.includes(collection)) {
-      tags.push(collection)
-    }
-  }
-
-  return tags
+/** recordCacheTag for a table name the route's binding plan resolved. */
+export function formatRecordTag(table: string, key: unknown): string {
+  return `${table}:${String(key)}`
 }
 
 /**
@@ -235,7 +227,7 @@ export interface CachePolicyInput {
   readonly existingCacheControl?: string | null
   /** True when the response is a page (see isPageResponse). */
   readonly isPage: boolean
-  /** Binding-derived tags (see deriveCacheTags); static option tags append. */
+  /** The route's record tags (see recordCacheTag); static option tags append. */
   readonly derivedTags: readonly string[]
   readonly options: RouteCacheOptions
 }
