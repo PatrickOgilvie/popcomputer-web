@@ -463,10 +463,16 @@ reading the session from the headers a request handed it, wraps the concrete
 instance once and keeps plugin-added endpoint types:
 
 ```ts
+// src/session-reader.ts
 import { effectifyBetterAuth } from '@popcomputer/web/auth'
+import type { createAuth } from './auth'
 
-const authEffect = effectifyBetterAuth(auth)
-const session = yield* authEffect.api.getSession({ headers })
+// A Durable Object reads the session from the headers a request handed it.
+export const sessionFrom = (auth: ReturnType<typeof createAuth>, headers: Headers) => {
+  const authEffect = effectifyBetterAuth(auth)
+
+  return authEffect.api.getSession({ headers })
+}
 ```
 
 The raw Better Auth instance remains available as `authEffect.raw`. Expected
