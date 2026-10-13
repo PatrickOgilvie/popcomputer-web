@@ -49,3 +49,15 @@ export const leaseForm: FormInput<typeof CreateLease> = {
 
 // @ts-expect-error startDate is the field's name, not start
 export const misnamed: FormInput<typeof CreateLease> = { start: '', rent: 0, note: null, tenantEmails: [], contract: null }
+
+// A form's errors are keyed by the same fields.
+import type { FormErrors } from '@popcomputer/web/react'
+
+export function startDateError(errors: Readonly<Record<string, string>>) {
+  const typed: FormErrors<typeof CreateLease> = errors
+
+  // @ts-expect-error the field is startDate
+  void typed.start
+
+  return [typed.startDate, typed['tenantEmails.0']]
+}

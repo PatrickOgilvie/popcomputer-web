@@ -198,7 +198,10 @@ A component a page renders takes its props from the same declaration:
 A form's fields derive from the schema its action validates them with:
 `useForm<FormInput<typeof CreateLease>>({ ... })`, `FormInput` from
 `@popcomputer/web/react`, so a renamed field is a type error in the form as
-well as the action.
+well as the action, and `const errors: FormErrors<typeof CreateLease> =
+props.errors` types the errors the form reads by the same fields. Keep form
+schemas in a module both sides import, such as `src/forms.ts`, and import
+them in React with `import type`, so no server code reaches the browser.
 
 A renamed prop, a missing page or a `Date` used as a `Date` in the browser is a
 type error on the side that drifted.
@@ -1066,7 +1069,9 @@ Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS. An unsigned
 cookie holds whatever a visitor sends, so it suits a preference or a pointer
 the server checks; one the server must trust is declared with
 `signed: { secret: 'COOKIE_SECRET' }`, naming the binding that holds the
-secret, and a value without a valid signature reads as none.
+secret, and a value without a valid signature reads as none. A secret the
+bindings lack fails when the cookie is first read or set, so set a signed
+cookie before the writes it goes with.
 `betterAuthLogoutAction({ clear: [impersonationCookie] })` clears such cookies
 on sign-out. A cookie set
 before the action fails is still sent with the failure's response. A test
@@ -1431,7 +1436,7 @@ project's tag.
 
 ```ts
 export const projectTasks = action(Effect.gen(function* () {
-  // The key's project, or new UnauthorizedError({ message: 'This API key is not valid.' }),
+  // The key's project, or new UnauthorizedError({ message: 'This API key is not valid.', challenge: 'Bearer' }),
   // which a JSON client receives as a 401 with WWW-Authenticate: Bearer.
   const project = yield* apiKeyProject
 
@@ -1461,8 +1466,9 @@ application's own `services` are still built, so the test bindings include the
 vars and secrets those layers read even when a fake replaces them. A test
 that makes several requests as one visitor, such as adding to a cart and then
 checking out, uses `testBrowser(app, env)`, which keeps the cookies responses
-set, sends them to the paths they cover, and follows redirects with
-`browser.follow(res)`.
+set, sends them to the paths they cover, names the page it last showed as the
+`Referer` of a form it posts, and follows redirects with `browser.follow(res)`;
+`browser.setCookie(name, value, path)` gives it a cookie.
 
 ```ts
 // src/routes.test.ts
@@ -1771,7 +1777,10 @@ which on a text or uuid column needs `CREATE EXTENSION IF NOT EXISTS
 btree_gist` in a custom drizzle-kit migration, and PGlite in tests
 `new PGlite({ extensions: { btree_gist } })` from
 `@electric-sql/pglite/contrib/btree_gist`) and a trigger on SQLite and D1
-(`SELECT RAISE(ABORT, 'interviewer_double_booked')`), whose raised text is
+(`SELECT RAISE(ABORT, 'interviewer_double_booked')`, in a migration from
+`drizzle-kit generate --custom`; a time window it counts compares the rows'
+own timestamps with the new row's, `NEW.created_at`, rather than
+`unixepoch()`, so the test clock moves it), whose raised text is
 the `constraintName`. `constraintFieldErrors({ leases_no_overlap: {
 startDate: 'Another lease covers these dates.' } })` shows a named rule of any
 kind beside the fields it covers. The same action works on both, with no

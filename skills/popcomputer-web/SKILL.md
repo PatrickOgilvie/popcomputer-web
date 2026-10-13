@@ -98,7 +98,7 @@ TypeScript example here and in the README type-checks against the package.
    (`routes.jsonApi().provide(KeyAuth).get(paths.apiInvoices, ...)`), so every
    failure there answers JSON (a 401, not a redirect to sign in), and
    authenticate its keys in a layer that fails with
-   `new UnauthorizedError({ message })`.
+   `new UnauthorizedError({ message, challenge: 'Bearer' })`.
 8. **Use the database only through `dbQuery`, `dbMutation`, `dbTransaction`
    and `dbBatch`:** `yield* dbQuery((db) => db.select()...)` to read,
    `dbMutation((db) => db.insert(...))` to write. Operations that must
@@ -141,7 +141,9 @@ TypeScript example here and in the README type-checks against the package.
     response.
 12. **Test through the app.** `app.request(path, init, testEnv(layer,
     bindings))` from `@popcomputer/web/testing` runs the real route;
-    `signedIn(user)` signs the request in, and `readPage(res, 'Name')` reads
+    `signedIn(row)` signs the request in (pass the seeded user row when the
+    user table has columns of its own), `testBrowser(app, env)` carries a
+    visitor's cookies across requests, and `readPage(res, 'Name')` reads
     an `X-Inertia` response typed by the page registry. Test against the
     production database family: PGlite for Postgres (`testEnv`'s `database`),
     Miniflare's D1 for D1, migrated with `applyMigrations`. Replace a service
@@ -241,7 +243,8 @@ with that tag: remove the handler. The same error, or `... | { readonly _tag:
 unknown }` is not assignable, at a `catchTag` written apart from an Effect,
 as a reusable helper, means TypeScript cannot see the errors it handles:
 write it inside `.pipe(...)`, or use `Effect.mapError` with an `instanceof`
-check. A registration, `routes.run` or an
+check. `not assignable to type '{ EntitlementRequired: never; }'` at an
+`Effect.catchTags` means the same of that tag: remove its handler. A registration, `routes.run` or an
 `action(...)` reporting an `Effect<..., unknown, unknown>`, or
 `missingServices: "unnamed service"`, means an earlier type error in the
 action made its types unknown: fix that one first.

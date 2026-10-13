@@ -9,6 +9,8 @@ import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { flash, json, redirect } from '../../src/effect/responses.js'
+import { validateRequest } from '../../src/effect/validation.js'
+import { requiredString } from '../../src/effect/schema.js'
 import { cookie } from '../../src/effect/cookies.js'
 import { readCookie, testBrowser } from '../../src/testing.js'
 
@@ -143,6 +145,31 @@ describe('signed cookies', () => {
 })
 
 describe('testBrowser', () => {
+  test('names the page it last showed as the Referer of a form it posts', async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+    routes
+      .get('/projects/new', action(json({ form: true })))
+      .post('/projects', action(Effect.gen(function* () {
+        yield* validateRequest(S.Struct({ name: requiredString }))
+
+        return yield* json({ created: true })
+      })))
+
+    const browser = testBrowser(app)
+    await browser.request('/projects/new')
+    const failed = await browser.request('/projects', { method: 'POST', body: new URLSearchParams('name='), headers: { Accept: 'text/html' } })
+
+    expect(failed.headers.get('Location')).toBe('/projects/new')
+  })
+
+  test('takes a cookie a test gives it', async () => {
+    const browser = testBrowser(createApp())
+    browser.setCookie('cart', encodeURIComponent(JSON.stringify({ id: 'given', items: 1 })), '/r')
+
+    expect(await (await browser.request('/r/cart')).json()).toEqual({ cart: { id: 'given', items: 1 } })
+  })
+
   test('keeps cookies across requests, sends them by path, and drops the cleared ones', async () => {
     const browser = testBrowser(createApp())
 

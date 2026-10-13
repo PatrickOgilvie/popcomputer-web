@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `UnauthorizedError`'s `challenge`, such as `'Bearer'`, is sent as `WWW-Authenticate` on a JSON 401, whatever headers the request carried.
+- `FormErrors<typeof Schema>` from `@popcomputer/web/react` types a form's field errors by the fields of its schema.
+- `testBrowser` names the page it last showed as the `Referer` of a form it posts, and `setCookie(name, value, path)` gives it a cookie.
+
+### Fixed
+
+- `betterAuthRedirect` keeps Better Auth's session cookie when `redirectTo` fails after Better Auth signed the visitor in, such as a sign-up whose follow-up refuses; the visitor was left signed out of the account just created.
+- The development error page of a violation of a named constraint shows the `constraintFieldErrors` entry that would map it.
+
 ## [0.8.0-next.4] - 2026-10-13
 
 Changes since 0.8.0-next.3.

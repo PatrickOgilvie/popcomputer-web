@@ -469,13 +469,24 @@ export function betterAuthRedirect<
     const result = yield* runBetterAuthApiCall(() => call(auth, buildAuthRequest(request))).pipe(
       Effect.mapError((failure) => toAuthActionError(failure, options.errors))
     )
+    const resultHeaders = getHeaders(result)
+
+    // Once Better Auth has signed the visitor in, its session cookie reaches
+    // whatever response the request ends with, even if redirectTo fails
+    // after it created the user.
+    const jar = yield* Effect.serviceOption(CookieService)
+
+    if (resultHeaders && Option.isSome(jar)) {
+      const carried = new Headers()
+      appendSetCookies(carried, resultHeaders)
+      for (const cookie of carried.getSetCookie()) jar.value.append(cookie)
+    }
 
     const destination = typeof options.redirectTo === 'string' ? options.redirectTo : options.redirectTo(result)
     const location = Effect.isEffect(destination) ? yield* destination : destination
     const responseHeaders = new Headers({ Location: location })
-    const resultHeaders = getHeaders(result)
 
-    if (resultHeaders) {
+    if (resultHeaders && Option.isNone(jar)) {
       appendSetCookies(responseHeaders, resultHeaders)
     }
 

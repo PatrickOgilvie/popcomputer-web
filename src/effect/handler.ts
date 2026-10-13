@@ -206,10 +206,11 @@ export async function renderErrorResponse<E extends Env>(
 
   if (error instanceof UnauthorizedError) {
     if (format === 'json') {
-      // A client that sent a bearer token is told the scheme it must use.
-      const bearer = /^Bearer\b/i.test(c.req.header('Authorization') ?? '')
+      // A JSON client is told the scheme it must use: the one the failure
+      // names, or Bearer for a request that sent a bearer token.
+      const challenge = error.challenge ?? (/^Bearer\b/i.test(c.req.header('Authorization') ?? '') ? 'Bearer' : undefined)
 
-      if (bearer) c.header('WWW-Authenticate', 'Bearer')
+      if (challenge !== undefined) c.header('WWW-Authenticate', challenge)
 
       return finalize(c.json(formatter.json.format(structured), 401))
     }

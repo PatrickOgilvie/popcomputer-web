@@ -18,6 +18,7 @@ import { intendedUrl, RequireAuthLayer, RequireGuestLayer } from '../../src/effe
 import { betterAuthHandler, betterAuthLogoutAction, betterAuthRedirect } from '../../src/auth.js'
 import { render } from '../../src/effect/responses.js'
 import { requiredString } from '../../src/effect/schema.js'
+import { ValidationError } from '../../src/effect/errors.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { signedIn, testEnv } from '../../src/testing.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
@@ -78,6 +79,16 @@ const signUp = action(Effect.gen(function* () {
   )
 }))
 
+// Sign-up whose follow-up refuses after Better Auth created the user.
+const signUpThenRefuse = action(Effect.gen(function* () {
+  const input = yield* validateRequest(SignIn)
+
+  return yield* betterAuthRedirect(
+    (auth) => auth.api.signUpEmail({ body: input, returnHeaders: true }),
+    { redirectTo: () => Effect.fail(new ValidationError({ errors: { invitation: 'This invitation has expired.' } })) }
+  )
+}))
+
 function createApp() {
   const app = new Hono()
   const { routes } = setupWeb(app, {
@@ -91,6 +102,7 @@ function createApp() {
     .get('/sign-in', action(render('Auth/SignIn')))
     .post('/sign-in', signIn)
     .post('/sign-up', signUp)
+    .post('/sign-up-refused', signUpThenRefuse)
 
   routes
     .provide(RequireAuthLayer)
@@ -113,6 +125,18 @@ const submitSignIn = (app: Hono, password: string) =>
   })
 
 describe('auth flow on routes', () => {
+  test('a sign-up whose redirectTo fails keeps the session Better Auth created', async () => {
+    const res = await createApp().request('/sign-up-refused', {
+      method: 'POST',
+      headers: { Accept: 'text/html', Referer: 'http://localhost/invitations/abc' },
+      body: new URLSearchParams({ email: 'ada@example.com', password: 'correct horse' }),
+    })
+
+    expect(res.status).toBe(303)
+    expect(res.headers.get('Location')).toBe('/invitations/abc')
+    expect(res.headers.getSetCookie().some((cookie) => cookie.startsWith('better-auth.session_token=session-1'))).toBe(true)
+  })
+
   test('a signed-out visitor to a member route goes to the configured sign-in path', async () => {
     const res = await createApp().request('/dashboard')
 

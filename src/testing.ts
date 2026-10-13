@@ -359,6 +359,8 @@ export interface TestBrowser {
   follow(response: Response, init?: RequestInit): Promise<Response>
   /** The cookies the browser holds, by name. */
   readonly cookies: ReadonlyMap<string, string>
+  /** Give the browser a cookie, as another browser's or one a test makes up. */
+  setCookie(name: string, value: string, path?: string): void
 }
 
 export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
@@ -383,15 +385,24 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
     return response
   }
 
+  // The page the browser shows, which a form posted from it names as its Referer.
+  let page: string | undefined
+
   const request = async (path: string, init: RequestInit = {}): Promise<Response> => {
     const headers = new Headers(init.headers)
-    const pathname = new URL(path, 'http://localhost').pathname
-    const sent = [...jar].filter(([, cookie]) => pathname.startsWith(cookie.path)).map(([name, cookie]) => `${name}=${cookie.value}`)
+    const url = new URL(path, 'http://localhost')
+    const sent = [...jar].filter(([, cookie]) => url.pathname.startsWith(cookie.path)).map(([name, cookie]) => `${name}=${cookie.value}`)
     const given = headers.get('Cookie')
+    const method = (init.method ?? 'GET').toUpperCase()
 
     if (sent.length > 0) headers.set('Cookie', [given, ...sent].filter(Boolean).join('; '))
+    if (page !== undefined && !headers.has('Referer')) headers.set('Referer', page)
 
-    return keep(await app.request(path, { ...init, headers }, env))
+    const response = keep(await app.request(path, { ...init, headers }, env))
+
+    if (method === 'GET' && response.status < 300) page = url.href
+
+    return response
   }
 
   return {
@@ -410,6 +421,9 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
     },
     get cookies() {
       return new Map([...jar].map(([name, cookie]) => [name, cookie.value]))
+    },
+    setCookie: (name, value, path = '/') => {
+      jar.set(name, { value, path })
     },
   }
 }

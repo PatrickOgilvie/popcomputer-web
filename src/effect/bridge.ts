@@ -183,6 +183,10 @@ function createCookieJar<E extends Env>(c: HonoContext<E>): CookieJar {
         }),
       ]
     },
+    append: (setCookie) => {
+      const context = openWebContext(c)
+      context.responseCookies = [...(context.responseCookies ?? []), setCookie]
+    },
   }
 }
 

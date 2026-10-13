@@ -52,6 +52,11 @@ export interface CookieJar {
   get(name: string): string | undefined
   /** Set `name` on the response; an empty value with a zero lifetime clears it. */
   set(write: CookieWrite): void
+  /**
+   * Add a `Set-Cookie` header another library wrote, such as Better Auth's
+   * session cookie, to whatever response the request ends with.
+   */
+  append(setCookie: string): void
 }
 
 export class CookieService extends Context.Service<CookieService, CookieJar>()('@popcomputer/web/Cookies') {}

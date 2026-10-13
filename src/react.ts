@@ -105,6 +105,16 @@ type FormValue<T> =
  */
 export type FormInput<Schema extends { readonly Type: unknown }> = FormValue<Schema['Type']>
 
+/**
+ * A form's field errors, keyed by the fields of the schema its action
+ * validates, and by the paths under them for lists and groups
+ * (`items.2.amount`), so a renamed field is a type error where the form
+ * reads its error: `const errors: FormErrors<typeof CreateLease> = props.errors`.
+ */
+export type FormErrors<Schema extends { readonly Type: unknown }> = {
+  readonly [Field in Extract<keyof Schema['Type'], string> | `${Extract<keyof Schema['Type'], string>}.${string}`]?: string
+}
+
 export type PageResolver = (name: string) =>
   | Promise<{ default: ComponentType<never> }>
   | { default: ComponentType<never> }

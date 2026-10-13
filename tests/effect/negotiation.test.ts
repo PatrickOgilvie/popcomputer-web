@@ -5,6 +5,7 @@ import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { authorize } from '../../src/effect/services.js'
 import { json } from '../../src/effect/responses.js'
+import { UnauthorizedError } from '../../src/effect/errors.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { wantsJson } from '../../src/effect/negotiation.js'
 import { readError, testEnv } from '../../src/testing.js'
@@ -78,6 +79,7 @@ describe('routes.jsonApi()', () => {
 
       return yield* json({ id: auth.user.id })
     })))
+    .get('/keys', action(Effect.fail(new UnauthorizedError({ message: 'Send an API key.', challenge: 'Bearer' }))))
     .post('/counts', action(Effect.gen(function* () {
       const input = yield* validateRequest(S.Struct({ sku: S.NonEmptyString }))
 
@@ -102,6 +104,13 @@ describe('routes.jsonApi()', () => {
     expect((await app.request('/api/v1/me', { headers: { Authorization: 'Bearer stale' } }, env)).headers.get('WWW-Authenticate')).toBe('Bearer')
     expect(invalid.status).toBe(422)
     expect((await readError(invalid)).errors).toHaveProperty('sku')
+  })
+
+  test('a 401 naming its challenge carries it, whatever the request sent', async () => {
+    const res = await app.request('/api/v1/keys', {}, env)
+
+    expect(res.status).toBe(401)
+    expect(res.headers.get('WWW-Authenticate')).toBe('Bearer')
   })
 
   test('leaves the other routes as they were', async () => {

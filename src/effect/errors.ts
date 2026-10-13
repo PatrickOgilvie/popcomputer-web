@@ -154,6 +154,12 @@ export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()('
   message: Schema.String,
   redirectTo: Schema.optional(Schema.String),
   code: OptionalErrorCode,
+  /**
+   * The authentication scheme a JSON client is told to use, as
+   * `WWW-Authenticate`: `'Bearer'` for an API key. Without one, a request
+   * that sent a bearer token is told `Bearer`.
+   */
+  challenge: Schema.optional(Schema.String),
 }) implements StructuredErrorCapable {
   get httpStatus(): number {
     return 401
@@ -466,7 +472,9 @@ export class DatabaseConstraintViolation extends Schema.TaggedError<DatabaseCons
     const key = this.constraintName ?? (this.columns.length === 0 ? undefined : this.columns.join(','))
     const mapping = this.constraint === 'unique' && key !== undefined
       ? ` Show it on a form field with uniqueFieldErrors(messages, { constraints: { '${key}': 'field' } }).`
-      : ''
+      : this.constraintName !== undefined
+        ? ` Show it on a form field with constraintFieldErrors({ '${this.constraintName}': { field: 'message' } }).`
+        : ''
 
     // Database messages are sensitive: production replaces this one, so the
     // constraint's name and columns reach only development pages and logs,
