@@ -6,6 +6,7 @@
 
 import {
   Effect,
+  Predicate,
   Schema as S,
   SchemaIssue,
   SchemaParser,
@@ -75,7 +76,8 @@ export const requiredString = S.String.pipe(
 )
 
 /**
- * Create a required string with a custom message.
+ * Create a required string with a custom message, shown when the field is
+ * blank or missing, such as a radio group left unselected.
  */
 export const required = (message = 'This field is required') =>
   S.String.pipe(
@@ -86,7 +88,8 @@ export const required = (message = 'This field is required') =>
         encode: (s) => s,
       })
     ),
-    S.check(S.isMinLength(1, { message }))
+    S.check(S.isMinLength(1, { message })),
+    S.annotateKey({ messageMissingKey: message })
   )
 
 // =============================================================================
@@ -284,7 +287,8 @@ export const nullableDate = S.Unknown.pipe(
  * Ensures a value is always an array.
  */
 export const ensureArray = <InputSchema extends S.Constraint>(schema: InputSchema) => {
-  const decodeItem = SchemaParser.decodeUnknownEffect(schema)
+  // Decoded as a list, so a failing item's error carries its index.
+  const decodeItems = SchemaParser.decodeUnknownEffect(S.Array(schema))
   const encodeItem = SchemaParser.encodeEffect(schema)
   const isUnknownArray = S.is(S.Array(S.Unknown))
 
@@ -300,11 +304,7 @@ export const ensureArray = <InputSchema extends S.Constraint>(schema: InputSchem
         decode: (value, options) => {
           if (value === undefined || value === null) return Effect.succeed([])
 
-          if (isUnknownArray(value)) {
-            return Effect.forEach(value, (item) => decodeItem(item, options))
-          }
-
-          return Effect.map(decodeItem(value, options), (item) => [item])
+          return decodeItems(isUnknownArray(value) ? value : [value], options)
         },
         encode: (values, options) =>
           Effect.forEach(values, (value) => encodeItem(value, options)),
@@ -1033,9 +1033,17 @@ export const excludeIf = <InputSchema extends S.Constraint>(
 // Utility Functions
 // =============================================================================
 
+/** A form group, such as `condition[questionId]` and `condition[equals]`, whose every field is blank. */
+const isBlankGroup = (value: unknown): boolean =>
+  Predicate.isObject(value) && !Array.isArray(value) && !(value instanceof File) &&
+  Object.keys(value).length > 0 &&
+  Object.values(value).every((field) =>
+    field === undefined || field === null || (typeof field === 'string' && field.trim() === '') || isBlankGroup(field)
+  )
+
 /**
- * Creates a nullable version of any schema.
- * Converts empty strings to null.
+ * Creates a nullable version of any schema. An empty string, and a form group
+ * whose every field is blank, are null.
  */
 export const nullable = <InputSchema extends S.Constraint>(schema: InputSchema) => {
   const decodeValue = SchemaParser.decodeUnknownEffect(schema)
@@ -1049,6 +1057,9 @@ export const nullable = <InputSchema extends S.Constraint>(schema: InputSchema) 
           if (value === undefined || value === null) return Effect.succeed(null)
 
           if (S.is(S.String)(value) && value.trim() === '') return Effect.succeed(null)
+
+          // A form sends a group's fields even when every one is blank.
+          if (isBlankGroup(value)) return Effect.succeed(null)
 
           return decodeValue(value, options)
         },

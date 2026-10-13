@@ -1751,9 +1751,16 @@ When a limit cannot be a constraint, a guarded update such as
 (`meta.changes === 0`) is the limit refusing it. A statement can depend on
 the one before it through SQLite's `changes()`, the rows the previous
 statement changed: ``sql`changes() = 1` `` in an insert-select's `WHERE`
-writes a log row only after an update that applied, in the same batch. A value the database computes, such as the next ticket number in an
+writes a log row only after an update that applied, in the same batch.
+
+A value the database computes, such as the next ticket number in an
 organization, belongs in the insert:
-``sql`(SELECT coalesce(max(number), 0) + 1 FROM ...)` ``. Write every
+``sql`(SELECT coalesce(max(number), 0) + 1 FROM tickets WHERE organization_id = ${organizationId})` ``.
+Pass the outer row's value as a parameter, as here: in a select list Drizzle
+writes a column without its table, so ``${organizations.id}`` inside that
+subquery names the subquery's own table and silently computes the wrong
+value. Name it in full, ``${organizations}.${sql.identifier('id')}``, when it
+must be a column; in a `WHERE` Drizzle qualifies columns itself. Write every
 statement with the query builder: Drizzle's D1 batch fails at runtime on
 `db.run(sql)` with parameters, which is a type error there. An insert's select lists every
 column the insert writes in the table's order, defaulted ones included. D1
@@ -1946,6 +1953,14 @@ form.
   fails on another step's data fails with
   `new ValidationError({ errors, redirectTo })` to send the visitor to that
   step.
+- **Forms whose fields depend on earlier answers**, such as a survey's
+  conditional questions: validate in two passes, `validateRequest(Envelope)`
+  for what decides the rest, then `validateRequest(schemaFor(envelope))`; the
+  body is read once and kept. Give an optional nested group `nullable(Group)`,
+  which reads a group whose every field is blank as `null`, or
+  `S.optionalKey(Group)`, not a decoding default: in effect 4.0.3 a struct
+  with a decoding default reports its first missing field and drops its
+  siblings' errors.
 - **Cursor pagination**: decode the cursor and filters from the query with
   `validateRequest` (`nullable(coercedNumber)`, `nullableString`), so a
   malformed cursor is a 422 rather than a database error and an empty filter

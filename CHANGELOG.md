@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Page props, shared props, flash values and the shared `auth.user` are encoded from their schema's type, which is what the React page receives as JSON: a schema built from validators, such as a filter form's, serves as a page's props, where a date in it failed with `Expected JSON value`.
+- `ensureArray` reports a failing item under its index (`tags.1`), as `S.Array` does.
+- `required(message)` shows its message when the field is missing, such as an unselected radio group, as well as when it is blank.
+- `nullable(Group)` reads a form group whose every field is blank as `null`.
+- A value outside a set of options reads `Choose one of: approver, finance` rather than Effect's `Expected "approver" | "finance"`, and one matching no kind of a union of objects says so rather than printing the schema.
+
 ## [0.8.0-next.1] - 2026-10-13
 
 Changes since the previous pre-release. Every pre-release now has its own

@@ -96,7 +96,10 @@ export function encodePageProps(
     ))
   }
 
-  return S.encodeUnknownEffect(S.toCodecJson(schema))(props ?? {}).pipe(
+  // Props are encoded from their type, which is what the page's component
+  // receives as JSON (Jsonify), so a schema built from validators, whose
+  // encoded side is the request's raw input, serves as a page's props too.
+  return S.encodeUnknownEffect(S.toCodecJson(S.toType(schema)))(props ?? {}).pipe(
     Effect.mapError((issue) => new Error(`The props for page '${component}' do not match its schema: ${issue.message}`)),
     Effect.flatMap((encoded) =>
       Predicate.isObject(encoded) && !Array.isArray(encoded)
@@ -157,7 +160,7 @@ export function encodeDeclaredField(
 
   // SAFETY: shared props and flash values are plain data, whose JSON encoding
   // needs no services.
-  const codec = S.toCodecJson(field) as unknown as S.Codec<unknown, unknown, never, never>
+  const codec = S.toCodecJson(S.toType(field)) as unknown as S.Codec<unknown, unknown, never, never>
 
   return S.encodeUnknownEffect(codec)(value).pipe(
     Effect.mapError((issue) => new Error(`The value for ${option} '${key}' does not match its schema: ${issue.message}`)),

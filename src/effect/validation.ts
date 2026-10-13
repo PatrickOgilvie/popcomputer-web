@@ -24,6 +24,26 @@ const formatSchemaIssue = SchemaIssue.makeFormatterStandardSchemaV1({
   },
 })
 
+/** Effect's message for a value matching no member of a union of strings: `Expected "a" | "b"`. */
+const STRING_OPTIONS = /^Expected ("(?:[^"\\]|\\.)*"(?: \| "(?:[^"\\]|\\.)*")*)$/
+
+/**
+ * A field's message as a form shows it: a value outside a set of options
+ * names the options, and one matching no kind of a union of objects says so,
+ * rather than printing the schema.
+ */
+function readableMessage(message: string): string {
+  const options = STRING_OPTIONS.exec(message)
+
+  if (options) {
+    const names = options[1].split(' | ').map((option): unknown => JSON.parse(option))
+
+    return names.length === 1 ? `Must be ${String(names[0])}` : `Choose one of: ${names.join(', ')}`
+  }
+
+  return /^Expected \{.*\} \| /.test(message) ? 'This value is not one of the accepted kinds' : message
+}
+
 type FormattedSchemaIssue = ReturnType<typeof formatSchemaIssue>['issues'][number]
 
 /** Request input before schema decoding: keys from params, query and body. */
@@ -300,7 +320,7 @@ export function formatSchemaErrorsWithDetails<Input>(
     if (errors[field]) continue // First error wins
 
     const attribute = attributes[field] ?? field
-    const message = messages[field] ?? issue.message
+    const message = messages[field] ?? readableMessage(issue.message)
 
     errors[field] = message.replace(/:attribute/g, attribute)
 

@@ -212,7 +212,7 @@ function projectSharedUser(
 ): PagePropValue {
   if (!authUser) return null
 
-  const encoded = S.encodeUnknownExit(S.toCodecJson(schema))(authUser.user)
+  const encoded = S.encodeUnknownExit(S.toCodecJson(S.toType(schema)))(authUser.user)
 
   if (encoded._tag === 'Failure') {
     // A schema that does not fit the user type is a programming error, which

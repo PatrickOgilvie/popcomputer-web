@@ -14,12 +14,17 @@ import { action } from '../src/effect/action.js'
 import { jsonOrRender, render } from '../src/effect/responses.js'
 import type { PagePropsFor, WebPage } from '../src/react.js'
 import { readPage } from '../src/testing.js'
+import { coercedNumber, nullable, nullableDate, nullableString } from '../src/effect/schema.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
 const Project = S.Struct({ id: S.String, name: S.String, createdAt: S.Date })
 
+// A query's filters, declared once from validators, are also the page's props.
+const Filters = S.Struct({ from: nullableDate, minTasks: nullable(coercedNumber), search: nullableString })
+
 const pages = {
   'Projects/Show': S.Struct({ project: Project, canEdit: S.Boolean }),
+  'Projects/Search': S.Struct({ filters: Filters }),
   'Projects/Index': S.Struct({ projects: S.Array(Project), total: S.Number }),
   Dashboard: S.Struct({}),
 }
@@ -50,6 +55,9 @@ function createApp() {
     .get('/projects/p1', action(render('Projects/Show', { project: apollo, canEdit: true })))
     .get('/projects', action(jsonOrRender('Projects/Index', { projects: [apollo], total: 1 })))
     .get('/dashboard', action(render('Dashboard')))
+    .get('/search', action(render('Projects/Search', {
+      filters: { from: new Date(Date.UTC(2026, 0, 2)), minTasks: 3, search: null },
+    })))
     // Only reachable by bypassing the types: a value outside the schema.
     .get('/broken', action(render('Projects/Show', {
       project: { ...apollo, createdAt: new Date(Number.NaN) },
@@ -69,6 +77,12 @@ describe('render with registered pages', () => {
       component: 'Projects/Show',
       props: { project: { id: 'p1', createdAt: '2026-01-02T00:00:00.000Z' }, canEdit: true },
     })
+  })
+
+  test('encodes props from their type, so a schema of validators serves as props', async () => {
+    const res = await createApp().request('/search', { headers: page })
+
+    expect((await res.json()).props.filters).toEqual({ from: '2026-01-02T00:00:00.000Z', minTasks: 3, search: null })
   })
 
   test('takes no props for a page whose schema needs none', async () => {

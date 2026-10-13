@@ -19,7 +19,7 @@ import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { json } from '../../src/effect/responses.js'
 import { effectRoutes } from '../../src/effect/routing.js'
-import { requiredString } from '../../src/effect/schema.js'
+import { coercedNumber, ensureArray, nullable, nullableString, required, requiredString } from '../../src/effect/schema.js'
 import type { RequestData } from '../../src/effect/validation.js'
 
 // Helper to create a mock request context
@@ -930,5 +930,43 @@ describe('validateRequest through a route', () => {
 
       expect(res.status).toBe(422)
     }
+  })
+})
+
+describe('field messages a form shows', () => {
+  const errorsOf = async (schema: S.Codec<unknown, unknown, never, never>, input: unknown) => {
+    const exit = await Effect.runPromiseExit(validateUnknown(schema, input))
+    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()
+
+    return Option.isSome(failure) && failure.value instanceof ValidationError ? failure.value.errors : {}
+  }
+
+  test('a value outside a set of options names the options', async () => {
+    expect(await errorsOf(S.Struct({ stage: S.Literals(['approver', 'finance']) }), { stage: 'ceo' }))
+      .toEqual({ stage: 'Choose one of: approver, finance' })
+  })
+
+  test('required(message) shows its message when the field is missing as well as blank', async () => {
+    const Answer = S.Struct({ answer: required('Answer this question.') })
+
+    expect(await errorsOf(Answer, {})).toEqual({ answer: 'Answer this question.' })
+    expect(await errorsOf(Answer, { answer: '  ' })).toEqual({ answer: 'Answer this question.' })
+  })
+
+  test('ensureArray reports a failing item under its index', async () => {
+    expect(await errorsOf(S.Struct({ tags: ensureArray(coercedNumber) }), { tags: ['1', 'x'] }))
+      .toEqual({ 'tags.1': 'Expected a number' })
+  })
+
+  test('nullable reads a form group whose every field is blank as null', async () => {
+    const Condition = S.Struct({ questionId: requiredString, equals: nullableString })
+    const exit = await Effect.runPromiseExit(validateUnknown(
+      S.Struct({ condition: nullable(Condition) }),
+      { condition: { questionId: '', equals: ' ' } }
+    ))
+
+    expect(Exit.isSuccess(exit) && exit.value).toEqual({ condition: null })
+    expect(await errorsOf(S.Struct({ condition: nullable(Condition) }), { condition: { questionId: '', equals: 'yes' } }))
+      .toEqual({ 'condition.questionId': 'This field is required' })
   })
 })
