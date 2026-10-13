@@ -85,6 +85,26 @@ export interface ErrorPageProps {
  */
 export type WebErrorPage = WebPage<ErrorPageProps>
 
+/** One field's value as a form holds it before `validateRequest` decodes it. */
+type FormValue<T> =
+  T extends File ? File | null
+  : T extends Date ? string
+  : T extends number | bigint ? number | string
+  : T extends boolean ? boolean
+  : T extends string | null | undefined ? T
+  : T extends ReadonlyArray<infer Element> ? Array<FormValue<Element>>
+  : T extends object ? { -readonly [Key in keyof T]: FormValue<T[Key]> }
+  : T
+
+/**
+ * The fields a form sends to an action, derived from the schema the action
+ * validates them with, so a renamed field is a type error in the form too:
+ * `useForm<FormInput<typeof CreateLease>>({ ... })`. Dates are the strings a
+ * date input holds, numbers may be the strings a number input holds, and a
+ * file is `null` until one is chosen.
+ */
+export type FormInput<Schema extends { readonly Type: unknown }> = FormValue<Schema['Type']>
+
 export type PageResolver = (name: string) =>
   | Promise<{ default: ComponentType<never> }>
   | { default: ComponentType<never> }

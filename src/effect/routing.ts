@@ -403,7 +403,9 @@ export class EffectRouteBuilder<
    * @example
    * export default {
    *   fetch: app.fetch,
-   *   scheduled: (_event, env, ctx) => routes.run(expireHolds, env, ctx),
+   *   scheduled: async (_event, env, ctx) => {
+   *     await routes.run(expireHolds, env, ctx)
+   *   },
    * }
    */
   async run<A, Err, R>(

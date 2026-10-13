@@ -234,6 +234,32 @@ export function uniqueFieldErrors<const Field extends string>(
     })
 }
 
+/**
+ * Report a violation of a named constraint of any kind, such as a `CHECK`,
+ * an exclusion constraint or a trigger's `RAISE(ABORT, 'name')`, as field
+ * errors, so a form shows the rule beside the fields it covers. A violation
+ * of a constraint the map does not name, or one the database reports without
+ * a name, passes through unchanged. `uniqueFieldErrors` covers unique keys by
+ * their columns.
+ *
+ * @example
+ * yield* dbMutation((db) => db.insert(leases).values(lease)).pipe(
+ *   constraintFieldErrors({ leases_no_overlap: { startDate: 'Another lease covers these dates.' } })
+ * )
+ */
+export function constraintFieldErrors(
+  byConstraint: Readonly<Record<string, Readonly<Record<string, string>>>>
+): <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E | ValidationError, R> {
+  return <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    Effect.catch(self, (error): Effect.Effect<never, E | ValidationError> => {
+      const errors = error instanceof DatabaseConstraintViolation && error.constraintName !== undefined
+        ? Object.hasOwn(byConstraint, error.constraintName) ? byConstraint[error.constraintName] : undefined
+        : undefined
+
+      return Effect.fail(errors === undefined ? error : new ValidationError({ errors: { ...errors } }))
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Driver capabilities, read from the application's Drizzle client type
 // ---------------------------------------------------------------------------

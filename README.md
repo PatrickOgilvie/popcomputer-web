@@ -195,6 +195,11 @@ A component a page renders takes its props from the same declaration:
 `PagePropsFor<'Projects/Show'>['project']` from `@popcomputer/web/react` is the
 `project` prop as the browser receives it.
 
+A form's fields derive from the schema its action validates them with:
+`useForm<FormInput<typeof CreateLease>>({ ... })`, `FormInput` from
+`@popcomputer/web/react`, so a renamed field is a type error in the form as
+well as the action.
+
 A renamed prop, a missing page or a `Date` used as a `Date` in the browser is a
 type error on the side that drifted.
 
@@ -1606,7 +1611,10 @@ const delivered = await time.settle(app.request('/webhooks/deliver', { method: '
 Bun runs every test file in one module registry, so a clock or a test
 database created at the top of a shared support module is shared by all the
 files. A file that moves the clock sets it back in `beforeEach` (`await
-time.set(start)`), and a file that writes rows seeds and reads its own.
+time.set(start)`), and a file that writes rows seeds and reads its own. A job
+that reads every tenant's rows, such as a monthly invoicing cron, sees other
+files' seeds too, so seed through the application's own writes (or keep
+counters and sequences consistent), and give such a test its own database.
 
 ### A database for tests
 
@@ -1758,10 +1766,16 @@ event id for a webhook. A write that would break one fails with
 `'trigger'`) and `constraintName` which one, and the whole `dbTransaction`,
 or the whole `dbBatch` on Cloudflare D1, is undone. A rule no `CHECK` or
 unique index can state, such as no two interviews of one interviewer
-overlapping, is an exclusion constraint on Postgres (`EXCLUDE USING gist`)
-and a trigger on SQLite and D1 (`SELECT RAISE(ABORT, 'interviewer_double_booked')`),
-whose raised text is the `constraintName`. The same action works on both,
-with no count-then-write race:
+overlapping, is an exclusion constraint on Postgres (`EXCLUDE USING gist`,
+which on a text or uuid column needs `CREATE EXTENSION IF NOT EXISTS
+btree_gist` in a custom drizzle-kit migration, and PGlite in tests
+`new PGlite({ extensions: { btree_gist } })` from
+`@electric-sql/pglite/contrib/btree_gist`) and a trigger on SQLite and D1
+(`SELECT RAISE(ABORT, 'interviewer_double_booked')`), whose raised text is
+the `constraintName`. `constraintFieldErrors({ leases_no_overlap: {
+startDate: 'Another lease covers these dates.' } })` shows a named rule of any
+kind beside the fields it covers. The same action works on both, with no
+count-then-write race:
 
 ```ts
 import { eq, sql } from 'drizzle-orm'

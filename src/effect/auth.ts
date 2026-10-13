@@ -107,9 +107,9 @@ export const RequireGuestLayer = Layer.effectDiscard(
  *   '/dashboard'  // Redirect fully authenticated users to dashboard
  * )
  */
-export function createGuestLayer(
+export function createGuestLayer<const Path extends string = '/'>(
   allowUser: (authUser: AuthUser) => boolean,
-  redirectTo = '/'
+  redirectTo: Path & PathTarget<Path> = '/' as Path & PathTarget<Path>
 ): Layer.Layer<never, UnauthorizedError, never> {
   return Layer.effectDiscard(
     Effect.gen(function* () {
@@ -180,12 +180,6 @@ export const currentUser: Effect.Effect<AuthUser | null, never, never> =
     Effect.map((option) => (Option.isSome(option) ? option.value : null))
   )
 
-/**
- * How the authenticated user is shaped before being shared with the client.
- *
- * The default public shape contains only `id`, `name`, and `image`. Prefer an
- * explicit `project` function when the client needs a different shape.
- */
 /** The user pages receive as `auth.user` unless setupWeb's `auth.share` declares another. */
 export const DefaultPublicUser = S.Struct({
   id: S.String,

@@ -1128,9 +1128,10 @@ const acceptsType = (types: ReadonlyArray<string>, type: string): boolean => {
   })
 }
 
+/** A size as people read it: decimal units, so `maxBytes: 10_000_000` reads `10 MB`. */
 const formatBytes = (bytes: number): string =>
-  bytes >= 1024 * 1024 ? `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`
-  : bytes >= 1024 ? `${Math.round((bytes / 1024) * 10) / 10} KB`
+  bytes >= 1_000_000 ? `${Math.round(bytes / 100_000) / 10} MB`
+  : bytes >= 1000 ? `${Math.round(bytes / 100) / 10} KB`
   : `${bytes} bytes`
 
 /**

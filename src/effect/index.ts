@@ -98,6 +98,7 @@ export {
   dbTransaction,
   dbBatch,
   uniqueFieldErrors,
+  constraintFieldErrors,
   type UniqueFieldErrorsOptions,
   type DatabaseWriteError,
   type TransactionClient,

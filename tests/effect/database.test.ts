@@ -19,6 +19,7 @@ import {
   dbQuery,
   dbTransaction,
   uniqueFieldErrors,
+  constraintFieldErrors,
 } from '../../src/effect/database.js'
 import { DatabaseService } from '../../src/effect/services.js'
 import { DatabaseConstraintViolation, DatabaseError } from '../../src/effect/errors.js'
@@ -305,6 +306,23 @@ describe('uniqueFieldErrors', () => {
 
     expect(failureOf(exit)).toMatchObject({ value: { _tag: 'ValidationError', errors: { email: 'A contact has this email.' } } })
     expect(violation.toStructured().message).toContain('"contacts_email_lower_unique"')
+  })
+
+  test('constraintFieldErrors shows a named rule beside the fields it covers', async () => {
+    const { layer, db, sqlite } = openDatabase()
+    sqlite.run(`CREATE TRIGGER pages_one_draft BEFORE INSERT ON pages
+      WHEN NEW.title = 'Draft' AND EXISTS (SELECT 1 FROM pages WHERE workspace_id = NEW.workspace_id AND title = 'Draft')
+      BEGIN SELECT RAISE(ABORT, 'pages_one_draft_per_workspace'); END`)
+    await db.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'Draft' })
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'b', title: 'Draft' })).pipe(
+        constraintFieldErrors({ pages_one_draft_per_workspace: { title: 'A workspace keeps one draft.' } }),
+        Effect.provide(layer)
+      )
+    )
+
+    expect(failureOf(exit)).toMatchObject({ value: { _tag: 'ValidationError', errors: { title: 'A workspace keeps one draft.' } } })
   })
 
   test('reports a rule a SQLite trigger raises by the name it raises', async () => {

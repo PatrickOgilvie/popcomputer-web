@@ -46,7 +46,8 @@ TypeScript example here and in the README type-checks against the package.
    Better Auth's `additionalFields: betterAuthFields(schema.user, { role: {
    input: false } })`. Type each React page as `WebPage<'Projects/Show'>`
    from `@popcomputer/web/react`; its props, the shared `auth.user` and
-   `errors` follow. Declare props shared with every
+   `errors` follow. Type a form's fields as `FormInput<typeof Schema>`, from
+   the schema its action validates. Declare props shared with every
    page in `shared`, computed when a page renders by
    `routes.provide(shareProps(effect))`, and flash values in `flash`.
 4. **End every branch with a response helper:** `return yield* render(...)`,
@@ -77,7 +78,9 @@ TypeScript example here and in the README type-checks against the package.
 6. **Load route models with `{param}` placeholders and `bound('param')`.**
    Name each model's Drizzle table in `setupWeb`'s `bindings`
    (`bindings: { project: schema.projects }`); the model is the table's row,
-   checked against its columns. Never query by a route parameter yourself;
+   checked against its columns. Never query by a bound route parameter
+   yourself (a plain parameter, such as an invitation token, is read with
+   `validateRequest` and looked up like any input);
    to lock a bound record inside `dbTransaction`, read it again by its id with
    `.for('update')`. On a route that needs a signed-in user, call
    `authorize()` before `bound()`: models load on the first `bound()` call,
@@ -108,7 +111,8 @@ TypeScript example here and in the README type-checks against the package.
    requests could break as a database constraint (`CHECK (stock >= 0)`, a
    unique idempotency key or webhook event id, or a trigger raising a named
    abort on D1) and handle `DatabaseConstraintViolation` by its `constraint`
-   and `constraintName`. Pipe a write through
+   and `constraintName`, or show a named rule beside its fields with
+   `constraintFieldErrors({ name: { field: 'message' } })`. Pipe a write through
    `uniqueFieldErrors({ column: 'message' })` to show a duplicate as a field
    error.
 9. **Provide application services in `setupWeb`'s `services`:** `app` for

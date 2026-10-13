@@ -520,17 +520,10 @@ function assertSetupConfig(config: object): void {
 export type ErrorHandlerConfig = ErrorBoundaryConfig
 
 /**
- * Creates error handlers for the shared error boundary.
+ * The shared error boundary's `notFound` and `onError` handlers, which
+ * `registerErrorHandlers` installs.
  *
- * Returns an object with `notFound` and `onError` handlers
- * that you can pass to app.notFound() and app.onError().
- *
- * @example
- * ```ts
- * const { notFound, onError } = createErrorHandlers()
- * app.notFound(notFound)
- * app.onError(onError)
- * ```
+ * @internal
  */
 export function createErrorHandlers<E extends Env>(config: ErrorHandlerConfig = {}) {
   const notFound = (c: Context<E>) =>

@@ -925,6 +925,12 @@ describe('Uploads', () => {
     expect(String(S.decodeUnknownExit(Form)({ cover }))).toContain(message)
   })
 
+  test('names a size limit in decimal units', () => {
+    const big = new File([new Uint8Array(10_000_001)], 'big.jpg', { type: 'image/jpeg' })
+
+    expect(String(S.decodeUnknownExit(upload({ maxBytes: 10_000_000 }))(big))).toContain('The file must be at most 10 MB')
+  })
+
   test('accepts an SVG when its type is named', () => {
     const svg = new File(['<svg/>'], 'logo.svg', { type: 'image/svg+xml' })
 

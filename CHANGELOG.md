@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `constraintFieldErrors({ name: { field: message } })` shows a violation of a named constraint of any kind (a `CHECK`, an exclusion constraint, a trigger) as field errors.
+- `FormInput<typeof Schema>` from `@popcomputer/web/react` types a form's fields from the schema its action validates them with.
 - `cookie(name, Schema, { signed: { secret } })` signs the value with the secret in that binding (HMAC-SHA256); a value without a valid signature reads as none.
 - `testBrowser(app, env)` from `@popcomputer/web/testing` keeps a visitor's cookies across requests, sending each to the paths it covers and dropping the ones a response clears, and follows redirects.
 - `betterAuthLogoutAction({ clear: [cookie] })` clears declared application cookies on sign-out; `cookieNames` is documented as replacing Better Auth's session cookie names.
@@ -19,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An upload's size limit reads in decimal units: `maxBytes: 10_000_000` is `10 MB`, not `9.5 MB`.
+- `createGuestLayer`'s `redirectTo` takes a declared path, as other redirect targets do; the removed `createErrorHandlers` no longer appears in the published types.
 - A malformed body sent without a JSON or form media type says it could not be read as JSON, rather than asking for a matching Content-Type.
 - A cookie whose value's JSON form is a string is stored as it is, so a cookie an application wrote by hand reads the same after it adopts `cookie()`; one stored as a JSON string by 0.8.0-next.3 reads too. Setting a value the schema rejects is a defect naming the cookie.
 - `WWW-Authenticate: Bearer` accompanies a JSON 401 only when the request sent a bearer token.
