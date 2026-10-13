@@ -167,10 +167,9 @@ export async function renderErrorResponse<E extends Env>(
   const context = captureErrorContext(c)
   const isDev = isDevelopment(c, config)
 
-  const format = detectOutputFormat(
-    createFormatDetectionContext(c),
-    c.env
-  )
+  const format = openWebContext(c).jsonApi === true
+    ? 'json'
+    : detectOutputFormat(createFormatDetectionContext(c), c.env)
 
   const structured = error instanceof Error
     ? getStructuredFromThrown(error) ?? toStructuredError(error, context)

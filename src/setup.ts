@@ -5,7 +5,7 @@ import type { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
 import type { Config, Layer, Schema as S } from 'effect'
 import { web } from './middleware.js'
-import { verifyOrigin, type VerifyOriginConfig } from './security.js'
+import { originRefusal, type VerifyOriginConfig } from './security.js'
 import type { WebConfig } from './types.js'
 import { loadUserMiddleware, shareAuthMiddleware } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
@@ -36,7 +36,7 @@ import {
   renderErrorResponse,
   type ErrorBoundaryConfig,
 } from './effect/handler.js'
-import { NotFoundError } from './effect/errors.js'
+import { ForbiddenError, HttpError, NotFoundError } from './effect/errors.js'
 import { assertBindingsConfig, type RouteBindingsConfig } from './effect/binding.js'
 import type { PageSchemas } from './effect/pages.js'
 
@@ -413,11 +413,6 @@ function createSetupMiddleware<
   const middlewares: MiddlewareHandler<E>[] = [
     // Outermost, so it sees every response, including the page cache's own.
     privateByDefault<E>(),
-    // Origin verification runs first so cross-origin writes are rejected
-    // before any per-request setup work (db/auth client creation) happens.
-    ...(config.security?.verifyOrigin === false
-      ? []
-      : [verifyOrigin<E>(config.security?.verifyOrigin ?? {})]),
     // A cached page is served before db/auth setup, session lookup or rendering.
     ...(config.pageCache === false
       ? []
@@ -429,6 +424,12 @@ function createSetupMiddleware<
         ]),
     setupServices,
     web(webConfig),
+    // Origin verification runs once the error page can render, before the
+    // session lookup, so a refused request costs no database work and every
+    // client gets the boundary's answer: an error page or the JSON envelope.
+    ...(config.security?.verifyOrigin === false
+      ? []
+      : [refuseForeignOrigins<E>(config.security?.verifyOrigin ?? {}, config.errors)]),
     loadUserMiddleware<E>({
       sessionCookie: config.auth?.sessionCookie,
       // SAFETY: the registered AuthUser is this setup's User, the type
@@ -471,6 +472,26 @@ function createSetupMiddleware<
 
     // Return the response for proper propagation in forwarding/proxy scenarios
     return c.res
+  })
+}
+
+/** Origin verification answered through the error boundary. */
+function refuseForeignOrigins<E extends Env>(
+  verify: VerifyOriginConfig,
+  errors: ErrorHandlerConfig | undefined
+): MiddlewareHandler<E> {
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
+  return createMiddleware<E>(async (c, next) => {
+    const refused = originRefusal(c, verify)
+
+    if (refused === undefined) return next()
+
+    const status = verify.status ?? 403
+    const error = status === 403
+      ? new ForbiddenError({ message: refused })
+      : new HttpError({ status, message: refused })
+
+    return renderErrorResponse(error, c, errors)
   })
 }
 

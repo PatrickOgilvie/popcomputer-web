@@ -1031,7 +1031,9 @@ while it sends an `Accept` header, as `fetch` does with `*/*`, or an
 for HTML on every visit and form post, so they get pages, a signed-out visitor
 goes to sign in, and a failed form goes back to the form. A signed-out JSON
 client gets a 401 instead. `prefersJson` and `jsonOrRender` decide the same
-way. An `HttpError` adds its `headers` to the response, as
+way. An API whose clients may send neither header, such as a scanner that
+forgot its key, declares its routes with `routes.prefix('/api/v1').jsonApi()`:
+every request to them is a JSON client. An `HttpError` adds its `headers` to the response, as
 `HttpError.rateLimited(30)` adds `Retry-After`.
 
 ```json
@@ -1709,7 +1711,11 @@ inserted values break the check fails even when the row exists; insert a
 starting row with `onConflictDoNothing()` and update it after, in the same
 batch.
 
-On D1, write the same statements as one `dbBatch((db) => [...])`. A batch
+On D1, write the same statements as one `dbBatch((db) => [...])`, or a list
+built at run time, such as one statement per line of a form,
+`dbBatch((db) => lines.map((line) => db.update(...)))`, whose results are a
+list; a helper that returns statements for a batch types them
+`BatchStatement`. A batch
 cannot branch on an earlier statement's result, so a write that depends on
 one carries its condition in its own `WHERE`: an insert selects its values
 from a query that returns no row when the condition fails, every column given
@@ -1748,7 +1754,7 @@ writes a log row only after an update that applied, in the same batch. A value t
 organization, belongs in the insert:
 ``sql`(SELECT coalesce(max(number), 0) + 1 FROM ...)` ``. Write every
 statement with the query builder: Drizzle's D1 batch fails at runtime on
-`db.run(sql)`, which is a type error there. An insert's select lists every
+`db.run(sql)` with parameters, which is a type error there. An insert's select lists every
 column the insert writes in the table's order, defaulted ones included. D1
 binds at most 100 parameters to a statement, so an `IN (...)` over many ids,
 or an insert of many rows, goes in chunks.
@@ -1890,8 +1896,11 @@ and shows an HTML, SVG or XML body without a file name only under
 serving it, as for any record.
 
 `setupWeb` refuses a state-changing request whose `Origin` (or `Referer`)
-names another site with 403, beside the `SameSite` cookies Better Auth sets.
-A request without either header, such as a webhook, passes. A native app or
+names another site with 403, through the error boundary, so a visit gets the
+error page and a JSON client the envelope, beside the `SameSite` cookies
+Better Auth sets. A request without either header, such as a webhook, passes,
+and so does one with an `Authorization` header, which a browser never adds to
+a cross-site request by itself. A native app or
 another site that posts to the application is listed in
 `security: { verifyOrigin: { allowedOrigins: ['https://admin.example'] } }`.
 

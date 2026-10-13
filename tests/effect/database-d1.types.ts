@@ -60,6 +60,11 @@ export const writes = Effect.gen(function* () {
 
   // @ts-expect-error nor in a list
   yield* dbBatch((db) => ids.map(() => db.run('DELETE FROM pages')))
+
+  // @ts-expect-error nor beside query-builder statements
+  yield* dbBatch((db) => [db.delete(pages), db.run('DELETE FROM pages')])
+  // @ts-expect-error nor in a list that mixes them
+  yield* dbBatch((db) => ids.map((id) => id === 'p1' ? db.delete(pages) : db.run('DELETE FROM pages')))
 })
 
 // A result typed `any`, as D1's are without Cloudflare's types, is an error type.

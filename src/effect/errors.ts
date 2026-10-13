@@ -600,6 +600,17 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     })
   }
 
+  /** Create an error for a path registered twice for one method. */
+  static routeRegisteredTwice(method: string, path: string): RouteConfigurationError {
+    const verb = method === 'all' ? 'ALL' : method.toUpperCase()
+
+    return new RouteConfigurationError({
+      message: `${verb} ${path} is registered twice; the second registration is never reached.`,
+      hint: 'Remove one registration, or give the second its own path.',
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
   /** Create an error for a route an earlier route's path answers first. */
   static routeShadowed(method: string, path: string, earlierMethod: string, earlier: string): RouteConfigurationError {
     const verb = (name: string) => name === 'all' ? 'ALL' : name.toUpperCase()

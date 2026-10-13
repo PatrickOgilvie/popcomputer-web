@@ -11,6 +11,7 @@ import { verifyOrigin } from '../src/security.js'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
 import { json } from '../src/effect/responses.js'
+import { readError, readErrorPage } from '../src/testing.js'
 
 const createApp = (config = {}) => {
   const app = new Hono()
@@ -142,6 +143,25 @@ describe('setupWeb verifies origins by default', () => {
     expect((await app.request('/projects', { method: 'POST', headers: { Origin: 'https://evil.example' } })).status).toBe(403)
     expect((await app.request('/projects', { method: 'POST', headers: { Origin: 'http://localhost' } })).status).toBe(200)
     expect((await app.request('/projects', { method: 'POST' })).status).toBe(200)
+  })
+
+  test('answers a refused request through the error boundary', async () => {
+    const app = appWith()
+    const visit = await app.request('/projects', { method: 'POST', headers: { Origin: 'https://evil.example', 'X-Inertia': 'true' } })
+    const api = await app.request('/projects', { method: 'POST', headers: { Origin: 'https://evil.example', Accept: 'application/json' } })
+
+    expect(visit.status).toBe(403)
+    expect(await readErrorPage(visit)).toMatchObject({ component: 'Error', props: { status: 403 } })
+    expect(await readError(api)).toMatchObject({ httpStatus: 403, tag: 'ForbiddenError' })
+  })
+
+  test('passes a request that carries an Authorization header, which a browser never adds cross-site', async () => {
+    const res = await appWith().request('/projects', {
+      method: 'POST',
+      headers: { Origin: 'https://scanner.example', Authorization: 'Bearer key' },
+    })
+
+    expect(res.status).toBe(200)
   })
 
   test('verifyOrigin: false turns the check off', async () => {

@@ -100,6 +100,7 @@ export {
   type TransactionClient,
   type BatchArgument,
   type BatchResults,
+  type BatchStatement,
 } from './database.js'
 
 // Runtime-owned background work

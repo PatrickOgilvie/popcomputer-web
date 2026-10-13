@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `routes.jsonApi()` declares a group of routes as a JSON API: every request to them is a JSON client, whatever headers it sends, so a client without `Accept` or `Authorization` gets a 401 instead of a redirect to sign in, and the JSON envelope for every failure.
+- Origin verification answers through the error boundary, so a refused visit gets the error page and a JSON client the envelope, and lets a request with an `Authorization` header through, since a browser never adds one cross-site by itself. A route registered twice says so.
+- `BatchStatement` names a statement `dbBatch` takes, for a helper that returns statements; a raw `db.run(sql)` beside query-builder statements in a D1 batch is a type error too.
 - `dbBatch` takes a list built at run time, such as one statement per line of a form, and returns its results as a list; an empty list runs nothing.
 - A route registered after an earlier route whose path matches it, such as `/products/new` after `/products/{product}`, throws at registration naming the order that works; it was never reached. Configuration errors thrown when the application starts carry their fix in the message.
 - `cache()` no longer requires `ExecutionContextService`: a service built on it keeps the framework service out of its interface, and a stale value refreshes inline without one.

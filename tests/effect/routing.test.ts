@@ -771,6 +771,12 @@ describe('a route an earlier route answers first', () => {
     ])
   })
 
+  test('registered twice is refused as such', () => {
+    const routes = effectRoutes(new Hono()).get('/products/new', ok)
+
+    expect(() => routes.get('/products/new', ok)).toThrow('GET /products/new is registered twice')
+  })
+
   test('is refused under a catch-all registered for every method', () => {
     const routes = effectRoutes(new Hono()).all('/api/auth/*', ok)
 

@@ -346,11 +346,11 @@ export type DatabaseResult<A> = 0 extends 1 & A ? UntypedDatabaseResult : A
  * there. A string, so the compiler's message includes it.
  */
 export type RawStatementInD1Batch =
-  'Drizzle cannot run db.run(sql) in a Cloudflare D1 batch, where it fails at runtime: write the statement with the query builder, such as db.insert(table).select(...), or run it alone with dbMutation.'
+  'Drizzle cannot run db.run(sql) with parameters in a Cloudflare D1 batch, where it fails at runtime: write the statement with the query builder, such as db.insert(table).select(...), or run it alone with dbMutation.'
 
 /** The statements, with each raw statement in a D1 batch replaced by an error type. */
 export type CheckedBatchItems<Items> = IsD1 extends true
-  ? { readonly [K in keyof Items]: Items[K] extends SQLiteRaw<unknown> ? RawStatementInD1Batch : Items[K] }
+  ? { readonly [K in keyof Items]: [Extract<Items[K], SQLiteRaw<unknown>>] extends [never] ? Items[K] : RawStatementInD1Batch }
   : unknown
 
 interface Batches<Items> {

@@ -111,48 +111,49 @@ function originOf(url: string | undefined | null): string | null {
 export function verifyOrigin<E extends Env>(
   config: VerifyOriginConfig = {}
 ): MiddlewareHandler<E> {
-  const methods = new Set(
-    (config.methods ?? [...UNSAFE_METHODS]).map((m) => m.toUpperCase())
-  )
-
   const status = config.status ?? 403
 
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return async (c: Context<E>, next) => {
-    if (!methods.has(c.req.method.toUpperCase())) {
-      return next()
-    }
+    const refused = originRefusal(c, config)
 
-    const requestOrigin = originOf(c.req.url)
+    if (refused === undefined) return next()
 
-    if (!requestOrigin) {
-      // Cannot determine our own origin — fail closed only if strict.
-      if (config.requireOrigin) {
-        // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
-        return c.json({ error: 'Origin verification failed' }, status as ContentfulStatusCode)
-      }
-
-      return next()
-    }
-
-    // Prefer Origin; fall back to the origin of the Referer.
-    const headerOrigin =
-      c.req.header('Origin') ?? originOf(c.req.header('Referer'))
-
-    if (!headerOrigin) {
-      if (config.requireOrigin) {
-        // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
-        return c.json({ error: 'Missing Origin header' }, status as ContentfulStatusCode)
-      }
-
-      return next()
-    }
-
-    if (!originAllowed(headerOrigin, requestOrigin, config)) {
-      // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
-      return c.json({ error: 'Cross-origin request blocked' }, status as ContentfulStatusCode)
-    }
-
-    return next()
+    // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
+    return c.json({ error: refused }, status as ContentfulStatusCode)
   }
+}
+
+/**
+ * Why a request fails origin verification, or undefined when it passes: a
+ * state-changing request whose `Origin` (or `Referer`) names an origin the
+ * configuration does not allow. A request with an `Authorization` header
+ * passes, since a browser never attaches one to a cross-site request on its
+ * own, so it cannot be forged.
+ */
+export function originRefusal<E extends Env>(c: Context<E>, config: VerifyOriginConfig = {}): string | undefined {
+  const methods = new Set(
+    (config.methods ?? [...UNSAFE_METHODS]).map((m) => m.toUpperCase())
+  )
+
+  if (!methods.has(c.req.method.toUpperCase())) return undefined
+  if (c.req.header('Authorization') !== undefined) return undefined
+
+  const requestOrigin = originOf(c.req.url)
+
+  if (!requestOrigin) {
+    // Cannot determine our own origin: fail closed only if strict.
+    return config.requireOrigin ? 'Origin verification failed.' : undefined
+  }
+
+  // Prefer Origin; fall back to the origin of the Referer.
+  const headerOrigin = c.req.header('Origin') ?? originOf(c.req.header('Referer'))
+
+  if (!headerOrigin) {
+    return config.requireOrigin ? 'The request has no Origin header.' : undefined
+  }
+
+  return originAllowed(headerOrigin, requestOrigin, config)
+    ? undefined
+    : 'This request came from another site, which may not change anything here.'
 }

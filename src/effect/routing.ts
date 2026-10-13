@@ -341,7 +341,9 @@ export class EffectRouteBuilder<
     private readonly pathPrefix: string = '',
     private readonly bridgeConfig?: EffectBridgeConfig<E, never>,
     private readonly registry: RouteRegistry = getAppRouteRegistry(app),
-    private readonly middlewares: MiddlewareHandler<E>[] = []
+    private readonly middlewares: MiddlewareHandler<E>[] = [],
+    /** Whether every request to these routes is a JSON client (`jsonApi()`). */
+    private readonly answersJson: boolean = false
   ) {
     this.installRunner()
   }
@@ -456,7 +458,8 @@ export class EffectRouteBuilder<
       this.pathPrefix,
       this.bridgeConfig,
       this.registry,
-      this.middlewares
+      this.middlewares,
+      this.answersJson
     )
   }
 
@@ -484,7 +487,8 @@ export class EffectRouteBuilder<
       this.pathPrefix,
       this.bridgeConfig,
       this.registry,
-      [...this.middlewares, ...handlers]
+      [...this.middlewares, ...handlers],
+      this.answersJson
     )
   }
 
@@ -535,7 +539,29 @@ export class EffectRouteBuilder<
       this.pathPrefix + normalizedPath,
       this.bridgeConfig,
       this.registry,
-      this.middlewares
+      this.middlewares,
+      this.answersJson
+    )
+  }
+
+  /**
+   * Answer every request to these routes as a JSON client, whatever headers
+   * it sends: a failure is the JSON error envelope, a signed-out request is a
+   * 401 rather than a redirect to sign in, and invalid input is a 422. Use it
+   * for an API whose clients may send neither `Accept` nor `Authorization`.
+   *
+   * @example
+   * const api = routes.prefix('/api/v1').jsonApi().provide(TillKeyAuth)
+   */
+  jsonApi(): EffectRouteBuilder<E, Services, Path, Needs> {
+    return new EffectRouteBuilder<E, Services, Path, Needs>(
+      this.app,
+      this.layers,
+      this.pathPrefix,
+      this.bridgeConfig,
+      this.registry,
+      this.middlewares,
+      true
     )
   }
 
@@ -725,9 +751,13 @@ export class EffectRouteBuilder<
     // option owns this route's caching.
     const allowsDefaultPageCache = options?.cache === undefined && bindings.length === 0
 
+    const answersJson = this.answersJson
+
     // oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits request parsing and runtime completion, then maps the result to an HTTP response.
     return async (c) => {
       setEffectBridgeConfig(c, bridgeConfig)
+
+      if (answersJson) openWebContext(c).jsonApi = true
 
       if (allowsDefaultPageCache) {
         allowDefaultPageCache(c)
@@ -1023,7 +1053,10 @@ export class EffectRouteBuilder<
     )
 
     if (shadowing) {
-      throw RouteConfigurationError.routeShadowed(method, path, shadowing.method, shadowing.path).atStartup()
+      throw (shadowing.fullPath === fullPath && shadowing.method === method
+        ? RouteConfigurationError.routeRegisteredTwice(method, path)
+        : RouteConfigurationError.routeShadowed(method, path, shadowing.method, shadowing.path)
+      ).atStartup()
     }
 
     // Register route metadata
