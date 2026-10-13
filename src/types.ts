@@ -35,8 +35,18 @@ export interface PageObject<TProps extends object = PageProps> {
 }
 
 export interface WebConfig {
-  version: string | (() => string)
-  render: (page: PageObject, ctx?: Context) => string | Promise<string>
+  /**
+   * The asset version: a client holding another version reloads the page in
+   * full. Without one, pages carry none.
+   */
+  version?: string | (() => string)
+  /**
+   * The HTML document a first visit receives, holding the page object.
+   * Without one, the application answers only JSON, as an API does: every
+   * failure, an unknown path's included, is the JSON error envelope, and
+   * rendering a page is a configuration error.
+   */
+  render?: (page: PageObject, ctx?: Context) => string | Promise<string>
 }
 
 export interface RenderOptions {

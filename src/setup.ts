@@ -421,7 +421,7 @@ function createSetupMiddleware<
       ? []
       : [
           pageCache<E>({
-            version: config.version,
+            version: config.version ?? '',
             sessionCookie: config.auth?.sessionCookie,
           }),
         ]),

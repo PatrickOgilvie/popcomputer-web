@@ -1513,8 +1513,8 @@ endings, not statements to run in sequence:
 | Redirect | `return yield* redirect(paths.project, { project: project.id })` |
 | Redirect to the page the request came from | `return yield* back(paths.project, { project: project.id })`, falling back to that path |
 | Redirect from a helper or guard layer, ending the action | `yield* redirectNow(paths.dashboard)` |
-| Return JSON | `return yield* json({ projects })` |
 | Return JSON declared by a schema, encoded as page props are | `return yield* json(ProjectList, { projects })` |
+| Return JSON no client decodes, such as a webhook's acknowledgement | `return yield* json({ received: true })` |
 | Return JSON when requested, otherwise render a page | `return yield* jsonOrRender('Projects/Index', { projects })` |
 | Fail with `NotFoundError` | `return yield* notFound('Project', projectId)` |
 | Fail with `ForbiddenError` | `return yield* forbidden('You cannot edit this project')` |
@@ -1679,6 +1679,11 @@ test calls it with typed input and reads a typed result, and `openApi`
 describes every endpoint for a published reference. The module imports only
 `effect`, the validators and the paths, so a React bundle or a separate
 client imports it without the server.
+
+An application that is only an API leaves `version` and `render` out of
+`setupWeb`: without a template it answers only JSON, every failure an unknown
+path's included, whatever the client asks for, and rendering a page is a
+configuration error.
 
 ```ts
 // src/endpoints.ts

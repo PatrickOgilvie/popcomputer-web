@@ -13,6 +13,7 @@ import type {
 import { HEADERS } from './types.js'
 import { openWebContext } from './request-context.js'
 import { openFlash } from './flash.js'
+import { ConfigurationError } from './effect/errors.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
@@ -79,8 +80,11 @@ export function web(config: WebConfig): MiddlewareHandler {
     const errors: ValidationErrorBag = {}
     const flash = openFlash(c)
 
-    const getVersion = () => 
-      config.version instanceof Function ? config.version() : config.version
+    const getVersion = () =>
+      config.version instanceof Function ? config.version() : config.version ?? ''
+
+    // An application without a template answers only JSON, failures included.
+    if (config.render === undefined) openWebContext(c).jsonApi = true
 
     const isInertia = c.req.header(HEADERS.INERTIA) === 'true'
     const clientVersion = c.req.header(HEADERS.VERSION)
@@ -188,6 +192,13 @@ export function web(config: WebConfig): MiddlewareHandler {
           return c.json(page, 200, {
             [HEADERS.INERTIA]: 'true',
             'Vary': HEADERS.INERTIA,
+          })
+        }
+
+        if (config.render === undefined) {
+          throw new ConfigurationError({
+            message: `render('${page.component}') answers a page, but setupWeb has no render, so this application answers only JSON.`,
+            hint: "Give setupWeb a render template to answer pages, or answer this route with json(...) or an endpoint's contract.",
           })
         }
 
