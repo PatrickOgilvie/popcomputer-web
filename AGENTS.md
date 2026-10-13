@@ -22,22 +22,22 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
 2. **Every handler is an action.** Wrap an `Effect.gen` in `action(...)` and
    register it on the `routes` that `setupWeb` returns:
    `routes.get/post/put/patch/delete(paths.project, action, { name })`.
-   Declare every path once in `src/paths.ts` (`project: '/projects/{project}'`),
-   pass it as `setupWeb`'s `paths`, so `routes`, `redirect`, `back` and
-   `href` accept only declared paths, and build every URL from it: `redirect(paths.project, { project: id })`
-   in actions, `href(paths.project, { project: id })` from
-   `@popcomputer/web/paths` in React. Registrations chain. `routes` accepts only
-   actions whose services the setup provides.
+   Declare every path once in `src/paths.ts` (`project: '/projects/{project}'`)
+   and pass it as `setupWeb`'s `paths`, so `routes`, `redirect`, `back` and
+   `href` accept only declared paths. Build every URL from it:
+   `redirect(paths.project, { project: id })` in actions,
+   `href(paths.project, { project: id })` from `@popcomputer/web/paths` in
+   React. Registrations chain. `routes` accepts only actions whose services
+   the setup provides.
 3. **Declare every page's props as an Effect Schema** in `src/pages.ts` and
    pass the object as `setupWeb`'s `pages`. Take a table's columns from the
    table: `tableSchema(schema.projects).mapFields(Struct.pick(['id',
    'name']))` from `@popcomputer/web/schema`, and declare the signed-in user
    as `auth.session: betterAuthSession(tableSchema(schema.user))`, with
    Better Auth's `additionalFields: betterAuthFields(schema.user, { role: {
-   input: false } })`. Type each
-   React page as
-   `WebPage<'Projects/Show'>` from `@popcomputer/web/react`; its props, the
-   shared `auth.user` and `errors` follow. Declare props shared with every
+   input: false } })`. Type each React page as `WebPage<'Projects/Show'>`
+   from `@popcomputer/web/react`; its props, the shared `auth.user` and
+   `errors` follow. Declare props shared with every
    page in `shared`, computed when a page renders by
    `routes.provide(shareProps(effect))`, and flash values in `flash`.
 4. **End every branch with a response helper:** `return yield* render(...)`,
