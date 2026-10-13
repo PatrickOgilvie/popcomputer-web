@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The page data `createTemplate` embeds writes every `<`, `>`, `&`, U+2028 and U+2029 as a JSON `\\u` escape. It escaped only `/`, so a value a visitor wrote containing `<!--<script>`, such as a product name, made the HTML parser read past the page data's closing tag: the page data no longer parsed and the page's scripts never loaded, for everyone viewing that page.
 - `upload(...)` checks that a file's contents are what its declared type says: a PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, PDF or ZIP must start with its signature, and no other image may be markup, so an HTML page sent as `image/png` is refused ("The file is not a PNG image"). It trusted the type the browser declares. Decoding an upload now reads the file, so it decodes with `validateRequest` or `S.decodeUnknownEffect`, not synchronously.
 - The README's sign-in schema validated the password with `requiredString`, which trims it, while sign-up kept it as typed: a password chosen with outer spaces never signed in. `currentPassword` from `@popcomputer/web/schema` validates a password to sign in with, required and never trimmed, and the README uses it. `password({ min: 1 })` reads "at least 1 character".
 - The type declarations' examples for `RequireAuthLayer`, `RequireGuestLayer`, `createGuestLayer`, `intendedUrl` and `setupWeb` show the current APIs.

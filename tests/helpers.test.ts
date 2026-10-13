@@ -150,7 +150,7 @@ describe('createTemplate', () => {
       expect(html).toContain('<script data-page="app" type="application/json">')
       expect(html).toContain('<div id="app"></div>')
       expect(html).toContain('"component":"Dashboard"')
-      expect(html).toContain('"url":"\\/dashboard"')
+      expect(html).toContain('"url":"/dashboard"')
       expect(html).toContain('"version":"2.0.0"')
     })
   })
@@ -287,12 +287,12 @@ describe('createTemplate', () => {
       const html = template(page)
 
       expect(html).not.toContain('</script><script>alert("xss")')
-      expect(html).toContain('<\\/script>')
+      expect(html).toContain('\\u003c/script\\u003e')
       expect(html.match(/<script data-page="app" type="application\/json">/g)).toHaveLength(1)
       expect(html.match(/<\/script>/g)).toHaveLength(1)
     })
 
-    test('does not need HTML entity escaping inside JSON script payload', () => {
+    test('writes & as a JSON escape, never an HTML entity, inside the script payload', () => {
       const template = createTemplate({})
 
       const page: PageObject = {
@@ -306,8 +306,8 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      expect(html).toContain('foo&bar&baz')
-      expect(html).not.toContain('\\u0026')
+      expect(html).toContain('foo\\u0026bar\\u0026baz')
+      expect(html).not.toContain('&amp;')
     })
 
     test('allows single quotes in props without attribute escaping', () => {
@@ -399,7 +399,7 @@ describe('createTemplate', () => {
       const html = template(page)
 
       expect(html).toContain("O'Brien")
-      expect(html).toContain('Loves <coding> & testing')
+      expect(html).toContain('Loves \\u003ccoding\\u003e \\u0026 testing')
     })
 
     test('handles unicode characters', () => {
@@ -607,7 +607,7 @@ describe('Template Integration', () => {
 
     // Check page data
     expect(html).toContain('"component":"Dashboard"')
-    expect(html).toContain('"url":"\\/dashboard"')
+    expect(html).toContain('"url":"/dashboard"')
   })
 })
 
@@ -633,9 +633,39 @@ describe('serializePage', () => {
 
     const serialized = serializePage(page)
 
-    expect(serialized).toContain('<\\/script>')
     expect(serialized).not.toContain('</script>')
+    expect(serialized).not.toContain('<')
     expect(JSON.parse(serialized)).toEqual(page)
+  })
+
+  test('keeps a comment and script opening from making the parser read past the element', () => {
+    const page: PageObject = {
+      component: 'Products/Index',
+      props: { name: '<!--<script>', note: 'a & b > c', separators: '\u2028\u2029' },
+      url: '/',
+      version: '1.0.0',
+    }
+
+    const serialized = serializePage(page)
+
+    expect(serialized).not.toMatch(/[<>&\u2028\u2029]/)
+    expect(JSON.parse(serialized)).toEqual(page)
+  })
+
+  test('a page embedding visitor markup still parses as one element in the template', async () => {
+    const render = createTemplate({ title: 'Shop', scripts: ['/main.js'] })
+    const html = await render({ component: 'Products/Index', props: { name: '<!--<script>' }, url: '/', version: '1' })
+    let pageData = ''
+    const scripts: string[] = []
+
+    await new HTMLRewriter()
+      .on('script[data-page]', { text: (chunk) => { pageData += chunk.text } })
+      .on('script[src]', { element: (element) => { scripts.push(element.getAttribute('src') ?? '') } })
+      .transform(new Response(html))
+      .text()
+
+    expect(JSON.parse(pageData).props.name).toBe('<!--<script>')
+    expect(scripts).toEqual(['/main.js'])
   })
 })
 

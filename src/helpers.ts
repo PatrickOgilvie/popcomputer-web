@@ -21,16 +21,27 @@ export interface TemplateOptions {
   rootId?: string
 }
 
+/** The characters escaped in page data, as JSON's own `\\u` escapes, which `JSON.parse` reads back. */
+const SCRIPT_UNSAFE: Readonly<Record<string, string>> = {
+  '<': '\\u003c',
+  '>': '\\u003e',
+  '&': '\\u0026',
+  '\u2028': '\\u2028',
+  '\u2029': '\\u2029',
+}
+
 /**
  * Serialize an Inertia page object for embedding in a
  * `<script type="application/json">` initial page payload.
  *
- * Escaping `/` prevents a `</script>` sequence inside JSON data from closing
- * the script element early. This mirrors the approach used by @hono/inertia
- * and Inertia's script-element initial page transport.
+ * Every `<`, `>` and `&` in the data is written as a JSON `\\u` escape, so no
+ * value a visitor wrote can form markup the HTML parser acts on inside the
+ * script element: not a `</script>` that would close it early, nor a `<!--`
+ * and `<script` that would make the parser read past its real end and take
+ * the rest of the page with it.
  */
 export function serializePage(page: PageObject): string {
-  return JSON.stringify(page).replace(/\//g, '\\/')
+  return JSON.stringify(page).replace(/[<>&\u2028\u2029]/g, (character) => SCRIPT_UNSAFE[character] ?? character)
 }
 
 /**
