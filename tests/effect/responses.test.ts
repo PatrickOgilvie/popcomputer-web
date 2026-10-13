@@ -20,17 +20,17 @@ import {
   share,
 } from '../../src/effect/responses.js'
 import {
-  HonertiaService,
+  PageService,
   ResponseFactoryService,
   RequestService,
-  type HonertiaRenderer,
+  type PageRenderer,
   type ResponseFactory,
   type RequestContext,
 } from '../../src/effect/services.js'
 import { Redirect } from '../../src/effect/errors.js'
 
-// Mock HonertiaRenderer
-const createMockHonertia = (): HonertiaRenderer & {
+// Mock PageRenderer
+const createMockPage = (): PageRenderer & {
   renders: Array<{ component: string; props?: PageProps }>
   shared: PageProps
   errors: Record<string, string>
@@ -116,34 +116,34 @@ describe('redirect', () => {
 
 describe('render', () => {
   test('renders component with props', async () => {
-    const mockHonertia = createMockHonertia()
-    const layer = Layer.succeed(HonertiaService, mockHonertia)
+    const mockPage = createMockPage()
+    const layer = Layer.succeed(PageService, mockPage)
 
     const effect = render('Dashboard/Index', { projects: [] })
     const response = await Effect.runPromise(Effect.provide(effect, layer))
 
     expect(response).toBeInstanceOf(Response)
-    expect(mockHonertia.renders).toHaveLength(1)
-    expect(mockHonertia.renders[0].component).toBe('Dashboard/Index')
-    expect(mockHonertia.renders[0].props).toEqual({ projects: [] })
+    expect(mockPage.renders).toHaveLength(1)
+    expect(mockPage.renders[0].component).toBe('Dashboard/Index')
+    expect(mockPage.renders[0].props).toEqual({ projects: [] })
   })
 
   test('renders component without props', async () => {
-    const mockHonertia = createMockHonertia()
-    const layer = Layer.succeed(HonertiaService, mockHonertia)
+    const mockPage = createMockPage()
+    const layer = Layer.succeed(PageService, mockPage)
 
     const effect = render('Auth/Login')
     await Effect.runPromise(Effect.provide(effect, layer))
 
-    expect(mockHonertia.renders[0].component).toBe('Auth/Login')
-    expect(mockHonertia.renders[0].props).toBeUndefined()
+    expect(mockPage.renders[0].component).toBe('Auth/Login')
+    expect(mockPage.renders[0].props).toBeUndefined()
   })
 })
 
 describe('renderWithErrors', () => {
   test('sets errors before rendering', async () => {
-    const mockHonertia = createMockHonertia()
-    const layer = Layer.succeed(HonertiaService, mockHonertia)
+    const mockPage = createMockPage()
+    const layer = Layer.succeed(PageService, mockPage)
 
     const effect = renderWithErrors('Users/Create', {
       name: 'Name is required',
@@ -152,16 +152,16 @@ describe('renderWithErrors', () => {
 
     await Effect.runPromise(Effect.provide(effect, layer))
 
-    expect(mockHonertia.errors).toEqual({
+    expect(mockPage.errors).toEqual({
       name: 'Name is required',
       email: 'Invalid email',
     })
-    expect(mockHonertia.renders[0].component).toBe('Users/Create')
+    expect(mockPage.renders[0].component).toBe('Users/Create')
   })
 
   test('includes props with errors', async () => {
-    const mockHonertia = createMockHonertia()
-    const layer = Layer.succeed(HonertiaService, mockHonertia)
+    const mockPage = createMockPage()
+    const layer = Layer.succeed(PageService, mockPage)
 
     const effect = renderWithErrors(
       'Users/Create',
@@ -171,7 +171,7 @@ describe('renderWithErrors', () => {
 
     await Effect.runPromise(Effect.provide(effect, layer))
 
-    expect(mockHonertia.renders[0].props).toEqual({ existingUser: { id: 1 } })
+    expect(mockPage.renders[0].props).toEqual({ existingUser: { id: 1 } })
   })
 })
 
@@ -385,12 +385,12 @@ describe('prefersJson', () => {
 describe('jsonOrRender', () => {
   test('returns JSON when client prefers JSON', async () => {
     const request = createMockRequest({ accept: 'application/json' })
-    const mockHonertia = createMockHonertia()
+    const mockPage = createMockPage()
     const mockResponse = createMockResponseFactory()
 
     const layer = Layer.mergeAll(
       Layer.succeed(RequestService, request),
-      Layer.succeed(HonertiaService, mockHonertia),
+      Layer.succeed(PageService, mockPage),
       Layer.succeed(ResponseFactoryService, mockResponse)
     )
 
@@ -399,25 +399,25 @@ describe('jsonOrRender', () => {
 
     const body = await response.json()
     expect(body).toEqual({ projects: [1, 2, 3] })
-    expect(mockHonertia.renders).toHaveLength(0)
+    expect(mockPage.renders).toHaveLength(0)
   })
 
   test('renders when client prefers HTML', async () => {
     const request = createMockRequest({ accept: 'text/html' })
-    const mockHonertia = createMockHonertia()
+    const mockPage = createMockPage()
     const mockResponse = createMockResponseFactory()
 
     const layer = Layer.mergeAll(
       Layer.succeed(RequestService, request),
-      Layer.succeed(HonertiaService, mockHonertia),
+      Layer.succeed(PageService, mockPage),
       Layer.succeed(ResponseFactoryService, mockResponse)
     )
 
     const effect = jsonOrRender('Projects/Index', { projects: [1, 2, 3] })
     await Effect.runPromise(Effect.provide(effect, layer))
 
-    expect(mockHonertia.renders).toHaveLength(1)
-    expect(mockHonertia.renders[0].component).toBe('Projects/Index')
+    expect(mockPage.renders).toHaveLength(1)
+    expect(mockPage.renders[0].component).toBe('Projects/Index')
   })
 
   test('renders for Inertia requests even with JSON accept', async () => {
@@ -426,36 +426,36 @@ describe('jsonOrRender', () => {
       accept: 'application/json',
     })
 
-    const mockHonertia = createMockHonertia()
+    const mockPage = createMockPage()
     const mockResponse = createMockResponseFactory()
 
     const layer = Layer.mergeAll(
       Layer.succeed(RequestService, request),
-      Layer.succeed(HonertiaService, mockHonertia),
+      Layer.succeed(PageService, mockPage),
       Layer.succeed(ResponseFactoryService, mockResponse)
     )
 
     const effect = jsonOrRender('Projects/Index', { projects: [] })
     await Effect.runPromise(Effect.provide(effect, layer))
 
-    expect(mockHonertia.renders).toHaveLength(1)
+    expect(mockPage.renders).toHaveLength(1)
   })
 })
 
 describe('share', () => {
-  test('shares data with Honertia', () => {
-    const mockHonertia = createMockHonertia()
-    const layer = Layer.succeed(HonertiaService, mockHonertia)
+  test('shares data with the page renderer', () => {
+    const mockPage = createMockPage()
+    const layer = Layer.succeed(PageService, mockPage)
 
     const effect = share('user', { id: 1, name: 'John' })
     Effect.runSync(Effect.provide(effect, layer))
 
-    expect(mockHonertia.shared.user).toEqual({ id: 1, name: 'John' })
+    expect(mockPage.shared.user).toEqual({ id: 1, name: 'John' })
   })
 
   test('shares multiple values', () => {
-    const mockHonertia = createMockHonertia()
-    const layer = Layer.succeed(HonertiaService, mockHonertia)
+    const mockPage = createMockPage()
+    const layer = Layer.succeed(PageService, mockPage)
 
     const effect = Effect.gen(function* () {
       yield* share('flash', { message: 'Success!' })
@@ -464,7 +464,7 @@ describe('share', () => {
 
     Effect.runSync(Effect.provide(effect, layer))
 
-    expect(mockHonertia.shared.flash).toEqual({ message: 'Success!' })
-    expect(mockHonertia.shared.auth).toEqual({ user: null })
+    expect(mockPage.shared.flash).toEqual({ message: 'Success!' })
+    expect(mockPage.shared.auth).toEqual({ user: null })
   })
 })

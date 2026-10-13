@@ -95,7 +95,7 @@ export function makeInertiaRequest(
   } = options
 
   const inertiaHeaders = new Headers(headers)
-  inertiaHeaders.set(HEADERS.HONERTIA, 'true')
+  inertiaHeaders.set(HEADERS.INERTIA, 'true')
 
   if (version) {
     inertiaHeaders.set(HEADERS.VERSION, version)
@@ -172,8 +172,8 @@ export function assertInertiaResponse(res: Response) {
     throw new Error(`Expected JSON content type, got ${contentType}`)
   }
   
-  if (res.headers.get(HEADERS.HONERTIA) !== 'true') {
-    throw new Error(`Missing ${HEADERS.HONERTIA} header`)
+  if (res.headers.get(HEADERS.INERTIA) !== 'true') {
+    throw new Error(`Missing ${HEADERS.INERTIA} header`)
   }
 }
 

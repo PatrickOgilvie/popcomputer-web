@@ -277,7 +277,6 @@ export class RouteRegistry {
 
   /**
    * Convert all routes to JSON-serializable format.
-   * Used by `honertia routes --json` CLI command.
    */
   toJson(): RouteMetadataJson[] {
     return this.routes.map((route) => {

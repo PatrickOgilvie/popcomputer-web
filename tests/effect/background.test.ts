@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Context, Deferred, Effect, Layer } from 'effect'
 import { Hono } from 'hono'
-import { setupHonertia } from '../../src/setup.js'
+import { setupWeb } from '../../src/setup.js'
 import { background } from '../../src/effect/background.js'
 import { HttpError } from '../../src/effect/errors.js'
 import {
@@ -23,11 +23,9 @@ describe('background', () => {
     const releaseBackground = Deferred.makeUnsafe<void>()
     const app = new Hono()
 
-    setupHonertia(app, {
-      honertia: {
-        version: '1.0.0',
-        render: (page) => JSON.stringify(page),
-      },
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
       effect: {
         services: () =>
           Layer.succeed(EffectErrorObserverService, {
@@ -72,11 +70,9 @@ describe('background', () => {
     let completed = false
     const app = new Hono()
 
-    setupHonertia(app, {
-      honertia: {
-        version: '1.0.0',
-        render: (page) => JSON.stringify(page),
-      },
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
     })
     effectRoutes(app).post(
       '/events',

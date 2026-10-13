@@ -20,12 +20,12 @@ import type {
 } from './errors.js'
 import {
   runBetterAuthApiCall,
-  toHonertiaAuthError,
+  toAuthActionError,
   type BetterAuthActionError,
   type BetterAuthActionResult,
 } from './better-auth-boundary.js'
 import { effectRoutes, type EffectHandler } from './routing.js'
-import { openHonertiaContext } from '../request-context.js'
+import { openWebContext } from '../request-context.js'
 import type { PagePropValue, PageProps } from '../types.js'
 import { render } from './responses.js'
 import { validateRequest } from './validation.js'
@@ -288,8 +288,8 @@ export function shareAuthMiddleware<E extends Env>(
 ): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return async (c, next) => {
-    const requestContext = openHonertiaContext(c)
-    const page = requestContext.web ?? requestContext.honertia
+    const requestContext = openWebContext(c)
+    const page = requestContext.web
 
     if (page) {
       page.share('auth', {
@@ -526,7 +526,7 @@ export function effectAuthRoutes<E extends Env>(
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   app.all(`${apiPath}/*`, async (c) => {
     // SAFETY: The Better Auth boundary validated this representation before exposing the narrower adapter contract.
-    const auth = openHonertiaContext(c).auth as { handler?: (req: Request) => Response | Promise<Response> } | undefined
+    const auth = openWebContext(c).auth as { handler?: (req: Request) => Response | Promise<Response> } | undefined
 
     if (!auth?.handler) {
       return c.json({ error: 'Auth not configured' }, 500)
@@ -550,7 +550,7 @@ export function loadUser<E extends Env>(
 
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return async (c, next) => {
-    const requestCtx = openHonertiaContext(c)
+    const requestCtx = openWebContext(c)
 
     // Register the configured session cookie so the response-cache policy
     // treats it as private request state — even when auth isn't configured,
@@ -608,7 +608,7 @@ export function loadUser<E extends Env>(
         })
       }
 
-      openHonertiaContext(c).authUser = exit.value
+      openWebContext(c).authUser = exit.value
     }
 
     await next()
@@ -661,7 +661,7 @@ export interface BetterAuthFormActionConfig<A, I, AuthClient = AuthType> {
 }
 
 /**
- * Create a better-auth form action with Honertia-friendly responses.
+ * Create a Better Auth form action that answers with pages, redirects and typed errors.
  *
  * Copies Set-Cookie headers from better-auth and redirects with 303.
  * Maps expected Better Auth request rejections into ValidationError, rate
@@ -687,7 +687,7 @@ export function betterAuthFormAction<A, I, AuthClient = AuthType>(
       config.call(auth as AuthClient, input, buildAuthRequest(request))
     ).pipe(
       Effect.mapError((failure) =>
-        toHonertiaAuthError(failure, config.errorComponent, config.errorMapper)
+        toAuthActionError(failure, config.errorComponent, config.errorMapper)
       )
     )
 

@@ -293,13 +293,9 @@ can lose precision when mirrored through the Effect mapped type; use
 `authEffect.raw.api` when TypeScript does not retain an `asResponse`,
 `returnHeaders`, or `returnStatus` result precisely.
 
-Passing the app installs the middleware stack and shared error boundary and
-returns `{ app, routes }`. The middleware-only form remains available for
-manual Hono composition:
-
-```ts
-app.use('*', setupWeb({ version, render: template }))
-```
+`setupWeb` installs the middleware stack and shared error boundary on the app
+and returns `{ app, routes }`. For manual Hono composition, see
+[Lower-level composition](#lower-level-composition).
 
 ### 3. Write actions and register routes
 
@@ -753,11 +749,14 @@ Public type and runtime names have direct replacements:
 | `HonertiaService` / `HonertiaRenderer` | `PageService` / `PageRenderer` |
 | `honertiaContext` / `honertiaServices` | `webContext` / `webServices` |
 | `honertia` middleware / `c.var.honertia` | `web` / `c.var.web` |
+| `HonertiaConfigurationError` | `ConfigurationError` |
+| `HonertiaStructuredError` | `StructuredError` |
+| `HEADERS.HONERTIA` | `HEADERS.INERTIA` |
+| `HON_*` error codes | `WEB_*` error codes |
 
-Deprecated aliases remain in `@popcomputer/web@0.3` to support an incremental
-source migration. New code should use the current names. The old `honertia` npm
-package remains a separate published artifact and is not a runtime wrapper, so
-install only one framework package in an application.
+The former names are not exported. The old `honertia` npm package remains a
+separate published artifact and is not a runtime wrapper, so install only one
+framework package in an application.
 
 ## Tradeoffs and current limits
 

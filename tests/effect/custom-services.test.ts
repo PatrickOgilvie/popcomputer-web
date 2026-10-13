@@ -13,9 +13,9 @@ import { Effect, Layer, Context } from 'effect'
 import type { PageProps } from '../../src/types.js'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { effectBridge, buildContextLayer } from '../../src/effect/bridge.js'
-import { honertia } from '../../src/middleware.js'
-import { honertiaServices } from '../../src/request-context.js'
-import { setupHonertia } from '../../src/setup.js'
+import { web } from '../../src/middleware.js'
+import { webServices } from '../../src/request-context.js'
+import { setupWeb } from '../../src/setup.js'
 import { DatabaseService } from '../../src/effect/services.js'
 
 // =============================================================================
@@ -71,14 +71,14 @@ const createTestApp = () => {
 
   app.use(
     '*',
-    honertia({
+    web({
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
     })
   )
 
   // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
+  app.use('*', webServices(() => ({ db: { name: 'test-db' } as never })))
   app.use('*', async (c, next) => {
     // Simulate Cloudflare Worker bindings
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -200,7 +200,7 @@ describe('Custom Services via effectBridge', () => {
 
     app.use(
       '*',
-      honertia({
+      web({
         version: '1.0.0',
         render: (page) => JSON.stringify(page),
       })
@@ -208,7 +208,7 @@ describe('Custom Services via effectBridge', () => {
 
     // Simulate Cloudflare Worker bindings and set up db
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    app.use('*', honertiaServices(() => ({ db: { name: 'custom-db' } as never })))
+    app.use('*', webServices(() => ({ db: { name: 'custom-db' } as never })))
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       // oxlint-disable-next-line no-param-reassign -- This middleware supplies the Worker binding fixture consumed by the bridge.
@@ -252,12 +252,12 @@ describe('Custom Services via effectBridge', () => {
   })
 })
 
-describe('Custom Services via setupHonertia', () => {
+describe('Custom Services via setupWeb', () => {
   test('injects custom services via effect config', async () => {
     const app = new Hono<TestEnv>()
 
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
+    app.use('*', webServices(() => ({ db: { name: 'test-db' } as never })))
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       // oxlint-disable-next-line no-param-reassign -- This middleware supplies the Worker binding fixture consumed by the bridge.
@@ -268,25 +268,20 @@ describe('Custom Services via setupHonertia', () => {
       await next()
     })
 
-    app.use(
-      '*',
-      setupHonertia<TestEnv, unknown, BindingsService>({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-        },
-        effect: {
-          services: (c) =>
-            Layer.succeed(BindingsService, {
-              KV: createMockKV(c.env.KV_DATA),
-              ANALYTICS: createMockAnalytics(),
-            }),
-        },
-      })
-    )
+    setupWeb<TestEnv, unknown, BindingsService>(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      effect: {
+        services: (c) =>
+          Layer.succeed(BindingsService, {
+            KV: createMockKV(c.env.KV_DATA),
+            ANALYTICS: createMockAnalytics(),
+          }),
+      },
+    })
 
     effectRoutes(app).get(
-      '/setup-honertia',
+      '/setup-web',
       Effect.gen(function* () {
         const bindings = yield* BindingsService
         const name = yield* Effect.tryPromise(() => bindings.KV.get('user:123'))
@@ -295,7 +290,7 @@ describe('Custom Services via setupHonertia', () => {
       })
     )
 
-    const res = await app.request('/setup-honertia')
+    const res = await app.request('/setup-web')
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('John Doe')
   })

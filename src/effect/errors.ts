@@ -1,5 +1,5 @@
 /**
- * Typed Errors for Honertia Effect
+ * Typed errors for actions and the request boundary
  *
  * Using Effect's Data.TaggedError for type-safe error handling.
  * All errors support conversion to structured format via toStructured().
@@ -8,7 +8,7 @@
 import { Data } from 'effect'
 import type {
   ErrorContext,
-  HonertiaStructuredError,
+  StructuredError,
   FieldErrors,
   ErrorParams,
 } from './error-types.js'
@@ -24,7 +24,7 @@ import { emptyContext } from './error-context.js'
  * Interface for errors that can be converted to structured format.
  */
 export interface StructuredErrorCapable {
-  toStructured(context?: ErrorContext): HonertiaStructuredError
+  toStructured(context?: ErrorContext): StructuredError
 }
 
 /**
@@ -34,8 +34,8 @@ function structured(
   code: string,
   params: ErrorParams,
   context: ErrorContext,
-  overrides?: Partial<HonertiaStructuredError>
-): HonertiaStructuredError {
+  overrides?: Partial<StructuredError>
+): StructuredError {
   const base = createStructuredError(code, params, context)
 
   return overrides ? { ...base, ...overrides } : base
@@ -64,7 +64,7 @@ export class ValidationError extends Data.TaggedError('ValidationError')<{
     return 422
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     const fieldNames = Object.keys(this.errors)
     const code = this.code ?? ErrorCodes.VAL_004_SCHEMA_MISMATCH
 
@@ -127,7 +127,7 @@ export class UnauthorizedError extends Data.TaggedError('UnauthorizedError')<{
     return 401
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     const code = this.code ?? ErrorCodes.AUTH_100_UNAUTHENTICATED
 
     return structured(code, { reason: this.message }, context, { message: this.message })
@@ -179,7 +179,7 @@ export class NotFoundError extends Data.TaggedError('NotFoundError')<{
       : `${this.resource} was not found.`
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     const code = this.code ?? ErrorCodes.RES_200_NOT_FOUND
 
     return structured(code, { resource: this.resource, id: this.id }, context)
@@ -209,7 +209,7 @@ export class ForbiddenError extends Data.TaggedError('ForbiddenError')<{
     return 403
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     const code = this.code ?? ErrorCodes.AUTH_102_FORBIDDEN
 
     return structured(code, { reason: this.message }, context, { message: this.message })
@@ -249,7 +249,7 @@ export class AuthRateLimitError extends Data.TaggedError('AuthRateLimitError')<{
     return `Too many authentication attempts. Please try again in ${this.retryAfterSeconds} seconds.`
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     const result = structured(
       ErrorCodes.AUTH_104_RATE_LIMITED,
       {},
@@ -294,7 +294,7 @@ export class HttpError extends Data.TaggedError('HttpError')<{
     return this.status
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     const code = this.code ?? this.statusToCode()
 
     const result = structured(code, { reason: this.message }, context, {
@@ -304,7 +304,7 @@ export class HttpError extends Data.TaggedError('HttpError')<{
 
     if (this.body !== undefined) {
       // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
-      (result as HonertiaStructuredError & { body: unknown }).body = this.body
+      (result as StructuredError & { body: unknown }).body = this.body
     }
 
     return result
@@ -366,7 +366,7 @@ export class DatabaseMutationFailed extends Data.TaggedError('DatabaseMutationFa
     return 500
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     return structured(
       ErrorCodes.DB_501_QUERY_FAILED,
       { reason: 'mutation failed' },
@@ -389,7 +389,7 @@ export class DatabaseTransactionFailed extends Data.TaggedError('DatabaseTransac
     return 500
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     return structured(
       ErrorCodes.DB_503_TRANSACTION_FAILED,
       { reason: 'transaction failed' },
@@ -413,7 +413,7 @@ export class DatabaseConstraintViolation extends Data.TaggedError('DatabaseConst
     return 409
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     return structured(
       ErrorCodes.DB_502_CONSTRAINT_VIOLATION,
       { constraint: this.constraint },
@@ -436,7 +436,7 @@ export class SessionLookupUnavailable extends Data.TaggedError('SessionLookupUna
     return 503
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     return structured(
       ErrorCodes.SVC_700_SERVICE_UNAVAILABLE,
       { service: 'authentication' },
@@ -459,7 +459,7 @@ export class InvalidAuthSession extends Data.TaggedError('InvalidAuthSession')<{
     return 500
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     return structured(
       ErrorCodes.SVC_701_SERVICE_ERROR,
       { service: 'authentication', reason: 'invalid session response' },
@@ -495,7 +495,7 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
     return 500
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     const code = this.code ?? this.inferCode()
 
     return structured(
@@ -610,18 +610,18 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
 }
 
 /**
- * Honertia Configuration Error - Missing service configuration
+ * Configuration Error - Missing service configuration
  *
  * @example
  * ```ts
- * throw new HonertiaConfigurationError({
+ * throw new ConfigurationError({
  *   message: 'DatabaseService is not configured',
  *   service: 'DatabaseService',
  *   code: ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED,
  * })
  * ```
  */
-export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfigurationError')<{
+export class ConfigurationError extends Data.TaggedError('ConfigurationError')<{
   readonly message: string
   readonly hint?: string
   readonly code?: ErrorCode
@@ -631,7 +631,7 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
     return 500
   }
 
-  toStructured(context: ErrorContext = emptyContext()): HonertiaStructuredError {
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
     const code = this.code ?? getConfigErrorCode(this.service, this.message)
 
     const location = context.route
@@ -647,14 +647,14 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
         configPath: configurationPathFor(this.service),
         setupFunction: 'setupWeb',
       },
-    } as HonertiaStructuredError & { configuration: { missingService: string; configPath: string; setupFunction: string } }
+    } as StructuredError & { configuration: { missingService: string; configPath: string; setupFunction: string } }
   }
 
   /**
    * Create an error for missing database configuration.
    */
-  static databaseNotConfigured(): HonertiaConfigurationError {
-    return new HonertiaConfigurationError({
+  static databaseNotConfigured(): ConfigurationError {
+    return new ConfigurationError({
       message: 'DatabaseService is not configured. Add it to setupWeb.',
       hint: 'database: (c) => drizzle(c.env.DB)',
       service: 'DatabaseService',
@@ -665,8 +665,8 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
   /**
    * Create an error for missing auth configuration.
    */
-  static authNotConfigured(): HonertiaConfigurationError {
-    return new HonertiaConfigurationError({
+  static authNotConfigured(): ConfigurationError {
+    return new ConfigurationError({
       message: 'AuthService is not configured. Add it to setupWeb.',
       hint: 'auth: { client: (c, { db }) => betterAuth({ database: db }) }',
       service: 'AuthService',
@@ -677,8 +677,8 @@ export class HonertiaConfigurationError extends Data.TaggedError('HonertiaConfig
   /**
    * Create an error for missing schema configuration.
    */
-  static schemaNotConfigured(): HonertiaConfigurationError {
-    return new HonertiaConfigurationError({
+  static schemaNotConfigured(): ConfigurationError {
+    return new ConfigurationError({
       message: 'Schema is not configured for route model binding.',
       hint: 'schema: require("./db/schema")',
       service: 'Schema',
@@ -740,7 +740,7 @@ export type AppError =
   | InvalidAuthSession
   | AuthRedirect
   | RouteConfigurationError
-  | HonertiaConfigurationError
+  | ConfigurationError
 
 /**
  * Check if an error supports structured conversion.
@@ -756,7 +756,7 @@ export function isStructuredError(cause: unknown): cause is StructuredErrorCapab
 /**
  * Convert any error to a structured error format.
  *
- * Handles Honertia errors by calling their `toStructured()` method.
+ * Handles the package's errors by calling their `toStructured()` method.
  * Falls back to a generic internal error for unknown error types.
  *
  * @param error - Any error value (Error, AppError, or unknown).
@@ -766,7 +766,7 @@ export function isStructuredError(cause: unknown): cause is StructuredErrorCapab
 export function toStructuredError(
   cause: unknown,
   context: ErrorContext = emptyContext()
-): HonertiaStructuredError {
+): StructuredError {
   if (isStructuredError(cause)) {
     return cause.toStructured(context)
   }

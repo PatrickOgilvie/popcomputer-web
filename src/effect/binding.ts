@@ -71,10 +71,6 @@ export type RouteBindingsConfig = Readonly<Record<string, RouteBindingConfig>>
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface WebRouteBindingsType {}
 
-/** @deprecated Augment {@link WebRouteBindingsType} instead. */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface HonertiaRouteBindingsType {}
-
 /**
  * Add explicit metadata to a route-model parser.
  *
@@ -158,9 +154,7 @@ interface BoundModelNotConfigured<K extends string> {
 type ConfiguredRouteBindings = WebRouteBindingsType extends {
   type: infer Bindings
 } ? Bindings
-  : HonertiaRouteBindingsType extends { type: infer Bindings }
-    ? Bindings
-    : never
+  : never
 
 type RouteBindingOutput<Config> =
   Config extends S.Codec<unknown, unknown, never, never>

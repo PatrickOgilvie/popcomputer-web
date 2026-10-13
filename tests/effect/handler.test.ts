@@ -9,8 +9,8 @@ import type { Env } from 'hono'
 import { Effect, Layer, Schema as S } from 'effect'
 import { effectHandler, effect, handle, errorToResponse } from '../../src/effect/handler.js'
 import { effectBridge, type EffectBridgeConfig } from '../../src/effect/bridge.js'
-import { honertia } from '../../src/middleware.js'
-import { honertiaServices } from '../../src/request-context.js'
+import { web } from '../../src/middleware.js'
+import { webServices } from '../../src/request-context.js'
 import {
   ValidationError,
   UnauthorizedError,
@@ -20,7 +20,7 @@ import {
   HttpError,
   Redirect,
 } from '../../src/effect/errors.js'
-import { HonertiaService, DatabaseService } from '../../src/effect/services.js'
+import { PageService, DatabaseService } from '../../src/effect/services.js'
 import {
   EffectErrorObserverService,
   reportEffectError,
@@ -34,14 +34,14 @@ const createApp = (bridgeConfig?: EffectBridgeConfig<Env, never>) => {
 
   app.use(
     '*',
-    honertia({
+    web({
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
     })
   )
 
   // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } as never })))
+  app.use('*', webServices(() => ({ db: { name: 'test-db' } as never })))
 
   app.use('*', effectBridge(bridgeConfig))
 
@@ -210,7 +210,7 @@ describe('Error Handling', () => {
       expect(res.status).toBe(429)
       expect(res.headers.get('Retry-After')).toBe('37')
       expect(await res.json()).toMatchObject({
-        code: 'HON_AUTH_104_RATE_LIMITED',
+        code: 'WEB_AUTH_104_RATE_LIMITED',
         tag: 'AuthRateLimitError',
         body: { retryAfter: 37 },
       })
@@ -240,7 +240,7 @@ describe('Error Handling', () => {
       expect(res.status).toBe(422)
       const json = await res.json()
       // Structured format includes validation details
-      expect(json.code).toMatch(/^HON_VAL_/)
+      expect(json.code).toMatch(/^WEB_VAL_/)
       expect(json.validation.fields.name.message).toBe('Required')
       expect(json.validation.fields.email.message).toBe('Invalid')
     })
@@ -548,7 +548,7 @@ describe('errorToResponse', () => {
     expect(res.status).toBe(422)
     const json = await res.json()
     // New structured format includes code and validation details
-    expect(json.code).toBe('HON_VAL_004_SCHEMA_MISMATCH')
+    expect(json.code).toBe('WEB_VAL_004_SCHEMA_MISMATCH')
     expect(json.validation.fields.field.message).toBe('Error')
   })
 
@@ -568,7 +568,7 @@ describe('errorToResponse', () => {
 
     expect(res.status).toBe(422)
     const json = await res.json()
-    expect(json.code).toBe('HON_VAL_004_SCHEMA_MISMATCH')
+    expect(json.code).toBe('WEB_VAL_004_SCHEMA_MISMATCH')
     expect(json.validation.fields.field.message).toBe('Error')
   })
 })
@@ -663,7 +663,7 @@ describe('EffectErrorObserverService', () => {
     expect(events[0]?.kind).toBe('defect')
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     expect(events[0] ? (events[0].error as Error).message : undefined).toBe('boom')
-    expect(events[0]?.structured.code).toBe('HON_INT_801_EFFECT_DEFECT')
+    expect(events[0]?.structured.code).toBe('WEB_INT_801_EFFECT_DEFECT')
   })
 })
 
@@ -785,10 +785,10 @@ describe('Integration Patterns', () => {
       effectHandler(
         Effect.gen(function* () {
           const db = yield* DatabaseService
-          const honertia = yield* HonertiaService
+          const page = yield* PageService
 
           return yield* Effect.tryPromise(() =>
-            honertia.render('Projects/Show', { db, id: 'test' })
+            page.render('Projects/Show', { db, id: 'test' })
           )
         })
       )

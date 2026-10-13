@@ -14,7 +14,7 @@ import {
   resetGlobalRegistry,
   effectRoutes,
 } from '../../src/effect/index.js'
-import { honertia } from '../../src/middleware.js'
+import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 
 // Helper to create test app
@@ -22,7 +22,7 @@ const createApp = () => {
   const app = new Hono()
   app.use(
     '*',
-    honertia({
+    web({
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
     })

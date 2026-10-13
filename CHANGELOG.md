@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- The `Honertia*` and `honertia*` aliases are removed: `setupHonertia` and its nested `honertia: { ... }` configuration, the `honertia` middleware and `c.var.honertia`, `honertiaContext`, `honertiaServices`, `HonertiaService`, `HonertiaRenderer`, `HonertiaConfig`, `HonertiaInstance`, `HonertiaPage`, `HonertiaRequestContext`, `HonertiaProvidedServices`, `HonertiaApplication`, `HonertiaSetupConfig`, `HonertiaFullConfig`, and the `HonertiaDatabaseType`, `HonertiaAuthType`, `HonertiaBindingsType`, `HonertiaAuthUserType` and `HonertiaRouteBindingsType` augmentation interfaces. The README's migration table lists each replacement.
+- Names without a `Web*` replacement are renamed: `HonertiaConfigurationError` is `ConfigurationError` (`_tag: 'ConfigurationError'`), `HonertiaStructuredError` is `StructuredError`, `HEADERS.HONERTIA` is `HEADERS.INERTIA`, and error codes use the `WEB_` prefix instead of `HON_` (for example `WEB_VAL_001_FIELD_REQUIRED`). The unused `CFG_303_HONERTIA_NOT_CONFIGURED` code is removed.
+- `setupWeb` takes the app: `setupWeb(app, config)`. The middleware-only form `app.use('*', setupWeb(config))`, which skipped the error boundary, is removed, as are `createErrorHandlers` and the `WebFullConfig` type. `registerErrorHandlers` remains for lower-level composition.
 - The `popweb` CLI and the `@popcomputer/web/cli` entrypoint are removed, along with the package's `tsx` dependency. The package now has no runtime dependencies. In place of each command:
   - `generate:action`, `generate:crud`, `generate:feature`, `generate:tests-runner`: write actions and tests by hand from the README examples. The generators produced code that failed its own tests, wrote two files to `index.ts` for CRUD, and did not bundle for Workers.
   - `routes`: `setupWeb(app, config)` returns `routes`, a `RouteRegistry`; `routes.toJson()` lists every route.

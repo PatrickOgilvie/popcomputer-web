@@ -1,5 +1,5 @@
 /**
- * Structured Error Types for Honertia
+ * Structured error types
  *
  * World-class error system optimized for AI/LLM consumption.
  * Every error includes machine-readable fix suggestions.
@@ -160,7 +160,7 @@ export interface FixOperation {
   position?: FixPosition
   /** Code or content to insert */
   content?: string
-  /** Config path for config changes (e.g., "honertia.database") */
+  /** Config path for config changes (e.g., "database") */
   configPath?: string
   /** Config value to set */
   configValue?: unknown
@@ -212,10 +212,10 @@ export interface ErrorDocs {
 
 /**
  * The main structured error interface.
- * This is the format returned for all Honertia errors.
+ * This is the format returned for all of the package's errors.
  */
-export interface HonertiaStructuredError {
-  /** Unique error code (e.g., "HON_VAL_001_FIELD_REQUIRED") */
+export interface StructuredError {
+  /** Unique error code (e.g., "WEB_VAL_001_FIELD_REQUIRED") */
   code: string
   /** Effect tag for the error class */
   tag: string
@@ -277,7 +277,7 @@ export interface ValidationErrorData {
 export interface ConfigurationErrorData {
   /** The service that is missing */
   missingService: string
-  /** Configuration path (e.g., "honertia.database") */
+  /** Configuration path (e.g., "database") */
   configPath: string
   /** Setup function to use */
   setupFunction: string

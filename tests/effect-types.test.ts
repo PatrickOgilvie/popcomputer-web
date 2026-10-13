@@ -11,7 +11,7 @@ import {
   DatabaseService,
   AuthService,
   AuthUserService,
-  HonertiaService,
+  PageService,
   effectRoutes,
   RequireAuthLayer,
   bound,
@@ -72,7 +72,7 @@ type Category = typeof categories.$inferSelect
 
 type PublicProject = S.Schema.Type<typeof routeBindings.publicProject>
 
-// Custom auth user type for testing HonertiaAuthUserType augmentation
+// Custom auth user type for testing WebAuthUserType augmentation
 interface CustomAuthUser {
   user: {
     id: string
@@ -98,20 +98,20 @@ interface CustomAuthUser {
 
 // Augment interfaces for testing
 declare module '../src/effect/index.js' {
-  interface HonertiaDatabaseType {
+  interface WebDatabaseType {
     type: { query: (sql: string) => Promise<unknown[]> }
     schema: typeof schema
   }
 
-  interface HonertiaRouteBindingsType {
+  interface WebRouteBindingsType {
     type: typeof routeBindings
   }
 
-  interface HonertiaAuthType {
+  interface WebAuthType {
   type: { getSession: () => Promise<object> }
   }
 
-  interface HonertiaAuthUserType {
+  interface WebAuthUserType {
     type: CustomAuthUser
   }
 }
@@ -205,8 +205,8 @@ const SharePropsLayer = Layer.effect(
   SharedPropsService,
   Effect.gen(function* () {
     const db = yield* DatabaseService
-    const honertia = yield* HonertiaService
-    honertia.share('authUserAvatarSeed', 'seed-123')
+    const page = yield* PageService
+    page.share('authUserAvatarSeed', 'seed-123')
     void db
 
     return { ready: true as const }

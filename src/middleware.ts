@@ -11,14 +11,12 @@ import type {
   RenderOptions,
 } from './types.js'
 import { HEADERS } from './types.js'
-import { openHonertiaContext } from './request-context.js'
+import { openWebContext } from './request-context.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
     /** Page rendering API for plain Hono handlers. */
     web: WebInstance
-    /** @deprecated Use `c.var.web`. */
-    honertia: WebInstance
   }
 }
 
@@ -82,12 +80,12 @@ export function web(config: WebConfig): MiddlewareHandler {
     const getVersion = () => 
       config.version instanceof Function ? config.version() : config.version
 
-    const isHonertia = c.req.header(HEADERS.HONERTIA) === 'true'
+    const isInertia = c.req.header(HEADERS.INERTIA) === 'true'
     const clientVersion = c.req.header(HEADERS.VERSION)
     const version = getVersion()
 
     // Version mismatch - force full reload
-    if (isHonertia && clientVersion && clientVersion !== version && c.req.method === 'GET') {
+    if (isInertia && clientVersion && clientVersion !== version && c.req.method === 'GET') {
       return c.body(null, {
         status: 409,
         headers: { [HEADERS.LOCATION]: c.req.url },
@@ -119,7 +117,7 @@ export function web(config: WebConfig): MiddlewareHandler {
         // filtered out — that's the whole point of a partial reload.
         let partialKeep: ((key: string) => boolean) | undefined
 
-        if (isHonertia) {
+        if (isInertia) {
           const partialComponent = c.req.header(HEADERS.PARTIAL_COMPONENT)
           const partialData = c.req.header(HEADERS.PARTIAL_DATA)
           const partialExcept = c.req.header(HEADERS.PARTIAL_EXCEPT)
@@ -180,32 +178,30 @@ export function web(config: WebConfig): MiddlewareHandler {
           encryptHistory: options.encryptHistory,
         }
 
-        if (isHonertia) {
+        if (isInertia) {
           return c.json(page, 200, {
-            [HEADERS.HONERTIA]: 'true',
-            'Vary': HEADERS.HONERTIA,
+            [HEADERS.INERTIA]: 'true',
+            'Vary': HEADERS.INERTIA,
           })
         }
 
         const html = await config.render(page, c)
 
         return c.html(html, 200, {
-          'Vary': HEADERS.HONERTIA,
+          'Vary': HEADERS.INERTIA,
         })
       },
     } satisfies WebInstance
 
-    const requestContext = openHonertiaContext(c)
+    const requestContext = openWebContext(c)
     requestContext.web = instance
-    requestContext.honertia = instance
     c.set('web', instance)
-    c.set('honertia', instance)
     await next()
 
     // Convert 302 to 303 for non-GET requests
     // Guard against c.res being undefined (no handler matched)
     if (
-      isHonertia &&
+      isInertia &&
       c.res &&
       c.res.status === 302 &&
       ['POST', 'PUT', 'PATCH', 'DELETE'].includes(c.req.method)
@@ -216,7 +212,7 @@ export function web(config: WebConfig): MiddlewareHandler {
         // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
         c.res = new Response(null, {
           status: 303,
-          headers: { 'Location': location, 'Vary': HEADERS.HONERTIA },
+          headers: { 'Location': location, 'Vary': HEADERS.INERTIA },
         })
       }
     }
@@ -225,8 +221,5 @@ export function web(config: WebConfig): MiddlewareHandler {
     return c.res
   }
 }
-
-/** @deprecated Use {@link web}. */
-export const honertia: typeof web = web
 
 export { HEADERS }

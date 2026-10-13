@@ -20,12 +20,12 @@ import {
 } from './bridge.js'
 import {
   type AppError,
-  HonertiaConfigurationError,
+  ConfigurationError,
   Redirect,
   RouteConfigurationError,
   ValidationError,
 } from './errors.js'
-import { openHonertiaContext } from '../request-context.js'
+import { openWebContext } from '../request-context.js'
 import { allowDefaultPageCache } from '../page-cache.js'
 import {
   applyCachePolicy,
@@ -72,7 +72,7 @@ import {
 
 /**
  * Type for Effect-based route handlers.
- * Expected failures must be one of Honertia's typed application errors.
+ * Expected failures must be one of the package's typed application errors.
  */
 export type EffectHandler<R = never, E extends AppError = AppError> = Effect.Effect<
   Response | Redirect,
@@ -197,7 +197,7 @@ function isDevEnv<E extends Env>(c: HonoContext<E>): boolean {
 }
 
 function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
-  const requestCtx = openHonertiaContext(c)
+  const requestCtx = openWebContext(c)
 
   return (
     requestCtx.authUser !== undefined ||
@@ -552,7 +552,7 @@ export class EffectRouteBuilder<
         allowDefaultPageCache(c)
       }
 
-      // Get schema from bridgeConfig or from context (set by setupHonertia/effectBridge)
+      // Get schema from bridgeConfig or from context (set by setupWeb/effectBridge)
       const schema = bridgeConfig?.schema ?? getEffectSchema(c)
       const configuredBindings = bridgeConfig?.bindings ?? getEffectBindings(c)
 
@@ -624,13 +624,13 @@ export class EffectRouteBuilder<
       let boundModels: ReadonlyMap<string, unknown> = new Map()
 
       if (bindings.length > 0 && schema && configuredBindings) {
-        const db = openHonertiaContext(c).db
+        const db = openWebContext(c).db
 
         if (!db) {
           // A binding cannot be resolved without a database; this is
           // misconfiguration, not a missing row. Thrown to Hono's onError,
           // which renders the structured configuration error.
-          throw HonertiaConfigurationError.databaseNotConfigured()
+          throw ConfigurationError.databaseNotConfigured()
         }
 
         bindingPlanPromise ??= compileBindingPlan(bindings, schema, configuredBindings)

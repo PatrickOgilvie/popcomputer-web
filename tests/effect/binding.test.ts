@@ -8,7 +8,7 @@ import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { Effect, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
-import { honertia } from '../../src/middleware.js'
+import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import { uuid } from '../../src/effect/schema.js'
 import {
@@ -488,7 +488,7 @@ describe('Route Model Binding Integration', () => {
 
       app.use(
         '*',
-        honertia({
+        web({
           version: '1.0.0',
           render: (page) => JSON.stringify(page),
         })
@@ -508,7 +508,7 @@ describe('Route Model Binding Integration', () => {
 
     test('Laravel-style routes with custom column work', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       effectRoutes(app).get(
@@ -523,7 +523,7 @@ describe('Route Model Binding Integration', () => {
 
     test('Hono-style routes still work (backward compatibility)', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       effectRoutes(app).get(
@@ -538,7 +538,7 @@ describe('Route Model Binding Integration', () => {
 
     test('mixed Hono and Laravel styles work together', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       effectRoutes(app).get(
@@ -553,7 +553,7 @@ describe('Route Model Binding Integration', () => {
 
     test('nested Laravel-style routes work', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       effectRoutes(app).get(
@@ -568,7 +568,7 @@ describe('Route Model Binding Integration', () => {
 
     test('all HTTP methods support Laravel-style binding', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       const routes = effectRoutes(app)
@@ -597,7 +597,7 @@ describe('Route Model Binding Integration', () => {
 
     test('prefix() works with Laravel-style routes', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       effectRoutes(app)
@@ -611,7 +611,7 @@ describe('Route Model Binding Integration', () => {
 
     test('group() works with Laravel-style routes', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       effectRoutes(app)
@@ -632,7 +632,7 @@ describe('Route Model Binding Integration', () => {
   describe('params schema validation with Laravel-style routes', () => {
     test('validates params schema and 404s invalid values with Laravel syntax', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       effectRoutes(app).get(
@@ -651,7 +651,7 @@ describe('Route Model Binding Integration', () => {
 
     test('validates multiple params with Laravel syntax', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       effectRoutes(app).get(
@@ -687,7 +687,7 @@ describe('Route Model Binding Integration', () => {
 
     test('validates params with custom column syntax', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       // Even with :slug column, the param name is still 'project'
@@ -713,7 +713,7 @@ describe('Route Model Binding Integration', () => {
 
     test('validates mixed Hono and Laravel params', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       effectRoutes(app).get(
@@ -743,7 +743,7 @@ describe('Route Model Binding Integration', () => {
 
     test('params validation runs before model binding', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       // Even without schema configured, params validation should work
@@ -760,7 +760,7 @@ describe('Route Model Binding Integration', () => {
 
     test('bound() gives helpful RouteConfigurationError when schema not provided', async () => {
       const app = new Hono()
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       // Set up error handler to render error pages
@@ -780,7 +780,7 @@ describe('Route Model Binding Integration', () => {
       expect(res.status).toBe(500)
 
       const body = await res.json()
-      // Error is rendered via Honertia's error component (not raw JSON)
+      // Error is rendered via the configured error component (not raw JSON)
       expect(body.component).toBe('Error')
       expect(body.props.status).toBe(500)
       // In prod, message is hidden; in dev (with env var), it shows the actual error

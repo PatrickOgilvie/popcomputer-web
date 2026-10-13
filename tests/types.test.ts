@@ -1,13 +1,13 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
- * Honertia Types and React Utilities Tests
+ * Types and React utilities tests
  */
 
 import { describe, test, expect } from 'bun:test'
 import { HEADERS } from '../src/types.js'
 import type {
   PageObject,
-  HonertiaConfig,
+  WebConfig,
   RenderOptions,
 } from '../src/types.js'
 import type {
@@ -17,7 +17,7 @@ import type {
 
 describe('HEADERS Constant', () => {
   test('all header names follow X-Inertia convention', () => {
-    expect(HEADERS.HONERTIA).toMatch(/^X-Inertia/)
+    expect(HEADERS.INERTIA).toMatch(/^X-Inertia/)
     expect(HEADERS.VERSION).toMatch(/^X-Inertia/)
     expect(HEADERS.PARTIAL_COMPONENT).toMatch(/^X-Inertia/)
     expect(HEADERS.PARTIAL_DATA).toMatch(/^X-Inertia/)
@@ -28,7 +28,7 @@ describe('HEADERS Constant', () => {
   test('HEADERS has const assertion type', () => {
     // TypeScript const assertion makes it readonly at the type level
     // At runtime, we verify the expected values are correct strings
-    expect(HEADERS.HONERTIA).toEqual(expect.any(String))
+    expect(HEADERS.INERTIA).toEqual(expect.any(String))
     expect(HEADERS.VERSION).toEqual(expect.any(String))
     expect(HEADERS.PARTIAL_COMPONENT).toEqual(expect.any(String))
     expect(HEADERS.PARTIAL_DATA).toEqual(expect.any(String))
@@ -38,7 +38,7 @@ describe('HEADERS Constant', () => {
 
   test('all expected headers are defined', () => {
     const expectedHeaders = [
-      'HONERTIA',
+      'INERTIA',
       'VERSION',
       'PARTIAL_COMPONENT',
       'PARTIAL_DATA',
@@ -185,8 +185,8 @@ describe('React Type Utilities', () => {
 })
 
 describe('Type Compatibility', () => {
-  test('HonertiaConfig accepts string version', () => {
-    const config: HonertiaConfig = {
+  test('WebConfig accepts string version', () => {
+    const config: WebConfig = {
       version: '1.0.0',
       render: (page) => `<html>${JSON.stringify(page)}</html>`,
     }
@@ -194,8 +194,8 @@ describe('Type Compatibility', () => {
     expect(config.version).toBe('1.0.0')
   })
 
-  test('HonertiaConfig accepts function version', () => {
-    const config: HonertiaConfig = {
+  test('WebConfig accepts function version', () => {
+    const config: WebConfig = {
       version: () => '1.0.0',
       render: (page) => `<html>${JSON.stringify(page)}</html>`,
     }
@@ -205,8 +205,8 @@ describe('Type Compatibility', () => {
     expect((config.version as () => string)()).toBe('1.0.0')
   })
 
-  test('HonertiaConfig render can be async', () => {
-    const config: HonertiaConfig = {
+  test('WebConfig render can be async', () => {
+    const config: WebConfig = {
       version: '1.0.0',
       render: async (page) => {
         await Promise.resolve()

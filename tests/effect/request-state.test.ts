@@ -13,14 +13,14 @@ import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { Effect, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
-import { honertia } from '../../src/middleware.js'
+import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import { RequestStateService } from '../../src/effect/services.js'
 import type { PageProps } from '../../src/types.js'
 
 const createApp = () => {
   const app = new Hono()
-  app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+  app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
   app.use('*', effectBridge())
 
   return app
@@ -29,7 +29,7 @@ const createApp = () => {
 describe('RequestStateService', () => {
   test('action-published state is readable by wrapping middleware after next()', async () => {
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
 
     // Outer middleware: rewrites the response from state the action published
     app.use('*', async (c, next) => {
@@ -61,7 +61,7 @@ describe('RequestStateService', () => {
 
   test('middleware-set state is readable inside the action', async () => {
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
 
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.

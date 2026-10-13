@@ -22,9 +22,9 @@ import {
   AuthService,
   RequestService,
   AuthUserService,
-  HonertiaService,
+  PageService,
   type AuthUser,
-  type HonertiaRenderer,
+  type PageRenderer,
 } from '../../src/effect/services.js'
 import {
   AuthRateLimitError,
@@ -60,8 +60,8 @@ const createMockUser = (overrides: Partial<AuthUser['user']> = {}): AuthUser => 
   },
 })
 
-// Mock HonertiaRenderer
-const createMockHonertia = (): HonertiaRenderer & {
+// Mock PageRenderer
+const createMockPage = (): PageRenderer & {
   shared: PageProps
 } => {
   const shared: PageProps = {}
@@ -267,16 +267,16 @@ describe('requireGuest', () => {
 describe('shareAuth', () => {
   test('shares authenticated user', async () => {
     const mockUser = createMockUser({ name: 'John Doe' })
-    const mockHonertia = createMockHonertia()
+    const mockPage = createMockPage()
 
     const layer = Layer.mergeAll(
       Layer.succeed(AuthUserService, mockUser),
-      Layer.succeed(HonertiaService, mockHonertia)
+      Layer.succeed(PageService, mockPage)
     )
 
     await Effect.runPromise(Effect.provide(shareAuth(), layer))
 
-    expect(mockHonertia.shared.auth).toEqual({
+    expect(mockPage.shared.auth).toEqual({
       user: {
         id: mockUser.user.id,
         name: mockUser.user.name,
@@ -287,11 +287,11 @@ describe('shareAuth', () => {
 
   test('supports an explicit public user projection', async () => {
     const mockUser = createMockUser({ name: 'John Doe' })
-    const mockHonertia = createMockHonertia()
+    const mockPage = createMockPage()
 
     const layer = Layer.mergeAll(
       Layer.succeed(AuthUserService, mockUser),
-      Layer.succeed(HonertiaService, mockHonertia)
+      Layer.succeed(PageService, mockPage)
     )
 
     await Effect.runPromise(
@@ -301,18 +301,18 @@ describe('shareAuth', () => {
       )
     )
 
-    expect(mockHonertia.shared.auth).toEqual({
+    expect(mockPage.shared.auth).toEqual({
       user: { displayName: 'John Doe' },
     })
   })
 
   test('projects only whitelisted fields when configured', async () => {
     const mockUser = createMockUser({ name: 'John Doe' })
-    const mockHonertia = createMockHonertia()
+    const mockPage = createMockPage()
 
     const layer = Layer.mergeAll(
       Layer.succeed(AuthUserService, mockUser),
-      Layer.succeed(HonertiaService, mockHonertia)
+      Layer.succeed(PageService, mockPage)
     )
 
     await Effect.runPromise(
@@ -320,17 +320,17 @@ describe('shareAuth', () => {
     )
 
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    const shared = mockHonertia.shared.auth as { user: PageProps }
+    const shared = mockPage.shared.auth as { user: PageProps }
     expect(Object.keys(shared.user).sort()).toEqual(['id', 'name'])
   })
 
   test('shares null when not authenticated', async () => {
-    const mockHonertia = createMockHonertia()
-    const layer = Layer.succeed(HonertiaService, mockHonertia)
+    const mockPage = createMockPage()
+    const layer = Layer.succeed(PageService, mockPage)
 
     await Effect.runPromise(Effect.provide(shareAuth(), layer))
 
-    expect(mockHonertia.shared.auth).toEqual({
+    expect(mockPage.shared.auth).toEqual({
       user: null,
     })
   })

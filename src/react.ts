@@ -8,8 +8,6 @@ type ComponentType<P = Record<never, never>> = (props: P) => ReactRenderable
 
 export type WebPage<TProps = Record<string, never>> = ComponentType<TProps & PageProps>
 
-/** @deprecated Use {@link WebPage}. */
-export type HonertiaPage<TProps = Record<string, never>> = WebPage<TProps>
 
 export type PageResolver = (name: string) => 
   | Promise<{ default: ComponentType<unknown> }>

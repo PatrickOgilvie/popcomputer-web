@@ -1,5 +1,5 @@
 import { Context, Effect, Option } from 'effect'
-import type { HonertiaStructuredError } from './error-types.js'
+import type { StructuredError } from './error-types.js'
 
 export type EffectErrorMetadata = Readonly<Record<
   string,
@@ -11,7 +11,7 @@ export interface EffectErrorEvent {
   readonly handling: 'unhandled' | 'handled'
   readonly kind: 'failure' | 'defect'
   readonly error: unknown
-  readonly structured?: HonertiaStructuredError
+  readonly structured?: StructuredError
   readonly metadata?: EffectErrorMetadata
 }
 

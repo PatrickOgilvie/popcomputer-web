@@ -13,7 +13,7 @@ import { Hono } from 'hono'
 import { Effect } from 'effect'
 import type { MiddlewareHandler } from 'hono'
 import { effectRoutes } from '../../src/effect/routing.js'
-import { honertia } from '../../src/middleware.js'
+import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import { registerErrorHandlers } from '../../src/setup.js'
 
@@ -24,7 +24,7 @@ const stampResponses: MiddlewareHandler = async (c, next) => {
 
 const createApp = () => {
   const app = new Hono()
-  app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+  app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
   app.use('*', effectBridge())
   registerErrorHandlers(app)
 

@@ -1,5 +1,5 @@
 /**
- * Error Catalog for Honertia
+ * Error catalog: codes, titles and default fixes for structured errors
  *
  * Central registry of all error codes with fix generators.
  * This is the single source of truth for error definitions.
@@ -12,7 +12,7 @@ import type {
   ErrorParams,
   FixGenerator,
   FixSuggestion,
-  HonertiaStructuredError,
+  StructuredError,
 } from './error-types.js'
 import { Predicate } from 'effect'
 import type { PagePropValue } from '../types.js'
@@ -30,9 +30,9 @@ function formatErrorParam(value: PagePropValue): string {
 }
 
 /**
- * All Honertia error codes organized by category.
+ * All error codes, organized by category.
  *
- * Naming convention: HON_<CATEGORY>_<NUMBER>_<NAME>
+ * Naming convention: WEB_<CATEGORY>_<NUMBER>_<NAME>
  *
  * Categories:
  * - VAL (001-099): Validation errors
@@ -47,60 +47,59 @@ function formatErrorParam(value: PagePropValue): string {
  */
 export const ErrorCodes = {
   // Validation Errors (VAL)
-  VAL_001_FIELD_REQUIRED: 'HON_VAL_001_FIELD_REQUIRED',
-  VAL_002_FIELD_INVALID: 'HON_VAL_002_FIELD_INVALID',
-  VAL_003_BODY_PARSE_FAILED: 'HON_VAL_003_BODY_PARSE_FAILED',
-  VAL_004_SCHEMA_MISMATCH: 'HON_VAL_004_SCHEMA_MISMATCH',
-  VAL_005_TYPE_COERCION_FAILED: 'HON_VAL_005_TYPE_COERCION_FAILED',
-  VAL_006_SOURCE_CONFLICT: 'HON_VAL_006_SOURCE_CONFLICT',
+  VAL_001_FIELD_REQUIRED: 'WEB_VAL_001_FIELD_REQUIRED',
+  VAL_002_FIELD_INVALID: 'WEB_VAL_002_FIELD_INVALID',
+  VAL_003_BODY_PARSE_FAILED: 'WEB_VAL_003_BODY_PARSE_FAILED',
+  VAL_004_SCHEMA_MISMATCH: 'WEB_VAL_004_SCHEMA_MISMATCH',
+  VAL_005_TYPE_COERCION_FAILED: 'WEB_VAL_005_TYPE_COERCION_FAILED',
+  VAL_006_SOURCE_CONFLICT: 'WEB_VAL_006_SOURCE_CONFLICT',
 
   // Auth Errors (AUTH)
-  AUTH_100_UNAUTHENTICATED: 'HON_AUTH_100_UNAUTHENTICATED',
-  AUTH_101_SESSION_EXPIRED: 'HON_AUTH_101_SESSION_EXPIRED',
-  AUTH_102_FORBIDDEN: 'HON_AUTH_102_FORBIDDEN',
-  AUTH_103_INVALID_CREDENTIALS: 'HON_AUTH_103_INVALID_CREDENTIALS',
-  AUTH_104_RATE_LIMITED: 'HON_AUTH_104_RATE_LIMITED',
+  AUTH_100_UNAUTHENTICATED: 'WEB_AUTH_100_UNAUTHENTICATED',
+  AUTH_101_SESSION_EXPIRED: 'WEB_AUTH_101_SESSION_EXPIRED',
+  AUTH_102_FORBIDDEN: 'WEB_AUTH_102_FORBIDDEN',
+  AUTH_103_INVALID_CREDENTIALS: 'WEB_AUTH_103_INVALID_CREDENTIALS',
+  AUTH_104_RATE_LIMITED: 'WEB_AUTH_104_RATE_LIMITED',
 
   // Resource Errors (RES)
-  RES_200_NOT_FOUND: 'HON_RES_200_NOT_FOUND',
-  RES_201_ALREADY_EXISTS: 'HON_RES_201_ALREADY_EXISTS',
-  RES_202_GONE: 'HON_RES_202_GONE',
+  RES_200_NOT_FOUND: 'WEB_RES_200_NOT_FOUND',
+  RES_201_ALREADY_EXISTS: 'WEB_RES_201_ALREADY_EXISTS',
+  RES_202_GONE: 'WEB_RES_202_GONE',
 
   // Configuration Errors (CFG)
-  CFG_300_DATABASE_NOT_CONFIGURED: 'HON_CFG_300_DATABASE_NOT_CONFIGURED',
-  CFG_301_AUTH_NOT_CONFIGURED: 'HON_CFG_301_AUTH_NOT_CONFIGURED',
-  CFG_302_SCHEMA_NOT_CONFIGURED: 'HON_CFG_302_SCHEMA_NOT_CONFIGURED',
-  CFG_303_HONERTIA_NOT_CONFIGURED: 'HON_CFG_303_HONERTIA_NOT_CONFIGURED',
-  CFG_304_BINDINGS_NOT_CONFIGURED: 'HON_CFG_304_BINDINGS_NOT_CONFIGURED',
-  CFG_305_INVALID_CONFIG: 'HON_CFG_305_INVALID_CONFIG',
+  CFG_300_DATABASE_NOT_CONFIGURED: 'WEB_CFG_300_DATABASE_NOT_CONFIGURED',
+  CFG_301_AUTH_NOT_CONFIGURED: 'WEB_CFG_301_AUTH_NOT_CONFIGURED',
+  CFG_302_SCHEMA_NOT_CONFIGURED: 'WEB_CFG_302_SCHEMA_NOT_CONFIGURED',
+  CFG_304_BINDINGS_NOT_CONFIGURED: 'WEB_CFG_304_BINDINGS_NOT_CONFIGURED',
+  CFG_305_INVALID_CONFIG: 'WEB_CFG_305_INVALID_CONFIG',
 
   // HTTP Errors (HTTP)
-  HTTP_400_BAD_REQUEST: 'HON_HTTP_400_BAD_REQUEST',
-  HTTP_429_RATE_LIMITED: 'HON_HTTP_429_RATE_LIMITED',
-  HTTP_500_INTERNAL_ERROR: 'HON_HTTP_500_INTERNAL_ERROR',
-  HTTP_502_BAD_GATEWAY: 'HON_HTTP_502_BAD_GATEWAY',
-  HTTP_503_SERVICE_UNAVAILABLE: 'HON_HTTP_503_SERVICE_UNAVAILABLE',
+  HTTP_400_BAD_REQUEST: 'WEB_HTTP_400_BAD_REQUEST',
+  HTTP_429_RATE_LIMITED: 'WEB_HTTP_429_RATE_LIMITED',
+  HTTP_500_INTERNAL_ERROR: 'WEB_HTTP_500_INTERNAL_ERROR',
+  HTTP_502_BAD_GATEWAY: 'WEB_HTTP_502_BAD_GATEWAY',
+  HTTP_503_SERVICE_UNAVAILABLE: 'WEB_HTTP_503_SERVICE_UNAVAILABLE',
 
   // Database Errors (DB)
-  DB_500_CONNECTION_FAILED: 'HON_DB_500_CONNECTION_FAILED',
-  DB_501_QUERY_FAILED: 'HON_DB_501_QUERY_FAILED',
-  DB_502_CONSTRAINT_VIOLATION: 'HON_DB_502_CONSTRAINT_VIOLATION',
-  DB_503_TRANSACTION_FAILED: 'HON_DB_503_TRANSACTION_FAILED',
+  DB_500_CONNECTION_FAILED: 'WEB_DB_500_CONNECTION_FAILED',
+  DB_501_QUERY_FAILED: 'WEB_DB_501_QUERY_FAILED',
+  DB_502_CONSTRAINT_VIOLATION: 'WEB_DB_502_CONSTRAINT_VIOLATION',
+  DB_503_TRANSACTION_FAILED: 'WEB_DB_503_TRANSACTION_FAILED',
 
   // Routing Errors (RTE)
-  RTE_600_BINDING_NOT_FOUND: 'HON_RTE_600_BINDING_NOT_FOUND',
-  RTE_601_TABLE_NOT_FOUND: 'HON_RTE_601_TABLE_NOT_FOUND',
-  RTE_602_PARAM_VALIDATION: 'HON_RTE_602_PARAM_VALIDATION',
-  RTE_603_RELATION_NOT_FOUND: 'HON_RTE_603_RELATION_NOT_FOUND',
-  RTE_604_BOUND_ROW_INVALID: 'HON_RTE_604_BOUND_ROW_INVALID',
+  RTE_600_BINDING_NOT_FOUND: 'WEB_RTE_600_BINDING_NOT_FOUND',
+  RTE_601_TABLE_NOT_FOUND: 'WEB_RTE_601_TABLE_NOT_FOUND',
+  RTE_602_PARAM_VALIDATION: 'WEB_RTE_602_PARAM_VALIDATION',
+  RTE_603_RELATION_NOT_FOUND: 'WEB_RTE_603_RELATION_NOT_FOUND',
+  RTE_604_BOUND_ROW_INVALID: 'WEB_RTE_604_BOUND_ROW_INVALID',
 
   // Service Errors (SVC)
-  SVC_700_SERVICE_UNAVAILABLE: 'HON_SVC_700_SERVICE_UNAVAILABLE',
-  SVC_701_SERVICE_ERROR: 'HON_SVC_701_SERVICE_ERROR',
+  SVC_700_SERVICE_UNAVAILABLE: 'WEB_SVC_700_SERVICE_UNAVAILABLE',
+  SVC_701_SERVICE_ERROR: 'WEB_SVC_701_SERVICE_ERROR',
 
   // Internal Errors (INT)
-  INT_800_UNEXPECTED: 'HON_INT_800_UNEXPECTED',
-  INT_801_EFFECT_DEFECT: 'HON_INT_801_EFFECT_DEFECT',
+  INT_800_UNEXPECTED: 'WEB_INT_800_UNEXPECTED',
+  INT_801_EFFECT_DEFECT: 'WEB_INT_801_EFFECT_DEFECT',
 } as const
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes]
@@ -444,7 +443,7 @@ export const ErrorCatalog = {
   // Configuration Errors
   [ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED]: {
     code: ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED,
-    tag: 'HonertiaConfigurationError',
+    tag: 'ConfigurationError',
     category: 'configuration',
     title: 'Database Not Configured',
     messageTemplate:
@@ -457,7 +456,7 @@ export const ErrorCatalog = {
 
   [ErrorCodes.CFG_301_AUTH_NOT_CONFIGURED]: {
     code: ErrorCodes.CFG_301_AUTH_NOT_CONFIGURED,
-    tag: 'HonertiaConfigurationError',
+    tag: 'ConfigurationError',
     category: 'configuration',
     title: 'Auth Not Configured',
     messageTemplate:
@@ -470,7 +469,7 @@ export const ErrorCatalog = {
 
   [ErrorCodes.CFG_302_SCHEMA_NOT_CONFIGURED]: {
     code: ErrorCodes.CFG_302_SCHEMA_NOT_CONFIGURED,
-    tag: 'HonertiaConfigurationError',
+    tag: 'ConfigurationError',
     category: 'configuration',
     title: 'Schema Not Configured',
     messageTemplate:
@@ -481,21 +480,10 @@ export const ErrorCatalog = {
     related: [ErrorCodes.RTE_601_TABLE_NOT_FOUND],
   },
 
-  [ErrorCodes.CFG_303_HONERTIA_NOT_CONFIGURED]: {
-    code: ErrorCodes.CFG_303_HONERTIA_NOT_CONFIGURED,
-    tag: 'HonertiaConfigurationError',
-    category: 'configuration',
-    title: 'Page Middleware Not Configured',
-    messageTemplate: '@popcomputer/web middleware is not configured. Cannot render Inertia responses.',
-    httpStatus: 500,
-    defaultFixes: [],
-    docsPath: '/errors/configuration/honertia-not-configured',
-    related: [ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED],
-  },
 
   [ErrorCodes.CFG_304_BINDINGS_NOT_CONFIGURED]: {
     code: ErrorCodes.CFG_304_BINDINGS_NOT_CONFIGURED,
-    tag: 'HonertiaConfigurationError',
+    tag: 'ConfigurationError',
     category: 'configuration',
     title: 'Worker Bindings Not Available',
     messageTemplate: 'Cloudflare Worker bindings are not available in this context.',
@@ -507,7 +495,7 @@ export const ErrorCatalog = {
 
   [ErrorCodes.CFG_305_INVALID_CONFIG]: {
     code: ErrorCodes.CFG_305_INVALID_CONFIG,
-    tag: 'HonertiaConfigurationError',
+    tag: 'ConfigurationError',
     category: 'configuration',
     title: 'Invalid Configuration',
     messageTemplate: 'Invalid configuration: {reason}',
@@ -769,7 +757,7 @@ export function createStructuredError(
   code: string,
   params: ErrorParams,
   context: ErrorContext
-): HonertiaStructuredError {
+): StructuredError {
   // Check if code is a valid ErrorCode
   // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
   const isValidCode = Object.values(ErrorCodes).includes(code as ErrorCode)

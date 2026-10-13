@@ -17,9 +17,9 @@ import { relations } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { Effect, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
-import { honertia } from '../../src/middleware.js'
+import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
-import { honertiaServices } from '../../src/request-context.js'
+import { webServices } from '../../src/request-context.js'
 import { bound, findRelation } from '../../src/effect/binding.js'
 
 const workspaces = sqliteTable('workspaces', {
@@ -149,9 +149,9 @@ function createApp() {
   const db = createTestDb()
   const app = new Hono()
 
-  app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+  app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
   // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  app.use('*', honertiaServices(() => ({ db: db as never })))
+  app.use('*', webServices(() => ({ db: db as never })))
   app.use('*', effectBridge({ schema, bindings }))
 
   const routes = effectRoutes(app, { schema, bindings })

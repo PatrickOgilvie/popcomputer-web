@@ -95,9 +95,10 @@ function originOf(url: string | undefined | null): string | null {
  * `Origin` header keep working (see {@link VerifyOriginConfig.requireOrigin}).
  *
  * @example
- * // Enable via setupHonertia
- * setupHonertia({
- *   honertia: { ... },
+ * // Enable via setupWeb
+ * setupWeb(app, {
+ *   version,
+ *   render,
  *   security: {
  *     verifyOrigin: { allowedOrigins: ['journeymannative://'] },
  *   },

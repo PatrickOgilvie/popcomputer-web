@@ -1,5 +1,5 @@
 /**
- * Honertia Helper Utilities Tests
+ * Helper utilities tests
  * 
  * Tests for createTemplate, createVersion, and related helper functions.
  */

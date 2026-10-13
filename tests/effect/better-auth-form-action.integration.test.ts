@@ -11,7 +11,7 @@ import {
 import { effectHandler } from '../../src/effect/handler.js'
 import { ValidationError } from '../../src/effect/errors.js'
 import { AuthService, RequestService } from '../../src/effect/services.js'
-import { setupHonertia } from '../../src/setup.js'
+import { setupWeb } from '../../src/setup.js'
 import type { RequestData } from '../../src/effect/validation.js'
 
 const CredentialsSchema = S.Struct({
@@ -36,7 +36,7 @@ function createTestAuth() {
   return betterAuth({
     database: memoryAdapter(database),
     baseURL: 'http://localhost:3000',
-    secret: 'honertia-better-auth-integration-test-secret-32-chars',
+    secret: 'web-better-auth-integration-test-secret-32-chars-',
     emailAndPassword: { enabled: true },
     logger: { disabled: true },
   })
@@ -245,18 +245,13 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const app = new Hono()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: 'test',
-          render: (page) => JSON.stringify(page),
-        },
-        auth: {
-          client: () => auth,
-        },
-      })
-    )
+    setupWeb(app, {
+      version: 'test',
+      render: (page) => JSON.stringify(page),
+      auth: {
+        client: () => auth,
+      },
+    })
     app.post('/login', effectHandler(action))
 
     const response = await app.request('/login', {
@@ -302,16 +297,11 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const app = new Hono()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: 'test',
-          render: (page) => JSON.stringify(page),
-        },
-        auth: { client: () => auth },
-      })
-    )
+    setupWeb(app, {
+      version: 'test',
+      render: (page) => JSON.stringify(page),
+      auth: { client: () => auth },
+    })
     app.post('/login', effectHandler(action))
 
     const response = await app.request('/login', {
@@ -361,16 +351,11 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const app = new Hono()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: 'test',
-          render: (page) => JSON.stringify(page),
-        },
-        auth: { client: () => auth },
-      })
-    )
+    setupWeb(app, {
+      version: 'test',
+      render: (page) => JSON.stringify(page),
+      auth: { client: () => auth },
+    })
     app.post('/login', effectHandler(action))
 
     const response = await app.request('/login', {
@@ -410,16 +395,11 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const app = new Hono()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: 'test',
-          render: (page) => JSON.stringify(page),
-        },
-        auth: { client: () => auth },
-      })
-    )
+    setupWeb(app, {
+      version: 'test',
+      render: (page) => JSON.stringify(page),
+      auth: { client: () => auth },
+    })
     app.post('/login', effectHandler(action))
 
     const response = await app.request('/login', {
@@ -461,16 +441,11 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const app = new Hono()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: 'test',
-          render: (page) => JSON.stringify(page),
-        },
-        auth: { client: () => auth },
-      })
-    )
+    setupWeb(app, {
+      version: 'test',
+      render: (page) => JSON.stringify(page),
+      auth: { client: () => auth },
+    })
     app.post('/login', effectHandler(action))
 
     const response = await app.request('/login', {

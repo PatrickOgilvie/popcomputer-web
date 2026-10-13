@@ -1,5 +1,5 @@
 /**
- * Honertia Effect Schema Validators
+ * Effect Schema validators for request input
  *
  * Laravel-inspired Effect Schema helpers for common validation patterns.
  */

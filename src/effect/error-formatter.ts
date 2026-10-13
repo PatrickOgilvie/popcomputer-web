@@ -1,5 +1,5 @@
 /**
- * Error Formatters for Honertia
+ * Error formatters for terminal, JSON and Inertia output
  *
  * Multiple output formats for structured errors:
  * - JSON for AI/API consumption
@@ -8,7 +8,7 @@
  */
 
 import type {
-  HonertiaStructuredError,
+  StructuredError,
   ValidationErrorData,
 } from './error-types.js'
 import type { PagePropValue, PageProps } from '../types.js'
@@ -17,7 +17,7 @@ import type { PagePropValue, PageProps } from '../types.js'
  * Interface for error formatters.
  */
 export interface ErrorFormatter {
-  format(error: HonertiaStructuredError): string | object
+  format(error: StructuredError): string | object
 }
 
 /**
@@ -25,7 +25,7 @@ export interface ErrorFormatter {
  * (raw exception text, DB driver output, connection details, config values)
  * and must never be sent to clients in production.
  */
-const SENSITIVE_MESSAGE_CATEGORIES = new Set<HonertiaStructuredError['category']>([
+const SENSITIVE_MESSAGE_CATEGORIES = new Set<StructuredError['category']>([
   'configuration',
   'internal',
   'database',
@@ -40,16 +40,16 @@ const SAFE_GENERIC_MESSAGE = 'An error occurred. Please try again later.'
 interface FormattedError {
   code: string
   tag: string
-  category: HonertiaStructuredError['category']
+  category: StructuredError['category']
   title: string
   message: string
   httpStatus: number
   timestamp: string
   requestId?: string
-  source?: HonertiaStructuredError['source']
-  context?: HonertiaStructuredError['context']
-  fixes?: HonertiaStructuredError['fixes']
-  docs?: HonertiaStructuredError['docs']
+  source?: StructuredError['source']
+  context?: StructuredError['context']
+  fixes?: StructuredError['fixes']
+  docs?: StructuredError['docs']
   validation?: object
   body?: unknown
 }
@@ -66,7 +66,7 @@ interface FormattedError {
  * cannot drift apart.
  */
 export function getClientSafeMessage(
-  error: HonertiaStructuredError,
+  error: StructuredError,
   isDev: boolean
 ): string {
   if (isDev) return error.message
@@ -151,7 +151,7 @@ export class JsonErrorFormatter implements ErrorFormatter {
     }
   }
 
-  format(error: HonertiaStructuredError): FormattedError {
+  format(error: StructuredError): FormattedError {
     const output: FormattedError = {
       code: error.code,
       tag: error.tag,
@@ -206,7 +206,7 @@ export class JsonErrorFormatter implements ErrorFormatter {
   /**
    * Format to JSON string.
    */
-  formatString(error: HonertiaStructuredError): string {
+  formatString(error: StructuredError): string {
     const obj = this.format(error)
 
     return this.options.pretty ? JSON.stringify(obj, null, 2) : JSON.stringify(obj)
@@ -271,7 +271,7 @@ export class TerminalErrorFormatter implements ErrorFormatter {
         >
   }
 
-  format(error: HonertiaStructuredError): string {
+  format(error: StructuredError): string {
     const { c } = this
     const lines: string[] = []
 
@@ -421,7 +421,7 @@ export class InertiaErrorFormatter implements ErrorFormatter {
     }
   }
 
-  format(error: HonertiaStructuredError): PageProps {
+  format(error: StructuredError): PageProps {
     const props = new Map<string, PagePropValue>([
       ['status', error.httpStatus],
       ['code', error.code],

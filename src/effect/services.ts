@@ -24,17 +24,13 @@ import type { PageProps, PagePropValue } from '../types.js'
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface WebDatabaseType {}
 
-/** @deprecated Augment {@link WebDatabaseType} instead. */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface HonertiaDatabaseType {}
-
 /**
  * Error type shown when WebDatabaseType.type is not configured.
  * This provides a helpful error message in IDE tooltips.
  */
 interface DatabaseNotConfigured {
   readonly __error: 'DatabaseService type not configured. Add module augmentation: declare module "@popcomputer/web/effect" { interface WebDatabaseType { type: YourDbType } }'
-  readonly __hint: 'See https://github.com/patrickogilvie/popcomputer-web#typescript-setup'
+  readonly __hint: 'See https://github.com/patrickogilvie/popcomputer-web#1-describe-application-owned-types'
 }
 
 /**
@@ -48,16 +44,12 @@ interface SchemaNotConfigured {
 /** Extract database type from augmented interface, shows error type if not configured */
 export type DatabaseType = WebDatabaseType extends { type: infer T }
   ? T
-  : HonertiaDatabaseType extends { type: infer T }
-    ? T
-    : DatabaseNotConfigured
+  : DatabaseNotConfigured
 
 /** Extract schema type from augmented interface, shows error type if not configured */
 export type SchemaType = WebDatabaseType extends { schema: infer T }
   ? T
-  : HonertiaDatabaseType extends { schema: infer T }
-    ? T
-    : SchemaNotConfigured
+  : SchemaNotConfigured
 
 /**
  * Augmentable interface for auth type.
@@ -75,10 +67,6 @@ export type SchemaType = WebDatabaseType extends { schema: infer T }
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface WebAuthType {}
 
-/** @deprecated Augment {@link WebAuthType} instead. */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface HonertiaAuthType {}
-
 /**
  * Error type shown when WebAuthType.type is not configured.
  */
@@ -90,9 +78,7 @@ interface AuthNotConfigured {
 /** Extract auth type from augmented interface, shows error type if not configured */
 export type AuthType = WebAuthType extends { type: infer T }
   ? T
-  : HonertiaAuthType extends { type: infer T }
-    ? T
-    : AuthNotConfigured
+  : AuthNotConfigured
 
 /**
  * Augmentable interface for environment bindings type.
@@ -114,24 +100,18 @@ export type AuthType = WebAuthType extends { type: infer T }
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface WebBindingsType {}
 
-/** @deprecated Augment {@link WebBindingsType} instead. */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface HonertiaBindingsType {}
-
 /**
  * Error type shown when WebBindingsType.type is not configured.
  */
 interface BindingsNotConfigured {
   readonly __error: 'BindingsService type not configured. Add module augmentation: declare module "@popcomputer/web/effect" { interface WebBindingsType { type: YourBindingsType } }'
-  readonly __hint: 'This is optional - BindingsService will still work but be typed as Record<string, unknown>'
+  readonly __hint: 'Augment WebBindingsType with the Bindings type of your Hono environment to read bindings through BindingsService.'
 }
 
-/** Extract bindings type from augmented interface, defaults to Record<string, unknown> if not configured */
+/** Extract bindings type from augmented interface, shows error type if not configured */
 export type BindingsType = WebBindingsType extends { type: infer T }
   ? T
-  : HonertiaBindingsType extends { type: infer T }
-    ? T
-    : BindingsNotConfigured
+  : BindingsNotConfigured
 
 /**
  * Database Service - Generic database client
@@ -207,10 +187,6 @@ export class BindingsService extends BindingsService_base {}
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface WebAuthUserType {}
 
-/** @deprecated Augment {@link WebAuthUserType} instead. */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface HonertiaAuthUserType {}
-
 /**
  * Default auth user structure - used when WebAuthUserType is not configured.
  * Provides the standard Better Auth user and session shape.
@@ -241,9 +217,7 @@ export interface DefaultAuthUser {
  */
 export type AuthUser = WebAuthUserType extends { type: infer T }
   ? T
-  : HonertiaAuthUserType extends { type: infer T }
-    ? T
-    : DefaultAuthUser
+  : DefaultAuthUser
 
 /**
  * Authenticated User Service - Provides the current user session
@@ -273,11 +247,7 @@ export class PageService extends Context.Service<
   PageRenderer
 >()('@popcomputer/web/Page') {}
 
-/** @deprecated Use {@link PageRenderer}. */
-export type HonertiaRenderer = PageRenderer
 
-/** @deprecated Use {@link PageService}. */
-export { PageService as HonertiaService }
 
 /**
  * Request Context - HTTP request data and environment bindings
@@ -357,7 +327,7 @@ export class ResponseFactoryService extends Context.Service<
 /**
  * Cache Service - KV-backed caching for expensive operations
  *
- * Automatically provided by setupHonertia when KV binding is available.
+ * Automatically provided by setupWeb when a KV binding is available.
  * Falls back to a no-op implementation if KV is not configured.
  *
  * @example
@@ -484,7 +454,7 @@ export class ExecutionContextService extends Context.Service<
  * The check function is optional - if not provided, just requires authentication.
  *
  * NOTE: This function is defined in services.ts (same file as AuthUser)
- * to ensure module augmentation of HonertiaAuthUserType works correctly.
+ * to ensure module augmentation of WebAuthUserType works correctly.
  * If moved to a separate file, TypeScript resolves the AuthUser type
  * before the user's module augmentation is applied.
  *

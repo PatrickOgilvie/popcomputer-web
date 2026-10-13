@@ -43,7 +43,7 @@ describe('default error-handler logging', () => {
     const result = await runFixture('production')
 
     expect(result.exitCode).toBe(0)
-    expect(result.stderr).toContain('HON_INT_800_UNEXPECTED')
+    expect(result.stderr).toContain('WEB_INT_800_UNEXPECTED')
     expect(result.stderr).not.toContain('error-handler-logging-fixture')
   })
 })

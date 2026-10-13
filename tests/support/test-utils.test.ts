@@ -32,7 +32,7 @@ describe('Test Utilities', () => {
   describe('createTestApp', () => {
     test('creates app with default version', async () => {
       const app = createTestApp()
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await makeInertiaRequest(app, '/')
       const page = await parseInertiaResponse(res)
@@ -42,7 +42,7 @@ describe('Test Utilities', () => {
 
     test('creates app with custom version', async () => {
       const app = createTestApp({ version: '2.5.0' })
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await makeInertiaRequest(app, '/')
       const page = await parseInertiaResponse(res)
@@ -53,7 +53,7 @@ describe('Test Utilities', () => {
     test('creates app with version function', async () => {
       let counter = 0
       const app = createTestApp({ version: () => `v${++counter}` })
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res1 = await makeInertiaRequest(app, '/')
       const page1 = await parseInertiaResponse(res1)
@@ -69,7 +69,7 @@ describe('Test Utilities', () => {
         render: (page) => `CUSTOM:${page.component}`,
       })
 
-      app.get('/', (c) => c.var.honertia.render('MyComponent'))
+      app.get('/', (c) => c.var.web.render('MyComponent'))
 
       const res = await makeRequest(app, '/')
       const html = await res.text()
@@ -113,17 +113,17 @@ describe('Test Utilities', () => {
   describe('makeInertiaRequest', () => {
     test('includes X-Inertia header automatically', async () => {
       const app = createTestApp()
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await makeInertiaRequest(app, '/')
 
       expect(res.headers.get('Content-Type')).toContain('application/json')
-      expect(res.headers.get(HEADERS.HONERTIA)).toBe('true')
+      expect(res.headers.get(HEADERS.INERTIA)).toBe('true')
     })
 
     test('includes version header when specified', async () => {
       const app = createTestApp({ version: '2.0.0' })
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await makeInertiaRequest(app, '/', { version: '1.0.0' })
 
@@ -134,7 +134,7 @@ describe('Test Utilities', () => {
     test('includes partial headers when specified', async () => {
       const app = createTestApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Dashboard', {
+        c.var.web.render('Dashboard', {
           users: mockUsers,
           projects: mockProjects,
         })
@@ -153,7 +153,7 @@ describe('Test Utilities', () => {
     test('includes partial except header when specified', async () => {
       const app = createTestApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Dashboard', {
+        c.var.web.render('Dashboard', {
           users: mockUsers,
           projects: mockProjects,
         })
@@ -174,7 +174,7 @@ describe('Test Utilities', () => {
     test('parses JSON response to PageObject', async () => {
       const app = createTestApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Home', { message: 'Hello' })
+        c.var.web.render('Home', { message: 'Hello' })
       )
 
       const res = await makeInertiaRequest(app, '/')
@@ -191,7 +191,7 @@ describe('Test Utilities', () => {
     test('extracts page object from HTML', async () => {
       const app = createTestApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Home', { title: 'Test' })
+        c.var.web.render('Home', { title: 'Test' })
       )
 
       const res = await makeRequest(app, '/')
@@ -216,7 +216,7 @@ describe('Test Utilities', () => {
   describe('Assertions', () => {
     test('assertInertiaResponse passes for valid response', async () => {
       const app = createTestApp()
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await makeInertiaRequest(app, '/')
 
@@ -225,7 +225,7 @@ describe('Test Utilities', () => {
 
     test('assertHtmlResponse passes for valid response', async () => {
       const app = createTestApp()
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await makeRequest(app, '/')
 
@@ -234,7 +234,7 @@ describe('Test Utilities', () => {
 
     test('assertVersionMismatch passes for 409 response', async () => {
       const app = createTestApp({ version: '2.0.0' })
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await makeInertiaRequest(app, '/', { version: '1.0.0' })
 

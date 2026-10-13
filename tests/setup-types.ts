@@ -7,7 +7,7 @@
  */
 
 import { Context, Effect, Layer, Schema as S } from 'effect'
-import { Hono, type Context as HonoContext, type MiddlewareHandler } from 'hono'
+import { Hono, type Context as HonoContext } from 'hono'
 import { setupWeb } from '@popcomputer/web'
 import {
   betterAuthFormAction,
@@ -95,7 +95,7 @@ class TestSearchService extends Context.Service<
   { readonly search: () => 'ok' }
 >()('test/SearchService') {}
 
-const inferredMiddleware: MiddlewareHandler<TestEnv> = setupWeb({
+const inferredApplication = setupWeb(new Hono<TestEnv>(), {
   version: 'type-test',
   render: (page) => JSON.stringify(page),
   database: (context) => ({ name: context.env.DATABASE_NAME }),
@@ -122,7 +122,9 @@ const inferredMiddleware: MiddlewareHandler<TestEnv> = setupWeb({
   },
 })
 
-void inferredMiddleware
+const inferredApplicationApp: Hono<TestEnv> = inferredApplication.app
+
+void inferredApplicationApp
 
 const app = new Hono<TestEnv>()
 
@@ -140,7 +142,7 @@ void inferredApp
 
 void routeCount
 
-setupWeb({
+setupWeb(new Hono<TestEnv>(), {
   version: 'type-test',
   render: (page) => JSON.stringify(page),
   auth: {
@@ -154,14 +156,14 @@ setupWeb({
   },
 })
 
-setupWeb({
+setupWeb(new Hono<TestEnv>(), {
   version: 'type-test',
   render: (page) => JSON.stringify(page),
   // @ts-expect-error Auth construction has one owner: the auth.client field.
   auth: () => ({ databaseName: 'legacy' }),
 })
 
-setupWeb({
+setupWeb(new Hono<TestEnv>(), {
   version: 'type-test',
   render: (page) => JSON.stringify(page),
   effect: {
@@ -170,7 +172,7 @@ setupWeb({
   },
 })
 
-setupWeb({
+setupWeb(new Hono<TestEnv>(), {
   version: 'type-test',
   render: (page) => JSON.stringify(page),
   auth: {
@@ -181,7 +183,7 @@ setupWeb({
   },
 })
 
-setupWeb({
+setupWeb(new Hono<TestEnv>(), {
   version: 'type-test',
   render: (page) => JSON.stringify(page),
   // @ts-expect-error A configured database factory must return a database object.

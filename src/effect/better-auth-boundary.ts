@@ -5,7 +5,7 @@
  * values, resolved HTTP error `Response`s (returned instead of thrown when a
  * `Request` is passed), and `{ status, response }` envelopes. This module
  * classifies those unknown boundary values and translates them into
- * Honertia's typed errors so `betterAuthFormAction` never has to inspect raw
+ * the package's typed errors so `betterAuthFormAction` never has to inspect raw
  * Better Auth output.
  */
 
@@ -384,7 +384,7 @@ export function classifyBetterAuthFailure(
   })
 }
 
-export function toHonertiaAuthError(
+export function toAuthActionError(
   failure: BetterAuthBoundaryFailure,
   component: string,
   errorMapper: ((error: BetterAuthActionError) => Record<string, string>) | undefined

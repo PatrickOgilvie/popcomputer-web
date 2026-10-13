@@ -2,7 +2,7 @@
 /**
  * Workers Cache Integration Tests
  *
- * The `cache` route option makes Honertia emit correct Workers Cache headers
+ * The `cache` route option emits correct Workers Cache headers
  * (Cache-Control / Cloudflare-CDN-Cache-Control / Cache-Tag / Vary) with Inertia-aware
  * guard rails: HTML and JSON page objects vary on X-Inertia, pages are kept
  * only by purgeable shared caches, partial reloads are never stored,
@@ -14,7 +14,7 @@ import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { Effect, Layer, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
-import { honertia } from '../../src/middleware.js'
+import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import {
   createWorkersResponseCacheClient,
@@ -42,7 +42,7 @@ const recordingCacheLayer = () => {
 
 const createApp = () => {
   const app = new Hono()
-  app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+  app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
   app.use('*', effectBridge())
 
   return app
@@ -148,7 +148,7 @@ describe('cache route option', () => {
 
     try {
       const { loadUser } = await import('../../src/effect/auth.js')
-      const { honertiaServices } = await import('../../src/request-context.js')
+      const { webServices } = await import('../../src/request-context.js')
 
       const app = new Hono()
       app.use('*', async (c, next) => {
@@ -157,11 +157,11 @@ describe('cache route option', () => {
         (c.env as { ENVIRONMENT?: string }) = { ENVIRONMENT: 'development' }
         await next()
       })
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       app.use(
         '*',
-        honertiaServices(() => ({
+        webServices(() => ({
           auth: {
             api: {
               getSession: async () => ({
@@ -225,7 +225,7 @@ describe('cache route option', () => {
         (c.env as { ENVIRONMENT?: string }) = { ENVIRONMENT: 'development' }
         await next()
       })
-      app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
       app.use('*', effectBridge())
 
       effectRoutes(app).get('/api/me', Effect.succeed(new Response('private')), {
@@ -256,7 +256,7 @@ describe('cache route option', () => {
     })
 
     // Real browser traffic almost always carries cookies (__cf_bm, analytics,
-    // consent). Only session cookies personalize Honertia responses.
+    // consent). Only session cookies personalize responses.
     const res = await app.request('/landing', {
       headers: { Cookie: '__cf_bm=abc123; _ga=GA1.2.3; consent=granted' },
     })
@@ -289,7 +289,7 @@ describe('cache route option', () => {
     const { loadUser } = await import('../../src/effect/auth.js')
 
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     app.use('*', loadUser({ sessionCookie: 'my_app_session' }))
     app.use('*', effectBridge())
 
@@ -369,7 +369,7 @@ describe('cache route option', () => {
     const { Database } = await import('bun:sqlite')
     const { drizzle } = await import('drizzle-orm/bun-sqlite')
     const { sqliteTable, text } = await import('drizzle-orm/sqlite-core')
-    const { honertiaServices } = await import('../../src/request-context.js')
+    const { webServices } = await import('../../src/request-context.js')
     const { bound } = await import('../../src/effect/binding.js')
 
     const workspaces = sqliteTable('workspaces', {
@@ -389,9 +389,9 @@ describe('cache route option', () => {
     db.insert(workspaces).values({ id: 'ws-1', slug: 'acme' }).run()
 
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    app.use('*', honertiaServices(() => ({ db: db as never })))
+    app.use('*', webServices(() => ({ db: db as never })))
     app.use('*', effectBridge({ schema, bindings }))
 
     effectRoutes(app, { schema, bindings }).get(
@@ -521,7 +521,7 @@ describe('purges route option', () => {
     const { Database } = await import('bun:sqlite')
     const { drizzle } = await import('drizzle-orm/bun-sqlite')
     const { sqliteTable, text } = await import('drizzle-orm/sqlite-core')
-    const { honertiaServices } = await import('../../src/request-context.js')
+    const { webServices } = await import('../../src/request-context.js')
 
     const workspaces = sqliteTable('workspaces', {
       id: text('id').primaryKey(),
@@ -542,9 +542,9 @@ describe('purges route option', () => {
     const { purges, layer } = recordingCacheLayer()
 
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    app.use('*', honertiaServices(() => ({ db: db as never })))
+    app.use('*', webServices(() => ({ db: db as never })))
     app.use('*', effectBridge({ schema, bindings }))
 
     effectRoutes(app, { schema, bindings, services: () => layer }).put(
@@ -563,7 +563,7 @@ describe('purges route option', () => {
     const { purges, layer } = recordingCacheLayer()
 
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     app.use('*', effectBridge())
 
     effectRoutes(app, { services: () => layer }).post(
@@ -582,7 +582,7 @@ describe('purges route option', () => {
     const { purges, layer } = recordingCacheLayer()
 
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     app.use('*', effectBridge())
 
     effectRoutes(app, { services: () => layer }).post(
@@ -607,7 +607,7 @@ describe('purges route option', () => {
     const { purges, layer } = recordingCacheLayer()
 
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     app.use('*', effectBridge())
 
     effectRoutes(app, { services: () => layer }).post(
@@ -656,7 +656,7 @@ describe('resolveWorkersCachePurgeApi', () => {
 describe('ResponseCacheService default client', () => {
   test('is unavailable and no-ops outside a Workers runtime', async () => {
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     app.use('*', effectBridge())
 
     effectRoutes(app).get(

@@ -20,7 +20,7 @@ import {
   HttpError,
   AuthRateLimitError,
   AuthRedirect,
-  HonertiaConfigurationError,
+  ConfigurationError,
   Redirect,
   isStructuredError,
   toStructuredError,
@@ -34,14 +34,14 @@ import {
   InertiaErrorFormatter,
   TerminalErrorFormatter,
 } from './error-formatter.js'
-import type { HonertiaStructuredError } from './error-types.js'
+import type { StructuredError } from './error-types.js'
 import {
   observeEffectErrorEvent,
   type EffectErrorEvent,
 } from './error-observer.js'
-import { openHonertiaContext } from '../request-context.js'
+import { openWebContext } from '../request-context.js'
 
-const structuredErrorsByCause = new WeakMap<Error, HonertiaStructuredError>()
+const structuredErrorsByCause = new WeakMap<Error, StructuredError>()
 
 /**
  * Memoized formatter instances to avoid recreation on every error.
@@ -78,7 +78,7 @@ const memoizedFormatters = {
  * Suppressed during tests (NODE_ENV=test or BUN_ENV=test).
  */
 function logStructuredError(
-  structured: HonertiaStructuredError,
+  structured: StructuredError,
   isDev: boolean
 ): void {
   // Suppress logging during tests
@@ -142,7 +142,7 @@ export interface ErrorBoundaryConfig {
 }
 
 /**
- * Render any request failure through Honertia's single error boundary.
+ * Render any request failure through the single error boundary.
  */
 // oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
 export async function renderErrorResponse<E extends Env>(
@@ -191,8 +191,8 @@ export async function renderErrorResponse<E extends Env>(
       return finalize(c.json(formatter.json.format(structured), 422))
     }
 
-    const requestContext = openHonertiaContext(c)
-    const page = requestContext.web ?? requestContext.honertia
+    const requestContext = openWebContext(c)
+    const page = requestContext.web
 
     if (error.component && page) {
       page.setErrors(error.errors)
@@ -234,8 +234,8 @@ export async function renderErrorResponse<E extends Env>(
     return finalize(c.json(formatter.json.format(structured), status as ContentfulStatusCode))
   }
 
-  const requestContext = openHonertiaContext(c)
-  const page = requestContext.web ?? requestContext.honertia
+  const requestContext = openWebContext(c)
+  const page = requestContext.web
 
   if (page) {
     const response = await page.render(
@@ -305,12 +305,12 @@ function readResponseSetCookies(headers: Headers): readonly string[] {
 }
 
 /**
- * Classify Effect's missing-service defect for a known Honertia tag into the
+ * Classify Effect's missing-service defect for a known framework service tag into the
  * structured configuration error. Unconfigured services are not provided to
  * the layer, so the first `yield*` of their tag dies here with
  * "Service not found: <tagId> (...)". Returns null for any other defect.
  */
-function classifyMissingService(cause: unknown): HonertiaConfigurationError | null {
+function classifyMissingService(cause: unknown): ConfigurationError | null {
   const defect = cause
 
   if (!(defect instanceof Error)) return null
@@ -323,9 +323,9 @@ function classifyMissingService(cause: unknown): HonertiaConfigurationError | nu
 
   switch (tagId) {
     case '@popcomputer/web/Database':
-      return HonertiaConfigurationError.databaseNotConfigured()
+      return ConfigurationError.databaseNotConfigured()
     case '@popcomputer/web/Auth':
-      return HonertiaConfigurationError.authNotConfigured()
+      return ConfigurationError.authNotConfigured()
     default:
       return null
   }
@@ -362,7 +362,7 @@ export async function errorToResponse<E extends Env>(
   runtime?: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<Response> {
   if (error instanceof AuthRedirect) {
-    return renderErrorResponse(error, c, openHonertiaContext(c).errorBoundary)
+    return renderErrorResponse(error, c, openWebContext(c).errorBoundary)
   }
 
   const structured = toStructuredError(error, captureErrorContext(c))
@@ -379,7 +379,7 @@ export async function errorToResponse<E extends Env>(
     runtime
   )
 
-  return renderErrorResponse(error, c, openHonertiaContext(c).errorBoundary)
+  return renderErrorResponse(error, c, openWebContext(c).errorBoundary)
 }
 
 /**
@@ -454,7 +454,7 @@ async function handleExit<E extends Env>(
   c: HonoContext<E>,
   runtime?: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<Response> {
-  const boundaryConfig = openHonertiaContext(c).errorBoundary
+  const boundaryConfig = openWebContext(c).errorBoundary
 
   if (Exit.isSuccess(exit)) {
     const value = exit.value
@@ -485,11 +485,11 @@ async function handleExit<E extends Env>(
     const defect = Cause.findDefect(cause)
 
     if (Result.isSuccess(defect)) {
-      // A missing Honertia service is a configuration defect; translate it to
+      // A missing framework service is a configuration defect; translate it to
       // the structured configuration error before the generic defect paths.
       const err = classifyMissingService(defect.success) ?? defect.success
 
-      // If the defect is already a structured error (like HonertiaConfigurationError),
+      // If the defect is already a structured error (like ConfigurationError),
       // convert it using its own toStructured method.
       // This branch always throws after observing, so the generic defect path below
       // only runs for defects that do not implement toStructured.
@@ -586,6 +586,6 @@ export const handle = effectHandler
  * Get structured error from a thrown error (if available).
  * Used by Hono's onError handler.
  */
-export function getStructuredFromThrown(error: Error): HonertiaStructuredError | undefined {
+export function getStructuredFromThrown(error: Error): StructuredError | undefined {
   return structuredErrorsByCause.get(error)
 }

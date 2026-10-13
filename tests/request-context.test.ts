@@ -2,35 +2,35 @@
 /**
  * Request Context Seam Tests
  *
- * Framework per-request state (db, auth, authUser, honertia instance, Effect
- * runtime wiring) lives in one typed HonertiaRequestContext, written by
+ * Framework per-request state (db, auth, authUser, page renderer instance, Effect
+ * runtime wiring) lives in one typed WebRequestContext, written by
  * framework middleware and readable from plain Hono middleware via
- * honertiaContext(c). honertiaServices() is the public wiring middleware for
- * apps not using setupHonertia.
+ * webContext(c). webServices() is the public wiring middleware for
+ * apps not using setupWeb.
  */
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { Effect } from 'effect'
 import {
-  honertiaServices,
-  honertiaContext,
+  webServices,
+  webContext,
 } from '../src/request-context.js'
-import { honertia } from '../src/middleware.js'
+import { web } from '../src/middleware.js'
 import { effectBridge } from '../src/effect/bridge.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import { DatabaseService } from '../src/effect/services.js'
 
-describe('honertiaServices + honertiaContext', () => {
-  test('services provided by honertiaServices are readable in later middleware', async () => {
+describe('webServices + webContext', () => {
+  test('services provided by webServices are readable in later middleware', async () => {
     const app = new Hono()
     const db = { name: 'test-db' }
     const auth = { name: 'test-auth' }
 
-    app.use('*', honertiaServices(() => ({ db, auth })))
+    app.use('*', webServices(() => ({ db, auth })))
 
     app.get('/inspect', (c) => {
-      const ctx = honertiaContext(c)
+      const ctx = webContext(c)
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       return c.json({
@@ -48,13 +48,13 @@ describe('honertiaServices + honertiaContext', () => {
     const app = new Hono()
 
     app.get('/inspect', (c) => {
-      const ctx = honertiaContext(c)
+      const ctx = webContext(c)
 
       return c.json({
         db: ctx.db === undefined,
         auth: ctx.auth === undefined,
         authUser: ctx.authUser === undefined,
-        honertia: ctx.honertia === undefined,
+        web: ctx.web === undefined,
       })
     })
 
@@ -63,15 +63,15 @@ describe('honertiaServices + honertiaContext', () => {
       db: true,
       auth: true,
       authUser: true,
-      honertia: true,
+      web: true,
     })
   })
 
   test('DatabaseService in an effect route resolves to the provided db', async () => {
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    app.use('*', honertiaServices(() => ({ db: { name: 'holder-db' } as never })))
+    app.use('*', webServices(() => ({ db: { name: 'holder-db' } as never })))
     app.use('*', effectBridge())
 
     effectRoutes(app).get(
@@ -91,7 +91,7 @@ describe('honertiaServices + honertiaContext', () => {
 
   test('a route that does not use DatabaseService works without a configured db', async () => {
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
     app.use('*', effectBridge())
 
     effectRoutes(app).get('/plain', Effect.succeed(new Response('no db needed')))
@@ -101,12 +101,12 @@ describe('honertiaServices + honertiaContext', () => {
     expect(await res.text()).toBe('no db needed')
   })
 
-  test('the honertia renderer instance is exposed on the context', async () => {
+  test('the page renderer instance is exposed on the context', async () => {
     const app = new Hono()
-    app.use('*', honertia({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
 
     app.get('/shared', (c) => {
-      const instance = honertiaContext(c).honertia
+      const instance = webContext(c).web
       instance?.share('appName', 'context-test')
 
       return c.json({ shared: instance?.getShared() ?? null })
@@ -151,11 +151,11 @@ describe('honertiaServices + honertiaContext', () => {
     }
 
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    app.use('*', honertiaServices(() => ({ auth: fakeAuth as never })))
+    app.use('*', webServices(() => ({ auth: fakeAuth as never })))
     app.use('*', loadUser())
 
     app.get('/whoami', (c) => {
-      const { authUser } = honertiaContext(c)
+      const { authUser } = webContext(c)
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       return c.json({ userId: (authUser?.user as { id?: string } | undefined)?.id ?? null })
@@ -171,7 +171,7 @@ describe('honertiaServices + honertiaContext', () => {
 
     app.use(
       '*',
-      honertiaServices(() => {
+      webServices(() => {
         const db = { name: 'db-first' }
 
         return { db, auth: { name: `auth-over-${db.name}` } }
@@ -179,7 +179,7 @@ describe('honertiaServices + honertiaContext', () => {
     )
 
     app.get('/inspect', (c) => {
-      const ctx = honertiaContext(c)
+      const ctx = webContext(c)
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       return c.text((ctx.auth as { name: string }).name)

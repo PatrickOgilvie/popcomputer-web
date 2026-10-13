@@ -3,7 +3,7 @@
 import type { Context } from 'hono'
 import { Schema as S } from 'effect'
 import type { PageObject } from './types.js'
-import { HonertiaConfigurationError } from './effect/errors.js'
+import { ConfigurationError } from './effect/errors.js'
 
 export interface PageProps {
   errors?: Record<string, string>
@@ -74,7 +74,7 @@ export function createTemplate(
 
     if (options instanceof Function) {
       if (!ctx) {
-        throw new HonertiaConfigurationError({
+        throw new ConfigurationError({
           message: 'createTemplate requires context when using dynamic options function.',
           hint: 'Pass the Hono context to the render function, or use static options.',
         })
@@ -178,7 +178,7 @@ const VitePort = S.Int.check(S.isBetween({ minimum: 1, maximum: 65_535 }))
 function viteOrigin(server: ViteDevServer): string {
   if (S.is(S.Number)(server)) {
     if (!S.is(VitePort)(server)) {
-      throw new HonertiaConfigurationError({
+      throw new ConfigurationError({
         message: `Vite dev server port must be an integer from 1 to 65535, received ${String(server)}.`,
         hint: 'vite.script(\'/src/main.tsx\', 5173)',
       })
@@ -190,14 +190,14 @@ function viteOrigin(server: ViteDevServer): string {
   try {
     url = new URL(server)
   } catch {
-    throw new HonertiaConfigurationError({
+    throw new ConfigurationError({
       message: 'Vite dev server origin must be an absolute HTTP(S) URL.',
       hint: "vite.script('/src/main.tsx', 'https://vite.myapp.localhost')",
     })
   }
 
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new HonertiaConfigurationError({
+    throw new ConfigurationError({
       message: `Vite dev server origin must use http or https, received ${url.protocol}`,
       hint: "vite.script('/src/main.tsx', 'https://vite.myapp.localhost')",
     })

@@ -1,5 +1,5 @@
 /**
- * Error Context Capture for Honertia
+ * Error context capture
  *
  * Utilities for capturing request, route, and handler context
  * when errors occur.

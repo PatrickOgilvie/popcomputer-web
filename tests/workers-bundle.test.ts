@@ -146,7 +146,7 @@ describe('Route binding without drizzle-orm', () => {
 
       expect(error).toMatchObject({
         _tag: 'RouteConfigurationError',
-        code: 'HON_CFG_305_INVALID_CONFIG',
+        code: 'WEB_CFG_305_INVALID_CONFIG',
         hint: expect.stringContaining('bun add drizzle-orm'),
       })
     }))

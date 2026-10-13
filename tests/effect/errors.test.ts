@@ -10,7 +10,7 @@ import {
   NotFoundError,
   ForbiddenError,
   HttpError,
-  HonertiaConfigurationError,
+  ConfigurationError,
   Redirect,
 } from '../../src/effect/errors.js'
 
@@ -169,20 +169,20 @@ describe('Error Types', () => {
     })
   })
 
-  describe('HonertiaConfigurationError', () => {
+  describe('ConfigurationError', () => {
     test('creates configuration error with message', () => {
-      const error = new HonertiaConfigurationError({
+      const error = new ConfigurationError({
         message: 'DatabaseService is not configured',
       })
 
-      expect(error._tag).toBe('HonertiaConfigurationError')
+      expect(error._tag).toBe('ConfigurationError')
       expect(error.message).toBe('DatabaseService is not configured')
       expect(error.hint).toBeUndefined()
     })
 
     test('includes optional hint', () => {
-      const error = new HonertiaConfigurationError({
-        message: 'DatabaseService is not configured. Add it to setupHonertia.',
+      const error = new ConfigurationError({
+        message: 'DatabaseService is not configured. Add it to setupWeb.',
         hint: 'Example: database: (c) => drizzle(c.env.DB)',
       })
 
@@ -191,27 +191,27 @@ describe('Error Types', () => {
 
     test('can be caught with Effect.catchTag', () => {
       const program = Effect.fail(
-        new HonertiaConfigurationError({
+        new ConfigurationError({
           message: 'Service not configured',
-          hint: 'Configure it in setupHonertia',
+          hint: 'Configure it in setupWeb',
         })
       ).pipe(
-        Effect.catchTag('HonertiaConfigurationError', (e) =>
+        Effect.catchTag('ConfigurationError', (e) =>
           Effect.succeed(`Caught: ${e.message} (${e.hint})`)
         )
       )
 
       const result = Effect.runSync(program)
-      expect(result).toBe('Caught: Service not configured (Configure it in setupHonertia)')
+      expect(result).toBe('Caught: Service not configured (Configure it in setupWeb)')
     })
 
     test('can be thrown and caught as regular Error', () => {
-      const error = new HonertiaConfigurationError({
+      const error = new ConfigurationError({
         message: 'Test error',
         hint: 'Test hint',
       })
 
-      // HonertiaConfigurationError extends Error, so it can be thrown/caught normally
+      // ConfigurationError extends Error, so it can be thrown/caught normally
       expect(() => {
         throw error
       }).toThrow('Test error')
@@ -219,7 +219,7 @@ describe('Error Types', () => {
       try {
         throw error
       } catch (e: unknown) {
-        expect(e).toBeInstanceOf(HonertiaConfigurationError)
+        expect(e).toBeInstanceOf(ConfigurationError)
         expect(e).toMatchObject({ hint: 'Test hint' })
       }
     })
@@ -270,7 +270,7 @@ describe('Error Handling Patterns', () => {
       new NotFoundError({ resource: 'Item' }),
       new ForbiddenError({ message: 'Forbidden' }),
       new HttpError({ status: 500, message: 'Server error' }),
-      new HonertiaConfigurationError({ message: 'Not configured' }),
+      new ConfigurationError({ message: 'Not configured' }),
     ]
 
     const tags = errors.map((e) => e._tag)
@@ -280,7 +280,7 @@ describe('Error Handling Patterns', () => {
       'NotFoundError',
       'ForbiddenError',
       'HttpError',
-      'HonertiaConfigurationError',
+      'ConfigurationError',
     ])
   })
 

@@ -51,14 +51,10 @@ export interface WebInstance {
   setErrors(errors: Record<string, string>): void
 }
 
-/** @deprecated Use {@link WebConfig}. */
-export type HonertiaConfig = WebConfig
 
-/** @deprecated Use {@link WebInstance}. */
-export type HonertiaInstance = WebInstance
 
 export const HEADERS = {
-  HONERTIA: 'X-Inertia',
+  INERTIA: 'X-Inertia',
   VERSION: 'X-Inertia-Version',
   PARTIAL_COMPONENT: 'X-Inertia-Partial-Component',
   PARTIAL_DATA: 'X-Inertia-Partial-Data',

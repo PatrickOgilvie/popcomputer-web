@@ -8,7 +8,7 @@ import { Cause, Effect, Layer, ManagedRuntime, Option, Schema as S } from 'effec
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { WebRequestContext } from '../request-context.js'
-import { openHonertiaContext } from '../request-context.js'
+import { openWebContext } from '../request-context.js'
 import { markPageDynamic } from '../page-cache.js'
 import {
   ResponseCacheService,
@@ -70,7 +70,7 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
   services?: (c: HonoContext<E>) => Layer.Layer<CustomServices, never, never>
   /**
    * Drizzle schema for route model binding.
-   * Usually configured via `setupHonertia(app, { honertia: { schema } })`.
+   * Usually configured via `setupWeb(app, { schema })`.
    * Can also be passed here for standalone effectBridge usage.
    */
   schema?: object
@@ -81,7 +81,7 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
 // Unconfigured services are simply not provided to the Effect layer. When a
 // handler yields a tag that was never configured, Effect dies with a
 // missing-service defect that handler.ts classifies into the structured
-// HonertiaConfigurationError response (see classifyMissingService).
+// ConfigurationError response (see classifyMissingService).
 // The per-request runtime, bridge config, and binding schema live in the
 // typed request context (see request-context.ts).
 
@@ -270,7 +270,7 @@ export async function disposeRequestRuntime<E extends Env, R, RuntimeError>(
   c: HonoContext<E>,
   runtime: ManagedRuntime.ManagedRuntime<R, RuntimeError>
 ): Promise<void> {
-  const supervisor = openHonertiaContext(c).backgroundSupervisor
+  const supervisor = openWebContext(c).backgroundSupervisor
 
   if (supervisor?.hasPending() && supervisor.client.isAvailable) {
     supervisor.extendLifetime(
@@ -292,7 +292,7 @@ export async function disposeRequestRuntime<E extends Env, R, RuntimeError>(
 export async function drainRequestBackground<E extends Env>(
   c: HonoContext<E>
 ): Promise<void> {
-  const supervisor = openHonertiaContext(c).backgroundSupervisor
+  const supervisor = openWebContext(c).backgroundSupervisor
 
   if (!supervisor?.hasPending()) return
 
@@ -442,7 +442,7 @@ function createInlineExecutionContextSupervisor(): BackgroundSupervisor {
 function getOrCreateBackgroundSupervisor<E extends Env>(
   c: HonoContext<E>
 ): BackgroundSupervisor {
-  const requestContext = openHonertiaContext(c)
+  const requestContext = openWebContext(c)
 
   if (requestContext.backgroundSupervisor) {
     return requestContext.backgroundSupervisor
@@ -497,8 +497,8 @@ export function getRequestExecutionContextClient<E extends Env>(
  * Create a PageRenderer from Hono context.
  */
 function createPageRenderer<E extends Env>(c: HonoContext<E>): PageRenderer {
-  const requestContext = openHonertiaContext(c)
-  const page = requestContext.web ?? requestContext.honertia
+  const requestContext = openWebContext(c)
+  const page = requestContext.web
 
   if (!page) {
     return {
@@ -565,10 +565,10 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   )
 
   // Database and auth come from the typed request context (written by
-  // setupHonertia's service wiring or the honertiaServices middleware).
+  // setupWeb's service wiring or the webServices middleware).
   // They are provided IFF configured; absence surfaces as a missing-service
   // defect that handler.ts classifies into a configuration error.
-  const requestCtx = openHonertiaContext(c)
+  const requestCtx = openWebContext(c)
 
   // ExecutionContext layer - for background task execution
   const backgroundSupervisor = getOrCreateBackgroundSupervisor(c)
@@ -649,7 +649,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
 export function getEffectRuntime<E extends Env>(
   c: HonoContext<E>
 ): WebRequestContext<E>['runtime'] {
-  return openHonertiaContext(c).runtime
+  return openWebContext(c).runtime
 }
 
 /**
@@ -661,7 +661,7 @@ export function setEffectBridgeConfig<E extends Env, CustomServices = never>(
 ): void {
   if (!config) return
   // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
-  openHonertiaContext(c).bridgeConfig = config as EffectBridgeConfig<E, unknown>
+  openWebContext(c).bridgeConfig = config as EffectBridgeConfig<E, unknown>
 }
 
 /**
@@ -670,7 +670,7 @@ export function setEffectBridgeConfig<E extends Env, CustomServices = never>(
 export function getEffectBridgeConfig<E extends Env>(
   c: HonoContext<E>
 ): EffectBridgeConfig<E, unknown> | undefined {
-  return openHonertiaContext(c).bridgeConfig
+  return openWebContext(c).bridgeConfig
 }
 
 /**
@@ -690,7 +690,7 @@ export function effectBridge<E extends Env, CustomServices = never>(
     )
 
     // Store runtime and binding schema on the request context
-    const requestCtx = openHonertiaContext(c)
+    const requestCtx = openWebContext(c)
     requestCtx.runtime = runtime
 
     if (config?.schema) {
@@ -718,12 +718,12 @@ export function effectBridge<E extends Env, CustomServices = never>(
 export function getEffectSchema<E extends Env>(
   c: HonoContext<E>
 ): object | undefined {
-  return openHonertiaContext(c).schema
+  return openWebContext(c).schema
 }
 
 /** Get the route-model binding configuration from the request context. */
 export function getEffectBindings<E extends Env>(
   c: HonoContext<E>
 ): RouteBindingsConfig | undefined {
-  return openHonertiaContext(c).bindings
+  return openWebContext(c).bindings
 }

@@ -1,11 +1,11 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
- * Honertia Middleware Tests
+ * Page middleware tests
  */
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { honertia, HEADERS } from '../src/middleware.js'
+import { web, HEADERS } from '../src/middleware.js'
 import { serializePage } from '../src/helpers.js'
 import type { PageObject } from '../src/types.js'
 import {
@@ -20,13 +20,13 @@ import {
   createRequestTracker,
 } from './support/test-utils.js'
 
-// Create test app with honertia middleware
+// Create test app with the page middleware
 const createApp = (version = '1.0.0') => {
   const app = new Hono()
 
   app.use(
     '*',
-    honertia({
+    web({
       version,
       render: (page: PageObject) =>
         `<!DOCTYPE html><html><body><script data-page="app" type="application/json">${serializePage(page)}</script><div id="app"></div></body></html>`,
@@ -36,11 +36,11 @@ const createApp = (version = '1.0.0') => {
   return app
 }
 
-describe('Honertia Middleware', () => {
+describe('Page middleware', () => {
   describe('Basic Rendering', () => {
     test('renders HTML for regular requests', async () => {
       const app = createApp()
-      app.get('/', (c) => c.var.honertia.render('Home', { title: 'Welcome' }))
+      app.get('/', (c) => c.var.web.render('Home', { title: 'Welcome' }))
 
       const res = await app.request('/')
 
@@ -56,15 +56,15 @@ describe('Honertia Middleware', () => {
 
     test('renders JSON for Inertia requests', async () => {
       const app = createApp()
-      app.get('/', (c) => c.var.honertia.render('Home', { title: 'Welcome' }))
+      app.get('/', (c) => c.var.web.render('Home', { title: 'Welcome' }))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       expect(res.status).toBe(200)
       expect(res.headers.get('Content-Type')).toContain('application/json')
-      expect(res.headers.get(HEADERS.HONERTIA)).toBe('true')
+      expect(res.headers.get(HEADERS.INERTIA)).toBe('true')
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
@@ -75,11 +75,11 @@ describe('Honertia Middleware', () => {
     test('includes URL in page object', async () => {
       const app = createApp()
       app.get('/projects/:id', (c) =>
-        c.var.honertia.render('Project', { id: c.req.param('id') })
+        c.var.web.render('Project', { id: c.req.param('id') })
       )
 
       const res = await app.request('/projects/123?tab=details', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -89,10 +89,10 @@ describe('Honertia Middleware', () => {
 
     test('includes version in page object', async () => {
       const app = createApp('2.0.0')
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -106,14 +106,14 @@ describe('Honertia Middleware', () => {
       const app = createApp()
 
       app.use('*', async (c, next) => {
-        c.var.honertia.share('auth', { user: { id: 1, name: 'John' } })
+        c.var.web.share('auth', { user: { id: 1, name: 'John' } })
         await next()
       })
 
-      app.get('/', (c) => c.var.honertia.render('Home', { title: 'Welcome' }))
+      app.get('/', (c) => c.var.web.render('Home', { title: 'Welcome' }))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -126,16 +126,16 @@ describe('Honertia Middleware', () => {
       const app = createApp()
 
       app.use('*', async (c, next) => {
-        c.var.honertia.share('title', 'Shared Title')
+        c.var.web.share('title', 'Shared Title')
         await next()
       })
 
       app.get('/', (c) =>
-        c.var.honertia.render('Home', { title: 'Page Title' })
+        c.var.web.render('Home', { title: 'Page Title' })
       )
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -147,15 +147,15 @@ describe('Honertia Middleware', () => {
       const app = createApp()
 
       app.use('*', async (c, next) => {
-        c.var.honertia.share('timestamp', () => 'resolved-value')
-        c.var.honertia.share('asyncValue', async () => 'async-resolved')
+        c.var.web.share('timestamp', () => 'resolved-value')
+        c.var.web.share('asyncValue', async () => 'async-resolved')
         await next()
       })
 
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -170,16 +170,16 @@ describe('Honertia Middleware', () => {
       const app = createApp()
 
       app.get('/', (c) => {
-        c.var.honertia.setErrors({
+        c.var.web.setErrors({
           email: 'Invalid email',
           password: 'Required',
         })
 
-        return c.var.honertia.render('Login')
+        return c.var.web.render('Login')
       })
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -194,14 +194,14 @@ describe('Honertia Middleware', () => {
       const app = createApp()
 
       app.get('/', (c) => {
-        c.var.honertia.setErrors({ email: 'Invalid' })
-        c.var.honertia.setErrors({ password: 'Required' })
+        c.var.web.setErrors({ email: 'Invalid' })
+        c.var.web.setErrors({ password: 'Required' })
 
-        return c.var.honertia.render('Login')
+        return c.var.web.render('Login')
       })
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -214,10 +214,10 @@ describe('Honertia Middleware', () => {
 
     test('includes empty errors object by default', async () => {
       const app = createApp()
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -229,11 +229,11 @@ describe('Honertia Middleware', () => {
   describe('Version Mismatch', () => {
     test('returns 409 with X-Inertia-Location on version mismatch', async () => {
       const app = createApp('2.0.0')
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await app.request('/', {
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.VERSION]: '1.0.0',
         },
       })
@@ -244,12 +244,12 @@ describe('Honertia Middleware', () => {
 
     test('does not trigger version check for non-GET requests', async () => {
       const app = createApp('2.0.0')
-      app.post('/', (c) => c.var.honertia.render('Home'))
+      app.post('/', (c) => c.var.web.render('Home'))
 
       const res = await app.request('/', {
         method: 'POST',
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.VERSION]: '1.0.0',
         },
       })
@@ -262,7 +262,7 @@ describe('Honertia Middleware', () => {
     test('filters props on partial reload with include', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Dashboard', {
+        c.var.web.render('Dashboard', {
           users: [1, 2, 3],
           projects: [4, 5, 6],
           stats: { count: 10 },
@@ -271,7 +271,7 @@ describe('Honertia Middleware', () => {
 
       const res = await app.request('/', {
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.PARTIAL_COMPONENT]: 'Dashboard',
           [HEADERS.PARTIAL_DATA]: 'users,stats',
         },
@@ -287,7 +287,7 @@ describe('Honertia Middleware', () => {
     test('excludes props on partial reload with except', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Dashboard', {
+        c.var.web.render('Dashboard', {
           users: [1, 2, 3],
           projects: [4, 5, 6],
           stats: { count: 10 },
@@ -296,7 +296,7 @@ describe('Honertia Middleware', () => {
 
       const res = await app.request('/', {
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.PARTIAL_COMPONENT]: 'Dashboard',
           [HEADERS.PARTIAL_EXCEPT]: 'users',
         },
@@ -312,9 +312,9 @@ describe('Honertia Middleware', () => {
     test('always includes errors in partial reload', async () => {
       const app = createApp()
       app.get('/', (c) => {
-        c.var.honertia.setErrors({ name: 'Required' })
+        c.var.web.setErrors({ name: 'Required' })
 
-        return c.var.honertia.render('Form', {
+        return c.var.web.render('Form', {
           users: [1],
           data: { field: 'value' },
         })
@@ -322,7 +322,7 @@ describe('Honertia Middleware', () => {
 
       const res = await app.request('/', {
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.PARTIAL_COMPONENT]: 'Form',
           [HEADERS.PARTIAL_DATA]: 'users',
         },
@@ -338,7 +338,7 @@ describe('Honertia Middleware', () => {
     test('ignores partial headers for different component', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Dashboard', {
+        c.var.web.render('Dashboard', {
           users: [1, 2, 3],
           projects: [4, 5, 6],
         })
@@ -346,7 +346,7 @@ describe('Honertia Middleware', () => {
 
       const res = await app.request('/', {
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.PARTIAL_COMPONENT]: 'DifferentComponent',
           [HEADERS.PARTIAL_DATA]: 'users',
         },
@@ -364,23 +364,23 @@ describe('Honertia Middleware', () => {
       let expensiveEvaluated = 0
 
       app.get('/', (c) => {
-        c.var.honertia.share('cheap', () => {
+        c.var.web.share('cheap', () => {
           cheapEvaluated++
 
           return 'cheap-value'
         })
-        c.var.honertia.share('expensive', () => {
+        c.var.web.share('expensive', () => {
           expensiveEvaluated++
 
           return 'expensive-value'
         })
 
-        return c.var.honertia.render('Dashboard')
+        return c.var.web.render('Dashboard')
       })
 
       const res = await app.request('/', {
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.PARTIAL_COMPONENT]: 'Dashboard',
           [HEADERS.PARTIAL_DATA]: 'cheap',
         },
@@ -400,17 +400,17 @@ describe('Honertia Middleware', () => {
       let sharedEvaluated = 0
 
       app.get('/', (c) => {
-        c.var.honertia.share('user', () => {
+        c.var.web.share('user', () => {
           sharedEvaluated++
 
           return { id: 'shared' }
         })
 
-        return c.var.honertia.render('Dashboard', { user: { id: 'passed' } })
+        return c.var.web.render('Dashboard', { user: { id: 'passed' } })
       })
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -421,13 +421,13 @@ describe('Honertia Middleware', () => {
   })
 
   describe('Redirect Handling', () => {
-    test('converts 302 to 303 for POST requests with Honertia', async () => {
+    test('converts 302 to 303 for POST requests with X-Inertia', async () => {
       const app = createApp()
       app.post('/form', (c) => c.redirect('/success', 302))
 
       const res = await app.request('/form', {
         method: 'POST',
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // The middleware MUST convert 302 to 303 for mutating requests
@@ -436,38 +436,38 @@ describe('Honertia Middleware', () => {
       expect(res.headers.get('Location')).toBe('/success')
     })
 
-    test('converts 302 to 303 for PUT requests with Honertia', async () => {
+    test('converts 302 to 303 for PUT requests with X-Inertia', async () => {
       const app = createApp()
       app.put('/item', (c) => c.redirect('/success', 302))
 
       const res = await app.request('/item', {
         method: 'PUT',
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       expect(res.status).toBe(303)
     })
 
-    test('converts 302 to 303 for DELETE requests with Honertia', async () => {
+    test('converts 302 to 303 for DELETE requests with X-Inertia', async () => {
       const app = createApp()
       app.delete('/item', (c) => c.redirect('/list', 302))
 
       const res = await app.request('/item', {
         method: 'DELETE',
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       expect(res.status).toBe(303)
       expect(res.headers.get('Location')).toBe('/list')
     })
 
-    test('converts 302 to 303 for PATCH requests with Honertia', async () => {
+    test('converts 302 to 303 for PATCH requests with X-Inertia', async () => {
       const app = createApp()
       app.patch('/item', (c) => c.redirect('/success', 302))
 
       const res = await app.request('/item', {
         method: 'PATCH',
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       expect(res.status).toBe(303)
@@ -478,7 +478,7 @@ describe('Honertia Middleware', () => {
       app.get('/old', (c) => c.redirect('/new', 302))
 
       const res = await app.request('/old', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       expect(res.status).toBe(302)
@@ -498,11 +498,11 @@ describe('Honertia Middleware', () => {
     test('includes clearHistory in page object', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Home', {}, { clearHistory: true })
+        c.var.web.render('Home', {}, { clearHistory: true })
       )
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -513,11 +513,11 @@ describe('Honertia Middleware', () => {
     test('includes encryptHistory in page object', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Home', {}, { encryptHistory: true })
+        c.var.web.render('Home', {}, { encryptHistory: true })
       )
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -529,22 +529,22 @@ describe('Honertia Middleware', () => {
   describe('Vary Header', () => {
     test('includes Vary header for HTML responses', async () => {
       const app = createApp()
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await app.request('/')
 
-      expect(res.headers.get('Vary')).toBe(HEADERS.HONERTIA)
+      expect(res.headers.get('Vary')).toBe(HEADERS.INERTIA)
     })
 
     test('includes Vary header for JSON responses', async () => {
       const app = createApp()
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
-      expect(res.headers.get('Vary')).toBe(HEADERS.HONERTIA)
+      expect(res.headers.get('Vary')).toBe(HEADERS.INERTIA)
     })
   })
 
@@ -555,16 +555,16 @@ describe('Honertia Middleware', () => {
 
       app.use(
         '*',
-        honertia({
+        web({
           version: () => `v${++versionCounter}`,
           render: (page) => JSON.stringify(page),
         })
       )
 
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res1 = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -572,7 +572,7 @@ describe('Honertia Middleware', () => {
       expect(json1.version).toBe('v1')
 
       const res2 = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -585,11 +585,11 @@ describe('Honertia Middleware', () => {
     test('handles emoji in props correctly', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Home', { emoji: edgeCaseStrings.emoji })
+        c.var.web.render('Home', { emoji: edgeCaseStrings.emoji })
       )
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -600,11 +600,11 @@ describe('Honertia Middleware', () => {
     test('handles multi-byte emoji (family) in props', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Home', { emoji: edgeCaseStrings.multiByteEmoji })
+        c.var.web.render('Home', { emoji: edgeCaseStrings.multiByteEmoji })
       )
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -615,11 +615,11 @@ describe('Honertia Middleware', () => {
     test('handles unicode/Japanese characters in props', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Home', { text: edgeCaseStrings.unicode })
+        c.var.web.render('Home', { text: edgeCaseStrings.unicode })
       )
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -629,10 +629,10 @@ describe('Honertia Middleware', () => {
 
     test('handles special characters in component names', async () => {
       const app = createApp()
-      app.get('/', (c) => c.var.honertia.render('Users/Profile/Edit'))
+      app.get('/', (c) => c.var.web.render('Users/Profile/Edit'))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -657,10 +657,10 @@ describe('Honertia Middleware', () => {
         },
       }
 
-      app.get('/', (c) => c.var.honertia.render('Home', deepProps))
+      app.get('/', (c) => c.var.web.render('Home', deepProps))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -671,13 +671,13 @@ describe('Honertia Middleware', () => {
     test('handles arrays with mixed types', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Home', {
+        c.var.web.render('Home', {
           mixed: [1, 'string', { nested: true }, [1, 2, 3], null],
         })
       )
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -694,14 +694,14 @@ describe('Honertia Middleware', () => {
     test('handles null and undefined values', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Home', {
+        c.var.web.render('Home', {
           nullValue: null,
           undefinedValue: undefined,
         })
       )
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -722,10 +722,10 @@ describe('Honertia Middleware', () => {
         meta: { total: 1000, page: 1, perPage: 1000 },
       }
 
-      app.get('/', (c) => c.var.honertia.render('Users/Index', largeData))
+      app.get('/', (c) => c.var.web.render('Users/Index', largeData))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -739,11 +739,11 @@ describe('Honertia Middleware', () => {
       // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
       const date = new Date('2025-01-01T00:00:00Z')
       app.get('/', (c) =>
-        c.var.honertia.render('Home', { createdAt: date.toISOString() })
+        c.var.web.render('Home', { createdAt: date.toISOString() })
       )
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -756,17 +756,17 @@ describe('Honertia Middleware', () => {
     test('handles error bag pattern (nested errors)', async () => {
       const app = createApp()
       app.get('/', (c) => {
-        c.var.honertia.setErrors({
+        c.var.web.setErrors({
           'user.email': 'Invalid email',
           'user.password': 'Too short',
           'settings.notifications': 'Required',
         })
 
-        return c.var.honertia.render('Settings')
+        return c.var.web.render('Settings')
       })
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -779,17 +779,17 @@ describe('Honertia Middleware', () => {
     test('handles array-indexed errors', async () => {
       const app = createApp()
       app.get('/', (c) => {
-        c.var.honertia.setErrors({
+        c.var.web.setErrors({
           'items.0.name': 'Required',
           'items.1.price': 'Must be positive',
           'items.2.quantity': 'Must be integer',
         })
 
-        return c.var.honertia.render('Form')
+        return c.var.web.render('Form')
       })
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -804,14 +804,14 @@ describe('Honertia Middleware', () => {
 
       app.get('/', (c) => {
         if (hasErrors) {
-          c.var.honertia.setErrors({ email: 'Invalid' })
+          c.var.web.setErrors({ email: 'Invalid' })
         }
 
-        return c.var.honertia.render('Form')
+        return c.var.web.render('Form')
       })
 
       const res1 = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -821,7 +821,7 @@ describe('Honertia Middleware', () => {
       hasErrors = false
 
       const res2 = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -835,16 +835,16 @@ describe('Honertia Middleware', () => {
       const app = createApp()
 
       app.use('*', async (c, next) => {
-        c.var.honertia.share('user', lazyProp({ id: 1, name: 'John' }))
-        c.var.honertia.share('settings', lazyProp({ theme: 'dark' }))
-        c.var.honertia.share('notifications', lazyProp([{ id: 1 }]))
+        c.var.web.share('user', lazyProp({ id: 1, name: 'John' }))
+        c.var.web.share('settings', lazyProp({ theme: 'dark' }))
+        c.var.web.share('notifications', lazyProp([{ id: 1 }]))
         await next()
       })
 
-      app.get('/', (c) => c.var.honertia.render('Dashboard'))
+      app.get('/', (c) => c.var.web.render('Dashboard'))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -858,18 +858,18 @@ describe('Honertia Middleware', () => {
       const app = createApp()
 
       app.use('*', async (c, next) => {
-        c.var.honertia.share('failing', async () => {
+        c.var.web.share('failing', async () => {
           throw new Error('Prop resolution failed')
         })
         await next()
       })
 
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       // The error should propagate
       try {
         await app.request('/', {
-          headers: { [HEADERS.HONERTIA]: 'true' },
+          headers: { [HEADERS.INERTIA]: 'true' },
         })
       } catch (e) {
         expect(e).toBeDefined()
@@ -880,16 +880,16 @@ describe('Honertia Middleware', () => {
       const app = createApp()
 
       app.use('*', async (c, next) => {
-        c.var.honertia.share('sync', 'immediate')
-        c.var.honertia.share('async', async () => 'delayed')
-        c.var.honertia.share('lazy', () => 'lazy-sync')
+        c.var.web.share('sync', 'immediate')
+        c.var.web.share('async', async () => 'delayed')
+        c.var.web.share('lazy', () => 'lazy-sync')
         await next()
       })
 
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await app.request('/', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -904,7 +904,7 @@ describe('Honertia Middleware', () => {
     test('handles partial reload with dot notation keys', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Dashboard', {
+        c.var.web.render('Dashboard', {
           'user.profile': { name: 'John' },
           'user.settings': { theme: 'dark' },
           stats: { count: 10 },
@@ -913,7 +913,7 @@ describe('Honertia Middleware', () => {
 
       const res = await app.request('/', {
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.PARTIAL_COMPONENT]: 'Dashboard',
           [HEADERS.PARTIAL_DATA]: 'user.profile,stats',
         },
@@ -929,7 +929,7 @@ describe('Honertia Middleware', () => {
     test('handles empty partial data header', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Dashboard', {
+        c.var.web.render('Dashboard', {
           users: mockUsers,
           projects: mockProjects,
         })
@@ -937,7 +937,7 @@ describe('Honertia Middleware', () => {
 
       const res = await app.request('/', {
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.PARTIAL_COMPONENT]: 'Dashboard',
           [HEADERS.PARTIAL_DATA]: '',
         },
@@ -952,7 +952,7 @@ describe('Honertia Middleware', () => {
     test('handles partial reload with both only and except', async () => {
       const app = createApp()
       app.get('/', (c) =>
-        c.var.honertia.render('Dashboard', {
+        c.var.web.render('Dashboard', {
           users: mockUsers,
           projects: mockProjects,
           stats: { count: 10 },
@@ -962,7 +962,7 @@ describe('Honertia Middleware', () => {
       // When both are provided, only should be processed first, then except
       const res = await app.request('/', {
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.PARTIAL_COMPONENT]: 'Dashboard',
           [HEADERS.PARTIAL_DATA]: 'users,projects,stats',
           [HEADERS.PARTIAL_EXCEPT]: 'projects',
@@ -979,9 +979,9 @@ describe('Honertia Middleware', () => {
     test('partial reload preserves errors regardless of filter', async () => {
       const app = createApp()
       app.get('/', (c) => {
-        c.var.honertia.setErrors(mockErrors)
+        c.var.web.setErrors(mockErrors)
 
-        return c.var.honertia.render('Form', {
+        return c.var.web.render('Form', {
           users: mockUsers,
           settings: { theme: 'dark' },
         })
@@ -989,7 +989,7 @@ describe('Honertia Middleware', () => {
 
       const res = await app.request('/', {
         headers: {
-          [HEADERS.HONERTIA]: 'true',
+          [HEADERS.INERTIA]: 'true',
           [HEADERS.PARTIAL_COMPONENT]: 'Form',
           [HEADERS.PARTIAL_EXCEPT]: 'errors',
         },
@@ -1009,14 +1009,14 @@ describe('Honertia Middleware', () => {
 
       for (const method of methods) {
         app.on(method, '/test', (c) =>
-          c.var.honertia.render('Test', { method })
+          c.var.web.render('Test', { method })
         )
       }
 
       for (const method of methods) {
         const res = await app.request('/test', {
           method,
-          headers: { [HEADERS.HONERTIA]: 'true' },
+          headers: { [HEADERS.INERTIA]: 'true' },
         })
 
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -1030,10 +1030,10 @@ describe('Honertia Middleware', () => {
       app.post('/form', (c) => c.redirect('/success', 302))
       app.get('/redirect', (c) => c.redirect('/success', 302))
 
-      // POST with Honertia MUST convert 302 to 303
+      // POST with X-Inertia MUST convert 302 to 303
       const postRes = await app.request('/form', {
         method: 'POST',
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       expect(postRes.status).toBe(303)
@@ -1041,7 +1041,7 @@ describe('Honertia Middleware', () => {
 
       // GET with Inertia should stay 302
       const getRes = await app.request('/redirect', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       expect(getRes.status).toBe(302)
@@ -1058,10 +1058,10 @@ describe('Honertia Middleware', () => {
   describe('Edge Cases: URL Handling', () => {
     test('handles URL with query parameters', async () => {
       const app = createApp()
-      app.get('/search', (c) => c.var.honertia.render('Search'))
+      app.get('/search', (c) => c.var.web.render('Search'))
 
       const res = await app.request('/search?q=test&page=1&sort=name', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -1071,11 +1071,11 @@ describe('Honertia Middleware', () => {
 
     test('handles URL with hash fragment', async () => {
       const app = createApp()
-      app.get('/page', (c) => c.var.honertia.render('Page'))
+      app.get('/page', (c) => c.var.web.render('Page'))
 
       // Note: hash fragments are typically not sent to server
       const res = await app.request('/page', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -1085,10 +1085,10 @@ describe('Honertia Middleware', () => {
 
     test('handles URL with encoded characters', async () => {
       const app = createApp()
-      app.get('/users/:name', (c) => c.var.honertia.render('User'))
+      app.get('/users/:name', (c) => c.var.web.render('User'))
 
       const res = await app.request('/users/John%20Doe', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -1099,7 +1099,7 @@ describe('Honertia Middleware', () => {
     test('handles deeply nested routes', async () => {
       const app = createApp()
       app.get('/org/:org/team/:team/project/:project/task/:task', (c) =>
-        c.var.honertia.render('Task', {
+        c.var.web.render('Task', {
           org: c.req.param('org'),
           team: c.req.param('team'),
           project: c.req.param('project'),
@@ -1108,7 +1108,7 @@ describe('Honertia Middleware', () => {
       )
 
       const res = await app.request('/org/acme/team/dev/project/api/task/123', {
-        headers: { [HEADERS.HONERTIA]: 'true' },
+        headers: { [HEADERS.INERTIA]: 'true' },
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -1122,7 +1122,7 @@ describe('Honertia Middleware', () => {
   describe('Test Utilities Integration', () => {
     test('createTestApp works correctly', async () => {
       const app = createTestApp({ version: '2.0.0' })
-      app.get('/', (c) => c.var.honertia.render('Home'))
+      app.get('/', (c) => c.var.web.render('Home'))
 
       const res = await makeInertiaRequest(app, '/')
       const page = await parseInertiaResponse(res)
@@ -1150,7 +1150,7 @@ describe('Honertia Middleware', () => {
 
 describe('HEADERS constant', () => {
   test('exports all required header names', () => {
-    expect(HEADERS.HONERTIA).toBe('X-Inertia')
+    expect(HEADERS.INERTIA).toBe('X-Inertia')
     expect(HEADERS.VERSION).toBe('X-Inertia-Version')
     expect(HEADERS.PARTIAL_COMPONENT).toBe('X-Inertia-Partial-Component')
     expect(HEADERS.PARTIAL_DATA).toBe('X-Inertia-Partial-Data')
@@ -1166,14 +1166,14 @@ describe('HEADERS constant', () => {
  * cause Hono to throw "Context is not finalized" errors.
  */
 describe('Context Finalization (regression)', () => {
-  test('POST redirect with Honertia headers does not throw context error', async () => {
+  test('POST redirect with X-Inertia headers does not throw context error', async () => {
     const app = createApp()
     app.post('/login', (c) => c.redirect('/dashboard', 302))
 
     // This specific scenario previously caused "Context is not finalized"
     const res = await app.request('/login', {
       method: 'POST',
-      headers: { [HEADERS.HONERTIA]: 'true' },
+      headers: { [HEADERS.INERTIA]: 'true' },
     })
 
     // Must get a valid response, not an error
@@ -1183,12 +1183,12 @@ describe('Context Finalization (regression)', () => {
 
   test('version mismatch returns 409 without context error', async () => {
     const app = createApp()
-    app.get('/page', (c) => c.var.honertia.render('Page'))
+    app.get('/page', (c) => c.var.web.render('Page'))
 
     // Version mismatch early return
     const res = await app.request('/page', {
       headers: {
-        [HEADERS.HONERTIA]: 'true',
+        [HEADERS.INERTIA]: 'true',
         [HEADERS.VERSION]: 'old-version',
       },
     })
@@ -1208,10 +1208,10 @@ describe('Context Finalization (regression)', () => {
       executed.push('middleware-1-after')
     })
 
-    // Honertia middleware
+    // Page middleware
     app.use(
       '*',
-      honertia({
+      web({
         version: '1.0.0',
         render: async (page) => `<html>${JSON.stringify(page)}</html>`,
       })
@@ -1232,7 +1232,7 @@ describe('Context Finalization (regression)', () => {
 
     const res = await app.request('/form', {
       method: 'POST',
-      headers: { [HEADERS.HONERTIA]: 'true' },
+      headers: { [HEADERS.INERTIA]: 'true' },
     })
 
     // Response should be valid
@@ -1253,7 +1253,7 @@ describe('Context Finalization (regression)', () => {
 
     app.use(
       '*',
-      honertia({
+      web({
         version: '1.0.0',
         render: async (page) => `<html>${JSON.stringify(page)}</html>`,
       })
@@ -1266,7 +1266,7 @@ describe('Context Finalization (regression)', () => {
 
     const res = await app.request('/weird', {
       method: 'POST',
-      headers: { [HEADERS.HONERTIA]: 'true' },
+      headers: { [HEADERS.INERTIA]: 'true' },
     })
 
     // Should still get a response (302 stays 302 since no Location to convert)
@@ -1274,19 +1274,19 @@ describe('Context Finalization (regression)', () => {
   })
 
   test('middleware returns response for proper propagation in forwarding scenarios', async () => {
-    // This tests that the honertia middleware properly returns c.res
+    // This tests that the page middleware properly returns c.res
     // which is critical for request forwarding/sandbox scenarios
     const innerApp = new Hono()
 
     innerApp.use(
       '*',
-      honertia({
+      web({
         version: '1.0.0',
         render: async (page) => `<html>${JSON.stringify(page)}</html>`,
       })
     )
 
-    innerApp.get('/page', (c) => c.var.honertia.render('Page', { data: 'test' }))
+    innerApp.get('/page', (c) => c.var.web.render('Page', { data: 'test' }))
     innerApp.post('/submit', (c) => c.redirect('/success', 302))
 
     // Outer app that forwards requests (simulating sandbox forwarding)
@@ -1300,7 +1300,7 @@ describe('Context Finalization (regression)', () => {
 
     // Test regular render
     const getRes = await outerApp.request('/page', {
-      headers: { [HEADERS.HONERTIA]: 'true' },
+      headers: { [HEADERS.INERTIA]: 'true' },
     })
 
     expect(getRes.status).toBe(200)
@@ -1310,7 +1310,7 @@ describe('Context Finalization (regression)', () => {
     // Test redirect conversion
     const postRes = await outerApp.request('/submit', {
       method: 'POST',
-      headers: { [HEADERS.HONERTIA]: 'true' },
+      headers: { [HEADERS.INERTIA]: 'true' },
     })
 
     expect(postRes.status).toBe(303)
@@ -1322,7 +1322,7 @@ describe('Context Finalization (regression)', () => {
 
     app.use(
       '*',
-      honertia({
+      web({
         version: '1.0.0',
         render: async (page) => `<html>${JSON.stringify(page)}</html>`,
       })
@@ -1331,7 +1331,7 @@ describe('Context Finalization (regression)', () => {
     // No route defined for /missing
 
     const res = await app.request('/missing', {
-      headers: { [HEADERS.HONERTIA]: 'true' },
+      headers: { [HEADERS.INERTIA]: 'true' },
     })
 
     // Should get Hono's 404 response

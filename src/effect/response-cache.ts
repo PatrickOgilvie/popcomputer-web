@@ -1,7 +1,7 @@
 /**
  * Workers Cache Integration
  *
- * Honertia's response-cache policy for Cloudflare Workers Cache. The `cache`
+ * The response-cache policy for Cloudflare Workers Cache. The `cache`
  * route option declares intent; this module owns every correctness rule:
  * only successful GET/HEAD responses qualify, HTML and JSON page objects are
  * distinct variants (Vary: X-Inertia), and partial reloads are never stored.
@@ -316,11 +316,11 @@ export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision 
     ? {
         'Cache-Control': BROWSER_PAGE_CACHE_CONTROL,
         'Cloudflare-CDN-Cache-Control': directives.join(', '),
-        Vary: HEADERS.HONERTIA,
+        Vary: HEADERS.INERTIA,
       }
     : {
         'Cache-Control': directives.join(', '),
-        Vary: HEADERS.HONERTIA,
+        Vary: HEADERS.INERTIA,
       }
 
   const preparedTags = prepareCacheTags([
@@ -362,22 +362,22 @@ function hasCacheControlDirective(
 }
 
 /**
- * Cookie-name prefixes that carry Honertia-managed session state.
+ * Cookie-name prefixes that carry framework-managed session state.
  * better-auth's cookies all share one prefix (session_token, session_data,
  * account_data, dont_remember), with a `__Secure-` variant over HTTPS.
  */
 const SESSION_COOKIE_PREFIXES = ['better-auth.', '__Secure-better-auth.']
 
 /**
- * Whether a Cookie header carries a session cookie Honertia knows about:
+ * Whether a Cookie header carries a session cookie the framework knows about:
  * better-auth's cookies by prefix, plus any custom names registered on the
  * request context (e.g. via loadUser's `sessionCookie` config), including
  * their `__Secure-` variants.
  *
  * Unknown cookies (analytics, consent, bot-management) do NOT count —
- * they don't personalize Honertia responses, and treating every cookie as
+ * they don't personalize responses, and treating every cookie as
  * private would disable caching for essentially all browser traffic.
- * Apps with custom cookie auth outside Honertia must register their cookie
+ * Apps with custom cookie auth outside the framework must register their cookie
  * name or avoid the `cache` option on authenticated routes.
  */
 export function hasSessionCookie(
@@ -407,7 +407,7 @@ export function isPageResponse(headers: Headers): boolean {
   const contentType = headers.get('Content-Type')?.toLowerCase() ?? ''
 
   return (
-    headers.get(HEADERS.HONERTIA) === 'true' ||
+    headers.get(HEADERS.INERTIA) === 'true' ||
     contentType.startsWith('text/html')
   )
 }

@@ -1,8 +1,8 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
- * setupHonertia Tests
+ * setupWeb Tests
  *
- * Tests for the unified setupHonertia configuration including:
+ * Tests for the unified setupWeb configuration including:
  * - Database and auth factory setup
  * - Schema configuration for route model binding
  * - Helpful error messages when configuration is missing
@@ -13,14 +13,14 @@ import { Hono } from 'hono'
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- These teardown tests must yield the actual Hono/SDK Promise event loop; advancing an Effect TestClock cannot flush that native work.
 import { scheduler } from 'node:timers/promises'
 import { Option, Deferred, Effect, Schema as S } from 'effect'
-import { setupWeb, setupHonertia, registerErrorHandlers } from '../src/setup.js'
+import { setupWeb, setupWeb, registerErrorHandlers } from '../src/setup.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import {
   DatabaseService,
   AuthService,
   AuthUserService,
   PageService,
-  HonertiaService,
+  PageService,
 } from '../src/effect/services.js'
 import { bound, routeBinding } from '../src/effect/binding.js'
 import { NotFoundError } from '../src/effect/errors.js'
@@ -74,18 +74,16 @@ describe('setupWeb', () => {
 })
 
 // =============================================================================
-// Basic setupHonertia Configuration Tests
+// Basic setupWeb Configuration Tests
 // =============================================================================
 
-describe('setupHonertia basic configuration', () => {
+describe('setupWeb basic configuration', () => {
   test('configures middleware, errors, and app-owned routes in one call', async () => {
     const app = new Hono<TestEnv>()
 
-    const configured = setupHonertia(app, {
-      honertia: {
-        version: '1.0.0',
-        render: (page) => JSON.stringify(page),
-      },
+    const configured = setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
       errors: { component: 'Problem' },
     })
 
@@ -122,16 +120,11 @@ describe('setupHonertia basic configuration', () => {
   test('database factory result is provided as DatabaseService', async () => {
     const app = new Hono<TestEnv>()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          database: () => ({ name: 'test-db', url: 'postgres://test' }),
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => ({ name: 'test-db', url: 'postgres://test' }),
+    })
 
     // Route that uses DatabaseService
     effectRoutes(app).get(
@@ -153,23 +146,18 @@ describe('setupHonertia basic configuration', () => {
   test('auth factory receives the database and its result is provided as AuthService', async () => {
     const app = new Hono<TestEnv>()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          database: () => ({ name: 'auth-db' }),
-        },
-        auth: {
-          client: (_c, { db }) => ({
-            // Auth can access db because database runs first
-            dbName: db.name,
-            secret: 'test-secret',
-          }),
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => ({ name: 'auth-db' }),
+      auth: {
+        client: (_c, { db }) => ({
+          // Auth can access db because database runs first
+          dbName: db.name,
+          secret: 'test-secret',
+        }),
+      },
+    })
 
     // Route that uses AuthService
     effectRoutes(app).get(
@@ -195,15 +183,10 @@ describe('setupHonertia basic configuration', () => {
   test('works without database or auth configured', async () => {
     const app = new Hono<TestEnv>()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+    })
 
     // Simple route that doesn't need db/auth
     effectRoutes(app).get(
@@ -220,25 +203,20 @@ describe('setupHonertia basic configuration', () => {
     const app = new Hono<TestEnv>()
     let authFactoryArgumentCount: number | undefined
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-        },
-        auth: {
-          client: function (context) {
-            authFactoryArgumentCount = arguments.length
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      auth: {
+        client: function (context) {
+          authFactoryArgumentCount = arguments.length
 
-            return {
-              mode: 'stateless',
-              secret: context.env.AUTH_SECRET,
-            }
-          },
+          return {
+            mode: 'stateless',
+            secret: context.env.AUTH_SECRET,
+          }
         },
-      })
-    )
+      },
+    })
 
     effectRoutes(app).get(
       '/stateless-auth-test',
@@ -272,22 +250,17 @@ describe('setupHonertia basic configuration', () => {
 
     const handlerComplete = Deferred.makeUnsafe<void>()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-        },
-        auth: {
-          client: (_context, { backgroundTasks }) => {
-            backgroundTasks.handler(backgroundTask)
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      auth: {
+        client: (_context, { backgroundTasks }) => {
+          backgroundTasks.handler(backgroundTask)
 
-            return { mode: 'stateless' }
-          },
+          return { mode: 'stateless' }
         },
-      })
-    )
+      },
+    })
     app.get('/background-auth', (c) => {
       Effect.runSync(Deferred.succeed(handlerComplete, undefined))
 
@@ -363,7 +336,7 @@ describe('setupHonertia basic configuration', () => {
 // Schema Configuration Tests
 // =============================================================================
 
-describe('setupHonertia schema configuration', () => {
+describe('setupWeb schema configuration', () => {
   // Mock schema for testing
   const mockSchema = {
     projects: {
@@ -390,22 +363,17 @@ describe('setupHonertia schema configuration', () => {
       }),
     }
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          database: () => mockDb,
-          schema: mockSchema,
-          bindings: {
-            project: S.Struct({ id: S.String, name: S.String }),
-          },
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => mockDb,
+      schema: mockSchema,
+      bindings: {
+        project: S.Struct({ id: S.String, name: S.String }),
+      },
+    })
 
-    // Route with model binding - schema comes from setupHonertia
+    // Route with model binding - schema comes from setupWeb
     effectRoutes(app).get(
       '/projects/{project}',
       Effect.gen(function* () {
@@ -488,24 +456,19 @@ describe('setupHonertia schema configuration', () => {
       }),
     }
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          database: () => mockDb,
-          schema: mockSchema,
-          bindings: {
-            user: S.Struct({ id: S.String }),
-            post: routeBinding(
-              S.Struct({ id: S.String, userId: S.String }),
-              { scope: { user: { foreignKey: 'userId' } } }
-            ),
-          },
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => mockDb,
+      schema: mockSchema,
+      bindings: {
+        user: S.Struct({ id: S.String }),
+        post: routeBinding(
+          S.Struct({ id: S.String, userId: S.String }),
+          { scope: { user: { foreignKey: 'userId' } } }
+        ),
+      },
+    })
 
     effectRoutes(app).get(
       '/users/{user}/posts/{post}',
@@ -524,67 +487,62 @@ describe('setupHonertia schema configuration', () => {
   })
 })
 
-describe('setupHonertia auth session loading', () => {
+describe('setupWeb auth session loading', () => {
   test('loaded session user reaches AuthUserService and shared auth props', async () => {
     const app = new Hono<TestEnv>()
 
     const getSessionCalls: string[] = []
     const sessionCookie = 'custom_auth_cookie'
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-        },
-        auth: {
-          client: () => ({
-            api: {
-              getSession: async ({ headers }: { headers: Headers }) => {
-                getSessionCalls.push(headers.get('cookie') ?? '')
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      auth: {
+        client: () => ({
+          api: {
+            getSession: async ({ headers }: { headers: Headers }) => {
+              getSessionCalls.push(headers.get('cookie') ?? '')
 
-                return {
-                  user: {
-                    id: 'user-42',
-                    email: 'user42@example.com',
-                    name: 'User 42',
-                    emailVerified: true,
-                    image: null,
-                    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-                    createdAt: new Date('2026-01-01T00:00:00Z'),
-                    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-                    updatedAt: new Date('2026-01-01T00:00:00Z'),
-                  },
-                  session: {
-                    id: 'session-42',
-                    userId: 'user-42',
-                    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-                    expiresAt: new Date('2027-01-01T00:00:00Z'),
-                    token: 'redacted-test-token',
-                    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-                    createdAt: new Date('2026-01-01T00:00:00Z'),
-                    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-                    updatedAt: new Date('2026-01-01T00:00:00Z'),
-                  },
-                }
-              },
+              return {
+                user: {
+                  id: 'user-42',
+                  email: 'user42@example.com',
+                  name: 'User 42',
+                  emailVerified: true,
+                  image: null,
+                  // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+                  createdAt: new Date('2026-01-01T00:00:00Z'),
+                  // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+                  updatedAt: new Date('2026-01-01T00:00:00Z'),
+                },
+                session: {
+                  id: 'session-42',
+                  userId: 'user-42',
+                  // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+                  expiresAt: new Date('2027-01-01T00:00:00Z'),
+                  token: 'redacted-test-token',
+                  // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+                  createdAt: new Date('2026-01-01T00:00:00Z'),
+                  // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+                  updatedAt: new Date('2026-01-01T00:00:00Z'),
+                },
+              }
             },
-          }),
-          sessionCookie,
-        },
-      })
-    )
+          },
+        }),
+        sessionCookie,
+      },
+    })
 
     effectRoutes(app).get(
       '/me',
       Effect.gen(function* () {
         const authUser = yield* AuthUserService
-        const honertia = yield* HonertiaService
+        const page = yield* PageService
 
         // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         return yield* Effect.tryPromise(() =>
-          honertia.render('Auth/Me', {
+          page.render('Auth/Me', {
             userId: authUser.user.id,
           })
         )
@@ -610,27 +568,22 @@ describe('setupHonertia auth session loading', () => {
 
     let getSessionCalls = 0
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-        },
-        auth: {
-          client: () => ({
-            api: {
-              getSession: async () => {
-                getSessionCalls += 1
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      auth: {
+        client: () => ({
+          api: {
+            getSession: async () => {
+              getSessionCalls += 1
 
-                return null
-              },
+              return null
             },
-          }),
-          sessionCookie: 'custom_auth_cookie',
-        },
-      })
-    )
+          },
+        }),
+        sessionCookie: 'custom_auth_cookie',
+      },
+    })
 
     effectRoutes(app).get(
       '/health',
@@ -645,11 +598,9 @@ describe('setupHonertia auth session loading', () => {
 
   test('distinguishes an unavailable session provider from an anonymous session', async () => {
     const app = new Hono<TestEnv>()
-    setupHonertia(app, {
-      honertia: {
-        version: '1.0.0',
-        render: (page) => JSON.stringify(page),
-      },
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
       auth: {
         client: () => ({
           api: {
@@ -673,11 +624,9 @@ describe('setupHonertia auth session loading', () => {
 
   test('rejects malformed provider sessions at the boundary', async () => {
     const app = new Hono<TestEnv>()
-    setupHonertia(app, {
-      honertia: {
-        version: '1.0.0',
-        render: (page) => JSON.stringify(page),
-      },
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
       auth: {
         client: () => ({
           api: {
@@ -702,11 +651,9 @@ describe('setupHonertia auth session loading', () => {
 
   test('treats a null session as anonymous', async () => {
     const app = new Hono<TestEnv>()
-    setupHonertia(app, {
-      honertia: {
-        version: '1.0.0',
-        render: (page) => JSON.stringify(page),
-      },
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
       auth: {
         client: () => ({ api: { getSession: async () => null } }),
       },
@@ -735,40 +682,30 @@ describe('setupHonertia auth session loading', () => {
 // Configuration Error Tests
 // =============================================================================
 
-describe('setupHonertia configuration errors', () => {
-  test('rejects legacy auth ownership at the setup boundary', () => {
+describe('setupWeb configuration errors', () => {
+  test('rejects an auth factory passed as auth instead of auth.client', () => {
     const app = new Hono<TestEnv>()
 
-    const legacyConfig = {
-      honertia: {
-        version: '1.0.0',
-        render: <Page>(page: Page) => JSON.stringify(page),
-        auth: () => ({ mode: 'legacy' }),
-      },
+    const config = {
+      version: '1.0.0',
+      render: <Page>(page: Page) => JSON.stringify(page),
+      auth: () => ({ mode: 'misplaced' }),
     }
 
-    expect(() => setupHonertia(app, legacyConfig)).toThrow(
-      'move honertia.auth to top-level auth.client'
-    )
+    // @ts-expect-error The auth factory belongs at auth.client.
+    expect(() => setupWeb(app, config)).toThrow('pass the auth factory as auth.client')
   })
 
-  test('rejects Effect schema ownership at the setup boundary', () => {
+  test('rejects a schema passed under effect instead of at the top level', () => {
     const app = new Hono<TestEnv>()
 
-    const legacyConfig = {
-      honertia: {
-        version: '1.0.0',
-        render: <Page>(page: Page) => JSON.stringify(page),
-      },
-      effect: {
-        services: undefined,
-        schema: {},
-      },
+    const config = {
+      version: '1.0.0',
+      render: <Page>(page: Page) => JSON.stringify(page),
+      effect: { services: undefined, schema: {} },
     }
 
-    expect(() => setupHonertia(app, legacyConfig)).toThrow(
-      'move effect.schema to honertia.schema'
-    )
+    expect(() => setupWeb(app, config)).toThrow('move effect.schema to top-level schema')
   })
 
   test('helpful error when using route model binding without schema', async () => {
@@ -783,19 +720,14 @@ describe('setupHonertia configuration errors', () => {
     })
 
     // Setup WITHOUT schema
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          database: () => ({ name: 'test-db' }),
-          // No schema configured!
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => ({ name: 'test-db' }),
+      // No schema configured!,
+    })
 
-    // Register error handlers to render errors via Honertia
+    // Register error handlers to render errors through the error boundary
     registerErrorHandlers(app, {
       component: 'Error',
       showDevErrors: true,
@@ -815,7 +747,7 @@ describe('setupHonertia configuration errors', () => {
 
     const res = await app.request('/projects/123')
 
-    // Error should be rendered via Honertia
+    // Error should be rendered through the error boundary
     expect(res.status).toBe(500)
 
     const body = await res.json()
@@ -824,7 +756,7 @@ describe('setupHonertia configuration errors', () => {
     expect(body.props.message).toContain('schema configuration')
   })
 
-  test('error hint references setupHonertia configuration', async () => {
+  test('error hint references setupWeb configuration', async () => {
     const app = new Hono<TestEnv>()
 
     app.use('*', async (c, next) => {
@@ -835,17 +767,12 @@ describe('setupHonertia configuration errors', () => {
       await next()
     })
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          database: () => ({ name: 'test-db' }),
-          // No schema!
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => ({ name: 'test-db' }),
+      // No schema!,
+    })
 
     registerErrorHandlers(app, {
       component: 'Error',
@@ -880,16 +807,11 @@ describe('setupHonertia configuration errors', () => {
       await next()
     })
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          database: () => ({ name: 'test-db' }),
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => ({ name: 'test-db' }),
+    })
 
     registerErrorHandlers(app, {
       component: 'Error',
@@ -919,7 +841,7 @@ describe('setupHonertia configuration errors', () => {
 // Database Not Configured Tests
 // =============================================================================
 
-describe('setupHonertia database configuration errors', () => {
+describe('setupWeb database configuration errors', () => {
   test('route model binding without a configured database is a configuration error', async () => {
     const app = new Hono<TestEnv>()
 
@@ -934,18 +856,13 @@ describe('setupHonertia database configuration errors', () => {
       await next()
     })
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          // database NOT configured
-          schema: mockSchema,
-          bindings: { project: S.Struct({ id: S.String }) },
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      // database NOT configured
+      schema: mockSchema,
+      bindings: { project: S.Struct({ id: S.String }) },
+    })
 
     registerErrorHandlers(app, {
       component: 'Error',
@@ -980,16 +897,11 @@ describe('setupHonertia database configuration errors', () => {
       await next()
     })
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          // database NOT configured!
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      // database NOT configured!,
+    })
 
     registerErrorHandlers(app, {
       component: 'Error',
@@ -1030,16 +942,11 @@ describe('setupHonertia database configuration errors', () => {
       await next()
     })
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          // auth NOT configured!
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      // auth NOT configured!,
+    })
 
     registerErrorHandlers(app, {
       component: 'Error',
@@ -1073,16 +980,11 @@ describe('setupHonertia database configuration errors', () => {
   test('routes that do not yield DatabaseService work without a configured db', async () => {
     const app = new Hono<TestEnv>()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          // database NOT configured, and this route never asks for it
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      // database NOT configured, and this route never asks for it,
+    })
 
     effectRoutes(app).get('/no-db-use', Effect.succeed(new Response('OK')))
 
@@ -1101,16 +1003,11 @@ describe('setupHonertia database configuration errors', () => {
       await next()
     })
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          // database NOT configured
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      // database NOT configured,
+    })
 
     registerErrorHandlers(app, {
       component: 'Error',
@@ -1141,7 +1038,7 @@ describe('setupHonertia database configuration errors', () => {
 // Integration with effectRoutes Tests
 // =============================================================================
 
-describe('setupHonertia integration with effectRoutes', () => {
+describe('setupWeb integration with effectRoutes', () => {
   test('effectRoutes can override schema if needed', async () => {
     const app = new Hono<TestEnv>()
 
@@ -1166,17 +1063,12 @@ describe('setupHonertia integration with effectRoutes', () => {
       }),
     }
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          database: () => mockDb,
-          schema: setupSchema,
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => mockDb,
+      schema: setupSchema,
+    })
 
     // effectRoutes can pass its own schema to override
     effectRoutes(app, {
@@ -1197,7 +1089,7 @@ describe('setupHonertia integration with effectRoutes', () => {
     expect(json.title).toBe('Test Task')
   })
 
-  test('multiple effectRoutes groups share the same schema from setupHonertia', async () => {
+  test('multiple effectRoutes groups share the same schema from setupWeb', async () => {
     const app = new Hono<TestEnv>()
 
     const mockSchema = {
@@ -1229,21 +1121,16 @@ describe('setupHonertia integration with effectRoutes', () => {
       }),
     }
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          database: () => mockDb,
-          schema: mockSchema,
-          bindings: {
-            project: S.Struct({ id: S.String, name: S.String }),
-            user: S.Struct({ id: S.String, email: S.String }),
-          },
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => mockDb,
+      schema: mockSchema,
+      bindings: {
+        project: S.Struct({ id: S.String, name: S.String }),
+        user: S.Struct({ id: S.String, email: S.String }),
+      },
+    })
 
     // First route group
     effectRoutes(app).get(
@@ -1255,7 +1142,7 @@ describe('setupHonertia integration with effectRoutes', () => {
       })
     )
 
-    // Second route group - both use schema from setupHonertia
+    // Second route group - both use schema from setupWeb
     effectRoutes(app).get(
       '/users/{user}',
       Effect.gen(function* () {
@@ -1281,7 +1168,7 @@ describe('setupHonertia integration with effectRoutes', () => {
 // Full Stack Configuration Test
 // =============================================================================
 
-describe('setupHonertia full configuration', () => {
+describe('setupWeb full configuration', () => {
   test('complete setup with database, auth, schema, and custom middleware', async () => {
     const app = new Hono<TestEnv>()
 
@@ -1301,32 +1188,27 @@ describe('setupHonertia full configuration', () => {
 
     let customMiddlewareRan = false
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-          database: () => mockDb,
-          schema: mockSchema,
-          bindings: {
-            project: S.Struct({ id: S.String, ownerId: S.String }),
-          },
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      database: () => mockDb,
+      schema: mockSchema,
+      bindings: {
+        project: S.Struct({ id: S.String, ownerId: S.String }),
+      },
+      auth: {
+        client: (_c, { db }) => ({
+          getUser: () => ({ id: 'user-1', name: 'Test User' }),
+          dbRef: db, // Can access db
+        }),
+      },
+      middleware: [
+        async (c, next) => {
+          customMiddlewareRan = true
+          await next()
         },
-        auth: {
-          client: (_c, { db }) => ({
-            getUser: () => ({ id: 'user-1', name: 'Test User' }),
-            dbRef: db, // Can access db
-          }),
-        },
-        middleware: [
-          async (c, next) => {
-            customMiddlewareRan = true
-            await next()
-          },
-        ],
-      })
-    )
+      ],
+    })
 
     effectRoutes(app).get(
       '/projects/{project}',
@@ -1361,27 +1243,22 @@ describe('setupHonertia full configuration', () => {
 // Middleware Dispatcher Tests (regression for "Context is not finalized")
 // =============================================================================
 
-describe('setupHonertia middleware dispatcher (regression)', () => {
+describe('setupWeb middleware dispatcher (regression)', () => {
   test('dispatcher properly propagates response through middleware chain', async () => {
     const app = new Hono<TestEnv>()
     const executed: string[] = []
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      middleware: [
+        async (c, next) => {
+          executed.push('custom-before')
+          await next()
+          executed.push('custom-after')
         },
-        middleware: [
-          async (c, next) => {
-            executed.push('custom-before')
-            await next()
-            executed.push('custom-after')
-          },
-        ],
-      })
-    )
+      ],
+    })
 
     effectRoutes(app).post(
       '/form',
@@ -1410,23 +1287,18 @@ describe('setupHonertia middleware dispatcher (regression)', () => {
   test('wrapper middleware can transform the downstream response via c.res', async () => {
     const app = new Hono<TestEnv>()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      middleware: [
+        async (c, next) => {
+          await next()
+          // Hono's contract: next() resolves to void; wrappers observe and
+          // transform the downstream response through c.res.
+          c.res.headers.set('X-Transformed', 'yes')
         },
-        middleware: [
-          async (c, next) => {
-            await next()
-            // Hono's contract: next() resolves to void; wrappers observe and
-            // transform the downstream response through c.res.
-            c.res.headers.set('X-Transformed', 'yes')
-          },
-        ],
-      })
-    )
+      ],
+    })
 
     effectRoutes(app).get('/page', Effect.succeed(new Response('content')))
 
@@ -1439,25 +1311,20 @@ describe('setupHonertia middleware dispatcher (regression)', () => {
   test('dispatcher handles early return from custom middleware', async () => {
     const app = new Hono<TestEnv>()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-        },
-        middleware: [
-          async (c, next) => {
-            // Early return - don't call next()
-            if (c.req.header('X-Block') === 'true') {
-              return c.text('Blocked', 403)
-            }
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      middleware: [
+        async (c, next) => {
+          // Early return - don't call next()
+          if (c.req.header('X-Block') === 'true') {
+            return c.text('Blocked', 403)
+          }
 
-            await next()
-          },
-        ],
-      })
-    )
+          await next()
+        },
+      ],
+    })
 
     effectRoutes(app).get(
       '/protected',
@@ -1481,22 +1348,17 @@ describe('setupHonertia middleware dispatcher (regression)', () => {
   test('dispatcher handles response modification after next()', async () => {
     const app = new Hono<TestEnv>()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      middleware: [
+        async (c, next) => {
+          await next()
+          // Modify response after handler
+          c.res.headers.set('X-Custom-Header', 'added')
         },
-        middleware: [
-          async (c, next) => {
-            await next()
-            // Modify response after handler
-            c.res.headers.set('X-Custom-Header', 'added')
-          },
-        ],
-      })
-    )
+      ],
+    })
 
     effectRoutes(app).get(
       '/test',
@@ -1511,15 +1373,10 @@ describe('setupHonertia middleware dispatcher (regression)', () => {
   test('version mismatch returns 409 through dispatcher without error', async () => {
     const app = new Hono<TestEnv>()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '2.0.0',
-          render: (page) => JSON.stringify(page),
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '2.0.0',
+      render: (page) => JSON.stringify(page),
+    })
 
     effectRoutes(app).get(
       '/page',
@@ -1540,15 +1397,10 @@ describe('setupHonertia middleware dispatcher (regression)', () => {
   test('catch-all route that does not call next() still finalizes context', async () => {
     const app = new Hono<TestEnv>()
 
-    app.use(
-      '*',
-      setupHonertia({
-        honertia: {
-          version: '1.0.0',
-          render: (page) => JSON.stringify(page),
-        },
-      })
-    )
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+    })
 
     // Register error handlers
     registerErrorHandlers(app, {

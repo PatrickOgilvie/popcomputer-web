@@ -28,7 +28,7 @@ import {
   isPageResponse,
   isPartialReloadRequest,
 } from './effect/response-cache.js'
-import { openHonertiaContext } from './request-context.js'
+import { openWebContext } from './request-context.js'
 import { HEADERS } from './types.js'
 
 /** Response header reporting what the page cache did: HIT, MISS, DYNAMIC or BYPASS. */
@@ -103,7 +103,7 @@ export interface PageCacheOptions {
  * cached. A no-op outside the page cache.
  */
 export function markPageDynamic<E extends Env>(c: Context<E>): void {
-  const state = openHonertiaContext(c).pageCache
+  const state = openWebContext(c).pageCache
 
   if (state) {
     state.dynamic = true
@@ -116,7 +116,7 @@ export function markPageDynamic<E extends Env>(c: Context<E>): void {
  * cached by default.
  */
 export function allowDefaultPageCache<E extends Env>(c: Context<E>): void {
-  const state = openHonertiaContext(c).pageCache
+  const state = openWebContext(c).pageCache
 
   if (state) {
     state.routeAllowsDefault = true
@@ -170,7 +170,7 @@ export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareH
       return servedFromCache(cached)
     }
 
-    openHonertiaContext(c).pageCache = state
+    openWebContext(c).pageCache = state
     // Downstream code sees bindings that report reads, so a page that queries
     // D1 or KV, or calls a Durable Object or service, renders dynamically.
     // oxlint-disable-next-line no-param-reassign -- The page cache swaps in an observed env for the rest of this request.
@@ -322,7 +322,7 @@ function isCacheableRequest<E extends Env>(c: Context<E>, version: string): bool
   // A stale Inertia client must reach web(), which answers 409 so the client
   // reloads with the current assets.
   if (
-    c.req.header(HEADERS.HONERTIA) !== undefined &&
+    c.req.header(HEADERS.INERTIA) !== undefined &&
     c.req.header(HEADERS.VERSION) !== version
   ) {
     return false
@@ -365,7 +365,7 @@ function deployIdentity<E extends Env>(
  */
 function cacheKey<E extends Env>(c: Context<E>, deploy: string): Request {
   const url = new URL(c.req.url)
-  const variant = c.req.header(HEADERS.HONERTIA) === undefined ? 'html' : 'inertia'
+  const variant = c.req.header(HEADERS.INERTIA) === undefined ? 'html' : 'inertia'
 
   return new Request(
     `${url.origin}/__popweb/page/${encodeURIComponent(deploy)}/${variant}${url.pathname}${url.search}`
@@ -388,7 +388,7 @@ function shouldStore<E extends Env>(c: Context<E>, state: PageCacheState): boole
   return (
     state.routeAllowsDefault &&
     !state.dynamic &&
-    openHonertiaContext(c).authUser === undefined &&
+    openWebContext(c).authUser === undefined &&
     response.status === 200 &&
     isPageResponse(response.headers) &&
     !response.headers.has('Set-Cookie') &&
@@ -396,7 +396,7 @@ function shouldStore<E extends Env>(c: Context<E>, state: PageCacheState): boole
     // A page that varies on more than the Inertia variant depends on request
     // headers the key does not include.
     (vary === null ||
-      vary.split(',').every((name) => name.trim().toLowerCase() === HEADERS.HONERTIA.toLowerCase()))
+      vary.split(',').every((name) => name.trim().toLowerCase() === HEADERS.INERTIA.toLowerCase()))
   )
 }
 
@@ -413,7 +413,7 @@ function storedCopy(response: Response, ttl: number): Response {
 function servedFromCache(cached: Response): Response {
   // The stored copy's Cache-Control is the Cache API's TTL; browsers get the page policy.
   const response = new Response(cached.body, cached)
-  response.headers.set('Vary', HEADERS.HONERTIA)
+  response.headers.set('Vary', HEADERS.INERTIA)
 
   return withBrowserPolicy(response, 'HIT')
 }

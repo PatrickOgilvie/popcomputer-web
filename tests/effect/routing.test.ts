@@ -7,12 +7,12 @@ import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { Effect, Layer, Context, Schema as S } from 'effect'
 import { effectRoutes, EffectRouteBuilder } from '../../src/effect/routing.js'
-import { honertia } from '../../src/middleware.js'
-import { honertiaServices } from '../../src/request-context.js'
+import { web } from '../../src/middleware.js'
+import { webServices } from '../../src/request-context.js'
 import { effectBridge, type EffectBridgeConfig } from '../../src/effect/bridge.js'
 import {
   DatabaseService,
-  HonertiaService,
+  PageService,
   AuthUserService,
   type AuthUser,
 } from '../../src/effect/services.js'
@@ -51,13 +51,13 @@ const createApp = <CustomServices = never>(
 
   app.use(
     '*',
-    honertia({
+    web({
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
     })
   )
 
-  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } })))
+  app.use('*', webServices(() => ({ db: { name: 'test-db' } })))
 
   app.use('*', effectBridge(bridgeConfig))
 
@@ -69,13 +69,13 @@ const createAppWithoutBridge = () => {
 
   app.use(
     '*',
-    honertia({
+    web({
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
     })
   )
 
-  app.use('*', honertiaServices(() => ({ db: { name: 'test-db' } })))
+  app.use('*', webServices(() => ({ db: { name: 'test-db' } })))
 
   return app
 }
@@ -339,10 +339,10 @@ describe('EffectRouteBuilder', () => {
       effectRoutes(app).get(
         '/users/:id',
         Effect.gen(function* () {
-          const honertia = yield* HonertiaService
+          const page = yield* PageService
 
           return yield* Effect.promise(() =>
-            honertia.render('Users/Show', { userId: 'from-route' })
+            page.render('Users/Show', { userId: 'from-route' })
           )
         })
       )
@@ -506,8 +506,8 @@ describe('EffectRouteBuilder', () => {
         SharedPropsReady,
         Effect.gen(function* () {
           const db = yield* DatabaseService
-          const honertia = yield* HonertiaService
-          honertia.share('organizations', [{ id: 'org-1' }])
+          const page = yield* PageService
+          page.share('organizations', [{ id: 'org-1' }])
 
           return { orgCount: S.is(S.String)(db.name) ? 1 : 0 }
         })
@@ -519,10 +519,10 @@ describe('EffectRouteBuilder', () => {
           '/context-aware-provide',
           Effect.gen(function* () {
             const shared = yield* SharedPropsReady
-            const honertia = yield* HonertiaService
+            const page = yield* PageService
 
             return yield* Effect.promise(() =>
-              honertia.render('Dashboard', { orgCount: shared.orgCount })
+              page.render('Dashboard', { orgCount: shared.orgCount })
             )
           })
         )
@@ -632,16 +632,16 @@ describe('EffectRouteBuilder', () => {
       expect(json).toEqual({ name: 'test-db' })
     })
 
-    test('routes can access HonertiaService', async () => {
+    test('routes can access PageService', async () => {
       const app = createApp()
 
       effectRoutes(app).get(
         '/render-test',
         Effect.gen(function* () {
-          const honertia = yield* HonertiaService
+          const page = yield* PageService
 
           return yield* Effect.promise(() =>
-            honertia.render('Test', { data: 123 })
+            page.render('Test', { data: 123 })
           )
         })
       )

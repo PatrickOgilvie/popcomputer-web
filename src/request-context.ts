@@ -30,8 +30,6 @@ export interface WebRequestContext<E extends Env = Env> {
   authUser?: AuthUser
   /** web() middleware — renderer / shared props / errors instance */
   web?: WebInstance
-  /** @deprecated Use {@link web}. */
-  honertia?: WebInstance
   /**
    * effectBridge() — per-request Effect runtime.
    * Typed over `any` services: the concrete union depends on per-app bridge
@@ -59,8 +57,6 @@ export interface WebRequestContext<E extends Env = Env> {
   pageCache?: PageCacheState
 }
 
-/** @deprecated Use {@link WebRequestContext}. */
-export type HonertiaRequestContext<E extends Env = Env> = WebRequestContext<E>
 
 const WEB_REQUEST_CONTEXT: unique symbol = Symbol('@popcomputer/web:request-context')
 
@@ -71,7 +67,7 @@ const WEB_REQUEST_CONTEXT: unique symbol = Symbol('@popcomputer/web:request-cont
  * {@link WebRequestContext}); mutating the returned holder is their contract.
  * App code should read through {@link webContext} instead.
  */
-export function openHonertiaContext<E extends Env>(
+export function openWebContext<E extends Env>(
   c: Context<E>
 ): WebRequestContext<E> {
   // SAFETY: Hono's ContextVariableMap typing does not carry symbol keys
@@ -107,11 +103,9 @@ export function openHonertiaContext<E extends Env>(
 export function webContext<E extends Env>(
   c: Context<E>
 ): Readonly<WebRequestContext<E>> {
-  return openHonertiaContext(c)
+  return openWebContext(c)
 }
 
-/** @deprecated Use {@link webContext}. */
-export const honertiaContext: typeof webContext = webContext
 
 /**
  * Services returned by a {@link webServices} provide function.
@@ -123,8 +117,6 @@ export interface WebProvidedServices {
   auth?: AuthType
 }
 
-/** @deprecated Use {@link WebProvidedServices}. */
-export type HonertiaProvidedServices = WebProvidedServices
 
 /**
  * Wire the database and auth clients for apps composing middleware manually
@@ -142,7 +134,7 @@ export function webServices<E extends Env>(
 ): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return async (c, next) => {
-    const ctx = openHonertiaContext(c)
+    const ctx = openWebContext(c)
     const services = provide(c)
 
     if (services.db !== undefined) {
@@ -157,5 +149,3 @@ export function webServices<E extends Env>(
   }
 }
 
-/** @deprecated Use {@link webServices}. */
-export const honertiaServices: typeof webServices = webServices
