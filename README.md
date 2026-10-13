@@ -284,7 +284,7 @@ export const web = setupWeb(new Hono<Env>(), {
   }),
   database: (c) => createDb(c.env.DATABASE_URL),
   schema,
-  bindings: { project: schema.projects, task: schema.tasks },
+  bindings: { project: schema.projects, task: schema.tasks, organization: schema.organizations },
   pages,
   paths,
   auth: {
@@ -498,6 +498,8 @@ export const paths = {
   project: '/projects/{project}',
   projectName: '/projects/{project}/name',
   projectBySlug: '/p/{project:slug}',
+  organizationMembers: '/orgs/{organization:slug}/members',
+  organizationMember: '/orgs/{organization:slug}/members/{member}',
   task: '/projects/{project}/tasks/{task}',
   apiProjects: '/api/projects',
   apiProject: '/api/projects/{project}',
@@ -1089,6 +1091,17 @@ is read as JSON whatever its media type, as `fetch` sends a string as
 sources provide with different values fails validation, so a body field cannot
 replace a route parameter; pass `request: { order: ['body'] }` to read only the
 body.
+
+Dates and times have strict validators: `isoDate` accepts a calendar day
+written `YYYY-MM-DD` and keeps it as that string, since a day has no time
+zone, and `isoDateTime` accepts a moment with its zone,
+`2030-05-01T09:00:00Z`, as a `Date`. Each refuses a day the calendar lacks,
+and `isoDateTime` a time without a zone, which `coercedDate` would read in the
+server's zone. The form validators coerce, since a form sends every value as
+a string: `coercedNumber` accepts `"12"`. A JSON endpoint's contract, whose
+clients send JSON's own types, declares numbers with Effect's schemas,
+`S.Int.check(S.isGreaterThan(0))`, so a string is refused and the published
+description says what the endpoint accepts.
 
 A multipart form's files reach the schema as `File` values. Check them with
 `upload({ types: ['image/png', 'image/jpeg'], maxBytes: 5_000_000 })`, or
@@ -2034,7 +2047,7 @@ const time = await testClock()
 await worker.scheduled({ cron: '0 3 * * *', scheduledTime: Date.now() }, testEnv(time.layer, testBindings))
 
 const batch = testBatch([{ orderId: 'order-1' }, { orderId: 42 }])
-await worker.queue(batch, testEnv(Layer.empty, testBindings))
+await worker.queue(batch, testEnv(testBindings))
 batch.acked() // [{ orderId: 'order-1' }]
 batch.retried() // [{ orderId: 42 }], which does not decode
 ```
@@ -2437,6 +2450,9 @@ export const testDb: Database = drizzle(client, { schema })
 const env = testEnv(signedIn({ id: 'user-1' }), testBindings, { database: testDb })
 ```
 
+A test whose visitors sign in through the application, as a `testBrowser`
+does, needs no layer: `testEnv(testBindings, { database: testDb })`.
+
 A request built with `testEnv` renders failures with their development
 details unless its bindings set `ENVIRONMENT`; pass `ENVIRONMENT: 'production'`
 to test the production error page. `services.app` is built once per test
@@ -2715,6 +2731,110 @@ routes.provide(OwnedProject).get(paths.task, action(Effect.gen(function* () {
   return yield* render('Projects/Show', { project })
 })))
 ```
+
+### Roles belong to memberships, read by a guard
+
+A role a user holds in one organization, such as admin, is not a field of the
+user: the same user may be an admin of one organization and a member of
+another, and a `role` column on the user table makes an admin anywhere an
+admin everywhere. Keep the role on a membership row, one per user and
+organization, and read it in a guard layer for the organization's routes.
+The guard answers a visitor who is not a member with 404, so the
+organization's existence stays private, and provides the membership as a
+service, so actions and `shareProps` read it without querying again:
+
+```ts
+// src/memberships.ts
+import { and, eq } from 'drizzle-orm'
+import { Context, Effect, Layer } from 'effect'
+import { authorize, bound, dbQuery, forbidden, notFound } from '@popcomputer/web/effect'
+import { memberships } from './schema'
+
+type Membership = typeof memberships.$inferSelect
+
+export class CurrentMember extends Context.Service<CurrentMember, Membership>()('app/CurrentMember') {}
+
+export const RequireMember = Layer.effect(CurrentMember, Effect.gen(function* () {
+  const auth = yield* authorize()
+  const organization = yield* bound('organization')
+  const [membership] = yield* dbQuery((db) =>
+    db.select().from(memberships).where(and(
+      eq(memberships.organizationId, organization.id),
+      eq(memberships.userId, auth.user.id)
+    ))
+  )
+
+  if (membership === undefined) return yield* notFound('Organization')
+
+  return CurrentMember.of(membership)
+}))
+
+// A member who can see the organization but lacks the role gets a 403.
+export const requireRole = (...roles: ReadonlyArray<Membership['role']>) =>
+  Effect.gen(function* () {
+    const member = yield* CurrentMember
+
+    if (!roles.includes(member.role)) return yield* forbidden('Your role in this organization does not allow that.')
+
+    return member
+  })
+```
+
+An action states the role it needs, and scopes its write by the membership's
+organization rather than by anything the request sends:
+
+```ts
+// src/actions/organizations/change-role.ts
+import { and, eq, ne } from 'drizzle-orm'
+import { Effect, Schema as S } from 'effect'
+import { action, back, bound, dbMutation, flash, notFound, validateRequest } from '@popcomputer/web/effect'
+import { requiredString } from '@popcomputer/web/schema'
+import { requireRole } from '../../memberships'
+import { paths } from '../../paths'
+import { memberships } from '../../schema'
+
+// {member} is a plain parameter: the member's user id.
+const ChangeRole = S.Struct({ member: requiredString, role: S.Literals(['admin', 'member']) })
+
+export const changeRole = action(Effect.gen(function* () {
+  const admin = yield* requireRole('owner', 'admin')
+  const organization = yield* bound('organization')
+  const input = yield* validateRequest(ChangeRole)
+
+  const [changed] = yield* dbMutation((db) =>
+    db.update(memberships)
+      .set({ role: input.role })
+      .where(and(
+        eq(memberships.organizationId, admin.organizationId),
+        eq(memberships.userId, input.member),
+        // An owner's role changes only by transferring ownership.
+        ne(memberships.role, 'owner')
+      ))
+      .returning()
+  )
+
+  if (changed === undefined) return yield* notFound('Member')
+
+  yield* flash('success', 'Role changed.')
+
+  return yield* back(paths.organizationMembers, { organization: organization.slug })
+}))
+```
+
+```ts
+import { changeRole } from '../actions/organizations/change-role'
+import { RequireMember } from '../memberships'
+
+routes.provide(RequireMember).put(paths.organizationMember, changeRole, { name: 'organizations.members.role' })
+```
+
+`changeRole` reads `CurrentMember`, which only `RequireMember` provides, so
+registering it without the guard is a `missingServices` type error, and the
+guard reads `bound('organization')`, so its routes need `{organization}` in
+their path. A membership's role is an enum column, `text('role', { enum:
+['owner', 'admin', 'member'] })`, so a misspelled role is a type error in
+`requireRole` and in the update. A test seeds a membership for the user it
+signs in with `signedIn`, and checks a stranger gets 404 and a member 403.
 
 ### Webhooks verify the raw body, then record the event once
 

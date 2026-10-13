@@ -1,7 +1,7 @@
 // Drizzle tables the README examples refer to as `./schema`. The examples'
 // database is Postgres, as `src/db.ts` in the README creates it.
 import { sql } from 'drizzle-orm'
-import { boolean, check, integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+import { boolean, check, integer, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
 
 export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
@@ -54,3 +54,20 @@ export const user = pgTable('user', {
   createdAt: timestamp('created_at').notNull(),
   updatedAt: timestamp('updated_at').notNull(),
 })
+
+// The README's memberships pattern: a role per user and organization.
+export const organizations = pgTable('organizations', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+})
+
+export const memberships = pgTable(
+  'memberships',
+  {
+    organizationId: text('organization_id').notNull().references(() => organizations.id),
+    userId: text('user_id').notNull().references(() => user.id),
+    role: text('role', { enum: ['owner', 'admin', 'member'] }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.userId] })]
+)
