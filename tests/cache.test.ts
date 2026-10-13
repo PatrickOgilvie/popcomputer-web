@@ -11,11 +11,18 @@ import {
   cacheSet,
   cacheInvalidate,
   cacheInvalidatePrefix,
+  invalidateCacheTags,
   kvCache,
   type CacheClient,
 } from '../src/cache.js'
 import { ExecutionContextService, type ExecutionContextClient } from '../src/effect/index.js'
 import { EffectErrorObserverService } from '../src/effect/error-observer.js'
+import { Hono } from 'hono'
+import { setupWeb } from '../src/setup.js'
+import { action } from '../src/effect/action.js'
+import { json } from '../src/effect/responses.js'
+import { purgeCache } from '../src/effect/response-cache.js'
+import { testEnv } from '../src/testing.js'
 
 // ============================================================================
 // Test ExecutionContext Layer
@@ -124,6 +131,7 @@ const makeTestCache = () => {
       execCtx.layer,
       TestClock.layer(),
     ),
+    storeLayer: Layer.succeed(CacheService, client),
     store,
     executionContext: {
       backgroundTasks: execCtx.backgroundTasks,
@@ -1231,6 +1239,132 @@ describe('cache', () => {
         expect(callCount).toBe(2) // Recomputed because schema changed
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
+  })
+})
+
+describe('cache tags', () => {
+  const ttl = { ttl: Duration.hours(1) }
+
+  it('recomputes an entry once one of its tags is invalidated, and leaves untagged entries', async () => {
+    const { layer } = makeTestCache()
+    let computations = 0
+    const compute = Effect.sync(() => ++computations)
+
+    await Effect.gen(function* () {
+      expect(yield* cache('flags:e1', compute, S.Number, { ...ttl, tags: ['environments:e1', 'flags'] })).toBe(1)
+      expect(yield* cache('flags:e1', compute, S.Number, { ...ttl, tags: ['environments:e1', 'flags'] })).toBe(1)
+      expect(yield* cache('untagged', compute, S.Number, ttl)).toBe(2)
+
+      yield* invalidateCacheTags(['environments:e2'])
+      expect(yield* cache('flags:e1', compute, S.Number, { ...ttl, tags: ['environments:e1', 'flags'] })).toBe(1)
+
+      yield* invalidateCacheTags(['flags'])
+      expect(yield* cache('flags:e1', compute, S.Number, { ...ttl, tags: ['environments:e1', 'flags'] })).toBe(3)
+      expect(yield* cache('flags:e1', compute, S.Number, { ...ttl, tags: ['environments:e1', 'flags'] })).toBe(3)
+      expect(yield* cache('untagged', compute, S.Number, ttl)).toBe(2)
+    }).pipe(Effect.provide(layer), Effect.runPromise)
+  })
+
+  it('does not keep a value computed while one of its tags was invalidated', async () => {
+    const { layer } = makeTestCache()
+    let computations = 0
+
+    // The write the purge follows lands while the first value is computed.
+    const compute = Effect.gen(function* () {
+      computations += 1
+      if (computations === 1) yield* invalidateCacheTags(['projects:p1'])
+
+      return computations
+    })
+
+    await Effect.gen(function* () {
+      expect(yield* cache('project:p1', compute, S.Number, { ...ttl, tags: ['projects:p1'] })).toBe(1)
+      expect(yield* cache('project:p1', compute, S.Number, { ...ttl, tags: ['projects:p1'] })).toBe(2)
+      expect(yield* cache('project:p1', compute, S.Number, { ...ttl, tags: ['projects:p1'] })).toBe(2)
+    }).pipe(Effect.provide(layer), Effect.runPromise)
+  })
+
+  it('does not serve a stale tagged entry while revalidating', async () => {
+    const { layer } = makeTestCache()
+    let computations = 0
+    const compute = Effect.sync(() => ++computations)
+    const options = { ttl: '1 minute', swr: '1 hour', tags: ['projects'] } as const
+
+    await Effect.gen(function* () {
+      yield* cache('projects', compute, S.Number, options)
+      yield* TestClock.adjust('2 minutes')
+      yield* invalidateCacheTags(['projects'])
+
+      expect(yield* cache('projects', compute, S.Number, options)).toBe(2)
+    }).pipe(Effect.provide(layer), Effect.runPromise)
+  })
+
+  it('computes without storing when the tags cannot be read', async () => {
+    const reported: unknown[] = []
+    let puts = 0
+    const failing: CacheClient = {
+      get: (key) => key.startsWith('popweb:tag:') ? Effect.fail(new CacheError({ reason: 'down' })) : Effect.succeed(null),
+      put: () => Effect.sync(() => { puts += 1 }),
+      delete: () => Effect.void,
+      list: () => Effect.succeed({ keys: [], list_complete: true }),
+    }
+
+    const value = await cache('k', Effect.succeed(7), S.Number, { ...ttl, tags: ['t'] }).pipe(
+      Effect.provide(Layer.mergeAll(
+        Layer.succeed(CacheService, failing),
+        makeNoopExecutionContext().layer,
+        Layer.succeed(EffectErrorObserverService, {
+          observe: (event) => Effect.sync(() => { reported.push(event.metadata?.operation) }),
+        })
+      )),
+      Effect.runPromise
+    )
+
+    expect(value).toBe(7)
+    expect(puts).toBe(0)
+    expect(reported).toEqual(['cache.tags'])
+  })
+
+  it('a route that purges a tag invalidates data cached with it, as routes.run does', async () => {
+    const { storeLayer } = makeTestCache()
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      services: { request: () => storeLayer },
+    })
+    let computations = 0
+
+    routes
+      .get('/flags', action(Effect.gen(function* () {
+        const evaluated = yield* cache('flags:e1', Effect.sync(() => ++computations), S.Number, {
+          ttl: Duration.hours(1),
+          tags: ['environments:e1'],
+        })
+
+        return yield* json({ evaluated })
+      })))
+      .post('/flags', action(Effect.gen(function* () {
+        yield* purgeCache('environments:e1')
+
+        return yield* json({ saved: true })
+      })))
+
+    const env = testEnv(Layer.empty)
+    const evaluated = async () => (await (await app.request('/flags', {}, env)).json() as { evaluated: number }).evaluated
+
+    expect(await evaluated()).toBe(1)
+    expect(await evaluated()).toBe(1)
+
+    await app.request('/flags', { method: 'POST' }, env)
+    expect(await evaluated()).toBe(2)
+
+    await routes.run(purgeCache('environments:e1'), env)
+    expect(await evaluated()).toBe(3)
+  })
+
+  it('does nothing without a cache store', async () => {
+    await Effect.runPromise(invalidateCacheTags(['projects']))
   })
 })
 

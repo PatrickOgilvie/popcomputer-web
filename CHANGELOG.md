@@ -69,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cache(key, effect, schema, { ttl, tags })` tags an entry with the cache tags a route's `purges` and `purgeCache` name: the route that purges one of them after a write invalidates the data along with the cached responses. `purgeCache` also works in `routes.run`.
 - `testClock`'s `settle(request, step?, maxSteps?)` moves the test clock until a request that waits on it answers, such as an action retrying with `Schedule.exponential`.
 - `WebErrorPage` from `@popcomputer/web/react` types the error page component, and `readErrorPage(response)` from `@popcomputer/web/testing` reads it in a test, with the invalid fields of a page visit as `errors`.
 - `betterAuthRedirect`'s and `betterAuthLogoutAction`'s `redirectTo`, and `auth.signInPath`, take declared paths, as `redirect` does.

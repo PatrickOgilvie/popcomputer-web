@@ -117,7 +117,11 @@ TypeScript example here and in the README type-checks against the package.
     read bindings, headers or bound models are already rendered per request.
     A route that changes records cached pages show purges them with
     `purges: true`, and an action adds other records it changed with
-    `purgeCache(recordCacheTag('listings', id))`.
+    `purgeCache(recordCacheTag('listings', id))`. Give data kept with
+    `cache(key, effect, schema, { ttl, tags })` the same tags, so the same
+    purges invalidate it. An API that authenticates each request (a bearer
+    token) caches its data this way, after authenticating, never its
+    response.
 12. **Test through the app.** `app.request(path, init, testEnv(layer,
     bindings))` from `@popcomputer/web/testing` runs the real route;
     `signedIn(user)` signs the request in, and `readPage(res, 'Name')` reads

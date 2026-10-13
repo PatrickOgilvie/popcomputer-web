@@ -1078,6 +1078,26 @@ export const listProjects = action(Effect.gen(function* () {
 }))
 ```
 
+A value that depends on records takes their cache tags, the names a route's
+`purges` and `purgeCache` use (see [Time-based caching with Workers
+Cache](#time-based-caching-with-workers-cache)). A route that purges one of
+them after a write invalidates the value as well as the cached responses, so
+what changed is stated once, by the write:
+
+```ts
+const summary = yield* cache(
+  `projects:${project.id}:summary`,
+  summarizeProject(project.id),
+  ProjectSummary,
+  { ttl: Duration.minutes(5), tags: [recordCacheTag('projects', project.id)] }
+)
+```
+
+Each purge gives the tag a new generation in the store, and an entry stored
+under an older one is a miss. A tagged read costs one store read per tag
+besides the entry's own, a tagged entry lives at most 30 days, and KV takes up
+to a minute to show a write everywhere, as it does an invalidation.
+
 `cache` never fails because of the store: an unreachable store or an entry that
 no longer matches the schema computes the value instead, and the failure goes
 to `EffectErrorObserverService`. `cacheGet` and `cacheSet` fail with
@@ -1245,12 +1265,34 @@ the action fails:
 yield* purgeCache(recordCacheTag('projects', 'project-1'), 'projects')
 ```
 
-When a record changes outside its routes, such as in a queue consumer, purge
-its tag yourself:
+`purgeCache` works the same in an Effect run by `routes.run`, such as a
+queue consumer that changes a record: the purge runs once the Effect succeeds.
+
+### Caching an API that authenticates each request
+
+The route `cache` option never stores a response to a request with an
+`Authorization` header: it answers `no-store`. Workers Cache answers a hit
+before the Worker runs, so a stored response would reach a revoked key and
+skip the key's rate limit. Authenticate every request and cache the data the
+response is built from instead, keyed by what it depends on, such as the
+project an API key belongs to, so every key of that project shares one entry.
+Tag it with the records it reads, and the writes that purge them invalidate
+it: `purges: true` on `PUT /projects/{project}/tasks/{task}` purges the
+project's tag.
 
 ```ts
-const responseCache = yield* ResponseCacheService
-yield* responseCache.purge({ tags: [recordCacheTag('projects', 'project-1')] })
+export const projectTasks = action(Effect.gen(function* () {
+  const project = yield* apiKeyProject // the API key's project, or a 401
+
+  const tasks = yield* cache(
+    `projects:${project.id}:tasks`,
+    loadTasks(project.id),
+    S.Array(Task),
+    { ttl: Duration.seconds(30), tags: [recordCacheTag('projects', project.id)] }
+  )
+
+  return yield* json({ tasks })
+}))
 ```
 
 ## Testing

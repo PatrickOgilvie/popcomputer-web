@@ -26,6 +26,7 @@ import {
   RouteConfigurationError,
 } from './errors.js'
 import { openWebContext } from '../request-context.js'
+import { invalidateCacheTags } from '../cache.js'
 import { allowDefaultPageCache } from '../page-cache.js'
 import {
   applyCachePolicy,
@@ -905,6 +906,10 @@ export class EffectRouteBuilder<
                 }),
               })
             }
+
+            // Cached data tagged with them goes too, before the Workers Cache
+            // purge, which can fail the request.
+            yield* invalidateCacheTags(tags)
 
             const cache = yield* ResponseCacheService
             yield* cache.purge({ tags: preparedTags.tags })

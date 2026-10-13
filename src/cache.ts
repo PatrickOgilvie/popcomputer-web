@@ -8,7 +8,7 @@
  * instead, and the failure is reported to EffectErrorObserverService.
  */
 
-import { Clock, Duration, Effect, Layer, Option, Schema } from 'effect'
+import { Clock, Duration, Effect, Layer, Option, Random, Schema } from 'effect'
 import { CacheService, ExecutionContextService, type CacheClient } from './effect/services.js'
 import { CacheError } from './effect/errors.js'
 import { observeOrLog } from './effect/error-observer.js'
@@ -33,6 +33,13 @@ export type CacheOptions = {
    * - `false` or omitted: No versioning
    */
   version?: string | boolean
+  /**
+   * The cache tags the value depends on, as a route's `purges`, `purgeCache`
+   * and `recordCacheTag` name them: a route that purges one of them after a
+   * write also invalidates this entry, as it does a cached response. A tagged
+   * entry lives at most 30 days.
+   */
+  tags?: ReadonlyArray<string>
 }
 
 export type CacheGetOptions = {
@@ -58,9 +65,30 @@ const CacheEntrySchema = <V>(valueSchema: CacheSchema<V>) =>
   Schema.Struct({
     v: Schema.toCodecJson(valueSchema),
     t: Schema.Finite, // cachedAt timestamp
+    g: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)), // tag generations
   })
 
-type CacheEntry<V> = { v: V; t: number }
+type CacheEntry<V> = { v: V; t: number; g?: Readonly<Record<string, string>> }
+
+/** The store key holding a cache tag's generation, which each purge replaces. */
+const tagGenerationKey = (tag: string): string => `popweb:tag:${tag}`
+
+/** How long a purged tag's generation is kept, and so the longest a tagged entry lives. */
+const TAG_GENERATION_TTL_SECONDS = 30 * 24 * 60 * 60
+
+/** A tag's generation before any purge. */
+const INITIAL_GENERATION = '0'
+
+/** Each tag's current generation: the value its last purge wrote. */
+const readTagGenerations = (
+  client: CacheClient,
+  tags: ReadonlyArray<string>
+): Effect.Effect<Readonly<Record<string, string>>, CacheError> =>
+  Effect.forEach(
+    tags,
+    (tag) => Effect.map(client.get(tagGenerationKey(tag)), (generation) => [tag, generation ?? INITIAL_GENERATION] as const),
+    { concurrency: 'unbounded' }
+  ).pipe(Effect.map((entries) => Object.fromEntries(entries)))
 
 /**
  * Simple string hash function (djb2 algorithm).
@@ -245,28 +273,52 @@ export const cache = <V, E, R>(
       : 0
 
     const totalTtlSeconds = Math.ceil((ttlMs + swrMs) / 1000)
+    const tags = options.tags ?? []
+
+    // An unreadable store or entry is a miss. The tags' generations are read
+    // before the value is computed, so a purge during the computation leaves
+    // the stored entry stale; without them the value is not stored.
+    const [cached, generations] = yield* Effect.all([
+      cacheService.get(effectiveKey).pipe(
+        Effect.catch((error) => Effect.as(reportStoreFailure('cache.get')(error), null))
+      ),
+      tags.length === 0
+        ? Effect.succeedSome<Readonly<Record<string, string>>>({})
+        : readTagGenerations(cacheService, tags).pipe(
+            Effect.map(Option.some),
+            Effect.catch((error) => Effect.as(reportStoreFailure('cache.tags')(error), Option.none()))
+          ),
+    ], { concurrency: 'unbounded' })
 
     // Store a computed value; a failed write leaves the value uncached.
     const storeInCache = (value: V) =>
       Effect.gen(function* () {
-        const newEntry: CacheEntry<V> = { v: value, t: yield* Clock.currentTimeMillis }
+        if (Option.isNone(generations)) return
+
+        const t = yield* Clock.currentTimeMillis
+        const newEntry: CacheEntry<V> = tags.length === 0 ? { v: value, t } : { v: value, t, g: generations.value }
         const serialized = yield* Schema.encodeEffect(jsonSchema)(newEntry)
         yield* cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
       }).pipe(Effect.catch(reportStoreFailure('cache.put')))
 
-    // An unreadable store or entry is a miss.
-    const cached = yield* cacheService.get(effectiveKey).pipe(
-      Effect.catch((error) => Effect.as(reportStoreFailure('cache.get')(error), null))
-    )
-
-    const entry = cached === null
+    const decoded = cached === null
       ? undefined
       : yield* Schema.decodeEffect(jsonSchema)(cached).pipe(
           Effect.catch((error) => Effect.as(reportStoreFailure('cache.decode')(error), undefined))
         )
 
+    const now = yield* Clock.currentTimeMillis
+
+    // A purge of any of its tags since the entry was stored makes it a miss.
+    const entry = decoded !== undefined && Option.isSome(generations) && (
+      tags.length === 0 || (
+        now - decoded.t < TAG_GENERATION_TTL_SECONDS * 1000 &&
+        tags.every((tag) => (decoded.g?.[tag] ?? INITIAL_GENERATION) === generations.value[tag])
+      )
+    ) ? decoded : undefined
+
     if (entry !== undefined) {
-      const age = (yield* Clock.currentTimeMillis) - entry.t
+      const age = now - entry.t
 
       if (age < ttlMs) {
         // Fresh - return immediately
@@ -459,6 +511,27 @@ export const cacheInvalidatePrefix = (
     Effect.catchTag('CacheError', reportInvalidationFailure('invalidatePrefix')),
     Effect.withSpan('Web.cacheInvalidatePrefix')
   )
+
+/**
+ * Give each tag a new generation, so every entry `cache` stored with it is a
+ * miss. A route runs it with its purges after a successful write. A store
+ * failure is reported and the entries stay until they expire; without a
+ * cache store it does nothing.
+ */
+export const invalidateCacheTags = (tags: ReadonlyArray<string>): Effect.Effect<void> =>
+  Effect.flatMap(Effect.serviceOption(CacheService), (store) => {
+    if (Option.isNone(store) || tags.length === 0) return Effect.void
+
+    return Effect.gen(function* () {
+      const generation = `${(yield* Clock.currentTimeMillis).toString(36)}.${(yield* Random.nextInt).toString(36)}`
+
+      yield* Effect.forEach(
+        tags,
+        (tag) => store.value.put(tagGenerationKey(tag), generation, { expirationTtl: TAG_GENERATION_TTL_SECONDS }),
+        { concurrency: 'unbounded', discard: true }
+      )
+    }).pipe(Effect.catch(reportInvalidationFailure('cache.invalidateTags')))
+  })
 
 export { CacheService, type CacheClient } from './effect/services.js'
 export { CacheError }
