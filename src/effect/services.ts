@@ -1,6 +1,6 @@
 /** Effect services exposed by @popcomputer/web. */
 
-import { Context, Effect, Option, type Redacted } from 'effect'
+import { Context, Effect, Option, type Redacted, type Schema as S } from 'effect'
 import { CacheError, UnauthorizedError, ForbiddenError } from './errors.js'
 import type { PageProps, PagePropValue } from '../types.js'
 
@@ -219,6 +219,24 @@ export interface DefaultAuthUser {
 export type AuthUser = WebAuthUserType extends { type: infer T }
   ? T
   : DefaultAuthUser
+
+/**
+ * The session parser option of setupWeb's `auth` and `loadUser`. It is
+ * required once the application augments WebAuthUserType, because the default
+ * parser decodes only Better Auth's default user and session.
+ */
+export type SessionParserOption = WebAuthUserType extends { type: unknown }
+  ? {
+      /** Parse Better Auth's session response into the augmented AuthUser. */
+      readonly session: S.Codec<AuthUser, unknown, never, never>
+    }
+  : {
+      /**
+       * Parse Better Auth's session response before actions receive it.
+       * Defaults to Better Auth's default user and session.
+       */
+      readonly session?: S.Codec<AuthUser, unknown, never, never>
+    }
 
 /**
  * Authenticated User Service - Provides the current user session

@@ -14,6 +14,7 @@ export {
   effectifyBetterAuth,
   loadUser,
   type AuthRoutesConfig,
+  type LoadUserConfig,
   type AuthActionEffect,
   type BetterAuthFormActionConfig,
   type BetterAuthLogoutConfig,

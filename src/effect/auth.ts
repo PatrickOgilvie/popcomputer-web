@@ -7,7 +7,7 @@
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import type { Hono, MiddlewareHandler, Env } from 'hono'
 import type { DatabaseService } from './services.js'
-import { AuthUserService, AuthService, PageService, RequestService, type AuthType, type AuthUser } from './services.js'
+import { AuthUserService, AuthService, PageService, RequestService, type AuthType, type AuthUser, type SessionParserOption, type WebAuthUserType } from './services.js'
 import {
   InvalidAuthSession,
   HttpError,
@@ -499,14 +499,28 @@ export function effectAuthRoutes<E extends Env>(
 }
 
 /**
- * Middleware to load the authenticated user.
- * This should be used early in the middleware chain.
+ * Middleware to load the authenticated user, for applications that compose
+ * middleware by hand. setupWeb installs it.
+ *
+ * Pass `session` once the application augments WebAuthUserType.
  */
 export function loadUser<E extends Env>(
+  ...[config]: WebAuthUserType extends { type: unknown }
+    ? [config: LoadUserConfig]
+    : [config?: LoadUserConfig]
+): MiddlewareHandler<E> {
+  return loadUserMiddleware<E>(config ?? {})
+}
+
+/** Options for {@link loadUser}. */
+export type LoadUserConfig = { readonly sessionCookie?: string } & SessionParserOption
+
+/** loadUser without the augmentation check, for setupWeb, whose own type enforces it. */
+export function loadUserMiddleware<E extends Env>(
   config: {
     readonly sessionCookie?: string
     readonly session?: S.Codec<AuthUser, unknown, never, never>
-  } = {}
+  }
 ): MiddlewareHandler<E> {
   const { sessionCookie } = config
   const sessionSchema: S.Codec<AuthUser, unknown, never, never> =
@@ -611,9 +625,9 @@ const DefaultAuthSessionSchema = S.Struct({
  * augments WebAuthUserType.
  */
 function defaultSessionSchema(): S.Codec<AuthUser, unknown, never, never> {
-  // SAFETY: an application that augments WebAuthUserType passes a parser for
-  // its user shape as auth.session (README "Auth"); otherwise AuthUser is
-  // DefaultAuthUser, which this schema decodes.
+  // SAFETY: setupWeb and loadUser require a session parser once the
+  // application augments WebAuthUserType (SessionParserOption), so this
+  // default runs only when AuthUser is DefaultAuthUser, which it decodes.
   return DefaultAuthSessionSchema as unknown as S.Codec<AuthUser, unknown, never, never>
 }
 

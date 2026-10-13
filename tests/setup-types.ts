@@ -162,6 +162,7 @@ setupWeb(new Hono<TestEnv>(), {
 
       return { databaseName: 'none' }
     },
+    session: TestAuthSession,
   },
 })
 
@@ -186,6 +187,22 @@ setupWeb(new Hono<TestEnv>(), {
   render: (page) => JSON.stringify(page),
   auth: {
     // @ts-expect-error Database-backed auth requires a database factory.
+    client: (_context: HonoContext<TestEnv>, { db }: { readonly db: TestDatabase }) => ({
+      databaseName: db.name,
+    }),
+    session: TestAuthSession,
+  },
+})
+
+// This file augments WebAuthUserType, so auth must say how to parse it.
+// (With unannotated factories TypeScript reports the same mistake less
+// precisely: inference of the whole configuration fails.)
+setupWeb(new Hono<TestEnv>(), {
+  version: 'type-test',
+  render: (page) => JSON.stringify(page),
+  database: (context: HonoContext<TestEnv>) => ({ name: context.env.DATABASE_NAME }),
+  // @ts-expect-error The augmented AuthUser needs auth.session.
+  auth: {
     client: (_context: HonoContext<TestEnv>, { db }: { readonly db: TestDatabase }) => ({
       databaseName: db.name,
     }),
@@ -326,7 +343,7 @@ const failsWithPackageError = action(Effect.gen(function* () {
     version: 'type-test',
     render: (page) => JSON.stringify(page),
     database: (context) => ({ name: context.env.DATABASE_NAME }),
-    auth: { client: (_context, { db }) => ({ databaseName: db.name }) },
+    auth: { client: (_context, { db }) => ({ databaseName: db.name }), session: TestAuthSession },
     services: {
       request: () => Layer.succeed(TestMailer, TestMailer.of({ send: () => Effect.void })),
     },

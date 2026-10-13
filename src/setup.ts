@@ -7,12 +7,13 @@ import type { Layer, Schema as S } from 'effect'
 import { web } from './middleware.js'
 import { verifyOrigin, type VerifyOriginConfig } from './security.js'
 import type { PagePropValue, WebConfig } from './types.js'
-import { loadUser, shareAuthMiddleware } from './effect/auth.js'
+import { loadUserMiddleware, shareAuthMiddleware } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
 import { pageCache } from './page-cache.js'
 import type {
   AuthService,
   DatabaseService,
+  WebAuthUserType,
   DatabaseType,
   AuthType,
   BindingsType,
@@ -47,19 +48,40 @@ export interface AuthBackgroundTasks {
 }
 
 /** Better Auth configuration: client construction, session parsing and projection. */
-interface WebAuthOptions<E extends Env, Auth, ClientServices> {
+interface WebAuthBaseOptions<E extends Env, Auth, ClientServices> {
   /** Build the Better Auth server client at the request composition seam. */
   client?: (c: Context<E>, services: ClientServices) => Auth
-  /**
-   * Parse Better Auth's session response before actions receive it.
-   * The encoded side is intentionally unconstrained because decodeUnknown
-   * owns the external boundary; the decoded AuthUser and context stay strict.
-   */
-  session?: S.Codec<AuthUser, unknown, never, never>
   /** Explicit public projection placed at `auth.user` in page props. */
   share?: (auth: AuthUser) => PagePropValue
   readonly sessionCookie?: string
 }
+
+interface WebAuthOptionsWithDefaultUser<E extends Env, Auth, ClientServices>
+  extends WebAuthBaseOptions<E, Auth, ClientServices> {
+  /**
+   * Parse Better Auth's session response before actions receive it.
+   * Defaults to Better Auth's default user and session.
+   */
+  readonly session?: S.Codec<AuthUser, unknown, never, never>
+}
+
+interface WebAuthOptionsWithCustomUser<E extends Env, Auth, ClientServices>
+  extends WebAuthBaseOptions<E, Auth, ClientServices> {
+  /**
+   * Parse Better Auth's session response into the augmented AuthUser.
+   * Required: the default parser decodes only Better Auth's default user.
+   */
+  readonly session: S.Codec<AuthUser, unknown, never, never>
+}
+
+/**
+ * Better Auth configuration. `session` is required once the application
+ * augments WebAuthUserType.
+ */
+type WebAuthOptions<E extends Env, Auth, ClientServices> =
+  WebAuthUserType extends { type: unknown }
+    ? WebAuthOptionsWithCustomUser<E, Auth, ClientServices>
+    : WebAuthOptionsWithDefaultUser<E, Auth, ClientServices>
 
 interface WebSetupOptions<E extends Env, AppServices, RequestServices> extends WebConfig {
   /**
@@ -122,64 +144,39 @@ interface WebSetupOptions<E extends Env, AppServices, RequestServices> extends W
   pageCache?: boolean
 }
 
-/** Complete framework configuration when a database factory is present. */
-interface WebSetupWithDatabaseConfig<
+/**
+ * Flat configuration accepted by {@link setupWeb}.
+ *
+ * Database, schema, rendering, auth and services are configured at one
+ * application boundary. Types are inferred from the supplied factories: the
+ * auth client receives the request's database only when `database` is set.
+ */
+export interface WebSetupConfig<
   E extends Env = DefaultEnv,
-  DB extends object = DatabaseType,
+  DB extends object = never,
   Auth = never,
   AppServices = never,
   RequestServices = never,
 > extends WebSetupOptions<E, AppServices, RequestServices> {
   /**
-   * Database factory function.
-   * Creates the database client for each request.
+   * Database factory function. Creates the database client for each request.
+   * Leave it out for applications without persistence or with stateless auth.
    *
    * @example
    * ```typescript
    * database: (c) => createDb(c.env.DATABASE_URL)
    * ```
    */
-  database: (c: Context<E>) => DB
-  /** Authentication. The client factory receives the request's database. */
-  auth?: WebAuthOptions<E, Auth, {
-    readonly db: DB
-    readonly backgroundTasks: AuthBackgroundTasks
-  }>
+  database?: (c: Context<E>) => DB
+  /** Authentication. The client factory receives the request's database when one is configured. */
+  // NoInfer: DB comes from `database` alone, never from the client's parameters.
+  auth?: WebAuthOptions<E, Auth, AuthClientServices<NoInfer<DB>>>
 }
 
-/** Complete framework configuration for applications without a database. */
-interface WebSetupWithoutDatabaseConfig<
-  E extends Env = DefaultEnv,
-  Auth = never,
-  AppServices = never,
-  RequestServices = never,
-> extends WebSetupOptions<E, AppServices, RequestServices> {
-  /**
-   * A database factory is intentionally absent. This supports applications
-   * without persistence and deliberately stateless authentication.
-   */
-  database?: undefined
-  /** Authentication without a database (Better Auth stateless mode). */
-  auth?: WebAuthOptions<E, Auth, { readonly backgroundTasks: AuthBackgroundTasks }>
-}
-
-/**
- * Flat configuration accepted by {@link setupWeb}.
- *
- * Database, schema, rendering, auth, and Effect composition are configured at
- * one application boundary. Types are inferred from the supplied factories.
- */
-export type WebSetupConfig<
-  E extends Env = DefaultEnv,
-  DB = undefined,
-  Auth = never,
-  AppServices = never,
-  RequestServices = never,
-> = [DB] extends [undefined]
-  ? WebSetupWithoutDatabaseConfig<E, Auth, AppServices, RequestServices>
-  : DB extends object
-    ? WebSetupWithDatabaseConfig<E, DB, Auth, AppServices, RequestServices>
-    : never
+/** What the auth client factory receives: the database when one is configured. */
+type AuthClientServices<DB> = [DB] extends [never]
+  ? { readonly backgroundTasks: AuthBackgroundTasks }
+  : { readonly db: DB; readonly backgroundTasks: AuthBackgroundTasks }
 
 /**
  * The services routes can use under a setup: the core services, the database
@@ -228,43 +225,22 @@ export interface WebApplication<E extends Env, Services = BaseServices> {
  */
 export function setupWeb<
   E extends Env = DefaultEnv,
-  DB extends object = DatabaseType,
+  DB extends object = never,
   Auth = never,
   AppServices = never,
   RequestServices = never,
 >(
   app: Hono<E>,
-  config: WebSetupWithDatabaseConfig<E, DB, Auth, AppServices, RequestServices>
-): WebApplication<E, WebRouteServices<true, Auth, AppServices | RequestServices>>
-export function setupWeb<
-  E extends Env = DefaultEnv,
-  Auth = never,
-  AppServices = never,
-  RequestServices = never,
->(
-  app: Hono<E>,
-  config: WebSetupWithoutDatabaseConfig<E, Auth, AppServices, RequestServices>
-): WebApplication<E, WebRouteServices<false, Auth, AppServices | RequestServices>>
-export function setupWeb<
-  E extends Env,
-  DB extends object,
-  Auth,
-  AppServices,
-  RequestServices,
->(
-  app: Hono<E>,
-  config:
-    | WebSetupWithDatabaseConfig<E, DB, Auth, AppServices, RequestServices>
-    | WebSetupWithoutDatabaseConfig<E, Auth, AppServices, RequestServices>
-): WebApplication<E, WebRouteServices<boolean, Auth, AppServices | RequestServices>> {
+  config: WebSetupConfig<E, DB, Auth, AppServices, RequestServices>
+): WebApplication<
+  E,
+  WebRouteServices<[DB] extends [never] ? false : true, Auth, AppServices | RequestServices>
+> {
   assertSetupConfig(config)
   app.use('*', createSetupMiddleware(config))
   registerErrorHandlers(app, config.errors)
 
-  return {
-    app,
-    routes: new EffectRouteBuilder<E, WebRouteServices<boolean, Auth, AppServices | RequestServices>>(app),
-  }
+  return { app, routes: new EffectRouteBuilder(app) }
 }
 
 function createSetupMiddleware<
@@ -274,9 +250,7 @@ function createSetupMiddleware<
   AppServices,
   RequestServices,
 >(
-  config:
-    | WebSetupWithDatabaseConfig<E, DB, Auth, AppServices, RequestServices>
-    | WebSetupWithoutDatabaseConfig<E, Auth, AppServices, RequestServices>
+  config: WebSetupConfig<E, DB, Auth, AppServices, RequestServices>
 ): MiddlewareHandler<E> {
   const webConfig: WebConfig = {
     version: config.version,
@@ -299,18 +273,24 @@ function createSetupMiddleware<
       // SAFETY: DB/Auth generics are the app's declared client types; the
       // WebDatabaseType/WebAuthType module augmentations make these
       // the same types DatabaseService/AuthService hand back to handlers.
-      if (config.database !== undefined) {
-        const db = config.database(c)
+      const db = config.database?.(c)
+
+      if (db !== undefined) {
         // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
         requestCtx.db = db as DatabaseType
+      }
 
-        if (config.auth?.client !== undefined) {
-          // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
-          requestCtx.auth = config.auth.client(c, { db, backgroundTasks }) as AuthType
-        }
-      } else if (config.auth?.client !== undefined) {
+      if (config.auth?.client !== undefined) {
+        // SAFETY: AuthClientServices<DB> carries `db` exactly when `database`
+        // is configured, which is when `db` is defined here; the conditional
+        // type cannot be resolved for the generic DB inside this function.
+        const createAuth = config.auth.client as (
+          c: Context<E>,
+          services: { readonly db?: DB; readonly backgroundTasks: AuthBackgroundTasks }
+        ) => Auth
+
         // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
-        requestCtx.auth = config.auth.client(c, { backgroundTasks }) as AuthType
+        requestCtx.auth = createAuth(c, db === undefined ? { backgroundTasks } : { db, backgroundTasks }) as AuthType
       }
 
       await next()
@@ -343,7 +323,7 @@ function createSetupMiddleware<
         ]),
     setupServices,
     web(webConfig),
-    loadUser<E>({
+    loadUserMiddleware<E>({
       sessionCookie: config.auth?.sessionCookie,
       session: config.auth?.session,
     }),
