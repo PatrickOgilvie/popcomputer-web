@@ -50,7 +50,7 @@ const createApp = () => {
 }
 
 describe('cache route option', () => {
-  test('cacheable GET emits Cache-Control and Vary: X-Inertia', async () => {
+  test('cacheable GET varies on the Inertia variant and cookies', async () => {
     const app = createApp()
 
     effectRoutes(app).get('/pricing', Effect.succeed(new Response('pricing page')), {
@@ -60,7 +60,20 @@ describe('cache route option', () => {
     const res = await app.request('/pricing')
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=300')
-    expect(res.headers.get('Vary')).toBe('X-Inertia')
+    expect(res.headers.get('Vary')).toBe('X-Inertia, Cookie')
+  })
+
+  test('cached responses add cookies to the headers a response already varies on', async () => {
+    const app = createApp()
+
+    effectRoutes(app).get(
+      '/feed',
+      Effect.sync(() => new Response('feed', { headers: { Vary: 'Accept' } })),
+      { cache: { maxAge: 300 } }
+    )
+
+    const res = await app.request('/feed')
+    expect(res.headers.get('Vary')).toBe('Accept, X-Inertia, Cookie')
   })
 
   test('staleWhileRevalidate renders into Cache-Control', async () => {
@@ -140,7 +153,7 @@ describe('cache route option', () => {
     expect(res.headers.get('Vary')).toBeNull()
   })
 
-  test('authenticated requests are never publicly cached and warn in development', async () => {
+  test('signed-in requests render their own page, which no cache stores', async () => {
     const warnings: string[] = []
     const originalWarn = console.warn
     console.warn = (...args: unknown[]) => {
@@ -202,16 +215,15 @@ describe('cache route option', () => {
 
       const res = await app.request('/account')
       expect(res.status).toBe(200)
-      expect(res.headers.get('Cache-Control')).toBeNull()
-      expect(
-        warnings.some((w) => w.includes('/account') && w.includes('private/authentication state'))
-      ).toBe(true)
+      expect(res.headers.get('Cache-Control')).toBe('no-store')
+      // Members visiting a cached page is expected, not a misconfiguration.
+      expect(warnings).toEqual([])
     } finally {
       console.warn = originalWarn
     }
   })
 
-  test('requests with Authorization are never publicly cached and warn in development', async () => {
+  test('requests with Authorization are never stored', async () => {
     const warnings: string[] = []
     const originalWarn = console.warn
     console.warn = (...args: unknown[]) => {
@@ -238,12 +250,8 @@ describe('cache route option', () => {
       })
 
       expect(res.status).toBe(200)
-      expect(res.headers.get('Cache-Control')).toBeNull()
-      expect(
-        warnings.some(
-          (w) => w.includes('/api/me') && w.includes('private/authentication state')
-        )
-      ).toBe(true)
+      expect(res.headers.get('Cache-Control')).toBe('no-store')
+      expect(warnings).toEqual([])
     } finally {
       console.warn = originalWarn
     }
@@ -269,7 +277,7 @@ describe('cache route option', () => {
   test('better-auth session cookies disable public caching', async () => {
     const app = createApp()
 
-    effectRoutes(app).get('/dashboard', Effect.succeed(new Response('private')), {
+    effectRoutes(app).get('/dashboard', Effect.sync(() => new Response('private')), {
       cache: { maxAge: 300 },
     })
 
@@ -277,13 +285,13 @@ describe('cache route option', () => {
       headers: { Cookie: 'better-auth.session_token=abc' },
     })
 
-    expect(plain.headers.get('Cache-Control')).toBeNull()
+    expect(plain.headers.get('Cache-Control')).toBe('no-store')
 
     const secure = await app.request('/dashboard', {
       headers: { Cookie: '__Secure-better-auth.session_token=abc' },
     })
 
-    expect(secure.headers.get('Cache-Control')).toBeNull()
+    expect(secure.headers.get('Cache-Control')).toBe('no-store')
   })
 
   test('a custom session cookie configured via loadUser disables public caching', async () => {
@@ -294,7 +302,7 @@ describe('cache route option', () => {
     app.use('*', loadUser({ sessionCookie: 'my_app_session' }))
     app.use('*', effectBridge())
 
-    effectRoutes(app).get('/custom', Effect.succeed(new Response('private')), {
+    effectRoutes(app).get('/custom', Effect.sync(() => new Response('private')), {
       cache: { maxAge: 300 },
     })
 
@@ -302,7 +310,7 @@ describe('cache route option', () => {
       headers: { Cookie: 'my_app_session=abc' },
     })
 
-    expect(withSession.headers.get('Cache-Control')).toBeNull()
+    expect(withSession.headers.get('Cache-Control')).toBe('no-store')
 
     const withoutSession = await app.request('/custom', {
       headers: { Cookie: '_ga=GA1.2.3' },
@@ -465,7 +473,7 @@ describe('cache route option', () => {
       'public, max-age=300, stale-while-revalidate=3600'
     )
     expect(res.headers.get('Cache-Tag')).toBe(`marketing,${PAGE_CACHE_TAG}`)
-    expect(res.headers.get('Vary')).toBe('X-Inertia')
+    expect(res.headers.get('Vary')).toBe('X-Inertia, Cookie')
   })
 
   test('Inertia page objects follow the same page policy', async () => {

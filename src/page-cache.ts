@@ -39,6 +39,12 @@ export const PAGE_CACHE_HEADER = 'X-Popweb-Cache'
 const PRIVATE_CACHE_CONTROL = 'no-store'
 
 /**
+ * Cache-Control for every other response that sets none: browsers revalidate
+ * it, and no shared cache stores it.
+ */
+export const DEFAULT_CACHE_CONTROL = 'private, no-cache'
+
+/**
  * Binding that identifies the deployed Worker version, from Wrangler's
  * `"version_metadata": { "binding": "CF_VERSION_METADATA" }`. With it, cached
  * pages live until the next deploy; without it, they are keyed by the asset
@@ -122,6 +128,29 @@ export function allowDefaultPageCache<E extends Env>(c: Context<E>): void {
   if (state) {
     state.routeAllowsDefault = true
   }
+}
+
+/**
+ * Middleware that gives every response without a Cache-Control header
+ * DEFAULT_CACHE_CONTROL. Workers Cache, once enabled, stores a response
+ * without one for a heuristic lifetime and serves it to every visitor, so a
+ * page rendered per request must say it is not shared. setupWeb installs it
+ * outermost; a response that states its own policy keeps it.
+ */
+export function privateByDefault<E extends Env>(): MiddlewareHandler<E> {
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware uses native next() promises.
+  return createMiddleware<E>(async (c, next) => {
+    await next()
+
+    if (c.res.headers.has('Cache-Control')) {
+      return
+    }
+
+    const result = new Response(c.res.body, c.res)
+    result.headers.set('Cache-Control', DEFAULT_CACHE_CONTROL)
+    // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
+    c.res = result
+  })
 }
 
 /**

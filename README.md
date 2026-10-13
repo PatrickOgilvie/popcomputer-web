@@ -873,7 +873,10 @@ so server-only changes still appear.
 - Signed-in requests, requests with `Authorization` or app cookies, partial
   reloads, stale Inertia versions and development never use the cache. Analytics
   and Cloudflare cookies such as `_ga` and `__cf_bm` don't count as app cookies.
-- Signed-in responses that set no `Cache-Control` get `no-store`.
+- Signed-in responses that set no `Cache-Control` get `no-store`, and every
+  other response that sets none gets `private, no-cache`: Workers Cache, once
+  enabled, would otherwise keep a page rendered per request and serve it to
+  other visitors.
 - Browsers always revalidate cached pages. A page is stored only if the final
   response, after all middleware, still allows it: no `Set-Cookie`, and no
   other `Cache-Control`.
@@ -916,12 +919,13 @@ yield* cache.purge({ tags: [PAGE_CACHE_TAG] })
 Other cached responses, such as JSON APIs and text, use `maxAge` and
 `staleWhileRevalidate` in `Cache-Control` for every cache.
 
-Workers Cache answers a hit before the Worker runs, so it cannot look at the
-visitor's cookies. Use the `cache` option only for pages that are the same for
-every visitor, signed in or not: a cached page shows `auth.user: null` to a
-member, and a form that redirects back to it loses its flashed errors on a hit.
-A page with per-visitor parts belongs on the default page cache, which checks
-cookies first, or renders per request.
+Workers Cache answers a hit before the Worker runs, so cached responses vary
+on `Cookie`: visitors without cookies share the cached copy, and a request
+with any cookie renders afresh. A signed-in member sees their own `auth.user`,
+a form that redirects back keeps its flashed errors, and neither response is
+stored. Visitors carrying only analytics cookies also miss the cache, so the
+option pays off for traffic that arrives without cookies, such as first visits
+and crawlers.
 
 A bound route's cached page carries the Cache-Tag of each record it reads,
 `recordCacheTag(table, primaryKey)` such as `projects:project-1`, whichever

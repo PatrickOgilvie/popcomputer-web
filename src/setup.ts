@@ -10,7 +10,7 @@ import type { WebConfig } from './types.js'
 import { loadUserMiddleware, shareAuthMiddleware } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
 import { readTestDatabase } from './effect/test-env.js'
-import { pageCache } from './page-cache.js'
+import { pageCache, privateByDefault } from './page-cache.js'
 import type {
   AuthService,
   DatabaseService,
@@ -379,6 +379,8 @@ function createSetupMiddleware<
   }
 
   const middlewares: MiddlewareHandler<E>[] = [
+    // Outermost, so it sees every response, including the page cache's own.
+    privateByDefault<E>(),
     // Origin verification runs first so cross-origin writes are rejected
     // before any per-request setup work (db/auth client creation) happens.
     ...(config.security?.verifyOrigin

@@ -186,8 +186,9 @@ export interface EffectRouteOptions {
    *
    * An object caches this route's responses for a fixed time via Cloudflare
    * Workers Cache instead, data reads included. Applied to successful
-   * GET/HEAD responses only; partial reloads are marked no-store and
-   * HTML/JSON page objects vary on X-Inertia. Requires
+   * GET/HEAD responses only; partial reloads and signed-in requests are
+   * marked no-store, and stored responses vary on X-Inertia and Cookie, so
+   * only visitors without cookies share them. Requires
    * `"cache": { "enabled": true }` in wrangler config.
    */
   cache?: RouteCacheOptions | false

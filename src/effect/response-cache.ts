@@ -4,7 +4,8 @@
  * The response-cache policy for Cloudflare Workers Cache. The `cache`
  * route option declares intent; this module owns every correctness rule:
  * only successful GET/HEAD responses qualify, HTML and JSON page objects are
- * distinct variants (Vary: X-Inertia), and partial reloads are never stored.
+ * distinct variants (Vary: X-Inertia), a request with cookies never shares a
+ * stored response (Vary: Cookie), and partial reloads are never stored.
  *
  * Pages (HTML documents and Inertia page objects) belong to the deploy that
  * rendered them: the document names that build's hashed assets and the page
@@ -235,7 +236,7 @@ export interface CachePolicyInput {
 /**
  * The cache-policy decision for one response.
  * - apply: emit the given headers
- * - noStore: partial reload on a cache-enabled route; forbid storage
+ * - noStore: a partial reload or a signed-in request; forbid storage
  * - skip: leave the response untouched; `warning` names a route
  *   misconfiguration worth surfacing in development
  */
@@ -247,6 +248,14 @@ export type CachePolicyDecision =
 const CachePolicyDecision = Data.taggedEnum<CachePolicyDecision>()
 
 const CACHEABLE_METHODS = new Set(['GET', 'HEAD'])
+
+/**
+ * Workers Cache answers before the Worker runs, so a cached response must
+ * name every request header it depends on: the Inertia variant, and the
+ * cookies that sign a visitor in or carry a flashed form error. Requests
+ * without cookies share one copy; any other request renders afresh.
+ */
+const CACHED_RESPONSE_VARY = `${HEADERS.INERTIA}, Cookie`
 
 /**
  * Decide the cache headers for a response. Pure: all request/response facts
@@ -283,16 +292,10 @@ export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision 
     return CachePolicyDecision.skip({})
   }
 
-  // Publicly caching private request state would serve one visitor's page
-  // (including shared auth props) to everyone. Fail safe: skip caching and
-  // tell the developer in development.
+  // A signed-in visitor's response is their own. Cached responses vary on
+  // Cookie, so this visitor never receives the guests' copy either.
   if (input.hasPrivateRequestState) {
-    return CachePolicyDecision.skip({
-      warning:
-        'has the `cache` route option but this request carries private/authentication state; ' +
-        'public caching is disabled for it. Cache only guest routes, or key ' +
-        'per-user at a gateway boundary.'
-    })
+    return CachePolicyDecision.noStore()
   }
 
   const directives = [`public`, `max-age=${input.options.maxAge}`]
@@ -308,11 +311,11 @@ export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision 
     ? {
         'Cache-Control': BROWSER_PAGE_CACHE_CONTROL,
         'Cloudflare-CDN-Cache-Control': directives.join(', '),
-        Vary: HEADERS.INERTIA,
+        Vary: CACHED_RESPONSE_VARY,
       }
     : {
         'Cache-Control': directives.join(', '),
-        Vary: HEADERS.INERTIA,
+        Vary: CACHED_RESPONSE_VARY,
       }
 
   const preparedTags = prepareCacheTags([
@@ -440,13 +443,13 @@ export function applyCachePolicy(
     const vary = result.headers.get('Vary')
 
     if (name.toLowerCase() === 'vary' && vary !== null) {
-      const existing = vary
+      const existing = vary.split(',').map((v) => v.trim())
+      const added = value
         .split(',')
         .map((v) => v.trim())
+        .filter((v) => !existing.some((present) => present.toLowerCase() === v.toLowerCase()))
 
-      if (!existing.includes(value)) {
-        result.headers.set('Vary', [...existing, value].join(', '))
-      }
+      result.headers.set('Vary', [...existing, ...added].join(', '))
     } else {
       result.headers.set(name, value)
     }

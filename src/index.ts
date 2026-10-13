@@ -45,7 +45,9 @@ export { verifyOrigin, type VerifyOriginConfig } from './security.js'
 // Default edge page cache
 export {
   pageCache,
+  privateByDefault,
   markPageDynamic,
+  DEFAULT_CACHE_CONTROL,
   PAGE_CACHE_HEADER,
   VERSION_METADATA_BINDING,
   type PageCacheOptions,

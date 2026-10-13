@@ -238,7 +238,7 @@ describe('default page cache', () => {
     const first = await get(app, '/projects', {}, env)
     expect(first.res.status).toBe(200)
     expect(first.status).toBe('DYNAMIC')
-    expect(first.res.headers.get('Cache-Control')).toBeNull()
+    expect(first.res.headers.get('Cache-Control')).toBe('private, no-cache')
 
     await get(app, '/projects', {}, env)
     expect(renders.get('projects')).toBe(2)
@@ -321,7 +321,7 @@ describe('default page cache', () => {
 
     const appCookie = await get(app, '/', { headers: { Cookie: 'cart=3' } }, env)
     expect(appCookie.status).toBe('BYPASS')
-    expect(appCookie.res.headers.get('Cache-Control')).toBeNull()
+    expect(appCookie.res.headers.get('Cache-Control')).toBe('private, no-cache')
 
     const analytics = await get(app, '/', { headers: { Cookie: '_ga=GA1.1.1; _ga_ABC=GS1; __cf_bm=x' } }, env)
     expect(analytics.status).toBe('HIT')
@@ -381,6 +381,30 @@ describe('testEnv with the page cache', () => {
     expect(member.status).toBe('BYPASS')
     expect(member.res.headers.get('Cache-Control')).toBe('no-store')
     expect(JSON.parse(guest.body).props.auth.user).toBeNull()
+  })
+})
+
+describe('responses without a cache policy', () => {
+  test('are private and revalidated, so Workers Cache never shares them', async () => {
+    const { app } = createApp({ pageCache: false })
+    const env = production()
+
+    const page = await get(app, '/projects', {}, env)
+    const api = await get(app, '/api/ping', {}, env)
+
+    expect(page.res.headers.get('Cache-Control')).toBe('private, no-cache')
+    expect(api.res.headers.get('Cache-Control')).toBe('private, no-cache')
+  })
+
+  test('keep the policy a route states itself', async () => {
+    const { app } = createApp()
+    const env = production()
+
+    await get(app, '/', {}, env)
+    const cached = await get(app, '/', {}, env)
+
+    expect(cached.status).toBe('HIT')
+    expect(cached.res.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate')
   })
 })
 
