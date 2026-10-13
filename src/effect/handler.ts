@@ -50,23 +50,21 @@ const memoizedFormatters = {
   dev: {
     json: new JsonErrorFormatter({
       pretty: true,
-      includeSource: true,
       includeContext: true,
       includeFixes: true,
     }),
     terminal: new TerminalErrorFormatter({
       useColors: true,
-      showSnippet: true,
       showFixes: true,
     }),
     inertia: new InertiaErrorFormatter({ isDev: true, includeFixes: true }),
   },
+  // Production responses carry no fixes: they describe the application's setup.
   prod: {
     json: new JsonErrorFormatter({
       pretty: false,
-      includeSource: false,
       includeContext: false,
-      includeFixes: true,
+      includeFixes: false,
       safeMessages: true,
     }),
     inertia: new InertiaErrorFormatter({ isDev: false, includeFixes: false }),

@@ -46,10 +46,8 @@ interface FormattedError {
   httpStatus: number
   timestamp: string
   requestId?: string
-  source?: StructuredError['source']
   context?: StructuredError['context']
   fixes?: StructuredError['fixes']
-  docs?: StructuredError['docs']
   validation?: object
   body?: unknown
 }
@@ -116,14 +114,10 @@ function projectValidationExtension(value: ValidationErrorData | undefined): obj
 export interface JsonFormatterOptions {
   /** Pretty print with indentation */
   pretty?: boolean
-  /** Include source location */
-  includeSource?: boolean
   /** Include request/route context */
   includeContext?: boolean
-  /** Include fix suggestions */
+  /** Include fix suggestions, which can contain setup code */
   includeFixes?: boolean
-  /** Include documentation links */
-  includeDocs?: boolean
   /**
    * Emit the client-safe production projection: replace server-error messages,
    * omit server-error bodies and unknown extensions, and remove rejected
@@ -142,10 +136,8 @@ export class JsonErrorFormatter implements ErrorFormatter {
     // Default all options to true
     this.options = {
       pretty: true,
-      includeSource: true,
       includeContext: true,
       includeFixes: true,
-      includeDocs: true,
       safeMessages: false,
       ...options,
     }
@@ -164,10 +156,6 @@ export class JsonErrorFormatter implements ErrorFormatter {
 
     if (error.requestId) {
       output.requestId = error.requestId
-    }
-
-    if (this.options.includeSource && error.source) {
-      output.source = error.source
     }
 
     if (this.options.includeContext && error.context) {
@@ -194,10 +182,6 @@ export class JsonErrorFormatter implements ErrorFormatter {
     } else {
       output.validation = projectValidationExtension(error.validation)
       output.body = error.body
-    }
-
-    if (this.options.includeDocs && error.docs) {
-      output.docs = error.docs
     }
 
     return output
@@ -237,8 +221,6 @@ const colors = {
 export interface TerminalFormatterOptions {
   /** Use ANSI colors */
   useColors?: boolean
-  /** Show source code snippet */
-  showSnippet?: boolean
   /** Show fix suggestions */
   showFixes?: boolean
   /** Maximum number of fixes to show */
@@ -255,7 +237,6 @@ export class TerminalErrorFormatter implements ErrorFormatter {
   constructor(private options: TerminalFormatterOptions = {}) {
     this.options = {
       useColors: true,
-      showSnippet: true,
       showFixes: true,
       maxFixes: 3,
       ...options,
@@ -289,50 +270,6 @@ export class TerminalErrorFormatter implements ErrorFormatter {
     lines.push(error.message)
     lines.push('')
 
-    // Source location with code snippet
-    if (error.source) {
-      lines.push(`${c.cyan}Location:${c.reset}`)
-      lines.push(
-        `  ${c.dim}${error.source.file}:${error.source.line}:${error.source.column}${c.reset}`
-      )
-
-      if (this.options.showSnippet && error.source.codeSnippet) {
-        lines.push('')
-        const snippet = error.source.codeSnippet
-        const errorLine = error.source.line
-        const startLine = errorLine - snippet.before.length
-
-        // Lines before
-        snippet.before.forEach((line, i) => {
-          const lineNum = String(startLine + i).padStart(4)
-          lines.push(`${c.gray}${lineNum} |${c.reset} ${line}`)
-        })
-
-        // Error line (highlighted)
-        const errorLineNum = String(errorLine).padStart(4)
-        lines.push(`${c.red}${errorLineNum} |${c.reset} ${snippet.line}`)
-
-        // Pointer arrow
-        if (snippet.highlight) {
-          const padding = ' '.repeat(7 + snippet.highlight.start)
-
-          const arrows = '^'.repeat(
-            Math.max(1, snippet.highlight.end - snippet.highlight.start)
-          )
-
-          lines.push(`${c.red}${padding}${arrows}${c.reset}`)
-        }
-
-        // Lines after
-        snippet.after.forEach((line, i) => {
-          const lineNum = String(errorLine + 1 + i).padStart(4)
-          lines.push(`${c.gray}${lineNum} |${c.reset} ${line}`)
-        })
-
-        lines.push('')
-      }
-    }
-
     // Route context
     if (error.context.route) {
       const { method, path, params } = error.context.route
@@ -353,26 +290,10 @@ export class TerminalErrorFormatter implements ErrorFormatter {
 
       const fixesToShow = error.fixes.slice(0, this.options.maxFixes)
       fixesToShow.forEach((fix, i) => {
-        const confidenceLabels = {
-          high: `${c.green}[high]${c.reset}`,
-          medium: `${c.yellow}[med]${c.reset}`,
-          low: `${c.gray}[low]${c.reset}`,
-        }
+        lines.push(`  ${i + 1}. ${fix.description}`)
 
-        const confidence = confidenceLabels[fix.confidence]
-
-        const auto = fix.automated ? `${c.cyan}(auto)${c.reset} ` : ''
-        lines.push(`  ${i + 1}. ${confidence} ${auto}${fix.description}`)
-
-        // Show code preview if available
-        if (fix.operations[0]?.content) {
-          const preview = fix.operations[0].content.trim().split('\n')[0]
-
-          if (preview.length > 60) {
-            lines.push(`     ${c.dim}${preview.slice(0, 60)}...${c.reset}`)
-          } else {
-            lines.push(`     ${c.dim}${preview}${c.reset}`)
-          }
+        for (const codeLine of fix.code?.split('\n') ?? []) {
+          lines.push(`     ${c.dim}${codeLine}${c.reset}`)
         }
       })
 
@@ -382,12 +303,6 @@ export class TerminalErrorFormatter implements ErrorFormatter {
         )
       }
 
-      lines.push('')
-    }
-
-    // Documentation link
-    if (error.docs?.url) {
-      lines.push(`${c.cyan}Docs:${c.reset} ${c.underline}${error.docs.url}${c.reset}`)
       lines.push('')
     }
 
@@ -401,8 +316,6 @@ export class TerminalErrorFormatter implements ErrorFormatter {
 export interface InertiaFormatterOptions {
   /** Include fix suggestions */
   includeFixes?: boolean
-  /** Include source location */
-  includeSource?: boolean
   /** Development mode (shows more details) */
   isDev?: boolean
 }
@@ -415,7 +328,6 @@ export class InertiaErrorFormatter implements ErrorFormatter {
   constructor(private options: InertiaFormatterOptions = {}) {
     this.options = {
       includeFixes: true,
-      includeSource: true,
       isDev: true,
       ...options,
     }
@@ -430,30 +342,12 @@ export class InertiaErrorFormatter implements ErrorFormatter {
     ])
 
     if (this.options.includeFixes && error.fixes.length > 0) {
-      props.set('fixes', error.fixes.map((f) => ({
-        description: f.description,
-        confidence: f.confidence,
-        automated: f.automated,
-      })))
-
-      // Include first high-confidence fix as a hint
-      const highConfidenceFix = error.fixes.find((f) => f.confidence === 'high')
-
-      if (highConfidenceFix) {
-        props.set('hint', highConfidenceFix.description)
-      }
-    }
-
-    if (this.options.includeSource && this.options.isDev && error.source) {
-      props.set('source', {
-        file: error.source.file,
-        line: error.source.line,
-        column: error.source.column,
-      })
-    }
-
-    if (error.docs?.url) {
-      props.set('docsUrl', error.docs.url)
+      props.set('fixes', error.fixes.map((fix) =>
+        fix.code === undefined
+          ? { description: fix.description }
+          : { description: fix.description, code: fix.code }
+      ))
+      props.set('hint', error.fixes[0].description)
     }
 
     return Object.fromEntries(props)
@@ -495,7 +389,6 @@ export interface FormatDetectionContext {
  *   { header: (n) => c.req.header(n), method: c.req.method, url: c.req.url },
  *   c.env
  * )
- * const formatter = createFormatter(format, isDev)
  * ```
  */
 export function detectOutputFormat<Environment>(
@@ -549,52 +442,4 @@ export function detectOutputFormat<Environment>(
 
   // Production browser requests get Inertia format
   return 'inertia'
-}
-
-/**
- * Create a formatter instance for the given output format.
- *
- * @param format - The output format: 'json', 'terminal', or 'inertia'.
- * @param isDev - Whether to include dev-only details (source, context). Defaults to true.
- * @returns An ErrorFormatter instance configured for the format.
- *
- * @example
- * ```ts
- * const format = detectOutputFormat(request, env)
- * const formatter = createFormatter(format, isDev)
- * const output = formatter.format(structuredError)
- * ```
- */
-export function createFormatter(
-  format: OutputFormat,
-  isDev: boolean = true
-): ErrorFormatter {
-  switch (format) {
-    case 'json':
-      return new JsonErrorFormatter({
-        pretty: isDev,
-        includeSource: isDev,
-        includeContext: isDev,
-        includeFixes: true,
-        includeDocs: true,
-        // Match the framework's own production handlers: sensitive-category
-        // messages must never reach clients through this public factory.
-        safeMessages: !isDev,
-      })
-
-    case 'terminal':
-      return new TerminalErrorFormatter({
-        useColors: true,
-        showSnippet: true,
-        showFixes: true,
-        maxFixes: 3,
-      })
-
-    case 'inertia':
-      return new InertiaErrorFormatter({
-        includeFixes: isDev,
-        includeSource: isDev,
-        isDev,
-      })
-  }
 }

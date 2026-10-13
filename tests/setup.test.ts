@@ -973,8 +973,9 @@ describe('setupWeb database configuration errors', () => {
     expect(body.component).toBe('Error')
     expect(body.props.message).toContain('AuthService is not configured')
     expect(body.props.message).toContain('setupWeb')
-    // Hint now comes from fix suggestions
-    expect(body.props.hint).toContain('auth')
+    // The first fix suggestion is the hint, and its code shows the setup to add
+    expect(body.props.hint).toContain('Better Auth client factory')
+    expect(body.props.fixes[0].code).toContain('auth: {')
   })
 
   test('routes that do not yield DatabaseService work without a configured db', async () => {

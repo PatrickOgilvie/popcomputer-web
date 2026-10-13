@@ -27,18 +27,28 @@ export interface StructuredErrorCapable {
   toStructured(context?: ErrorContext): StructuredError
 }
 
-/**
- * Helper to create structured error with optional message override.
- */
+interface StructuredOverrides {
+  readonly message?: string
+  readonly httpStatus?: number
+  /** The error's own fix, more specific than the catalog's; listed first. */
+  readonly hint?: string
+}
+
+/** Build a structured error from the catalog entry for `code`. */
 function structured(
   code: string,
   params: ErrorParams,
   context: ErrorContext,
-  overrides?: Partial<StructuredError>
+  overrides: StructuredOverrides = {}
 ): StructuredError {
+  const { hint, ...fields } = overrides
   const base = createStructuredError(code, params, context)
 
-  return overrides ? { ...base, ...overrides } : base
+  return {
+    ...base,
+    ...fields,
+    fixes: hint === undefined ? base.fixes : [{ description: hint }, ...base.fixes],
+  }
 }
 
 /**
@@ -502,7 +512,7 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
       code,
       { binding: this.binding, table: this.table, parent: this.parent, child: this.child },
       context,
-      { message: this.message }
+      { message: this.message, hint: this.hint }
     )
   }
 
@@ -520,7 +530,6 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
   static schemaNotConfigured(binding: string): RouteConfigurationError {
     return new RouteConfigurationError({
       message: `Route model binding requires schema configuration. Cannot resolve bound('${binding}') without schema.`,
-      hint: 'Pass your schema to setupWeb: setupWeb(app, { schema, version, render })',
       binding,
       code: ErrorCodes.CFG_302_SCHEMA_NOT_CONFIGURED,
     })
@@ -638,16 +647,10 @@ export class ConfigurationError extends Data.TaggedError('ConfigurationError')<{
       ? `${context.route.method} ${context.route.path}`
       : 'unknown'
 
-    // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
-    return {
-      ...createStructuredError(code, { location, reason: this.message }, context),
+    return structured(code, { location, reason: this.message }, context, {
       message: this.message,
-      configuration: {
-        missingService: this.service ?? 'unknown',
-        configPath: configurationPathFor(this.service),
-        setupFunction: 'setupWeb',
-      },
-    } as StructuredError & { configuration: { missingService: string; configPath: string; setupFunction: string } }
+      hint: this.hint,
+    })
   }
 
   /**
@@ -656,7 +659,6 @@ export class ConfigurationError extends Data.TaggedError('ConfigurationError')<{
   static databaseNotConfigured(): ConfigurationError {
     return new ConfigurationError({
       message: 'DatabaseService is not configured. Add it to setupWeb.',
-      hint: 'database: (c) => drizzle(c.env.DB)',
       service: 'DatabaseService',
       code: ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED,
     })
@@ -668,7 +670,6 @@ export class ConfigurationError extends Data.TaggedError('ConfigurationError')<{
   static authNotConfigured(): ConfigurationError {
     return new ConfigurationError({
       message: 'AuthService is not configured. Add it to setupWeb.',
-      hint: 'auth: { client: (c, { db }) => betterAuth({ database: db }) }',
       service: 'AuthService',
       code: ErrorCodes.CFG_301_AUTH_NOT_CONFIGURED,
     })
@@ -680,26 +681,12 @@ export class ConfigurationError extends Data.TaggedError('ConfigurationError')<{
   static schemaNotConfigured(): ConfigurationError {
     return new ConfigurationError({
       message: 'Schema is not configured for route model binding.',
-      hint: 'schema: require("./db/schema")',
       service: 'Schema',
       code: ErrorCodes.CFG_302_SCHEMA_NOT_CONFIGURED,
     })
   }
 }
 
-function configurationPathFor(service: string | undefined): string {
-  switch (service) {
-    case 'DatabaseService':
-      return 'database'
-    case 'AuthService':
-      return 'auth.client'
-    case 'Schema':
-      return 'schema'
-    case undefined:
-    default:
-      return 'unknown'
-  }
-}
 
 /**
  * Redirect - Control flow for HTTP redirects (not an error)

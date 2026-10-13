@@ -1,12 +1,10 @@
 /**
  * Error catalog: codes, titles and default fixes for structured errors
  *
- * Central registry of all error codes with fix generators.
- * This is the single source of truth for error definitions.
+ * Every error code with its title, message template, status and fixes.
  */
 
 import type {
-  ErrorCategory,
   ErrorContext,
   ErrorDefinition,
   ErrorParams,
@@ -48,29 +46,23 @@ function formatErrorParam(value: PagePropValue): string {
 export const ErrorCodes = {
   // Validation Errors (VAL)
   VAL_001_FIELD_REQUIRED: 'WEB_VAL_001_FIELD_REQUIRED',
-  VAL_002_FIELD_INVALID: 'WEB_VAL_002_FIELD_INVALID',
   VAL_003_BODY_PARSE_FAILED: 'WEB_VAL_003_BODY_PARSE_FAILED',
   VAL_004_SCHEMA_MISMATCH: 'WEB_VAL_004_SCHEMA_MISMATCH',
-  VAL_005_TYPE_COERCION_FAILED: 'WEB_VAL_005_TYPE_COERCION_FAILED',
   VAL_006_SOURCE_CONFLICT: 'WEB_VAL_006_SOURCE_CONFLICT',
 
   // Auth Errors (AUTH)
   AUTH_100_UNAUTHENTICATED: 'WEB_AUTH_100_UNAUTHENTICATED',
   AUTH_101_SESSION_EXPIRED: 'WEB_AUTH_101_SESSION_EXPIRED',
   AUTH_102_FORBIDDEN: 'WEB_AUTH_102_FORBIDDEN',
-  AUTH_103_INVALID_CREDENTIALS: 'WEB_AUTH_103_INVALID_CREDENTIALS',
   AUTH_104_RATE_LIMITED: 'WEB_AUTH_104_RATE_LIMITED',
 
   // Resource Errors (RES)
   RES_200_NOT_FOUND: 'WEB_RES_200_NOT_FOUND',
-  RES_201_ALREADY_EXISTS: 'WEB_RES_201_ALREADY_EXISTS',
-  RES_202_GONE: 'WEB_RES_202_GONE',
 
   // Configuration Errors (CFG)
   CFG_300_DATABASE_NOT_CONFIGURED: 'WEB_CFG_300_DATABASE_NOT_CONFIGURED',
   CFG_301_AUTH_NOT_CONFIGURED: 'WEB_CFG_301_AUTH_NOT_CONFIGURED',
   CFG_302_SCHEMA_NOT_CONFIGURED: 'WEB_CFG_302_SCHEMA_NOT_CONFIGURED',
-  CFG_304_BINDINGS_NOT_CONFIGURED: 'WEB_CFG_304_BINDINGS_NOT_CONFIGURED',
   CFG_305_INVALID_CONFIG: 'WEB_CFG_305_INVALID_CONFIG',
 
   // HTTP Errors (HTTP)
@@ -81,7 +73,6 @@ export const ErrorCodes = {
   HTTP_503_SERVICE_UNAVAILABLE: 'WEB_HTTP_503_SERVICE_UNAVAILABLE',
 
   // Database Errors (DB)
-  DB_500_CONNECTION_FAILED: 'WEB_DB_500_CONNECTION_FAILED',
   DB_501_QUERY_FAILED: 'WEB_DB_501_QUERY_FAILED',
   DB_502_CONSTRAINT_VIOLATION: 'WEB_DB_502_CONSTRAINT_VIOLATION',
   DB_503_TRANSACTION_FAILED: 'WEB_DB_503_TRANSACTION_FAILED',
@@ -89,7 +80,6 @@ export const ErrorCodes = {
   // Routing Errors (RTE)
   RTE_600_BINDING_NOT_FOUND: 'WEB_RTE_600_BINDING_NOT_FOUND',
   RTE_601_TABLE_NOT_FOUND: 'WEB_RTE_601_TABLE_NOT_FOUND',
-  RTE_602_PARAM_VALIDATION: 'WEB_RTE_602_PARAM_VALIDATION',
   RTE_603_RELATION_NOT_FOUND: 'WEB_RTE_603_RELATION_NOT_FOUND',
   RTE_604_BOUND_ROW_INVALID: 'WEB_RTE_604_BOUND_ROW_INVALID',
 
@@ -105,159 +95,50 @@ export const ErrorCodes = {
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes]
 
 /**
- * Fix generators for common scenarios.
+ * Fix generators for common scenarios. Code uses the README's application:
+ * `setupWeb(app, config)` in `src/app.ts`, `createDb` and `createAuth`
+ * factories, and a Drizzle schema module.
  */
 const fixGenerators = {
-  /**
-   * Generate fix for adding database configuration.
-   */
   addDatabaseConfig: (): FixSuggestion => ({
-    id: 'add-database-config',
-    type: 'modify_code',
-    confidence: 'high',
-    description: 'Add database configuration to setupWeb',
-    automated: true,
-    operations: [
-      {
-        type: 'modify_code',
-        position: { after: 'setupWeb({' },
-        content: `
-  database: (c) => drizzle(c.env.DB),`,
-      },
-    ],
-    postActions: [
-      {
-        type: 'restart_server',
-        description: 'Restart the dev server for changes to take effect',
-      },
-    ],
+    description: 'Give setupWeb a database factory, and augment WebDatabaseType with its type.',
+    code: `setupWeb(app, {
+  version,
+  render,
+  database: (c) => createDb(c.env.DATABASE_URL),
+})`,
   }),
 
-  /**
-   * Generate fix for adding auth configuration.
-   */
   addAuthConfig: (): FixSuggestion => ({
-    id: 'add-auth-config',
-    type: 'modify_code',
-    confidence: 'high',
-    description: 'Add auth configuration to setupWeb',
-    automated: true,
-    operations: [
-      {
-        type: 'modify_code',
-        position: { after: 'setupWeb({' },
-        content: `
+    description: 'Give setupWeb a Better Auth client factory, and augment WebAuthType with its type.',
+    code: `setupWeb(app, {
+  version,
+  render,
+  database: (c) => createDb(c.env.DATABASE_URL),
   auth: {
-    client: (_c, { db }) => betterAuth({ database: db }),
-  },`,
-      },
-    ],
-    postActions: [
-      {
-        type: 'restart_server',
-        description: 'Restart the dev server for changes to take effect',
-      },
-    ],
-  }),
-
-  /**
-   * Generate fix for adding schema configuration.
-   */
-  addSchemaConfig: (): FixSuggestion => ({
-    id: 'add-schema-config',
-    type: 'modify_code',
-    confidence: 'high',
-    description: 'Add schema configuration for route model binding',
-    automated: true,
-    operations: [
-      {
-        type: 'add_code',
-        position: { line: 1 },
-        content: "import * as schema from './db/schema'",
-      },
-      {
-        type: 'modify_code',
-        position: { after: 'setupWeb({' },
-        content: '\n  schema,',
-      },
-    ],
-    postActions: [
-      {
-        type: 'restart_server',
-        description: 'Restart the dev server for changes to take effect',
-      },
-    ],
-  }),
-
-  /**
-   * Generate fix for making a field optional.
-   */
-  makeFieldOptional: (
-    ctx: ErrorContext,
-    params: ErrorParams
-  ): FixSuggestion => ({
-    id: 'make-field-optional',
-    type: 'modify_code',
-    confidence: 'medium',
-    description: `Make the "${formatErrorParam(params.field)}" field optional in your schema`,
-    automated: false,
-    operations: [
-      {
-        type: 'modify_code',
-        file: ctx.handler?.file,
-        content: `S.optional(S.String), // Make ${formatErrorParam(params.field)} optional`,
-      },
-    ],
-  }),
-
-  /**
-   * Generate fix for providing a required field.
-   */
-  provideRequiredField: (
-    ctx: ErrorContext,
-    params: ErrorParams
-  ): FixSuggestion => {
-    const routeInfo = ctx.route
-      ? ` for ${ctx.route.method} ${ctx.route.path}`
-      : ''
-
-    return {
-      id: 'provide-field-value',
-      type: 'modify_code',
-      confidence: 'high',
-      description: `Provide a value for the "${formatErrorParam(params.field)}" field in your request${routeInfo}`,
-      automated: false,
-      operations: [],
-    }
+    client: (c, { db, backgroundTasks }) => createAuth({
+      db,
+      secret: c.env.BETTER_AUTH_SECRET,
+      baseURL: new URL(c.req.url).origin,
+      advanced: { backgroundTasks },
+    }),
   },
-
-  /**
-   * Generate fix for adding RequireAuthLayer.
-   */
-  addAuthMiddleware: (): FixSuggestion => ({
-    id: 'add-auth-middleware',
-    type: 'modify_code',
-    confidence: 'high',
-    description: 'Add RequireAuthLayer to protect this route',
-    automated: true,
-    operations: [
-      {
-        type: 'modify_code',
-        content: `.provide(RequireAuthLayer)`,
-      },
-    ],
+})`,
   }),
 
-  /**
-   * Generate fix for redirecting to login.
-   */
-  redirectToLogin: (): FixSuggestion => ({
-    id: 'redirect-to-login',
-    type: 'modify_code',
-    confidence: 'high',
-    description: 'User needs to authenticate - redirect to login page',
-    automated: false,
-    operations: [],
+  addSchemaConfig: (): FixSuggestion => ({
+    description: 'Pass the Drizzle schema to setupWeb so route model binding can find tables.',
+    code: `import * as schema from './schema'
+
+setupWeb(app, { version, render, database, schema })`,
+  }),
+
+  provideRequiredField: (params: ErrorParams): FixSuggestion => ({
+    description: `Send a value for "${formatErrorParam(params.field)}", or make the field optional in the schema with S.optional(...).`,
+  }),
+
+  signIn: (): FixSuggestion => ({
+    description: 'The request has no signed-in user. Sign in, then retry.',
   }),
 }
 
@@ -273,21 +154,7 @@ export const ErrorCatalog = {
     title: 'Required Field Missing',
     messageTemplate: 'The field "{field}" is required but was not provided.',
     httpStatus: 422,
-    defaultFixes: [fixGenerators.provideRequiredField, fixGenerators.makeFieldOptional],
-    docsPath: '/errors/validation/field-required',
-    related: [ErrorCodes.VAL_002_FIELD_INVALID, ErrorCodes.VAL_004_SCHEMA_MISMATCH],
-  },
-
-  [ErrorCodes.VAL_002_FIELD_INVALID]: {
-    code: ErrorCodes.VAL_002_FIELD_INVALID,
-    tag: 'ValidationError',
-    category: 'validation',
-    title: 'Invalid Field Value',
-    messageTemplate: 'The field "{field}" has an invalid value: {reason}',
-    httpStatus: 422,
-    defaultFixes: [],
-    docsPath: '/errors/validation/field-invalid',
-    related: [ErrorCodes.VAL_001_FIELD_REQUIRED, ErrorCodes.VAL_005_TYPE_COERCION_FAILED],
+    defaultFixes: [fixGenerators.provideRequiredField],
   },
 
   [ErrorCodes.VAL_003_BODY_PARSE_FAILED]: {
@@ -298,8 +165,6 @@ export const ErrorCatalog = {
     messageTemplate: 'Could not parse request body: {reason}',
     httpStatus: 400,
     defaultFixes: [],
-    docsPath: '/errors/validation/body-parse-failed',
-    related: [ErrorCodes.HTTP_400_BAD_REQUEST],
   },
 
   [ErrorCodes.VAL_004_SCHEMA_MISMATCH]: {
@@ -310,24 +175,6 @@ export const ErrorCatalog = {
     messageTemplate: 'Request data does not match the expected schema.',
     httpStatus: 422,
     defaultFixes: [],
-    docsPath: '/errors/validation/schema-mismatch',
-    related: [
-      ErrorCodes.VAL_001_FIELD_REQUIRED,
-      ErrorCodes.VAL_002_FIELD_INVALID,
-      ErrorCodes.VAL_006_SOURCE_CONFLICT,
-    ],
-  },
-
-  [ErrorCodes.VAL_005_TYPE_COERCION_FAILED]: {
-    code: ErrorCodes.VAL_005_TYPE_COERCION_FAILED,
-    tag: 'ValidationError',
-    category: 'validation',
-    title: 'Type Coercion Failed',
-    messageTemplate: 'Could not convert "{field}" to {expectedType}.',
-    httpStatus: 422,
-    defaultFixes: [],
-    docsPath: '/errors/validation/type-coercion-failed',
-    related: [ErrorCodes.VAL_002_FIELD_INVALID],
   },
 
   [ErrorCodes.VAL_006_SOURCE_CONFLICT]: {
@@ -338,8 +185,6 @@ export const ErrorCatalog = {
     messageTemplate: 'Conflicting values were provided for "{field}" across request sources.',
     httpStatus: 422,
     defaultFixes: [],
-    docsPath: '/errors/validation/source-conflict',
-    related: [ErrorCodes.VAL_004_SCHEMA_MISMATCH],
   },
 
   // Auth Errors
@@ -350,9 +195,7 @@ export const ErrorCatalog = {
     title: 'Authentication Required',
     messageTemplate: 'You must be logged in to access this resource.',
     httpStatus: 401,
-    defaultFixes: [fixGenerators.redirectToLogin],
-    docsPath: '/errors/auth/unauthenticated',
-    related: [ErrorCodes.AUTH_101_SESSION_EXPIRED, ErrorCodes.AUTH_102_FORBIDDEN],
+    defaultFixes: [fixGenerators.signIn],
   },
 
   [ErrorCodes.AUTH_101_SESSION_EXPIRED]: {
@@ -362,9 +205,7 @@ export const ErrorCatalog = {
     title: 'Session Expired',
     messageTemplate: 'Your session has expired. Please log in again.',
     httpStatus: 401,
-    defaultFixes: [fixGenerators.redirectToLogin],
-    docsPath: '/errors/auth/session-expired',
-    related: [ErrorCodes.AUTH_100_UNAUTHENTICATED],
+    defaultFixes: [fixGenerators.signIn],
   },
 
   [ErrorCodes.AUTH_102_FORBIDDEN]: {
@@ -375,20 +216,6 @@ export const ErrorCatalog = {
     messageTemplate: 'You do not have permission to access this resource.',
     httpStatus: 403,
     defaultFixes: [],
-    docsPath: '/errors/auth/forbidden',
-    related: [ErrorCodes.AUTH_100_UNAUTHENTICATED],
-  },
-
-  [ErrorCodes.AUTH_103_INVALID_CREDENTIALS]: {
-    code: ErrorCodes.AUTH_103_INVALID_CREDENTIALS,
-    tag: 'UnauthorizedError',
-    category: 'auth',
-    title: 'Invalid Credentials',
-    messageTemplate: 'The provided credentials are invalid.',
-    httpStatus: 401,
-    defaultFixes: [],
-    docsPath: '/errors/auth/invalid-credentials',
-    related: [ErrorCodes.AUTH_100_UNAUTHENTICATED],
   },
 
   [ErrorCodes.AUTH_104_RATE_LIMITED]: {
@@ -399,8 +226,6 @@ export const ErrorCatalog = {
     messageTemplate: 'Too many authentication attempts. Please try again later.',
     httpStatus: 429,
     defaultFixes: [],
-    docsPath: '/errors/auth/rate-limited',
-    related: [ErrorCodes.AUTH_103_INVALID_CREDENTIALS],
   },
 
   // Resource Errors
@@ -412,32 +237,6 @@ export const ErrorCatalog = {
     messageTemplate: 'The {resource} was not found.',
     httpStatus: 404,
     defaultFixes: [],
-    docsPath: '/errors/resource/not-found',
-    related: [ErrorCodes.RES_202_GONE],
-  },
-
-  [ErrorCodes.RES_201_ALREADY_EXISTS]: {
-    code: ErrorCodes.RES_201_ALREADY_EXISTS,
-    tag: 'HttpError',
-    category: 'resource',
-    title: 'Resource Already Exists',
-    messageTemplate: 'A {resource} with this identifier already exists.',
-    httpStatus: 409,
-    defaultFixes: [],
-    docsPath: '/errors/resource/already-exists',
-    related: [ErrorCodes.DB_502_CONSTRAINT_VIOLATION],
-  },
-
-  [ErrorCodes.RES_202_GONE]: {
-    code: ErrorCodes.RES_202_GONE,
-    tag: 'HttpError',
-    category: 'resource',
-    title: 'Resource Gone',
-    messageTemplate: 'The {resource} has been permanently deleted.',
-    httpStatus: 410,
-    defaultFixes: [],
-    docsPath: '/errors/resource/gone',
-    related: [ErrorCodes.RES_200_NOT_FOUND],
   },
 
   // Configuration Errors
@@ -449,9 +248,7 @@ export const ErrorCatalog = {
     messageTemplate:
       'DatabaseService is not configured. You attempted to use the database in {location}.',
     httpStatus: 500,
-    defaultFixes: [() => fixGenerators.addDatabaseConfig()],
-    docsPath: '/errors/configuration/database-not-configured',
-    related: [ErrorCodes.CFG_301_AUTH_NOT_CONFIGURED, ErrorCodes.CFG_302_SCHEMA_NOT_CONFIGURED],
+    defaultFixes: [fixGenerators.addDatabaseConfig],
   },
 
   [ErrorCodes.CFG_301_AUTH_NOT_CONFIGURED]: {
@@ -462,9 +259,7 @@ export const ErrorCatalog = {
     messageTemplate:
       'AuthService is not configured. You attempted to use auth in {location}.',
     httpStatus: 500,
-    defaultFixes: [() => fixGenerators.addAuthConfig()],
-    docsPath: '/errors/configuration/auth-not-configured',
-    related: [ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED],
+    defaultFixes: [fixGenerators.addAuthConfig],
   },
 
   [ErrorCodes.CFG_302_SCHEMA_NOT_CONFIGURED]: {
@@ -475,22 +270,7 @@ export const ErrorCatalog = {
     messageTemplate:
       'Schema is not configured for route model binding. Cannot resolve binding "{binding}".',
     httpStatus: 500,
-    defaultFixes: [() => fixGenerators.addSchemaConfig()],
-    docsPath: '/errors/configuration/schema-not-configured',
-    related: [ErrorCodes.RTE_601_TABLE_NOT_FOUND],
-  },
-
-
-  [ErrorCodes.CFG_304_BINDINGS_NOT_CONFIGURED]: {
-    code: ErrorCodes.CFG_304_BINDINGS_NOT_CONFIGURED,
-    tag: 'ConfigurationError',
-    category: 'configuration',
-    title: 'Worker Bindings Not Available',
-    messageTemplate: 'Cloudflare Worker bindings are not available in this context.',
-    httpStatus: 500,
-    defaultFixes: [],
-    docsPath: '/errors/configuration/bindings-not-configured',
-    related: [ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED],
+    defaultFixes: [fixGenerators.addSchemaConfig],
   },
 
   [ErrorCodes.CFG_305_INVALID_CONFIG]: {
@@ -501,8 +281,6 @@ export const ErrorCatalog = {
     messageTemplate: 'Invalid configuration: {reason}',
     httpStatus: 500,
     defaultFixes: [],
-    docsPath: '/errors/configuration/invalid-config',
-    related: [],
   },
 
   // HTTP Errors
@@ -514,8 +292,6 @@ export const ErrorCatalog = {
     messageTemplate: 'The request could not be understood: {reason}',
     httpStatus: 400,
     defaultFixes: [],
-    docsPath: '/errors/http/bad-request',
-    related: [ErrorCodes.VAL_003_BODY_PARSE_FAILED],
   },
 
   [ErrorCodes.HTTP_429_RATE_LIMITED]: {
@@ -526,8 +302,6 @@ export const ErrorCatalog = {
     messageTemplate: 'Too many requests. Please try again in {retryAfter} seconds.',
     httpStatus: 429,
     defaultFixes: [],
-    docsPath: '/errors/http/rate-limited',
-    related: [],
   },
 
   [ErrorCodes.HTTP_500_INTERNAL_ERROR]: {
@@ -538,8 +312,6 @@ export const ErrorCatalog = {
     messageTemplate: 'An unexpected error occurred.',
     httpStatus: 500,
     defaultFixes: [],
-    docsPath: '/errors/http/internal-error',
-    related: [ErrorCodes.INT_800_UNEXPECTED],
   },
 
   [ErrorCodes.HTTP_502_BAD_GATEWAY]: {
@@ -550,8 +322,6 @@ export const ErrorCatalog = {
     messageTemplate: 'The upstream server returned an invalid response.',
     httpStatus: 502,
     defaultFixes: [],
-    docsPath: '/errors/http/bad-gateway',
-    related: [ErrorCodes.HTTP_503_SERVICE_UNAVAILABLE],
   },
 
   [ErrorCodes.HTTP_503_SERVICE_UNAVAILABLE]: {
@@ -562,22 +332,9 @@ export const ErrorCatalog = {
     messageTemplate: 'The service is temporarily unavailable. Please try again later.',
     httpStatus: 503,
     defaultFixes: [],
-    docsPath: '/errors/http/service-unavailable',
-    related: [ErrorCodes.HTTP_502_BAD_GATEWAY],
   },
 
   // Database Errors
-  [ErrorCodes.DB_500_CONNECTION_FAILED]: {
-    code: ErrorCodes.DB_500_CONNECTION_FAILED,
-    tag: 'HttpError',
-    category: 'database',
-    title: 'Database Connection Failed',
-    messageTemplate: 'Could not connect to the database: {reason}',
-    httpStatus: 500,
-    defaultFixes: [],
-    docsPath: '/errors/database/connection-failed',
-    related: [ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED],
-  },
 
   [ErrorCodes.DB_501_QUERY_FAILED]: {
     code: ErrorCodes.DB_501_QUERY_FAILED,
@@ -587,8 +344,6 @@ export const ErrorCatalog = {
     messageTemplate: 'Database query failed: {reason}',
     httpStatus: 500,
     defaultFixes: [],
-    docsPath: '/errors/database/query-failed',
-    related: [ErrorCodes.DB_502_CONSTRAINT_VIOLATION],
   },
 
   [ErrorCodes.DB_502_CONSTRAINT_VIOLATION]: {
@@ -599,8 +354,6 @@ export const ErrorCatalog = {
     messageTemplate: 'Database constraint violation: {constraint}',
     httpStatus: 409,
     defaultFixes: [],
-    docsPath: '/errors/database/constraint-violation',
-    related: [ErrorCodes.RES_201_ALREADY_EXISTS],
   },
 
   [ErrorCodes.DB_503_TRANSACTION_FAILED]: {
@@ -611,8 +364,6 @@ export const ErrorCatalog = {
     messageTemplate: 'Database transaction failed and was rolled back: {reason}',
     httpStatus: 500,
     defaultFixes: [],
-    docsPath: '/errors/database/transaction-failed',
-    related: [ErrorCodes.DB_501_QUERY_FAILED],
   },
 
   // Routing Errors
@@ -625,8 +376,6 @@ export const ErrorCatalog = {
       'Route binding "{binding}" was not found in the request context.',
     httpStatus: 500,
     defaultFixes: [],
-    docsPath: '/errors/routing/binding-not-found',
-    related: [ErrorCodes.RTE_601_TABLE_NOT_FOUND],
   },
 
   [ErrorCodes.RTE_601_TABLE_NOT_FOUND]: {
@@ -637,21 +386,7 @@ export const ErrorCatalog = {
     messageTemplate:
       'No table "{table}" found in schema for route model binding.',
     httpStatus: 500,
-    defaultFixes: [() => fixGenerators.addSchemaConfig()],
-    docsPath: '/errors/routing/table-not-found',
-    related: [ErrorCodes.CFG_302_SCHEMA_NOT_CONFIGURED],
-  },
-
-  [ErrorCodes.RTE_602_PARAM_VALIDATION]: {
-    code: ErrorCodes.RTE_602_PARAM_VALIDATION,
-    tag: 'NotFoundError',
-    category: 'routing',
-    title: 'Invalid Route Parameter',
-    messageTemplate: 'Route parameter "{param}" has invalid value: {value}',
-    httpStatus: 404,
-    defaultFixes: [],
-    docsPath: '/errors/routing/param-validation',
-    related: [ErrorCodes.RES_200_NOT_FOUND],
+    defaultFixes: [fixGenerators.addSchemaConfig],
   },
 
   [ErrorCodes.RTE_603_RELATION_NOT_FOUND]: {
@@ -663,8 +398,6 @@ export const ErrorCatalog = {
       'No relation found between "{parent}" and "{child}" for nested binding.',
     httpStatus: 500,
     defaultFixes: [],
-    docsPath: '/errors/routing/relation-not-found',
-    related: [ErrorCodes.RTE_601_TABLE_NOT_FOUND],
   },
 
   [ErrorCodes.RTE_604_BOUND_ROW_INVALID]: {
@@ -676,8 +409,6 @@ export const ErrorCatalog = {
       'A row loaded for route binding "{binding}" did not satisfy its registered schema.',
     httpStatus: 500,
     defaultFixes: [],
-    docsPath: '/errors/routing/bound-row-invalid',
-    related: [ErrorCodes.RTE_600_BINDING_NOT_FOUND],
   },
 
   // Service Errors
@@ -689,8 +420,6 @@ export const ErrorCatalog = {
     messageTemplate: 'The "{service}" service is not available.',
     httpStatus: 503,
     defaultFixes: [],
-    docsPath: '/errors/service/unavailable',
-    related: [ErrorCodes.CFG_300_DATABASE_NOT_CONFIGURED],
   },
 
   [ErrorCodes.SVC_701_SERVICE_ERROR]: {
@@ -701,8 +430,6 @@ export const ErrorCatalog = {
     messageTemplate: 'The "{service}" service encountered an error: {reason}',
     httpStatus: 500,
     defaultFixes: [],
-    docsPath: '/errors/service/error',
-    related: [ErrorCodes.INT_800_UNEXPECTED],
   },
 
   // Internal Errors
@@ -714,8 +441,6 @@ export const ErrorCatalog = {
     messageTemplate: 'An unexpected error occurred: {reason}',
     httpStatus: 500,
     defaultFixes: [],
-    docsPath: '/errors/internal/unexpected',
-    related: [],
   },
 
   [ErrorCodes.INT_801_EFFECT_DEFECT]: {
@@ -726,15 +451,8 @@ export const ErrorCatalog = {
     messageTemplate: 'An unhandled Effect defect occurred: {reason}',
     httpStatus: 500,
     defaultFixes: [],
-    docsPath: '/errors/internal/effect-defect',
-    related: [ErrorCodes.INT_800_UNEXPECTED],
   },
 } satisfies Record<ErrorCode, ErrorDefinition>
-
-/**
- * Base URL for error documentation.
- */
-const ERROR_GUIDE_URL = 'https://github.com/patrickogilvie/popcomputer-web#responses-and-failures'
 
 /**
  * Create a structured error from an error code and parameters.
@@ -742,7 +460,7 @@ const ERROR_GUIDE_URL = 'https://github.com/patrickogilvie/popcomputer-web#respo
  * @param code - The error code (from ErrorCodes) or any string. Unknown codes fallback to INT_800_UNEXPECTED.
  * @param params - Parameters to interpolate into the message template.
  * @param context - The error context (route, request, handler info).
- * @returns A fully structured error with fix suggestions.
+ * @returns A structured error with fix suggestions.
  *
  * @example
  * ```ts
@@ -780,10 +498,7 @@ export function createStructuredError(
     message = message.replaceAll(`{${key}}`, () => formatErrorParam(value))
   }
 
-  // Generate fixes
-  const fixes = definition.defaultFixes
-    .map((gen: FixGenerator) => gen(context, params))
-    .filter((f: FixSuggestion | null): f is FixSuggestion => f !== null)
+  const fixes = definition.defaultFixes.map((generate: FixGenerator) => generate(params))
 
   return {
     code: definition.code,
@@ -794,30 +509,9 @@ export function createStructuredError(
     httpStatus: definition.httpStatus,
     context,
     fixes,
-    docs: {
-      url: ERROR_GUIDE_URL,
-      related: definition.related,
-    },
     // oxlint-disable-next-line effecttsgo/global-date -- The synchronous diagnostic formatter stamps its output at the native reporting boundary; this timestamp does not drive application decisions.
     timestamp: new Date().toISOString(),
   }
-}
-
-/**
- * Get an error definition by code.
- */
-export function getErrorDefinition(code: ErrorCode): ErrorDefinition | undefined {
-  return ErrorCatalog[code]
-}
-
-/**
- * Get all error codes for a category.
- */
-export function getErrorsByCategory(category: ErrorCategory): ErrorCode[] {
-  // SAFETY: The error boundary established the structured-error variant before restoring its precise local contract.
-  return (Object.values(ErrorCodes) as ErrorCode[]).filter(
-    (code) => ErrorCatalog[code]?.category === category
-  )
 }
 
 /**
