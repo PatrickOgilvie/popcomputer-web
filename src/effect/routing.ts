@@ -4,7 +4,7 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Predicate, Effect, Exit, Layer, ManagedRuntime, Schema as S } from 'effect'
+import { Predicate, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
 import type { Context as HonoContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { runEffectWithRuntime } from './handler.js'
 import {
@@ -40,8 +40,8 @@ import {
   ResponseCacheService,
   type RouteCacheOptions,
 } from './response-cache.js'
+import { DatabaseService } from './services.js'
 import type {
-  DatabaseService,
   AuthService,
   ExecutionContextService,
   PageService,
@@ -613,17 +613,21 @@ export class EffectRouteBuilder<
         return deriveCacheTags(bindings, values)
       }
 
-      const loadAllModels: Effect.Effect<ReadonlyMap<string, unknown>, BoundModelError> =
+      // Models load through the request's DatabaseService, so a database a
+      // test provides with testEnv serves bound() as it serves dbQuery.
+      const loadAllModels = (
+        database: Option.Option<object>
+      ): Effect.Effect<ReadonlyMap<string, unknown>, BoundModelError> =>
         Effect.gen(function* () {
           if (!configuredBindings) {
             return yield* RouteConfigurationError.bindingParserNotConfigured(bindings[0].param)
           }
 
-          const db = openWebContext(c).db
-
-          if (!db) {
+          if (Option.isNone(database)) {
             return yield* ConfigurationError.databaseNotConfigured()
           }
+
+          const db = database.value
 
           const outcome = yield* Effect.promise(() =>
             loadModels(schema ?? {}, configuredBindings, db)
@@ -640,7 +644,11 @@ export class EffectRouteBuilder<
 
       const boundModelsLayer = Layer.effect(
         BoundModels,
-        Effect.map(Effect.cached(loadAllModels), (load) =>
+        Effect.gen(function* () {
+          const database = yield* Effect.serviceOption(DatabaseService)
+
+          return yield* Effect.cached(loadAllModels(database))
+        }).pipe(Effect.map((load) =>
           BoundModels.of({
             get: (key) => {
               if (!bindings.some((binding) => binding.param === key)) {
@@ -654,10 +662,10 @@ export class EffectRouteBuilder<
               return Effect.map(load, (models) => models.get(key))
             },
           })
-        )
+        ))
       )
 
-      let fullLayer: Layer.Layer<never, AppError, never> = Layer.merge(contextLayer, boundModelsLayer)
+      let fullLayer: Layer.Layer<never, AppError, never> = Layer.provideMerge(boundModelsLayer, contextLayer)
 
       for (const layer of layers) {
         fullLayer = Layer.provideMerge(layer, fullLayer)

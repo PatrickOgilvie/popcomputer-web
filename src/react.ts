@@ -37,12 +37,16 @@ type ComponentType<P> = (props: P) => ReactRenderable
 export interface SharedProps {}
 
 /**
- * Props the framework gives every page: the field errors of a failed form,
- * by field. A form that names an error bag gets its errors under the bag's
- * name instead.
+ * Field errors by field, or, for a form that names an error bag, by bag and
+ * field. Typed as Inertia types them, so both `errors.name` and
+ * `errors.createProject.name` read as strings.
  */
+export type PageFieldErrors = Readonly<Record<string, string>> &
+  Readonly<Record<string, Readonly<Record<string, string>>>>
+
+/** Props the framework gives every page: the field errors of a failed form. */
 export interface FrameworkProps {
-  readonly errors: Readonly<Record<string, string>>
+  readonly errors: PageFieldErrors
 }
 
 /** A page's props: the registered props of a page name, or the props given. */

@@ -138,13 +138,15 @@ describe('Type Definitions', () => {
 })
 
 describe('React page props', () => {
-  test('a page typed by its own props also receives field errors', () => {
-    const props: PagePropsFor<{ title: string }> = {
-      title: 'Test',
-      errors: { title: 'Required' },
+  test('a page typed by its own props also receives field errors, by field or by bag', () => {
+    const page = (props: PagePropsFor<{ title: string }>) => {
+      const field: string = props.errors.title
+      const inBag: string = props.errors.createProject.name
+
+      return [props.title, field, inBag]
     }
 
-    expect(props.title).toBe('Test')
+    expect(page).toBeInstanceOf(Function)
   })
 })
 

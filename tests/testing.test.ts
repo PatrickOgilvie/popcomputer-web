@@ -5,7 +5,7 @@ import { TestClock } from 'effect/testing'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
-import { authorize, AuthUserService } from '../src/effect/services.js'
+import { authorize, AuthUserService, DatabaseService } from '../src/effect/services.js'
 import { flash, json, notFound, redirect, render } from '../src/effect/responses.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import { signedIn, testEnv } from '../src/testing.js'
@@ -209,6 +209,22 @@ describe('the README route test', () => {
       component: 'Projects/Show',
       props: { project: { id: 'project-1' } },
     })
+  })
+
+  test('a database a test provides serves route model binding', async () => {
+    const { app, testBindings } = await createProjectsApp()
+    const other = new Database(':memory:')
+    other.run('CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, user_id TEXT NOT NULL)')
+    const otherDb = drizzle(other, { schema: projectsSchema })
+    otherDb.insert(projects).values({ id: 'project-1', name: 'Gemini', userId: 'user-1' }).run()
+
+    const res = await app.request(
+      '/projects/project-1',
+      { headers: { 'X-Inertia': 'true' } },
+      testEnv(Layer.merge(signedIn({ id: 'user-1' }), Layer.succeed(DatabaseService, otherDb)), testBindings)
+    )
+
+    expect(await res.json()).toMatchObject({ props: { project: { name: 'Gemini' } } })
   })
 
   test("answers 404 for another member's project", async () => {

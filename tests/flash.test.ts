@@ -40,6 +40,14 @@ function createApp() {
 
       return yield* render('Notes/Show')
     })))
+    .post('/sessions', action(Effect.gen(function* () {
+      yield* flash('success', 'Signed in.')
+
+      return new Response(null, {
+        status: 303,
+        headers: { Location: '/projects', 'Set-Cookie': 'session=s1; Path=/; HttpOnly' },
+      })
+    })))
     .get('/search', action(Effect.gen(function* () {
       const query = yield* validateRequest(S.Struct({ page: positiveInt }))
 
@@ -128,6 +136,14 @@ describe('flash', () => {
 
     expect(created.headers.get('Location')).toBe('/projects')
     expect((await index.json()).flash).toEqual({ success: 'Created Apollo.' })
+  })
+
+  test('reaches the next page when the response sets its own cookies', async () => {
+    const res = await createApp().request('/sessions', { method: 'POST', headers: page })
+    const cookies = res.headers.getSetCookie()
+
+    expect(cookies).toContain('session=s1; Path=/; HttpOnly')
+    expect(cookies.some((cookie) => cookie.startsWith('popweb-flash='))).toBe(true)
   })
 
   test('reaches the page the same request renders, without a cookie', async () => {

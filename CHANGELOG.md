@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `flash()` reaches the next page when the action's response sets cookies of its own, such as `betterAuthRedirect`'s session: Hono replaced the response's `Set-Cookie` headers when the flash cookie was added.
+- Route model binding loads through the request's `DatabaseService`, so a database a test provides with `testEnv` serves `bound()` as it serves `dbQuery`. It used the `database` factory's client.
+- `WebPage` types `errors` as Inertia does, so a field error and an error bag's fields (`errors.createProject.name`) both read as strings.
 - `testEnv` layers apply to page visits while the page cache is on: the cache tracks bindings through a copy of the request env, and the copy lost the layer, so a test-signed-in GET ran as a guest.
 - A `services.app` layer that fails to build, such as one reading a missing binding, is built again by the next request instead of failing every later request in the isolate.
 - Validators for optional input accept an absent key: `checkbox` decodes it to `false`, the `nullable*` validators to `null`, `filled(schema, value)` to its default and `ensureArray` to `[]`. They failed with "Missing key", so a plain HTML form with an unchecked checkbox, or a page whose query string omitted a filter, failed validation.

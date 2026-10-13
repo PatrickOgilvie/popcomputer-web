@@ -227,6 +227,11 @@ export function web(config: WebConfig): MiddlewareHandler {
     const committed = c.res ? flash.commit(c.res) : undefined
 
     if (committed !== undefined && committed !== c.res) {
+      // Assigning c.res copies the previous response's Set-Cookie headers over
+      // the new one's, which would drop the flash cookie; the committed
+      // response already carries every cookie.
+      // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
+      c.res = undefined
       // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
       c.res = committed
     }
