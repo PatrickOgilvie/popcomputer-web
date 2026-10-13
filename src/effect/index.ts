@@ -167,6 +167,7 @@ export {
   type RouteBindingScope,
   type RouteBindingOptions,
   type RouteBindingDefinition,
+  type RouteBindingTable,
   type RouteBindingConfig,
   type RouteBindingsConfig,
 } from './binding.js'

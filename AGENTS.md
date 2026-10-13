@@ -45,9 +45,11 @@ To use this file, point the application's own `AGENTS.md` or `CLAUDE.md` at
    params, query and body provide with different values fails validation.
    Read headers and a raw body (a webhook signature) with `RequestService`.
 6. **Load route models with `{param}` placeholders and `bound('param')`.**
-   Declare each model's Effect Schema in `setupWeb`'s `bindings`. Never query by a route
-   parameter yourself. Call `authorize()` before `bound()`: models load on the
-   first `bound()` call, and a missing row is a 404. A record the user may not
+   Name each model's Drizzle table in `setupWeb`'s `bindings`
+   (`bindings: { project: schema.projects }`); the model is the table's row,
+   checked against its columns. Never query by a route parameter yourself.
+   Call `authorize()` before `bound()`: models load on the first `bound()`
+   call, and a missing row is a 404. A record the user may not
    see answers `notFound(...)`, so its existence stays private; use
    `authorize((auth) => rule)` (a 403) for a record the user can see but not
    change.

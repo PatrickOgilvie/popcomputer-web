@@ -1,6 +1,6 @@
 // Drizzle tables the README examples refer to as `./schema`. The examples'
 // database is Postgres, as `src/db.ts` in the README creates it.
-import { pgTable, text } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 
 export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
@@ -8,6 +8,7 @@ export const projects = pgTable('projects', {
   slug: text('slug').notNull(),
   description: text('description'),
   userId: text('user_id').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
 })
 
 export const tasks = pgTable('tasks', {

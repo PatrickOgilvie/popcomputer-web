@@ -15,6 +15,7 @@
  */
 import { Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono } from 'hono'
+import { pgTable, text } from 'drizzle-orm/pg-core'
 import { setupWeb } from '@popcomputer/web'
 import type { FlashData, SharedProps, WebPage } from '@popcomputer/web/react'
 import {
@@ -38,6 +39,12 @@ import {
 import { readPage, signedIn, testEnv } from '@popcomputer/web/testing'
 
 const Project = S.Struct({ id: S.String, userId: S.String })
+
+// A binding can name its table: the model is the table's row.
+const members = pgTable('members', {
+  id: text('id').primaryKey(),
+  role: text('role', { enum: ['owner', 'member'] }).notNull(),
+})
 
 const pages = {
   'Projects/Show': S.Struct({ project: S.Struct({ id: S.String, createdAt: S.Date }) }),
@@ -112,7 +119,7 @@ export const web = setupWeb(new Hono<Env>(), {
   version: '1',
   render: () => '',
   database: (c) => createDb(c.env.REGION),
-  bindings: { project: Project },
+  bindings: { project: Project, member: members },
   pages,
   auth: { session: MemberSession, share: PublicMember },
   shared: S.Struct({ locale: S.String }),
@@ -141,6 +148,9 @@ export const derivedTypes = Effect.gen(function* () {
 
   const project = yield* bound('project')
   expectType<Equals<typeof project, typeof Project.Type>>()
+
+  const boundMember = yield* bound('member')
+  expectType<Equals<typeof boundMember, typeof members.$inferSelect>>()
 
   // @ts-expect-error 'projcet' is not a registered binding
   yield* bound('projcet')

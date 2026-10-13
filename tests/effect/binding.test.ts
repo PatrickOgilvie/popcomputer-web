@@ -28,7 +28,7 @@ import { ErrorCodes } from '../../src/effect/error-catalog.js'
 import { registerErrorHandlers, setupWeb } from '../../src/setup.js'
 import { Database } from 'bun:sqlite'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
-import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { action } from '../../src/effect/action.js'
 import { authorize } from '../../src/effect/services.js'
 import { json } from '../../src/effect/responses.js'
@@ -258,6 +258,58 @@ describe('compiled route binding contract', () => {
         name: 'Internal name',
       })
     ).resolves.toEqual({ id: 'project-1' })
+  })
+})
+
+describe('table bindings', () => {
+  const members = sqliteTable('members', {
+    id: text('id').primaryKey(),
+    handle: text('handle').notNull(),
+    role: text('role', { enum: ['owner', 'member'] }).notNull(),
+    joinedAt: integer('joined_at', { mode: 'timestamp' }).notNull(),
+    bio: text('bio'),
+  })
+
+  test('check each loaded row against its table\'s columns', async () => {
+    const [binding] = await compileBindingPlan(
+      [{ param: 'member', column: 'handle' }],
+      { members },
+      { member: members }
+    )
+    const row = { id: 'm1', handle: 'ada', role: 'owner', joinedAt: new Date(0), bio: null }
+
+    expect(binding.tableName).toBe('members')
+    await expect(decodeBoundRow(binding, row)).resolves.toEqual(row)
+    await expect(decodeBoundRow(binding, { ...row, role: 'admin' })).rejects.toMatchObject({
+      // oxlint-disable-next-line popcomputer/effect-no-manual-tagged-construction -- Assert the literal external error shape independently of its production constructor.
+      _tag: 'RouteConfigurationError',
+      binding: 'member',
+    })
+    await expect(decodeBoundRow(binding, { ...row, joinedAt: 0 })).rejects.toMatchObject({ binding: 'member' })
+  })
+
+  test('load a route\'s model under any parameter name', async () => {
+    const sqlite = new Database(':memory:')
+    sqlite.run('CREATE TABLE members (id TEXT PRIMARY KEY, handle TEXT NOT NULL, role TEXT NOT NULL, joined_at INTEGER NOT NULL, bio TEXT)')
+    const db = drizzle(sqlite, { schema: { members } })
+    db.insert(members).values({ id: 'm1', handle: 'ada', role: 'owner', joinedAt: new Date(0) }).run()
+
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+      database: () => db as never,
+      schema: { members },
+      bindings: { author: members },
+    })
+
+    routes.get('/authors/{author:handle}', action(Effect.flatMap(bound('author'), (author) => json(author))))
+
+    const res = await app.request('/authors/ada')
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ id: 'm1', handle: 'ada', role: 'owner' })
   })
 })
 

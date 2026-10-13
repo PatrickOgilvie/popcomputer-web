@@ -718,7 +718,7 @@ export class EffectRouteBuilder<
 
       if (purges) {
         const writtenModel = modelBindings[modelBindings.length - 1]
-        const writtenTable = writtenModel ? [bindingTableName(writtenModel, configuredBindings)] : []
+        const writtenTable = writtenModel ? [bindingTableName(writtenModel, configuredBindings, schema)] : []
 
         const purgeTags: Effect.Effect<readonly string[], BoundModelError, RouteRecords> = purges === true
           ? Effect.flatMap(RouteRecords, (records) => records.tags).pipe(

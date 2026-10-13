@@ -51,13 +51,23 @@ export interface RouteBindingOptions {
   readonly scope?: Readonly<Record<string, RouteBindingScope>>
 }
 
+/**
+ * A Drizzle table whose rows a binding loads. Each row is checked against
+ * the table's columns, and the model's type is the table's row type.
+ */
+export type RouteBindingTable<Row = unknown> = Table & { readonly $inferSelect: Row }
+
 /** A row parser plus the small amount of metadata inference may need. */
 export interface RouteBindingDefinition<A = unknown> extends RouteBindingOptions {
-  readonly schema: S.Codec<A, unknown, never, never>
+  readonly schema: S.Codec<A, unknown, never, never> | RouteBindingTable<A>
 }
 
-/** Accepted setup value for one binding. */
+/**
+ * Accepted setup value for one binding: the Drizzle table the model is a row
+ * of, an Effect Schema that parses its row, or either with options.
+ */
 export type RouteBindingConfig =
+  | RouteBindingTable
   | S.Codec<unknown, unknown, never, never>
   | RouteBindingDefinition
 
@@ -65,16 +75,24 @@ export type RouteBindingConfig =
 export type RouteBindingsConfig = Readonly<Record<string, RouteBindingConfig>>
 
 /**
- * Add explicit metadata to a route-model parser.
+ * Add explicit metadata to a route-model binding.
  *
- * Most bindings should register their Effect Schema directly. Use this only
- * when a table name or nested parent scope is ambiguous.
+ * Most bindings name their table, or an Effect Schema, directly. Use this
+ * only when a table name or nested parent scope is ambiguous.
  */
 export function routeBinding<A>(
-  schema: S.Codec<A, unknown, never, never>,
+  schema: S.Codec<A, unknown, never, never> | RouteBindingTable<A>,
   options: RouteBindingOptions = {}
 ): RouteBindingDefinition<A> {
   return { schema, ...options }
+}
+
+const DRIZZLE_TABLE = Symbol.for('drizzle:IsDrizzleTable')
+const DRIZZLE_TABLE_NAME = Symbol.for('drizzle:Name')
+
+/** Whether a binding names a Drizzle table rather than a row schema. */
+function isBindingTable(value: unknown): value is RouteBindingTable {
+  return value instanceof Object && Reflect.get(value, DRIZZLE_TABLE) === true
 }
 
 /** Values decoded from a route parameter by its database column schema. */
@@ -180,11 +198,13 @@ interface BoundModelNotConfigured<K extends string> {
 type ConfiguredRouteBindings = Registered<'routeBindings', never>
 
 type RouteBindingOutput<Config> =
-  Config extends S.Codec<unknown, unknown, never, never>
-    ? S.Schema.Type<Config>
-    : Config extends RouteBindingDefinition<infer A>
-      ? A
-      : unknown
+  Config extends RouteBindingTable<infer Row>
+    ? Row
+    : Config extends S.Codec<unknown, unknown, never, never>
+      ? S.Schema.Type<Config>
+      : Config extends RouteBindingDefinition<infer A>
+        ? A
+        : unknown
 
 /** The keys `bound` accepts: the registered bindings, or any key before the application registers them. */
 export type BoundKey = [ConfiguredRouteBindings] extends [never] ? string : keyof ConfiguredRouteBindings & string
@@ -233,7 +253,47 @@ export const bound: <K extends BoundKey>(
 function isBindingDefinition(
   config: RouteBindingConfig
 ): config is RouteBindingDefinition {
-  return config instanceof Object && 'schema' in config
+  return !isBindingTable(config) && config instanceof Object && 'schema' in config
+}
+
+/** A binding's table or row schema, without its options. */
+function bindingSource(config: RouteBindingConfig): RouteBindingTable | S.Codec<unknown, unknown, never, never> {
+  return isBindingDefinition(config) ? config.schema : config
+}
+
+/** A row schema checking each of the table's columns against its database type. */
+async function tableRowSchema(table: Table): Promise<S.Codec<unknown, unknown, never, never>> {
+  const { getTableColumns } = await loadDrizzle()
+  const fields: Record<string, S.Codec<unknown, unknown, never, never>> = {}
+
+  for (const [key, column] of Object.entries(getTableColumns(table))) {
+    const value = columnValueSchema(column.dataType, column.enumValues)
+    fields[key] = column.notNull ? value : S.NullOr(value)
+  }
+
+  return S.Struct(fields)
+}
+
+/** The values a Drizzle column of this data type reads as. */
+function columnValueSchema(
+  dataType: string,
+  enumValues: readonly string[] | undefined
+): S.Codec<unknown, unknown, never, never> {
+  switch (dataType) {
+    case 'string':
+      return enumValues && enumValues.length > 0 ? S.Literals(enumValues) : S.String
+    case 'number':
+      return S.Number
+    case 'boolean':
+      return S.Boolean
+    case 'bigint':
+      return S.BigInt
+    case 'date':
+      return S.Date
+    default:
+      // JSON, arrays, buffers and custom types: Drizzle's own mapping decides.
+      return S.Unknown
+  }
 }
 
 function normalizeStringList(value: string | readonly string[]): readonly string[] {
@@ -279,9 +339,12 @@ export async function compileBindingPlan<Schema extends object>(
     const definition: RouteBindingDefinition = isBindingDefinition(config)
       ? config
       : { schema: config }
+    const source = bindingSource(config)
 
-    const tableName = bindingTableName(binding, configured)
-    const table = Object.getOwnPropertyDescriptor(schema, tableName)?.value
+    const tableName = bindingTableName(binding, configured, schema)
+    const table: unknown = isBindingTable(source)
+      ? source
+      : Object.getOwnPropertyDescriptor(schema, tableName)?.value
 
     if (!(table instanceof Object)) {
       throw RouteConfigurationError.tableNotFound(tableName)
@@ -339,7 +402,7 @@ export async function compileBindingPlan<Schema extends object>(
       table: table as Table,
       primaryKey: await primaryKeyOf(table as Table, binding.column),
       paramSchema: columnTypeToSchema(column.columnType),
-      rowSchema: definition.schema,
+      rowSchema: isBindingTable(source) ? await tableRowSchema(source) : source,
       parent,
     })
   }
@@ -355,11 +418,31 @@ async function primaryKeyOf(table: Table, lookupColumn: string): Promise<string>
   return primary.length === 1 ? primary[0][0] : lookupColumn
 }
 
-/** The table a binding loads its model from: its `table` option, else its plural name. */
-export function bindingTableName(binding: ParsedBinding, configured: RouteBindingsConfig | undefined): string {
+/**
+ * The schema key of the table a binding loads its model from: its `table`
+ * option, the key of the table it names, else its plural name.
+ */
+export function bindingTableName(
+  binding: ParsedBinding,
+  configured: RouteBindingsConfig | undefined,
+  schema?: object
+): string {
   const config = configured?.[binding.param]
 
-  return (config && isBindingDefinition(config) ? config.table : undefined) ?? pluralize(binding.param)
+  if (config === undefined) return pluralize(binding.param)
+
+  if (isBindingDefinition(config) && config.table !== undefined) return config.table
+
+  const source = bindingSource(config)
+
+  if (!isBindingTable(source)) return pluralize(binding.param)
+
+  const key = schema
+    ? Object.keys(schema).find((name) => Object.getOwnPropertyDescriptor(schema, name)?.value === source)
+    : undefined
+  const sqlName: unknown = Reflect.get(source, DRIZZLE_TABLE_NAME)
+
+  return key ?? (typeof sqlName === 'string' ? sqlName : pluralize(binding.param))
 }
 
 /** Decode one route parameter through its compiled column parser. */
@@ -679,7 +762,7 @@ export function inferParamsSchema<Schema extends object>(
   const fields: Record<string, S.Codec<unknown, unknown, never, never>> = {}
 
   for (const binding of bindings) {
-    const tableName = bindingTableName(binding, configured)
+    const tableName = bindingTableName(binding, configured, schema)
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
     const table = Object.getOwnPropertyDescriptor(schema, tableName)?.value
 

@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A route binding can name its Drizzle table: `bindings: { project: schema.projects }`. `bound('project')` is the table's row type, each loaded row is checked against the table's columns (types, nullability and enum values), and the parameter name need not match the table (`{ author: schema.users }`). An Effect Schema still parses a row differently, such as a column narrowed with `$type<...>()`.
 - `shareProps(effect)` computes props every page shares, such as a header's unread count, when a page renders: `routes.provide(shareProps(Effect.gen(...)))`. It returns any of setupWeb's `shared` props, encoded through their schema, and never runs for a redirect or a JSON response.
 - `href(path, params, query)` from the new `@popcomputer/web/paths` entrypoint builds a link from a route path, with its parameters typed from the path's placeholders (`{project}`, `{page:slug}`). An application declares each path once, in a module of paths that server and React code both import, and registers, redirects and links with it.
 - setupWeb's `shared` and `flash` options declare, as Effect Schema structs, the props shared with every page and the values `flash` hands to the next page. `share(key, value)` and `flash(key, value)` accept only their fields and encode values through them; `SharedProps` and `FlashData` type them in React, and pointing Inertia's `InertiaConfig` at them types `usePage()`.

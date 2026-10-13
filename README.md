@@ -201,7 +201,7 @@ import { createAuth } from './auth'
 import { createDb } from './db'
 import manifest from '../dist/manifest.json'
 import type { Env } from './env'
-import { pages, Project, Task } from './pages'
+import { pages } from './pages'
 import * as schema from './schema'
 
 const AuthSession = S.Struct({
@@ -233,7 +233,7 @@ export const web = setupWeb(new Hono<Env>(), {
   }),
   database: (c) => createDb(c.env.DATABASE_URL),
   schema,
-  bindings: { project: Project, task: Task },
+  bindings: { project: schema.projects, task: schema.tasks },
   pages,
   auth: {
     client: (c, { db, backgroundTasks }) => createAuth({
@@ -267,7 +267,7 @@ application reads its types from:
 | --- | --- |
 | `new Hono<Env>()` | `BindingsService`, Effect `Config`, `testEnv`'s bindings |
 | `database` | `DatabaseService` and the `db` in `dbQuery`, `dbMutation`, `dbBatch` |
-| `schema`, `bindings` | `bound('project')` and its keys |
+| `schema`, `bindings` | `bound('project')`, its keys and the model's row type |
 | `auth.client` | `AuthService` and `betterAuthRedirect`'s `auth` |
 | `auth.session` | `authorize()`, `currentUser`, `AuthUserService`, `signedIn` |
 | `auth.share` | `auth.user` in `SharedProps` and `WebPage` (default: `id`, `name`, `image`) |
@@ -711,7 +711,8 @@ yield* dbMutation((db) => db.insert(projects).values(newProject)).pipe(
 
 ## Route model binding
 
-Register an Effect Schema once, then use Laravel-style route placeholders:
+Name each model's Drizzle table once, in `setupWeb`'s `bindings`, then use
+Laravel-style route placeholders:
 
 ```ts
 routes
@@ -727,6 +728,12 @@ const project = yield* bound('project')
 const task = yield* bound('task')
 ```
 
+`bound('task')` is the table's row, checked against the table's columns as it
+loads, and a parameter name need not match its table: `bindings: { author:
+schema.users }` loads `{author}` from `users`. To parse a row differently, such
+as a text column narrowed with `$type<Role>()`, which the table cannot check,
+name an Effect Schema for the binding instead.
+
 The package parses route parameters and database rows before exposing them.
 A route loads its models the first time the action calls `bound()`, so a guard
 or `authorize()` that runs first decides before any database lookup, and a
@@ -736,8 +743,10 @@ Nested bindings must have a relationship discoverable from Drizzle metadata or
 an explicit scope:
 
 ```ts
+import * as schema from '../schema'
+
 const routeBindings = {
-  task: routeBinding(Task, {
+  task: routeBinding(schema.tasks, {
     scope: {
       project: { foreignKey: 'projectId' },
     },
