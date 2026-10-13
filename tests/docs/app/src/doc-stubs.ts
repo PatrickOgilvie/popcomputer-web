@@ -1,4 +1,4 @@
-// Application values that README fragments use without defining them.
+// Application values that README and AGENTS fragments use without defining them.
 // Fragments (fences without a `// src/...` header) import every name exported
 // here that they do not declare or import themselves.
 import { Effect, Schema as S } from 'effect'
@@ -36,6 +36,7 @@ export declare const event: AuditEvent
 export declare function sendAuditEvent(event: AuditEvent): Effect.Effect<void>
 
 export { showProject } from './actions/projects/show'
+export { updateProject } from './actions/projects/update'
 export const showProjectBySlug = json({ page: 'Projects/Show' })
 export const showTask = json({ page: 'Tasks/Show' })
 export const showPricing = json({ page: 'Pricing' })

@@ -22,10 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `describeRoute`, `createRouteTester`, `generateTestCases`, `TestLayer`, `TestCaptureService` and `EmailService` are removed. `describeRoute`'s `as: 'user'` option never signed the request in, and `TestLayer.Database.inMemory` returned every row whatever the query's `where` condition. Assert on responses instead: an `X-Inertia` request returns the page object as JSON.
 - `bound(key)` fails with `RouteConfigurationError` (code `RTE_600_BINDING_NOT_FOUND`, with a hint naming the missing `{key}` placeholder) when the route does not bind `key`. It failed with `BoundModelNotFound`, which no route accepted as a handler error, so `effectRoutes(app).get('/projects/{project}', showProject)` with an action that called `bound()` did not type-check. `BoundModelNotFound` is removed; replace `Effect.catchTag('BoundModelNotFound', ...)` with `Effect.catchTag('RouteConfigurationError', ...)`.
 
+### Added
+
+- `AGENTS.md`, shipped in the package: rules for coding agents that name the one API to use for each task, with a complete action whose behavior the test suite checks.
+
 ### Fixed
 
 - Route builder methods (`get`, `post`, `put`, `patch`, `delete`, `all`, `group`) return the builder, so registrations chain as the README shows. They returned `undefined`, and a chained call threw a `TypeError`.
-- README examples type-check against the package, and `bun run test:types` checks every TypeScript example in the README. Corrected examples: the `background` call takes an operation name, Workers Cache routes register through `effectRoutes(app)`, `src/routes.ts` imports its app, alternative setups read bindings the `Bindings` type declares, `authorize` predicates use a field of the default user, and the lower-level composition example is a complete module that passes its `Env` to `webServices`.
+- README examples type-check against the package, and `bun run test:types` checks every TypeScript example in the README and `AGENTS.md`. Corrected examples: the `background` call takes an operation name, Workers Cache routes register through `effectRoutes(app)`, `src/routes.ts` imports its app, alternative setups read bindings the `Bindings` type declares, `authorize` predicates use a field of the default user, and the lower-level composition example is a complete module that passes its `Env` to `webServices`.
 
 ### Changed
 

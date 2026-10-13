@@ -104,12 +104,17 @@ describe('the README route test', () => {
     const { drizzle } = await import('drizzle-orm/bun-sqlite')
     const { sqliteTable, text } = await import('drizzle-orm/sqlite-core')
     const { Schema: S } = await import('effect')
+    const { eq } = await import('drizzle-orm')
     const { bound } = await import('../src/effect/binding.js')
-    const { render } = await import('../src/effect/responses.js')
+    const { redirect, render } = await import('../src/effect/responses.js')
+    const { asTrusted, validateRequest } = await import('../src/effect/validation.js')
+    const { dbMutation } = await import('../src/effect/action.js')
+    const { requiredString, nullableString } = await import('../src/effect/schema.js')
 
     const projects = sqliteTable('projects', {
       id: text('id').primaryKey(),
       name: text('name').notNull(),
+      description: text('description'),
       userId: text('user_id').notNull(),
     })
     const schema = { projects }
@@ -117,7 +122,7 @@ describe('the README route test', () => {
 
     type ProjectsEnv = { Bindings: { readonly DATABASE_PATH: string } }
     const sqlite = new Database(':memory:')
-    sqlite.run('CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT NOT NULL)')
+    sqlite.run('CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, user_id TEXT NOT NULL)')
     const db = drizzle(sqlite, { schema })
     db.insert(projects).values({ id: 'project-1', name: 'Apollo', userId: 'user-1' }).run()
 
@@ -145,7 +150,26 @@ describe('the README route test', () => {
       return yield* render('Projects/Show', { project })
     })))
 
-    return { app, testBindings: { DATABASE_PATH: 'test.sqlite' } }
+    // AGENTS.md "A complete action".
+    const UpdateProject = S.Struct({ name: requiredString, description: nullableString })
+
+    effectRoutes(app).put('/projects/{project}', action(Effect.gen(function* () {
+      const project = yield* bound('project')
+      const projectId = String(Reflect.get(project, 'id'))
+      yield* authorize((auth) => auth.user.id === Reflect.get(project, 'userId'))
+
+      const input = yield* validateRequest(UpdateProject, { errorComponent: 'Projects/Edit' })
+
+      // The suite does not augment WebDatabaseType, so this uses the typed
+      // database directly where the application reads DatabaseService.
+      yield* dbMutation(db, asTrusted(input), (tx, values) =>
+        tx.update(projects).set(values).where(eq(projects.id, projectId))
+      )
+
+      return yield* redirect(`/projects/${projectId}`)
+    })))
+
+    return { app, db, projects, testBindings: { DATABASE_PATH: 'test.sqlite' } }
   }
 
   test('shows a project to its owner', async () => {
@@ -172,5 +196,42 @@ describe('the README route test', () => {
     )
 
     expect(res.status).toBe(403)
+  })
+
+  const update = (body: unknown, userId: string) =>
+    createProjectsApp().then(async ({ app, db, projects, testBindings }) => ({
+      db,
+      projects,
+      res: await app.request(
+        '/projects/project-1',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        testEnv(signedIn({ id: userId }), testBindings)
+      ),
+    }))
+
+  test('the AGENTS.md update action saves and redirects to the project', async () => {
+    const { db, projects, res } = await update({ name: 'Renamed', description: null }, 'user-1')
+
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe('/projects/project-1')
+    expect(db.select().from(projects).all()).toEqual([
+      { id: 'project-1', name: 'Renamed', description: null, userId: 'user-1' },
+    ])
+  })
+
+  test('the AGENTS.md update action forbids other users', async () => {
+    const { res } = await update({ name: 'Renamed' }, 'user-2')
+
+    expect(res.status).toBe(403)
+  })
+
+  test('the AGENTS.md update action rejects an empty name', async () => {
+    const { res } = await update({ name: '  ' }, 'user-1')
+
+    expect(res.status).toBe(422)
   })
 })

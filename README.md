@@ -48,6 +48,10 @@ bun add drizzle-orm                         # Drizzle route model binding
 bun add @inertiajs/react react react-dom    # React client
 ```
 
+Coding agents should read `node_modules/@popcomputer/web/AGENTS.md`, a short
+rulebook naming the one API to use for each task. Reference it from the
+application's own `AGENTS.md` or `CLAUDE.md`.
+
 Effect and Hono are peer dependencies so an application owns one Effect runtime
 and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers:
 an app without them still bundles for Cloudflare Workers. Route model binding
@@ -777,8 +781,9 @@ bun run test
 ```
 
 The repository verifies runtime behavior, strict TypeScript and module
-augmentation contracts, that every TypeScript example in this README
-type-checks, and that each built entrypoint imports under plain Node.
+augmentation contracts, that every TypeScript example in this README and in
+`AGENTS.md` type-checks, and that each built entrypoint imports under plain
+Node.
 
 ## License
 

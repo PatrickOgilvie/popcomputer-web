@@ -5,8 +5,8 @@ node_modules/
 
 # Build output
 dist/
-!tests/readme/app/dist/
-tests/readme/.generated/
+!tests/docs/app/dist/
+tests/docs/.generated/
 
 # IDE
 .idea/

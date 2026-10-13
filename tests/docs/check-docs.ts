@@ -1,46 +1,48 @@
 /**
- * Type-check every TypeScript code fence in README.md.
+ * Type-check every TypeScript code fence in README.md and AGENTS.md.
  *
- * Agents copy README examples verbatim, so each one must compile against the
- * current source. The fences are assembled into a small application:
+ * Agents copy these examples verbatim, so each one must compile against the
+ * current source. The fences of both documents are assembled into one small
+ * application:
  *
  * - A fence whose first line is `// src/<path>.ts` becomes that file, exactly
  *   as written. It must import everything it uses.
  * - Any other fence is a fragment. It gets a one-line prelude importing the
  *   package's public values, common Effect modules, the README's `app` and the
- *   stubs in `app/src/readme-stubs.ts`, minus names the fragment declares or
+ *   stubs in `app/src/doc-stubs.ts`, minus names the fragment declares or
  *   imports itself. A fragment that uses `yield*` outside a generator is
  *   wrapped in `Effect.gen`.
  *
- * Diagnostics are reported against README.md line numbers.
+ * Diagnostics are reported against document line numbers.
  *
- * Run: bun tests/readme/check-readme.ts
+ * Run: bun tests/docs/check-docs.ts
  */
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 
 const repoRoot = join(import.meta.dir, '..', '..')
-const readmePath = join(repoRoot, 'README.md')
+const documents = ['README.md', 'AGENTS.md']
 const stubAppDir = join(import.meta.dir, 'app')
 const outDir = join(import.meta.dir, '.generated')
 
 interface Fence {
-  /** 1-based README line of the fence's first code line. */
+  readonly document: string
+  /** 1-based document line of the fence's first code line. */
   readonly startLine: number
   readonly lines: ReadonlyArray<string>
 }
 
 interface OutputLine {
   readonly text: string
-  /** README line this output line came from; undefined for generated lines. */
-  readonly readmeLine?: number
+  /** Document location this output line came from; undefined for generated lines. */
+  readonly source?: { readonly document: string; readonly line: number }
 }
 
 const FILE_HEADER = /^\/\/ (src\/[\w./-]+\.tsx?)$/
 const TS_LANGS = new Set(['ts', 'tsx', 'typescript'])
 
-function readFences(markdown: string): Fence[] {
+function readFences(document: string, markdown: string): Fence[] {
   const fences: Fence[] = []
   const lines = markdown.split('\n')
   let current: { lang: string; startLine: number; lines: string[] } | undefined
@@ -55,7 +57,7 @@ function readFences(markdown: string): Fence[] {
 
     if (current) {
       if (TS_LANGS.has(current.lang)) {
-        fences.push({ startLine: current.startLine, lines: current.lines })
+        fences.push({ document, startLine: current.startLine, lines: current.lines })
       }
       current = undefined
       return
@@ -129,7 +131,7 @@ function buildFragment(
     importLine(effectNames, 'effect') +
     (taken.has('S') ? '' : "import { Schema as S } from 'effect'; ") +
     (taken.has('app') ? '' : "import app from '../app'; ") +
-    importLine(free(stubNames), '../readme-stubs')
+    importLine(free(stubNames), '../doc-stubs')
 
   // Imports stay at module scope; everything after them may need wrapping.
   let bodyStart = 0
@@ -145,7 +147,7 @@ function buildFragment(
 
   const toOutput = (line: string, index: number): OutputLine => ({
     text: line,
-    readmeLine: fence.startLine + index,
+    source: { document: fence.document, line: fence.startLine + index },
   })
   const imports = fence.lines.slice(0, bodyStart).map(toOutput)
   const body = fence.lines.slice(bodyStart).map((line, index) => toOutput(line, bodyStart + index))
@@ -156,7 +158,7 @@ function buildFragment(
     ...imports,
     ...(needsGenerator
       ? [
-          { text: 'export const readmeFragment = Effect.gen(function* () {' },
+          { text: 'export const documentFragment = Effect.gen(function* () {' },
           ...body,
           { text: '})' },
         ]
@@ -165,10 +167,12 @@ function buildFragment(
 }
 
 async function main(): Promise<number> {
-  const fences = readFences(readFileSync(readmePath, 'utf8'))
+  const fences = documents.flatMap((document) =>
+    readFences(document, readFileSync(join(repoRoot, document), 'utf8'))
+  )
   const packageModule: Record<string, unknown> = await import(join(repoRoot, 'src', 'index.ts'))
   const packageValues = Object.keys(packageModule).filter((name) => name !== 'default')
-  const stubNames = exportedNames(readFileSync(join(stubAppDir, 'src', 'readme-stubs.ts'), 'utf8'))
+  const stubNames = exportedNames(readFileSync(join(stubAppDir, 'src', 'doc-stubs.ts'), 'utf8'))
 
   rmSync(outDir, { recursive: true, force: true })
   cpSync(stubAppDir, outDir, { recursive: true })
@@ -177,16 +181,20 @@ async function main(): Promise<number> {
 
   for (const fence of fences) {
     const header = FILE_HEADER.exec(fence.lines[0] ?? '')
-    const file = header ? header[1] : `src/readme/fence-${fence.startLine}.ts`
+    const fragmentName = fence.document.replace(/\.md$/, '').toLowerCase()
+    const file = header ? header[1] : `src/fragments/${fragmentName}-${fence.startLine}.ts`
     const target = join(outDir, file)
 
     if (existsSync(target)) {
-      console.error(`README.md:${fence.startLine}: ${file} is defined twice (by the README or by a stub in tests/readme/app).`)
+      console.error(`${fence.document}:${fence.startLine}: ${file} is defined twice (by a document or by a stub in tests/docs/app).`)
       return 1
     }
 
     const output = header
-      ? fence.lines.map((text, index) => ({ text, readmeLine: fence.startLine + index }))
+      ? fence.lines.map((text, index) => ({
+          text,
+          source: { document: fence.document, line: fence.startLine + index },
+        }))
       : buildFragment(fence, packageValues, stubNames)
 
     mkdirSync(dirname(target), { recursive: true })
@@ -229,26 +237,26 @@ async function main(): Promise<number> {
   const diagnostics = `${result.stdout}${result.stderr}`.trim()
 
   if (result.status === 0) {
-    console.log(`README.md: ${fences.length} TypeScript examples type-check.`)
+    console.log(`${documents.join(', ')}: ${fences.length} TypeScript examples type-check.`)
     return 0
   }
 
-  // Rewrite `src/file.ts(line,col): message` to point at README.md.
+  // Rewrite `src/file.ts(line,col): message` to point at the document.
   const rewritten = diagnostics.split('\n').map((line) => {
     const match = /^(.+?)\((\d+),(\d+)\): (.*)$/.exec(line)
     if (!match) return line
 
     const file = relative(outDir, resolve(match[1]))
     const output = sourceMaps.get(file)
-    const readmeLine = output?.[Number(match[2]) - 1]?.readmeLine
+    const source = output?.[Number(match[2]) - 1]?.source
 
-    return readmeLine === undefined
-      ? `${file}(${match[2]},${match[3]}) [generated by tests/readme/check-readme.ts]: ${match[4]}`
-      : `README.md:${readmeLine}:${match[3]}: ${match[4]}`
+    return source === undefined
+      ? `${file}(${match[2]},${match[3]}) [generated by tests/docs/check-docs.ts]: ${match[4]}`
+      : `${source.document}:${source.line}:${match[3]}: ${match[4]}`
   })
 
   console.error(rewritten.join('\n'))
-  console.error(`\nREADME.md examples failed to type-check. Generated sources: ${relative(repoRoot, outDir)}`)
+  console.error(`\nDocumentation examples failed to type-check. Generated sources: ${relative(repoRoot, outDir)}`)
   return 1
 }
 
