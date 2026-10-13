@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- `signedIn` gives a user without a `name` the name `Test User` instead of `null`, which fits Better Auth's `user` table, whose `name` is not null.
 - `readPage(...).flash` is typed by setupWeb's `flash` declaration (`FlashData`) instead of `Record<string, unknown>`.
 - A `{param}` without a parser in `bindings` is a plain parameter, read with `validateRequest`, beside the route's models. `bound()` failed on any route that mixed the two, because every placeholder was loaded as a model. `bound('param')` for a plain parameter fails with a configuration error naming it, and route parameter validation and cache tags cover only the route's models.
 - `purges: true` on a route whose path has no `{param}` throws at registration, naming the route; it purged nothing. List the tags such a route changes, as in `purges: ['posts']`.
@@ -66,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tableSchema(table)` from `@popcomputer/web/schema` is an Effect Schema struct of a Drizzle table's row, each column checked against its type, nullability and enum values, so page props and the signed-in user take their fields from the table: `tableSchema(schema.projects).mapFields(Struct.pick(['id', 'name']))`. Table route bindings check rows with it.
+- `betterAuthSession(user)` from `@popcomputer/web/auth` is setupWeb's `auth.session` with the given user schema, as in `betterAuthSession(tableSchema(schema.user))`, so the user's fields are declared once, in the table. `BetterAuthSessionRecord` is Better Auth's session record.
 - `purgeCache(...tags)` adds cache tags for the route to purge once the action succeeds, with its `purges`: records the action changed that the route does not name, such as the listing an accepted offer sold. A failed action purges nothing.
 - `followRedirect(app, response, env)` from `@popcomputer/web/testing` follows a redirect as the browser would after a form, as an Inertia visit sending the cookies the response set, so the next page receives its `flash` and `errors`.
 - `invalid({ field: message })` sends a form back with field errors, as `validateRequest` does, to show a domain error beside its field: `Effect.catchTag('OfferTooLow', (error) => invalid({ amount: error.message }))`. `back(fallback)` redirects to the same-origin page the request came from.

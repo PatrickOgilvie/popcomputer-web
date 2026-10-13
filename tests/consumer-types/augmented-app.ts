@@ -13,9 +13,11 @@
  *
  * Run: bun run build && tsc -p tests/consumer-types
  */
-import { Context, Effect, Layer, Schema as S } from 'effect'
+import { Context, Effect, Layer, Schema as S, Struct } from 'effect'
 import { Hono } from 'hono'
-import { pgTable, text } from 'drizzle-orm/pg-core'
+import { boolean, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+import { betterAuthSession } from '@popcomputer/web/auth'
+import { tableSchema } from '@popcomputer/web/schema'
 import { setupWeb } from '@popcomputer/web'
 import type { FlashData, SharedProps, WebPage } from '@popcomputer/web/react'
 import {
@@ -55,29 +57,23 @@ const pages = {
   'Projects/Show': S.Struct({ project: S.Struct({ id: S.String, createdAt: S.Date }) }),
 }
 
-const MemberSession = S.Struct({
-  user: S.Struct({
-    id: S.String,
-    email: S.String,
-    name: S.NullOr(S.String),
-    emailVerified: S.Boolean,
-    image: S.NullOr(S.String),
-    createdAt: S.Date,
-    updatedAt: S.Date,
-    role: S.Literals(['owner', 'member']),
-    teamId: S.String,
-  }),
-  session: S.Struct({
-    id: S.String,
-    userId: S.String,
-    expiresAt: S.Date,
-    token: S.RedactedFromValue(S.String),
-    createdAt: S.Date,
-    updatedAt: S.Date,
-  }),
+// The user's fields are declared once, in the table: the session and the
+// public user derive from it.
+const users = pgTable('users', {
+  id: text('id').primaryKey(),
+  email: text('email').notNull(),
+  name: text('name'),
+  emailVerified: boolean('email_verified').notNull(),
+  image: text('image'),
+  createdAt: timestamp('created_at').notNull(),
+  updatedAt: timestamp('updated_at').notNull(),
+  role: text('role', { enum: ['owner', 'member'] }).notNull(),
+  teamId: text('team_id').notNull(),
 })
 
-const PublicMember = S.Struct({ id: S.String, name: S.NullOr(S.String), role: S.Literals(['owner', 'member']) })
+const MemberSession = betterAuthSession(tableSchema(users))
+
+const PublicMember = tableSchema(users).mapFields(Struct.pick(['id', 'name', 'role']))
 
 interface ProjectRow {
   readonly id: string

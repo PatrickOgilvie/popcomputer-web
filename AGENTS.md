@@ -29,7 +29,11 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
    `@popcomputer/web/paths` in React. Registrations chain. `routes` accepts only
    actions whose services the setup provides.
 3. **Declare every page's props as an Effect Schema** in `src/pages.ts` and
-   pass the object as `setupWeb`'s `pages`. Type each React page as
+   pass the object as `setupWeb`'s `pages`. Take a table's columns from the
+   table: `tableSchema(schema.projects).mapFields(Struct.pick(['id',
+   'name']))` from `@popcomputer/web/schema`, and declare the signed-in user
+   as `auth.session: betterAuthSession(tableSchema(schema.user))`. Type each
+   React page as
    `WebPage<'Projects/Show'>` from `@popcomputer/web/react`; its props, the
    shared `auth.user` and `errors` follow. Declare props shared with every
    page in `shared`, computed when a page renders by

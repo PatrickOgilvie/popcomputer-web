@@ -15,6 +15,7 @@ import {
 import type { Table } from 'drizzle-orm'
 import { ConfigurationError, NotFoundError, RouteConfigurationError } from './errors.js'
 import type { Registered } from './register.js'
+import { tableSchema } from './table-schema.js'
 
 /**
  * Drizzle column interface for type inference.
@@ -261,40 +262,6 @@ function bindingSource(config: RouteBindingConfig): RouteBindingTable | S.Codec<
   return isBindingDefinition(config) ? config.schema : config
 }
 
-/** A row schema checking each of the table's columns against its database type. */
-async function tableRowSchema(table: Table): Promise<S.Codec<unknown, unknown, never, never>> {
-  const { getTableColumns } = await loadDrizzle()
-  const fields: Record<string, S.Codec<unknown, unknown, never, never>> = {}
-
-  for (const [key, column] of Object.entries(getTableColumns(table))) {
-    const value = columnValueSchema(column.dataType, column.enumValues)
-    fields[key] = column.notNull ? value : S.NullOr(value)
-  }
-
-  return S.Struct(fields)
-}
-
-/** The values a Drizzle column of this data type reads as. */
-function columnValueSchema(
-  dataType: string,
-  enumValues: readonly string[] | undefined
-): S.Codec<unknown, unknown, never, never> {
-  switch (dataType) {
-    case 'string':
-      return enumValues && enumValues.length > 0 ? S.Literals(enumValues) : S.String
-    case 'number':
-      return S.Number
-    case 'boolean':
-      return S.Boolean
-    case 'bigint':
-      return S.BigInt
-    case 'date':
-      return S.Date
-    default:
-      // JSON, arrays, buffers and custom types: Drizzle's own mapping decides.
-      return S.Unknown
-  }
-}
 
 function normalizeStringList(value: string | readonly string[]): readonly string[] {
   return S.is(S.String)(value) ? [value] : value
@@ -402,7 +369,7 @@ export async function compileBindingPlan<Schema extends object>(
       table: table as Table,
       primaryKey: await primaryKeyOf(table as Table, binding.column),
       paramSchema: columnTypeToSchema(column.columnType),
-      rowSchema: isBindingTable(source) ? await tableRowSchema(source) : source,
+      rowSchema: isBindingTable(source) ? tableSchema(source) : source,
       parent,
     })
   }

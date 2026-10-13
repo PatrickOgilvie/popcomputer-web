@@ -89,7 +89,7 @@ type DefaultSessionFits = DefaultAuthUser['session'] extends AuthUser['session']
 /** The values `signedIn` gives user fields that the input leaves out. */
 interface UserDefaults {
   readonly email: string
-  readonly name: null
+  readonly name: string
   readonly emailVerified: false
   readonly image: null
   readonly createdAt: Date
@@ -145,7 +145,7 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
 
   const defaults: UserDefaults = {
     email: 'test@example.com',
-    name: null,
+    name: 'Test User',
     emailVerified: false,
     image: null,
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture for the Better Auth user contract; it does not read the clock.

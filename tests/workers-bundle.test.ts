@@ -34,8 +34,9 @@ effect.effectRoutes(app).get('/', Effect.succeed(new Response('ok')), { name: 'h
 export default { app, web, effect }
 `
 
-// Drizzle's table code registers this key; it only appears when drizzle-orm is bundled.
-const drizzleMarker = 'drizzle:Columns'
+// Drizzle's table code registers this key, which the package's own code never
+// names; it only appears when drizzle-orm is bundled.
+const drizzleMarker = 'drizzle:ExtraConfigBuilder'
 const runtimeImport = /import\(\s*["']drizzle-orm["']\s*\)/
 
 /**

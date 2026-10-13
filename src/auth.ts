@@ -13,6 +13,8 @@ export {
   betterAuthLogoutAction,
   effectifyBetterAuth,
   loadUser,
+  betterAuthSession,
+  BetterAuthSessionRecord,
   type LoadUserConfig,
   type BetterAuthRedirectOptions,
   type BetterAuthLogoutConfig,

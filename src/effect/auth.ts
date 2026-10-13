@@ -361,28 +361,43 @@ export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): Middl
   }
 }
 
+/** Better Auth's session record, as its `getSession` returns it. */
+export const BetterAuthSessionRecord = S.Struct({
+  id: S.String,
+  userId: S.String,
+  expiresAt: S.Date,
+  // Redacted, so serializing the auth user never exposes the session secret.
+  token: S.RedactedFromValue(S.String),
+  createdAt: S.Date,
+  updatedAt: S.Date,
+})
+
+/**
+ * setupWeb's `auth.session` for an application whose users have fields of
+ * their own: Better Auth's session with the user as `user` decodes it,
+ * typically the `user` table's row, so the user's fields are declared once,
+ * in the table.
+ *
+ * @example
+ * auth: { client, session: betterAuthSession(tableSchema(schema.user)) }
+ */
+export function betterAuthSession<User extends S.Codec<unknown, unknown, never, never>>(
+  user: User
+): S.Struct<{ readonly user: User; readonly session: typeof BetterAuthSessionRecord }> {
+  return S.Struct({ user, session: BetterAuthSessionRecord })
+}
+
 // Better Auth's default user and session, which the signed-in user is unless
 // setupWeb's `auth.session` declares another.
-const DefaultAuthSessionSchema = S.Struct({
-  user: S.Struct({
-    id: S.String,
-    email: S.String,
-    name: S.NullOr(S.String),
-    emailVerified: S.Boolean,
-    image: S.NullOr(S.String),
-    createdAt: S.Date,
-    updatedAt: S.Date,
-  }),
-  session: S.Struct({
-    id: S.String,
-    userId: S.String,
-    expiresAt: S.Date,
-    // Redacted, so serializing the auth user never exposes the session secret.
-    token: S.RedactedFromValue(S.String),
-    createdAt: S.Date,
-    updatedAt: S.Date,
-  }),
-})
+const DefaultAuthSessionSchema = betterAuthSession(S.Struct({
+  id: S.String,
+  email: S.String,
+  name: S.NullOr(S.String),
+  emailVerified: S.Boolean,
+  image: S.NullOr(S.String),
+  createdAt: S.Date,
+  updatedAt: S.Date,
+}))
 
 /**
  * The parser used when setupWeb has no `auth.session`. It decodes Better

@@ -190,18 +190,18 @@ Each page component's props are an Effect Schema:
 
 ```ts
 // src/pages.ts
-import { Schema as S } from 'effect'
+import { Schema as S, Struct } from 'effect'
+import { tableSchema } from '@popcomputer/web/schema'
+import * as schema from './schema'
 
-export const Project = S.Struct({
-  id: S.String,
-  name: S.String,
-  userId: S.String,
-  createdAt: S.Date,
-})
+// Each page names the columns it shows; the table declares their types.
+export const Project = tableSchema(schema.projects).mapFields(
+  Struct.pick(['id', 'name', 'userId', 'createdAt'])
+)
 
-export const ProjectSummary = S.Struct({ id: S.String, name: S.String })
+export const ProjectSummary = tableSchema(schema.projects).mapFields(Struct.pick(['id', 'name']))
 
-export const Task = S.Struct({ id: S.String, projectId: S.String, title: S.String })
+export const Task = tableSchema(schema.tasks)
 
 export const pages = {
   'Projects/Index': S.Struct({ projects: S.Array(ProjectSummary) }),
@@ -240,12 +240,14 @@ type error on the side that drifted.
 ```ts
 // src/app.ts
 import { Hono } from 'hono'
-import { Schema as S } from 'effect'
+import { Schema as S, Struct } from 'effect'
 import {
   createTemplate,
   createVersion,
   setupWeb,
 } from '@popcomputer/web'
+import { betterAuthSession } from '@popcomputer/web/auth'
+import { tableSchema } from '@popcomputer/web/schema'
 import { createAuth } from './auth'
 import { createDb } from './db'
 import manifest from '../dist/manifest.json'
@@ -253,26 +255,6 @@ import type { Env } from './env'
 import { pages } from './pages'
 import { paths } from './paths'
 import * as schema from './schema'
-
-const AuthSession = S.Struct({
-  user: S.Struct({
-    id: S.String,
-    email: S.String,
-    name: S.NullOr(S.String),
-    emailVerified: S.Boolean,
-    image: S.NullOr(S.String),
-    createdAt: S.Date,
-    updatedAt: S.Date,
-  }),
-  session: S.Struct({
-    id: S.String,
-    userId: S.String,
-    expiresAt: S.Date,
-    token: S.RedactedFromValue(S.String),
-    createdAt: S.Date,
-    updatedAt: S.Date,
-  }),
-})
 
 export const web = setupWeb(new Hono<Env>(), {
   version: createVersion(manifest),
@@ -293,8 +275,9 @@ export const web = setupWeb(new Hono<Env>(), {
       baseURL: new URL(c.req.url).origin,
       advanced: { backgroundTasks },
     }),
-    session: AuthSession,
-    share: S.Struct({ id: S.String, name: S.NullOr(S.String), image: S.NullOr(S.String) }),
+    // The user's fields are the user table's; pages see only `share`'s.
+    session: betterAuthSession(tableSchema(schema.user)),
+    share: tableSchema(schema.user).mapFields(Struct.pick(['id', 'name', 'image'])),
   },
   shared: S.Struct({ unreadCount: S.Number }),
   flash: S.Struct({ success: S.String }),
@@ -848,8 +831,12 @@ predicate returns `false`, the second form fails with `ForbiddenError`.
 
 `auth.session` decodes Better Auth's session response into the signed-in
 user, so a dependency response is never trusted because it looks
-session-shaped; an application that adds user fields declares them in it, and
-`authorize()` and `currentUser` follow. The session token is `Redacted`, so
+session-shaped. `betterAuthSession(tableSchema(schema.user))` takes the user
+from the `user` table, so a field the application adds, such as a `role`, is
+declared in the table (and in Better Auth's `additionalFields`, which tells
+Better Auth to return it), and `authorize()`, `currentUser` and `signedIn`
+follow. Give a narrowed column an enum, `text('role', { enum: ['admin',
+'member'] })`, so the session checks its values. The session token is `Redacted`, so
 serializing the auth user never exposes it; read it with `Redacted.value`
 where it is needed. `auth.share` names the fields pages receive as
 `auth.user`.

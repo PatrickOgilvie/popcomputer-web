@@ -81,3 +81,6 @@ export {
   filled,
   excludeIf,
 } from './effect/schema.js'
+
+// Schemas of Drizzle tables' rows
+export { tableSchema, type TableFields } from './effect/table-schema.js'
