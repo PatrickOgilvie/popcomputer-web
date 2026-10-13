@@ -50,7 +50,9 @@ bun add @inertiajs/react react react-dom    # React client
 
 Coding agents should read `node_modules/@popcomputer/web/AGENTS.md`, a short
 rulebook naming the one API to use for each task. Reference it from the
-application's own `AGENTS.md` or `CLAUDE.md`.
+application's own `AGENTS.md` or `CLAUDE.md`. The same rules ship as a Claude
+skill in `skills/popcomputer-web/SKILL.md`; copy that directory into
+`~/.claude/skills/` or a project's `.claude/skills/`.
 
 Effect and Hono are peer dependencies so an application owns one Effect runtime
 and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers:
@@ -785,6 +787,9 @@ framework package in an application.
 ```bash
 bun run test
 ```
+
+After changing `AGENTS.md`, regenerate the skill with
+`bun scripts/build-skill.ts`; a test fails while it is stale.
 
 The repository verifies runtime behavior, strict TypeScript and module
 augmentation contracts, that every TypeScript example in this README and in

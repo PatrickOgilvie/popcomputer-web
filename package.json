@@ -40,6 +40,7 @@
     "dist",
     "README.md",
     "AGENTS.md",
+    "skills",
     "LICENSE"
   ],
   "scripts": {
