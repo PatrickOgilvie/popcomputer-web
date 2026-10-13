@@ -38,7 +38,7 @@ const SENSITIVE_MESSAGE_CATEGORIES = new Set<StructuredError['category']>([
  * Generic, client-safe message used in place of sensitive error messages.
  */
 const SAFE_GENERIC_MESSAGE = 'An error occurred. Please try again later.'
-const NOT_FOUND_MESSAGE = 'The page you requested was not found.'
+const NOT_FOUND_MESSAGE = 'Nothing was found at this address.'
 
 /**
  * Return a client-safe message for an error.

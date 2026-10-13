@@ -15,7 +15,7 @@ import { responseHeader } from '../../src/effect/response-headers.js'
 import { call, endpoint, endpointRequest, openApi } from '../../src/endpoint.js'
 import { coercedNumber, nullableString, requiredString } from '../../src/effect/schema.js'
 import { href } from '../../src/paths.js'
-import { signedIn, testEnv } from '../../src/testing.js'
+import { signedIn, testBrowser, testEnv } from '../../src/testing.js'
 
 const paths = {
   places: '/api/places',
@@ -272,6 +272,14 @@ describe('call', () => {
 
     expect(shown.ok && shown.value.name).toBe('Café Nero')
     expect(deleted).toMatchObject({ ok: true, status: 204, value: undefined })
+  })
+
+  test('leaves out fields that may be null, and sends through a test browser', async () => {
+    const { app } = createApp()
+    const browser = testBrowser(app)
+    const listed = await call(endpoints.listPlaces, { query: { minRating: 3 } }, browser)
+
+    expect(listed.ok && listed.value.data.map((place) => place.id)).toEqual(['p1'])
   })
 
   test('builds the request from the contract', () => {

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Production's 404 message reads "Nothing was found at this address.", for an API's client as for a visitor, in place of "The page you requested was not found."
+
 - `authorize()` without a check is typed as failing only with `UnauthorizedError`; a check adds `ForbiddenError`, whose message `authorize(check, message)` sets.
 
 - A failed form's field errors, and flash values, pass through a request that only redirects, such as a home page sending visitors to their dashboard, to the next page that renders. They were cleared by the redirect, so a form posted without a `Referer`, which goes back to `/`, showed no errors.
@@ -20,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `testEnv(bindings, { database })` takes bindings without a layer, for a test whose visitors sign in through the application.
 - `routes.scheduled((event) => effect)` and `routes.queue(Schema, (body, message) => effect)` return the Worker's `scheduled` and `queue` handlers, running each job with the application's services and type-checking it as a registration does. The queue handler decodes each message's body with the schema, acknowledges a message whose work succeeds, and logs and retries one whose body does not decode or whose work fails. `testBatch(bodies)` from `@popcomputer/web/testing` makes a batch that records each message's outcome.
 
+- `call(endpoint, input, options)` takes input that leaves out the fields that may be null, such as a `nullable(...)` filter, and a `testBrowser` is a `fetch` it sends with: `call(endpoints.listPlaces, { query: { minRating: 3 } }, browser)`.
 - `setupWeb`'s `version` and `render` are optional. An application without `render` is an API: it answers only JSON, failures and unknown paths included, whatever the client asks for, and rendering a page is a configuration error naming the fix.
 - `BoundRequirements<'project'>` from `@popcomputer/web/effect` names what an Effect reading route models with `bound()` requires, for a helper whose type is written out, in place of `BoundModels | RouteModel<'project'>`.
 - The lint rule `prefer-checked-config` reports Effect's `Config.String('NAME')` and its siblings where the framework's `config.string('NAME')` reads the same binding and checks its name.

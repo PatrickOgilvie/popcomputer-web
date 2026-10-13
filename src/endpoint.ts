@@ -187,14 +187,32 @@ export type CallResult<Ep extends Endpoint> =
       readonly response: Response
     }
 
-/** The input a call sends, in the types the action receives. */
+/** A value's fields, with those that may be null or absent left optional, as a client may leave them out. */
+type Omissible<T> = T extends Date | ReadonlyArray<unknown>
+  ? T
+  : T extends object
+    ? Simplify<
+        { readonly [Key in keyof T as null extends T[Key] ? Key : undefined extends T[Key] ? Key : never]?: T[Key] } &
+        { readonly [Key in keyof T as null extends T[Key] ? never : undefined extends T[Key] ? never : Key]: T[Key] }
+      >
+    : T
+
+/** A part of a call's input, itself optional when every field of it is. */
+type CallPart<Name extends string, Value> = {} extends Omissible<Value>
+  ? { readonly [Key in Name]?: Omissible<Value> }
+  : { readonly [Key in Name]: Omissible<Value> }
+
+/**
+ * The input a call sends, in the types the action receives, where a field
+ * that may be null or absent can be left out.
+ */
 export type CallInput<Ep extends Endpoint> = Simplify<
   ([PathParamName<Ep['path']>] extends [never]
     ? unknown
     : { readonly params: { readonly [Name in PathParamName<Ep['path']>]: string | number } }) &
-  (Ep['spec'] extends { readonly query: infer Query } ? { readonly query: TypeOf<Query> } : unknown) &
-  (Ep['spec'] extends { readonly body: infer Body } ? { readonly body: TypeOf<Body> } : unknown) &
-  (Ep['spec'] extends { readonly headers: infer Headers } ? { readonly headers: TypeOf<Headers> } : unknown)
+  (Ep['spec'] extends { readonly query: infer Query } ? CallPart<'query', TypeOf<Query>> : unknown) &
+  (Ep['spec'] extends { readonly body: infer Body } ? CallPart<'body', TypeOf<Body>> : unknown) &
+  (Ep['spec'] extends { readonly headers: infer Headers } ? CallPart<'headers', TypeOf<Headers>> : unknown)
 >
 
 /** How a call is sent. */
@@ -226,10 +244,26 @@ function specOf(ep: Endpoint): EndpointSpec {
  */
 function encodeJson(schema: EndpointSchema, value: unknown, what: string): unknown {
   try {
-    return S.encodeUnknownSync(S.toCodecJson(schema), { disableChecks: true })(value)
+    return S.encodeUnknownSync(S.toCodecJson(schema), { disableChecks: true })(withOmittedNulls(schema, value))
   } catch (cause) {
     throw new Error(`The ${what} does not match the endpoint's schema: ${cause instanceof Error ? cause.message : String(cause)}`)
   }
+}
+
+/** The value with each field the client left out that may be null set to null, as the schema's type has it. */
+function withOmittedNulls(schema: EndpointSchema, value: unknown): unknown {
+  const fields: unknown = Reflect.get(schema, 'fields')
+
+  if (!(fields instanceof Object)) return value
+
+  const given: Record<string, unknown> = value instanceof Object ? { ...value } : {}
+
+  for (const [key, field] of Object.entries(fields)) {
+    // SAFETY: a struct's fields are schemas.
+    if (!Object.hasOwn(given, key) && S.is(S.toType(field as S.Top))(null)) given[key] = null
+  }
+
+  return given
 }
 
 /** A query string's parameters from an encoded value: lists as `key[]`, objects as `key[field]`. */

@@ -347,6 +347,11 @@ export interface TestBrowser {
    * one a test requested another way, such as with `app.request`.
    */
   follow(response: Response, init?: RequestInit): Promise<Response>
+  /**
+   * Send a `Request` as the browser would, with its cookies: so the browser
+   * is the `fetch` that `call(endpoint, input, browser)` sends with.
+   */
+  fetch(request: Request): Promise<Response>
   /** The cookies the browser holds, by name. */
   readonly cookies: ReadonlyMap<string, string>
   /** Give the browser a cookie, as another browser's or one a test makes up. */
@@ -409,6 +414,13 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
 
   return {
     request,
+    fetch: async (sent) => {
+      const url = new URL(sent.url)
+      const method = sent.method.toUpperCase()
+      const body = method === 'GET' || method === 'HEAD' ? undefined : await sent.text()
+
+      return request(`${url.pathname}${url.search}`, { method, headers: sent.headers, body })
+    },
     follow: async (response, init = {}) => {
       // A redirect requested another way hands its cookies to this browser first.
       if (!received.has(response)) keep(response)
