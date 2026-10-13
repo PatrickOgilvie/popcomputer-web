@@ -101,6 +101,9 @@ TypeScript example here and in the README type-checks against the package.
    ...`): `setupWeb`'s type includes its services and the database type comes
    from `setupWeb`, so an inferred one refers to itself.
 10. **Run work that outlives the response with `background('name', effect)`.**
+    Run a Cron Trigger's or Queue consumer's work with the application's
+    services through `routes.run(effect, env, ctx)` from the Worker's
+    `scheduled` or `queue` handler, never through a hidden route.
 11. **Give `cache: false` to routes whose page reads something the framework
     cannot see,** such as an external `fetch()` or the current time. Pages that
     read bindings, headers or bound models are already rendered per request.

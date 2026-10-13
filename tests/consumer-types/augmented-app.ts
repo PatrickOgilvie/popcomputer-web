@@ -206,6 +206,13 @@ web.routes
     )
   )
 
+// Scheduled work runs with the setup's services, and only those.
+export const scheduled = (env: Env['Bindings']) => web.routes.run(dbQuery((db) => db.findProject('p1')), env)
+
+class Unprovided extends Context.Service<Unprovided, { readonly value: number }>()('app/Unprovided') {}
+// @ts-expect-error Unprovided is not a service the setup provides
+web.routes.run(Effect.gen(function* () { return (yield* Unprovided).value }), { REGION: 'weur', MAX_LINKS: '5' })
+
 // Routes register only on declared paths.
 // @ts-expect-error '/projets/{project}' is not a declared path
 web.routes.get('/projets/{project}', action(json({})))

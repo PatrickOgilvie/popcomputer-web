@@ -4,8 +4,8 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Predicate, Context, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
-import type { Context as HonoContext, Hono, MiddlewareHandler, Env } from 'hono'
+import { Cause, Predicate, Context, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import type { Context as HonoContext, ExecutionContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { runEffectWithRuntime } from './handler.js'
 import {
   bindingsConfiguration,
@@ -42,12 +42,11 @@ import {
   formatRecordTag,
   type RouteCacheOptions,
 } from './response-cache.js'
-import { DatabaseService } from './services.js'
+import { DatabaseService, RequestService } from './services.js'
 import type {
   AuthService,
   ExecutionContextService,
   PageService,
-  RequestService,
   RequestStateService,
   ResponseFactoryService,
   BindingsService,
@@ -132,6 +131,26 @@ export type RouteActionCheck<R, Err, Services> = [Exclude<R, Services>] extends 
       readonly missingServices: ServiceKey<Exclude<R, Services>>
       readonly fix: 'Configure the service in setupWeb (database, auth, services.app, services.request), or add it with routes.provide(layer).'
     }
+
+/** An Effect `routes.run` can run: one whose services the routes provide. */
+export type RunCheck<R, Services> = [Exclude<R, Services>] extends [never]
+  ? unknown
+  : {
+      readonly missingServices: ServiceKey<Exclude<R, Services>>
+      readonly fix: 'Configure the service in setupWeb (database, auth, services.app, services.request), or add it with routes.provide(layer).'
+    }
+
+/** The path the route that `run` sends its Effects through answers on. */
+const RUN_PATH = '/__popweb/run'
+
+/** An Effect waiting for `run`'s request, keyed by that request. */
+interface RunJob {
+  readonly effect: Effect.Effect<unknown, unknown, never>
+  readonly done: (exit: Exit.Exit<unknown, unknown>) => void
+}
+
+const runJobs = new WeakMap<Request, RunJob>()
+const appsWithRunner = new WeakSet<object>()
 
 /** An action a route with `Services` can run. */
 export type RouteAction<R, Err, Services> = Effect.Effect<Response | Redirect, Err, R> &
@@ -267,7 +286,89 @@ export class EffectRouteBuilder<
     private readonly bridgeConfig?: EffectBridgeConfig<E, never>,
     private readonly registry: RouteRegistry = getAppRouteRegistry(app),
     private readonly middlewares: MiddlewareHandler<E>[] = []
-  ) {}
+  ) {
+    this.installRunner()
+  }
+
+  /**
+   * The route `run` sends its Effects through, registered once per app,
+   * before any of the application's routes. It answers 404 to any request
+   * but `run`'s own, which carries its Effect by identity.
+   */
+  private installRunner(): void {
+    if (appsWithRunner.has(this.app)) return
+
+    appsWithRunner.add(this.app)
+
+    const runner = Effect.gen(function* () {
+      const request = yield* RequestService
+      const job = runJobs.get(request.raw())
+
+      if (!job) return yield* new NotFoundError({ resource: 'page' })
+
+      const exit = yield* Effect.exit(job.effect)
+      job.done(exit)
+
+      return new Response(null, { status: Exit.isSuccess(exit) ? 204 : 500 })
+    })
+
+    const base = new EffectRouteBuilder<E, Services, Path>(this.app, [], '', this.bridgeConfig, this.registry, [])
+
+    this.app.get(RUN_PATH, base.createHandler(runner, [], { cache: false }))
+  }
+
+  /**
+   * Run an Effect with the application's services outside a request, such as
+   * in a Cron Trigger or a Queue consumer: the database, `services`, `Config`
+   * from the bindings and `background()` work as they do in an action, with
+   * this builder's provided layers. Resolves with the Effect's value and
+   * rejects with its failure.
+   *
+   * @example
+   * export default {
+   *   fetch: app.fetch,
+   *   scheduled: (_event, env, ctx) => routes.run(expireHolds, env, ctx),
+   * }
+   */
+  async run<A, Err, R>(
+    effect: Effect.Effect<A, Err, R> & RunCheck<R, Services>,
+    env: E['Bindings'],
+    executionCtx?: ExecutionContext
+  ): Promise<A> {
+    let provided: Layer.Layer<never, AppError, never> = Layer.empty
+
+    for (const layer of this.layers) {
+      provided = Layer.provideMerge(layer, provided)
+    }
+
+    const request = new Request(`http://localhost${RUN_PATH}`)
+    let result: Exit.Exit<unknown, unknown> | undefined
+
+    runJobs.set(request, {
+      // SAFETY: RunCheck admits only Effects whose services this builder's
+      // routes provide; the runner route runs with the setup's services and
+      // this builder's layers are provided here.
+      effect: Effect.provide(effect, provided) as Effect.Effect<unknown, unknown, never>,
+      done: (exit) => {
+        result = exit
+      },
+    })
+
+    try {
+      const response = await this.app.fetch(request, env, executionCtx)
+
+      if (result === undefined) {
+        throw new Error(`routes.run could not reach its route; the app answered ${response.status}. Register catch-all routes after setupWeb.`)
+      }
+    } finally {
+      runJobs.delete(request)
+    }
+
+    if (Exit.isFailure(result)) throw Cause.squash(result.cause)
+
+    // SAFETY: the job's exit is the exit of `effect`, whose success is A.
+    return result.value as A
+  }
 
   /**
    * Add a layer to provide services to all routes in this builder.

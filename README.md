@@ -1015,6 +1015,37 @@ the Effect. The name identifies the work in error reports:
 yield* background('audit.send', sendAuditEvent(event))
 ```
 
+Without an execution context, as in tests, background work runs before the
+response returns, so a test sees its effects; in a Worker it runs after.
+
+### Scheduled and queued work
+
+A Cron Trigger or a Queue consumer runs an Effect with the application's
+services through `routes.run(effect, env, ctx)`: the database, `services`,
+`Config` and `background()` work as they do in an action, and the layers a
+builder was given with `provide` apply. It resolves with the Effect's value
+and rejects with its failure, so the platform records a failed run.
+
+```ts
+import { lt } from 'drizzle-orm'
+import { DateTime } from 'effect'
+import type { ExecutionContext } from 'hono'
+import type { Bindings } from '../env'
+import { orders } from '../schema'
+
+const forgetAbandonedOrders = Effect.gen(function* () {
+  const cutoff = DateTime.toDateUtc(DateTime.subtract(yield* DateTime.now, { days: 30 }))
+
+  yield* dbMutation((db) => db.delete(orders).where(lt(orders.paidAt, cutoff)))
+})
+
+export default {
+  fetch: app.fetch,
+  scheduled: (_controller: unknown, env: Bindings, ctx: ExecutionContext) =>
+    routes.run(forgetAbandonedOrders, env, ctx),
+}
+```
+
 ### Page caching
 
 Pages are cached at Cloudflare's edge by default. `setupWeb` serves a page from
