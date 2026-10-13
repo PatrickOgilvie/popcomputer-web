@@ -11,11 +11,16 @@ import { Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
-import { json } from '../src/effect/responses.js'
+import { httpError, json } from '../src/effect/responses.js'
 import { HttpError } from '../src/effect/errors.js'
 import { readError, readJson } from '../src/testing.js'
+import { errorResponseWith } from '../src/schema.js'
 
 const Evaluation = S.Struct({ flag: S.String, enabled: S.Boolean, evaluatedAt: S.Date })
+const ShortOfStock = S.Struct({
+  lines: S.Array(S.Struct({ sku: S.String, available: S.Number })),
+  checkedAt: S.Date,
+})
 
 function createApp() {
   const app = new Hono()
@@ -26,6 +31,10 @@ function createApp() {
     // SAFETY: deliberately breaks the declared shape at runtime to check the response fails.
     .get('/api/broken', action(json(Evaluation, { flag: 'beta', enabled: 'yes' } as never)))
     .get('/page', action(Effect.fail(new HttpError({ status: 409, message: 'Taken' }))))
+    .post('/api/sales', action(httpError(409, 'Some lines are short of stock.', ShortOfStock, {
+      lines: [{ sku: 'A-1', available: 2 }],
+      checkedAt: new Date(Date.UTC(2026, 9, 13)),
+    })))
 
   return app
 }
@@ -53,6 +62,23 @@ describe('readError', () => {
   test('says how to get the JSON envelope when the response is HTML', async () => {
     const res = await createApp().request('/page', { headers: { Accept: 'text/html' } })
 
-    await expect(readError(res)).rejects.toThrow('Send Accept: application/json for the JSON envelope.')
+    await expect(readError(res)).rejects.toThrow('sends Accept: application/json, gets the JSON envelope.')
+  })
+})
+
+describe('httpError(status, message, Schema, body)', () => {
+  test('encodes the body through its schema, which the test and a client decode', async () => {
+    const res = await createApp().request('/api/sales', { method: 'POST', headers: { Accept: '*/*' } })
+    const expected = { lines: [{ sku: 'A-1', available: 2 }], checkedAt: new Date(Date.UTC(2026, 9, 13)) }
+
+    expect(res.status).toBe(409)
+    expect((await readError(res.clone(), ShortOfStock)).body).toEqual(expected)
+    expect(S.decodeUnknownSync(errorResponseWith(ShortOfStock))(await res.json()).body).toEqual(expected)
+  })
+
+  test('readError rejects a body that does not match the schema', async () => {
+    const res = await createApp().request('/api/sales', { method: 'POST', headers: { Accept: '*/*' } })
+
+    await expect(readError(res, S.Struct({ total: S.Number }))).rejects.toThrow('does not match the envelope')
   })
 })

@@ -16,7 +16,7 @@ import type { Registered } from './effect/register.js'
 import { attachTestDatabase, attachTestLayer } from './effect/test-env.js'
 import type { PageName } from './effect/pages.js'
 import type { ErrorPageProps, FlashData, PagePropsFor } from './react.js'
-import type { ErrorResponseBody } from './effect/error-formatter.js'
+import { ErrorResponse, errorResponseWith, type ErrorResponseBody } from './effect/error-response.js'
 
 type RegisteredBindings = Registered<'bindings', never>
 
@@ -218,25 +218,31 @@ export async function readErrorPage(response: Response): Promise<TestErrorPage> 
  * const error = await readError(res)
  * expect(error.errors).toEqual({ code: 'This field is required' })
  */
-export async function readError(response: Response): Promise<ErrorResponseBody> {
+export async function readError(response: Response): Promise<ErrorResponseBody>
+export async function readError<A, I>(
+  response: Response,
+  body: S.Codec<A, I, never, never>
+): Promise<ErrorResponseBody & { readonly body: A }>
+export async function readError(
+  response: Response,
+  body?: S.Codec<unknown, unknown, never, never>
+): Promise<ErrorResponseBody> {
   const contentType = response.headers.get('Content-Type') ?? ''
 
-  if (!contentType.includes('application/json')) {
+  if (response.status < 400 || !contentType.includes('application/json')) {
     throw new Error(
       `Expected a JSON error, but the response is ${response.status} ${contentType}. ` +
-        'Send Accept: application/json for the JSON envelope.'
+        'A request that asks for no HTML, or sends Accept: application/json, gets the JSON envelope.'
     )
   }
 
-  const body: unknown = response.status >= 400 ? await response.json() : undefined
+  const json: unknown = await response.json()
 
-  if (!(body instanceof Object) || typeof Reflect.get(body, 'code') !== 'string') {
-    throw new Error(`Expected a JSON error, but the response is ${response.status} ${response.headers.get('Content-Type') ?? ''}.`)
-  }
-
-  // SAFETY: the boundary answers every JSON client's failure with this
-  // envelope, which carries a string code; the check above found one.
-  return body as ErrorResponseBody
+  return Effect.runPromise(
+    S.decodeUnknownEffect(body === undefined ? ErrorResponse : errorResponseWith(body))(json).pipe(
+      Effect.mapError((issue) => new Error(`The JSON error (${response.status}) does not match the envelope: ${issue.message}`))
+    )
+  )
 }
 
 /**

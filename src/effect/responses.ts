@@ -300,14 +300,36 @@ export const forbidden = (message = 'Forbidden'): Effect.Effect<never, Forbidden
   Effect.fail(new ForbiddenError({ message }))
 
 /**
- * Fail with a custom HTTP error.
+ * Fail with a custom HTTP error. A body a JSON client reads is declared by a
+ * schema, as `json(Schema, value)` declares a response: the value is checked
+ * against it and encoded through its JSON form, and the client decodes it
+ * with `errorResponseWith(Schema)` (`readError(res, Schema)` in a test).
+ *
+ * @example
+ * return yield* httpError(409, 'Some lines are short of stock.', InsufficientStock, { lines })
  */
-export const httpError = (
+export function httpError<A, I>(
   status: number,
   message: string,
-  body?: PagePropValue
-): Effect.Effect<never, HttpError, never> =>
-  Effect.fail(new HttpError({ status, message, body }))
+  schema: S.Codec<A, I, never, never>,
+  body: NoInfer<A>
+): Effect.Effect<never, HttpError>
+export function httpError(status: number, message: string, body?: PagePropValue): Effect.Effect<never, HttpError>
+export function httpError(
+  status: number,
+  message: string,
+  third?: unknown,
+  fourth?: unknown
+): Effect.Effect<never, HttpError> {
+  if (!S.isSchema(third)) return Effect.fail(new HttpError({ status, message, body: third }))
+
+  // SAFETY: the schema overload takes only schemas without services.
+  return S.encodeUnknownEffect(S.toCodecJson(third as S.Codec<unknown, unknown, never, never>))(fourth).pipe(
+    Effect.mapError((issue) => new Error(`The ${status} error's body does not match its schema: ${issue.message}`)),
+    Effect.orDie,
+    Effect.flatMap((body) => Effect.fail(new HttpError({ status, message, body })))
+  )
+}
 
 /**
  * Whether the request comes from a client that reads JSON rather than pages:

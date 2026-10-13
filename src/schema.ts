@@ -91,3 +91,6 @@ export {
   type TableFields,
   type TableSchemaFields,
 } from './effect/table-schema.js'
+
+// The JSON body every failure answers a JSON client with, for clients to decode
+export { ErrorResponse, errorResponseWith } from './effect/error-response.js'

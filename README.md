@@ -1037,10 +1037,15 @@ type-check. The same holds for a page answered with `jsonOrRender` that such
 a client decodes.
 
 `errors` names each invalid field's message, as a form's page receives them.
-`ErrorResponseBody` from `@popcomputer/web/effect` types the envelope, and
-`readError(res)` from `@popcomputer/web/testing` reads it in a test.
-An `HttpError` with a body adds it as `body`, so a domain error a JSON action
-maps with `httpError(409, 'Already checked in.', { code: 'ticket_already_used' })`
+`ErrorResponse` from `@popcomputer/web/schema` is the envelope's schema, which
+imports only `effect`, so a client decodes a failure with it; `readError(res)`
+from `@popcomputer/web/testing` reads it in a test. An `HttpError` with a body
+adds it as `body`. A body a client reads is declared by a schema, as a JSON
+response is: `httpError(409, 'Some lines are short of stock.',
+ShortOfStock, { lines })` checks and encodes it, a test reads it with
+`readError(res, ShortOfStock)`, and a client decodes the whole failure with
+`errorResponseWith(ShortOfStock)`. A body without a schema,
+`httpError(409, 'Already checked in.', { code: 'ticket_already_used' })`,
 reaches the client as `{ ..., "httpStatus": 409, "body": { "code":
 "ticket_already_used" } }`. Production replaces the message of a 5xx or an
 internal failure with a generic one. Test the envelope a client receives with

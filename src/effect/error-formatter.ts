@@ -7,6 +7,7 @@
  * - Inertia for browser rendering
  */
 
+import type { ErrorResponseBody } from './error-response.js'
 import { wantsJson } from './negotiation.js'
 import type {
   StructuredError,
@@ -38,28 +39,6 @@ const SENSITIVE_MESSAGE_CATEGORIES = new Set<StructuredError['category']>([
  */
 const SAFE_GENERIC_MESSAGE = 'An error occurred. Please try again later.'
 const NOT_FOUND_MESSAGE = 'The page you requested was not found.'
-
-/**
- * The JSON body every failure answers a JSON client with, whatever its
- * status: `errors` for a failed form, `body` for an `HttpError` that carries
- * one. Read it in tests with `readError` from `@popcomputer/web/testing`.
- */
-export interface ErrorResponseBody {
-  code: string
-  tag: string
-  category: StructuredError['category']
-  title: string
-  message: string
-  httpStatus: number
-  timestamp: string
-  requestId?: string
-  context?: StructuredError['context']
-  fixes?: StructuredError['fixes']
-  /** Each invalid field's message, as a form's page receives them as `errors`. */
-  errors?: Readonly<Record<string, string>>
-  validation?: object
-  body?: unknown
-}
 
 /**
  * Return a client-safe message for an error.
@@ -155,7 +134,13 @@ export class JsonErrorFormatter implements ErrorFormatter {
   }
 
   format(error: StructuredError): ErrorResponseBody {
-    const output: ErrorResponseBody = {
+    const validation = projectValidationExtension(error.validation)
+    // HttpError.body is an intentional client payload for 4xx responses.
+    // Safe messages never forward it for 5xx responses, where arbitrary
+    // internals may have been attached by a caller.
+    const body = this.options.safeMessages && error.httpStatus >= 500 ? undefined : error.body
+
+    return {
       code: error.code,
       tag: error.tag,
       category: error.category,
@@ -163,45 +148,19 @@ export class JsonErrorFormatter implements ErrorFormatter {
       message: getClientSafeMessage(error, !this.options.safeMessages),
       httpStatus: error.httpStatus,
       timestamp: error.timestamp,
+      ...(error.requestId ? { requestId: error.requestId } : {}),
+      ...(this.options.includeContext && error.context ? { context: error.context } : {}),
+      ...(this.options.includeFixes && error.fixes.length > 0 ? { fixes: error.fixes } : {}),
+      ...(error.validation
+        ? {
+            errors: Object.fromEntries(
+              Object.entries(error.validation.fields).map(([name, field]) => [name, field.message])
+            ),
+          }
+        : {}),
+      ...(validation === undefined ? {} : { validation }),
+      ...(body === undefined ? {} : { body }),
     }
-
-    if (error.requestId) {
-      output.requestId = error.requestId
-    }
-
-    if (this.options.includeContext && error.context) {
-      output.context = error.context
-    }
-
-    if (this.options.includeFixes && error.fixes.length > 0) {
-      output.fixes = error.fixes
-    }
-
-    if (error.validation) {
-      output.errors = Object.fromEntries(
-        Object.entries(error.validation.fields).map(([name, field]) => [name, field.message])
-      )
-    }
-
-    if (this.options.safeMessages) {
-      const validation = projectValidationExtension(error.validation)
-
-      if (validation) {
-        output.validation = validation
-      }
-
-      // HttpError.body is an intentional client payload for 4xx responses.
-      // Never forward it for 5xx responses, where arbitrary internals may have
-      // been attached by a caller.
-      if (error.httpStatus < 500 && error.body !== undefined) {
-        output.body = error.body
-      }
-    } else {
-      output.validation = projectValidationExtension(error.validation)
-      output.body = error.body
-    }
-
-    return output
   }
 
   /**

@@ -43,7 +43,7 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
 4. **End every branch with a response helper:** `return yield* render(...)`,
    `redirect(...)`, `back(...)`, `json(Schema, value)`, `jsonOrRender(...)`,
    `file(...)`, `notFound(...)`, `forbidden(...)`, `invalid(...)` or
-   `httpError(...)`. `yield* flash(key, value)` before a redirect hands a
+   `httpError(status, message, Schema, body)`. `yield* flash(key, value)` before a redirect hands a
    message to the next page; a helper or guard layer that must send the
    visitor elsewhere fails with `redirectNow(path, params)`. Expected
    failures are typed Effect failures:

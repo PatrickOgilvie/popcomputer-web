@@ -194,4 +194,4 @@ export {
 export { config, type BindingConfig, type BindingName } from './config.js'
 
 // The JSON body every failure answers a JSON client with
-export type { ErrorResponseBody } from './error-formatter.js'
+export type { ErrorResponseBody } from './error-response.js'
