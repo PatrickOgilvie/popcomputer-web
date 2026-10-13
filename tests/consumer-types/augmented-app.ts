@@ -210,6 +210,23 @@ web.routes
     )
   )
 
+// An action reads only the models its route's path binds.
+const projectAction = action(Effect.gen(function* () {
+  const project = yield* bound('project')
+
+  return yield* json({ id: project.id })
+}))
+web.routes.get(paths.project, projectAction)
+// @ts-expect-error /members/{member} does not bind a project
+web.routes.get(paths.member, projectAction)
+web.routes.prefix('/projects/{project}').get('/settings', projectAction)
+
+// A guard layer that reads a model guards only routes that bind it.
+const ProjectGuard = Layer.effectDiscard(Effect.asVoid(bound('project')))
+web.routes.provide(ProjectGuard).get(paths.project, action(json({ ok: true })))
+// @ts-expect-error /members/{member} does not bind the project the guard reads
+web.routes.provide(ProjectGuard).get(paths.member, action(json({ ok: true })))
+
 // A JSON response declared by a schema takes values of its type.
 const Evaluation = S.Struct({ flag: S.String, enabled: S.Boolean })
 export const evaluated = json(Evaluation, { flag: 'beta', enabled: true })
@@ -227,6 +244,9 @@ export const scheduled = (env: Env['Bindings']) => web.routes.run(dbQuery((db) =
 class Unprovided extends Context.Service<Unprovided, { readonly value: number }>()('app/Unprovided') {}
 // @ts-expect-error Unprovided is not a service the setup provides
 web.routes.run(Effect.gen(function* () { return (yield* Unprovided).value }), { REGION: 'weur', MAX_LINKS: '5' })
+
+// @ts-expect-error routes.run has no route path, so it binds no models
+web.routes.run(bound('project'), { REGION: 'weur', MAX_LINKS: '5' })
 
 // Redirects and links name declared paths; a computed URL is a string.
 export const toProject = redirect(paths.project, { project: 'p1' })

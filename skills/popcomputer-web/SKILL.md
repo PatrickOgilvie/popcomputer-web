@@ -78,7 +78,8 @@ TypeScript example here and in the README type-checks against the package.
    and a missing row is a 404. A record the user may not
    see answers `notFound(...)`, so its existence stays private; use
    `authorize((auth) => rule)` (a 403) for a record the user can see but not
-   change.
+   change. `bound('project')` type-checks only on a route whose path or
+   prefix has `{project}`, in an action or in a layer guarding it.
 7. **Authorize with `authorize()` or `authorize((auth) => rule)`.** Use
    `currentUser` when signing in is optional. Guard a group of routes with
    `routes.provide(RequireAuthLayer)` or `routes.provide(RequireGuestLayer)`.
@@ -207,8 +208,10 @@ has `errors.name` (a JSON request gets a `422`).
 Run the application's type check (`tsc --noEmit`) and `bun test`. A type error
 at `routes.get(...)` names the problem: `missingServices` lists services the
 setup does not provide (configure them in `setupWeb`, or `routes.provide(layer)`),
-and `unhandledErrors` lists failures that are not the package's errors (handle
-them with `Effect.catchTag`, or fail with `HttpError`). A type error at
+`unhandledErrors` lists failures that are not the package's errors (handle
+them with `Effect.catchTag`, or fail with `HttpError`), and
+`missingRouteModels` lists models the action or a provided guard reads with
+`bound()` that the route's path does not bind. A type error at
 `render(...)` means the page or its props differ from `src/pages.ts`.
 `Argument of type 'string' is not assignable to parameter of type 'readonly
 [never, ...never[]]'` at an `Effect.catchTag` means the Effect no longer fails

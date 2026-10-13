@@ -554,6 +554,7 @@ describe('bound() accessor', () => {
     })
 
     const error = await Effect.runPromise(
+      // @ts-expect-error nothing binds the project, which the types report first.
       effect.pipe(Effect.provide(BoundModels.fromModels({})), Effect.flip)
     )
 

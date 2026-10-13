@@ -149,6 +149,7 @@ export {
   type CoreServices,
   type RouteAction,
   type RouteActionCheck,
+  type PathModels,
   type EffectRouteOptions,
   type EffectRoutesConfig,
 } from './routing.js'
@@ -169,6 +170,7 @@ export {
   bound,
   routeBinding,
   type BoundModel,
+  type BoundModelError,
   type BoundKey,
   type RouteBindingScope,
   type RouteBindingOptions,
@@ -176,6 +178,7 @@ export {
   type RouteBindingTable,
   type RouteBindingConfig,
   type RouteBindingsConfig,
+  type RouteModel,
 } from './binding.js'
 
 // Auth guards

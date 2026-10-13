@@ -65,7 +65,9 @@ import {
   type CompiledRouteBinding,
   type ParsedBinding,
   type RouteBindingsConfig,
+  type RouteModel,
 } from './binding.js'
+import type { PathParamName } from '../paths.js'
 import type { RouteRegistry } from './route-registry.js'
 import {
   getAppRouteRegistry,
@@ -115,29 +117,52 @@ type ErrorTag<Failure> = Failure extends { readonly _tag: infer Tag extends stri
   ? Tag
   : 'untagged error'
 
+/** The names of the route models among an Effect's requirements. */
+type ModelName<Requirement> = Requirement extends RouteModel<infer K> ? K : never
+
+/**
+ * The route models a path provides, one for each `{placeholder}`, or every
+ * model for a path the types cannot read.
+ */
+export type PathModels<Path extends string> = string extends Path
+  ? RouteModel<string>
+  : [PathParamName<Path>] extends [never]
+    ? never
+    : RouteModel<PathParamName<Path>>
+
 /**
  * `unknown` when a route can run an action that needs `R` and fails with
  * `Err`; otherwise an object type naming what is wrong, which the action
  * cannot satisfy, so the compiler reports it at the registration.
  */
-export type RouteActionCheck<R, Err, Services> = [Exclude<R, Services>] extends [never]
-  ? [Exclude<Err, AppError>] extends [never]
-    ? unknown
+export type RouteActionCheck<R, Err, Services> = [ModelName<Exclude<R, Services>>] extends [never]
+  ? [Exclude<R, Services>] extends [never]
+    ? [Exclude<Err, AppError>] extends [never]
+      ? unknown
+      : {
+          readonly unhandledErrors: ErrorTag<Exclude<Err, AppError>>
+          readonly fix: 'Handle these errors in the action (Effect.catchTag), or fail with one of the package errors such as HttpError.'
+        }
     : {
-        readonly unhandledErrors: ErrorTag<Exclude<Err, AppError>>
-        readonly fix: 'Handle these errors in the action (Effect.catchTag), or fail with one of the package errors such as HttpError.'
+        readonly missingServices: ServiceKey<Exclude<R, Services>>
+        readonly fix: 'Configure the service in setupWeb (database, auth, services.app, services.request), or add it with routes.provide(layer).'
       }
   : {
-      readonly missingServices: ServiceKey<Exclude<R, Services>>
-      readonly fix: 'Configure the service in setupWeb (database, auth, services.app, services.request), or add it with routes.provide(layer).'
+      readonly missingRouteModels: ModelName<Exclude<R, Services>>
+      readonly fix: "bound('name') reads the model a {name} placeholder in the route path loads: register the action on a path, or under a prefix, that has one."
     }
 
 /** An Effect `routes.run` can run: one whose services the routes provide. */
-export type RunCheck<R, Services> = [Exclude<R, Services>] extends [never]
-  ? unknown
+export type RunCheck<R, Services> = [ModelName<Exclude<R, Services>>] extends [never]
+  ? [Exclude<R, Services>] extends [never]
+    ? unknown
+    : {
+        readonly missingServices: ServiceKey<Exclude<R, Services>>
+        readonly fix: 'Configure the service in setupWeb (database, auth, services.app, services.request), or add it with routes.provide(layer).'
+      }
   : {
-      readonly missingServices: ServiceKey<Exclude<R, Services>>
-      readonly fix: 'Configure the service in setupWeb (database, auth, services.app, services.request), or add it with routes.provide(layer).'
+      readonly missingRouteModels: ModelName<Exclude<R, Services>>
+      readonly fix: 'routes.run has no route path, so it binds no models: load the record with dbQuery, or pass it to the Effect.'
     }
 
 /** The path the route that `run` sends its Effects through answers on. */
@@ -152,17 +177,20 @@ interface RunJob {
 const runJobs = new WeakMap<Request, RunJob>()
 const appsWithRunner = new WeakSet<object>()
 
-/** An action a route with `Services` can run. */
-export type RouteAction<R, Err, Services> = Effect.Effect<Response | Redirect, Err, R> &
-  RouteActionCheck<R, Err, Services>
+/**
+ * An action a route with `Services` can run, under layers that need the
+ * route models `Needs`.
+ */
+export type RouteAction<R, Err, Services, Needs = never> = Effect.Effect<Response | Redirect, Err, R> &
+  RouteActionCheck<R | Needs, Err, Services>
 
 /**
  * The action as the route runs it. RouteActionCheck rejects, at the call
  * site, any action whose failures are not AppError, so registered actions
  * fail only with AppError.
  */
-function checkedAction<R, Err, Services>(
-  action: RouteAction<R, Err, Services>
+function checkedAction<R, Err, Services, Needs>(
+  action: RouteAction<R, Err, Services, Needs>
 ): Effect.Effect<Response | Redirect, AppError, R> {
   // SAFETY: see above; an action with other failures does not compile.
   return action as Effect.Effect<Response | Redirect, AppError, R>
@@ -277,7 +305,9 @@ export class EffectRouteBuilder<
   E extends Env,
   Services = BaseServices,
   /** The paths routes may be registered on: setupWeb's `paths`, or any path. */
-  Path extends string = string
+  Path extends string = string,
+  /** The route models the provided layers read with `bound()`, which each route's path must bind. */
+  Needs = never
 > {
   constructor(
     private readonly app: Hono<E>,
@@ -312,7 +342,7 @@ export class EffectRouteBuilder<
       return new Response(null, { status: Exit.isSuccess(exit) ? 204 : 500 })
     })
 
-    const base = new EffectRouteBuilder<E, Services, Path>(this.app, [], '', this.bridgeConfig, this.registry, [])
+    const base = new EffectRouteBuilder<E, Services, Path, Needs>(this.app, [], '', this.bridgeConfig, this.registry, [])
 
     this.app.get(RUN_PATH, base.createHandler(runner, [], { cache: false }))
   }
@@ -332,7 +362,7 @@ export class EffectRouteBuilder<
    * }
    */
   async run<A, Err, R>(
-    effect: Effect.Effect<A, Err, R> & RunCheck<R, Services>,
+    effect: Effect.Effect<A, Err, R> & RunCheck<R | Needs, Services>,
     // Partial, so a test passes testEnv's bindings and its layer applies; a
     // binding the Effect reads that is missing fails as it does in a request.
     env: Partial<E['Bindings']>,
@@ -379,16 +409,18 @@ export class EffectRouteBuilder<
    * available in this route context (`BaseServices`, previously provided services,
    * and bridge-level custom services).
    * The layer's error type must be handled by the effect bridge (AppError or subtype).
+   * A layer that reads route models with `bound()` guards only routes whose
+   * paths bind them.
    */
   provide<
     S,
     LayerErr extends AppError,
-    LayerReq extends Services
+    LayerReq extends Services | RouteModel<string>
   >(
     layer: Layer.Layer<S, LayerErr, LayerReq>
-  ): EffectRouteBuilder<E, Services | S, Path> {
+  ): EffectRouteBuilder<E, Services | S, Path, Needs | Exclude<LayerReq, Services>> {
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-    return new EffectRouteBuilder<E, Services | S, Path>(
+    return new EffectRouteBuilder<E, Services | S, Path, Needs | Exclude<LayerReq, Services>>(
       this.app,
       [
         ...this.layers,
@@ -419,8 +451,8 @@ export class EffectRouteBuilder<
    */
   middleware(
     ...handlers: MiddlewareHandler<E>[]
-  ): EffectRouteBuilder<E, Services, Path> {
-    return new EffectRouteBuilder<E, Services, Path>(
+  ): EffectRouteBuilder<E, Services, Path, Needs> {
+    return new EffectRouteBuilder<E, Services, Path, Needs>(
       this.app,
       this.layers,
       this.pathPrefix,
@@ -451,7 +483,7 @@ export class EffectRouteBuilder<
    */
   prefixMiddleware(
     ...handlers: MiddlewareHandler<E>[]
-  ): EffectRouteBuilder<E, Services, Path> {
+  ): this {
     if (this.pathPrefix) {
       // Two patterns: '/api/*' does not match '/api' itself in Hono
       this.app.use(this.pathPrefix, ...handlers)
@@ -465,12 +497,13 @@ export class EffectRouteBuilder<
 
   /**
    * Set path prefix for all routes in this builder. Routes registered under a
-   * prefix take paths relative to it, so declared paths no longer apply.
+   * prefix take paths relative to it, so declared paths no longer apply. The
+   * prefix's `{placeholders}` bind models for every route under it.
    */
-  prefix(path: string): EffectRouteBuilder<E, Services, string> {
+  prefix<const Prefix extends string>(path: Prefix): EffectRouteBuilder<E, Services | PathModels<Prefix>, string, Needs> {
     const normalizedPath = path.replace(/\/$/, '')
 
-    return new EffectRouteBuilder<E, Services, string>(
+    return new EffectRouteBuilder<E, Services | PathModels<Prefix>, string, Needs>(
       this.app,
       this.layers,
       this.pathPrefix + normalizedPath,
@@ -484,7 +517,7 @@ export class EffectRouteBuilder<
    * Register routes that share this builder's prefix, layers and middleware.
    * Returns the builder so registrations can continue after the group.
    */
-  group(callback: (route: EffectRouteBuilder<E, Services, Path>) => void): this {
+  group(callback: (route: EffectRouteBuilder<E, Services, Path, Needs>) => void): this {
     callback(this)
 
     return this
@@ -986,9 +1019,9 @@ export class EffectRouteBuilder<
   }
 
   /** Register a GET route. Supports Laravel-style route model binding: /projects/{project} */
-  get<R, Err>(
-    path: Path,
-    effect: RouteAction<R, Err, Services>,
+  get<const P extends Path, R, Err>(
+    path: P,
+    effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
     options?: EffectRouteOptions
   ): this {
     this.registerRoute('get', path, checkedAction(effect), options)
@@ -997,9 +1030,9 @@ export class EffectRouteBuilder<
   }
 
   /** Register a POST route. Supports Laravel-style route model binding: /projects/{project} */
-  post<R, Err>(
-    path: Path,
-    effect: RouteAction<R, Err, Services>,
+  post<const P extends Path, R, Err>(
+    path: P,
+    effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
     options?: EffectRouteOptions
   ): this {
     this.registerRoute('post', path, checkedAction(effect), options)
@@ -1008,9 +1041,9 @@ export class EffectRouteBuilder<
   }
 
   /** Register a PUT route. Supports Laravel-style route model binding: /projects/{project} */
-  put<R, Err>(
-    path: Path,
-    effect: RouteAction<R, Err, Services>,
+  put<const P extends Path, R, Err>(
+    path: P,
+    effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
     options?: EffectRouteOptions
   ): this {
     this.registerRoute('put', path, checkedAction(effect), options)
@@ -1019,9 +1052,9 @@ export class EffectRouteBuilder<
   }
 
   /** Register a PATCH route. Supports Laravel-style route model binding: /projects/{project} */
-  patch<R, Err>(
-    path: Path,
-    effect: RouteAction<R, Err, Services>,
+  patch<const P extends Path, R, Err>(
+    path: P,
+    effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
     options?: EffectRouteOptions
   ): this {
     this.registerRoute('patch', path, checkedAction(effect), options)
@@ -1030,9 +1063,9 @@ export class EffectRouteBuilder<
   }
 
   /** Register a DELETE route. Supports Laravel-style route model binding: /projects/{project} */
-  delete<R, Err>(
-    path: Path,
-    effect: RouteAction<R, Err, Services>,
+  delete<const P extends Path, R, Err>(
+    path: P,
+    effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
     options?: EffectRouteOptions
   ): this {
     this.registerRoute('delete', path, checkedAction(effect), options)
@@ -1041,9 +1074,9 @@ export class EffectRouteBuilder<
   }
 
   /** Register a route for all HTTP methods. Supports Laravel-style route model binding: /projects/{project} */
-  all<R, Err>(
-    path: Path,
-    effect: RouteAction<R, Err, Services>,
+  all<const P extends Path, R, Err>(
+    path: P,
+    effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
     options?: EffectRouteOptions
   ): this {
     this.registerRoute('all', path, checkedAction(effect), options)

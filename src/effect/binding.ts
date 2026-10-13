@@ -170,13 +170,16 @@ export class BoundModels extends Context.Service<
   BoundModelsClient
 >()('@popcomputer/web/BoundModels') {
   /**
-   * Provide fixed models, to run an action outside a route.
+   * Provide fixed models, to run an action outside a route. The layer binds
+   * the models it holds, as a route's placeholders do.
    *
    * @example
    * yield* showProject.pipe(Effect.provide(BoundModels.fromModels({ project })))
    */
-  static fromModels(models: Readonly<Record<string, unknown>>): Layer.Layer<BoundModels> {
-    return Layer.succeed(
+  static fromModels<const Models extends Readonly<Record<string, unknown>>>(
+    models: Models
+  ): Layer.Layer<BoundModels | RouteModel<Extract<keyof Models, string>>> {
+    const layer = Layer.succeed(
       BoundModels,
       BoundModels.of({
         get: (key) =>
@@ -185,6 +188,10 @@ export class BoundModels extends Context.Service<
             : Effect.fail(RouteConfigurationError.bindingNotInRoute(key)),
       })
     )
+
+    // SAFETY: RouteModel is a requirement only the types track; no Effect
+    // reads it from the context, so serving the models is what binds them.
+    return layer as Layer.Layer<BoundModels | RouteModel<Extract<keyof Models, string>>>
   }
 }
 
@@ -206,6 +213,16 @@ type RouteBindingOutput<Config> =
       : Config extends RouteBindingDefinition<infer A>
         ? A
         : unknown
+
+/**
+ * What `bound(key)` needs from its route: a `{key}` placeholder in the path.
+ * A route provides one for each placeholder of its path and its prefix, so an
+ * action, or a layer guarding it, that reads a model its route does not bind
+ * fails to type-check where the route is registered.
+ */
+export interface RouteModel<K extends string> {
+  readonly '~popcomputer/web/RouteModel': K
+}
 
 /** The keys `bound` accepts: the registered bindings, or any key before the application registers them. */
 export type BoundKey = [ConfiguredRouteBindings] extends [never] ? string : keyof ConfiguredRouteBindings & string
@@ -239,7 +256,7 @@ export type BoundModel<K extends string> =
 // so it resolves against the application's registered bindings.
 export const bound: <K extends BoundKey>(
   key: K
-) => Effect.Effect<BoundModel<K>, BoundModelError, BoundModels> = Effect.fn('Web.bound')(function* <
+) => Effect.Effect<BoundModel<K>, BoundModelError, BoundModels | RouteModel<K>> = Effect.fn('Web.bound')(function* <
   K extends string,
 >(key: K) {
   const models = yield* BoundModels

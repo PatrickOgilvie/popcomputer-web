@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- `bound('project')` requires `RouteModel<'project'>`, which a route whose path or prefix has `{project}` provides, so an action or a guard layer reading a model its route does not bind is a type error at the registration (`missingRouteModels`) instead of a `RouteConfigurationError` at request time. `routes.run` binds no models. A helper annotated `Effect.Effect<A, E, BoundModels>` adds `RouteModel<'project'>`, and `BoundModels.fromModels(models)` binds the models it holds.
 - `cacheInvalidate` and `cacheInvalidatePrefix` report a store failure to `EffectErrorObserverService` and succeed, instead of failing with `CacheError` (503): they follow a write that has already happened, so the 503 told the visitor a saved change had failed. The entry stays until it expires.
 - `signedIn` gives a user without a `name` the name `Test User` instead of `null`, which fits Better Auth's `user` table, whose `name` is not null.
 - `readPage(...).flash` is typed by setupWeb's `flash` declaration (`FlashData`) instead of `Record<string, unknown>`.

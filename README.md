@@ -497,9 +497,10 @@ placeholder is a type error at every URL built from it.
 action uses and the action fails only with the package's errors. Otherwise the
 registration is a type error that names the problem, for example
 `missingServices: "@popcomputer/web/Database"` when no `database` is
-configured, or `unhandledErrors: "PaymentDeclined"` for a domain error the
-action has not handled. `routes.provide(layer)` adds services for the routes
-registered through it.
+configured, `unhandledErrors: "PaymentDeclined"` for a domain error the
+action has not handled, or `missingRouteModels: "project"` for an action that
+calls `bound('project')` on a path without `{project}`. `routes.provide(layer)`
+adds services for the routes registered through it.
 
 `action` does not hide another execution model. It preserves the Effect's
 success, error, and requirement channels, while documenting that the program is
@@ -802,6 +803,16 @@ picking one.
 A placeholder without a parser in `bindings` is a plain parameter: the action
 reads it with `validateRequest`, as in `/teams/{team}/invites/{token}`, where
 `bound('team')` loads the team and `token` arrives with the request's input.
+
+`bound('project')` needs a route whose path, or prefix, has `{project}`: the
+types track it as the Effect requirement `RouteModel<'project'>`, which only
+such a route provides. An action, or a guard layer, that reads a model its
+route does not bind fails to type-check where the route is registered, with
+`missingRouteModels: "project"`. A helper that reads a model and annotates its
+type includes the requirement, as in `Effect.Effect<Project, BoundModelError,
+BoundModels | RouteModel<'project'>>`, and a test that runs one outside a route
+provides `BoundModels.fromModels({ project })`, which binds the models it
+holds.
 
 Route model binding is currently Drizzle-specific even though the basic
 `DatabaseService` can hold any application database client.
