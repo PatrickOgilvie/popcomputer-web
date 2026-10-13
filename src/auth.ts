@@ -24,3 +24,6 @@ export {
   type BetterAuthEffectApi,
   type BetterAuthEffectClient,
 } from './effect/auth.js'
+
+// Better Auth's additionalFields, from the user table
+export { betterAuthFields, type BetterAuthFields, type BetterAuthFieldOptions } from './effect/auth-fields.js'

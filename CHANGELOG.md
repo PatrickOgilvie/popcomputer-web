@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `betterAuthFields(schema.user, { role: { input: false } })` from `@popcomputer/web/auth` is Better Auth's `user.additionalFields` for the named columns of the user table: each field's type, enum values and whether sign-up requires it follow the column, so a user's fields are declared once, in the table.
 - `columnsOf(table, schema)` from `@popcomputer/web/schema` is the table's columns a schema's fields name, for a query's `select`, so a page schema decides what its query reads: `db.select({ ...columnsOf(projects, ProjectCard), openTasks: count(tasks.id) })`.
 - `ErrorResponseBody` from `@popcomputer/web/effect` types the JSON envelope every failure answers a JSON client with, and `readError(response)` from `@popcomputer/web/testing` reads it in a test. `routes.run` takes `testEnv`'s bindings, so a test runs a scheduled job with its fakes.
 - `config` from `@popcomputer/web/effect` is Effect `Config` for the Worker's vars and secrets, each name checked against the bindings the Hono app's type declares: `config.string('REGION')`, `config.redacted('API_KEY')`, `config.duration('HOLD_TTL')`. A misspelled name is a type error instead of a default silently taken.

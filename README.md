@@ -813,9 +813,12 @@ predicate returns `false`, the second form fails with `ForbiddenError`.
 user, so a dependency response is never trusted because it looks
 session-shaped. `betterAuthSession(tableSchema(schema.user))` takes the user
 from the `user` table, so a field the application adds, such as a `role`, is
-declared in the table (and in Better Auth's `additionalFields`, which tells
-Better Auth to return it), and `authorize()`, `currentUser` and `signedIn`
-follow. Give a narrowed column an enum, so the session checks its values, and
+declared in the table, and `authorize()`, `currentUser` and `signedIn`
+follow. Better Auth learns of the field from the same table:
+`user: { additionalFields: betterAuthFields(schema.user, { role: { input: false } }) }`
+in `createAuth` takes each field's type, enum values and whether it is
+required from its column, and `input` says whether a visitor may set it at
+sign-up. Give a narrowed column an enum, so the session checks its values, and
 take it from the Effect schema the application validates input with, so the
 role is declared once: `text('role', { enum: Role.literals })` for
 `const Role = S.Literals(['admin', 'member'])`. The session token is `Redacted`, so

@@ -41,7 +41,9 @@ TypeScript example here and in the README type-checks against the package.
    pass the object as `setupWeb`'s `pages`. Take a table's columns from the
    table: `tableSchema(schema.projects).mapFields(Struct.pick(['id',
    'name']))` from `@popcomputer/web/schema`, and declare the signed-in user
-   as `auth.session: betterAuthSession(tableSchema(schema.user))`. Type each
+   as `auth.session: betterAuthSession(tableSchema(schema.user))`, with
+   Better Auth's `additionalFields: betterAuthFields(schema.user, { role: {
+   input: false } })`. Type each
    React page as
    `WebPage<'Projects/Show'>` from `@popcomputer/web/react`; its props, the
    shared `auth.user` and `errors` follow. Declare props shared with every
