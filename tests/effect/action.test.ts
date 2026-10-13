@@ -7,11 +7,7 @@ import assert from 'node:assert/strict'
 import { describe, test, expect } from 'bun:test'
 import { Option, Predicate, Effect, Schema as S, Layer, Exit, Cause, Redacted } from 'effect'
 import type { PageProps } from '../../src/types.js'
-import {
-  action,
-  dbMutation,
-  dbTransaction,
-} from '../../src/effect/action.js'
+import { action } from '../../src/effect/action.js'
 import {
   DatabaseService,
   AuthUserService,
@@ -22,9 +18,6 @@ import {
 } from '../../src/effect/services.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import {
-  DatabaseConstraintViolation,
-  DatabaseMutationFailed,
-  DatabaseTransactionFailed,
   Redirect,
   UnauthorizedError,
   ValidationError,
@@ -310,162 +303,6 @@ describe('authorize', () => {
 
     const result = await Effect.runPromise(Effect.provide(effect, layer))
     expect(result).toBeDefined()
-  })
-})
-
-describe('dbTransaction', () => {
-  test('runs operations in a transaction', async () => {
-    const mockDb = {
-      transaction: async <T>(fn: (tx: { insert: () => Promise<{ id: number }> }) => Promise<T>) => {
-        const tx = { insert: () => Promise.resolve({ id: 1 }) }
-
-        return fn(tx)
-      },
-    }
-
-    const effect = dbTransaction(mockDb, async (tx) => {
-      const result = await tx.insert()
-
-      return { inserted: result.id }
-    })
-
-    const result = await Effect.runPromise(effect)
-
-    expect(result).toEqual({ inserted: 1 })
-  })
-
-  test('rolls back on error', async () => {
-    let rolledBack = false
-
-    const mockDb = {
-      transaction: async <T>(fn: (tx: Record<never, never>) => Promise<T>) => {
-        try {
-          return await fn({})
-        } catch (e) {
-          rolledBack = true
-          // oxlint-disable-next-line only-throw-error -- SAFETY: The fake transaction rethrows the original dependency value so rollback and boundary classification are exercised together.
-          throw e
-        }
-      },
-    }
-
-    const effect = dbTransaction(mockDb, async () => {
-      throw new Error('Operation failed')
-    })
-
-    const exit = await Effect.runPromiseExit(effect)
-
-    expect(Exit.isFailure(exit)).toBe(true)
-    expect(rolledBack).toBe(true)
-  })
-
-  test('classifies unknown failures as transaction failures', async () => {
-    const mockDb = {
-      transaction: async <T>(fn: (tx: Record<never, never>) => Promise<T>) => fn({}),
-    }
-
-    const effect = dbTransaction(mockDb, async () => {
-      // oxlint-disable-next-line no-throw-literal, only-throw-error -- SAFETY: This intentionally malformed dependency failure verifies that the adapter classifies non-Error rejections.
-      throw 'string error'
-    })
-
-    const exit = await Effect.runPromiseExit(effect)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        expect(option.value).toBeInstanceOf(DatabaseTransactionFailed)
-        expect(option.value._tag).toBe('DatabaseTransactionFailed')
-      }
-    }
-  })
-})
-
-describe('database failure classification', () => {
-  test('keeps generic mutation failures out of the broad Error channel', async () => {
-    const exit = await Effect.runPromiseExit(
-      dbMutation({}, async () => {
-        throw new Error('connection reset')
-      })
-    )
-
-    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : null
-    expect(failure?._tag).toBe('Some')
-
-    if (Predicate.isTagged(failure, 'Some')) {
-      expect(failure.value).toBeInstanceOf(DatabaseMutationFailed)
-      expect(failure.value.cause).toBeInstanceOf(Error)
-    }
-  })
-
-  test('classifies provider constraint codes separately', async () => {
-    const exit = await Effect.runPromiseExit(
-      dbMutation({}, async () => {
-        throw Object.assign(new Error('duplicate key'), { code: '23505' })
-      })
-    )
-
-    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : null
-    expect(failure?._tag).toBe('Some')
-
-    if (Predicate.isTagged(failure, 'Some')) {
-      expect(failure.value).toBeInstanceOf(DatabaseConstraintViolation)
-
-      if (failure.value instanceof DatabaseConstraintViolation) {
-        expect(failure.value.constraint).toBe('unique')
-        expect(failure.value.httpStatus).toBe(409)
-      }
-    }
-  })
-
-  test.each([
-    ['unique', `INSERT INTO pages (id, workspace_id, slug, title) VALUES (2, 1, 'intro', 'Again')`],
-    ['unique', `INSERT INTO pages (id, workspace_id, slug, title) VALUES (1, 1, 'other', 'Same id')`],
-    ['foreign-key', `INSERT INTO pages (id, workspace_id, slug, title) VALUES (3, 99, 'orphan', 'Orphan')`],
-    ['not-null', `INSERT INTO pages (id, workspace_id, slug, title) VALUES (4, 1, 'untitled', NULL)`],
-    ['check', `INSERT INTO pages (id, workspace_id, slug, title) VALUES (5, 1, 'blank', '')`],
-  ] as const)('classifies a SQLite %s violation', async (constraint, statement) => {
-    const { Database } = await import('bun:sqlite')
-    const { drizzle } = await import('drizzle-orm/bun-sqlite')
-    const { sql } = await import('drizzle-orm')
-    const sqlite = new Database(':memory:')
-    sqlite.run('PRAGMA foreign_keys = ON')
-    sqlite.run('CREATE TABLE workspaces (id INTEGER PRIMARY KEY)')
-    sqlite.run(`CREATE TABLE pages (
-      id INTEGER PRIMARY KEY,
-      workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
-      slug TEXT NOT NULL,
-      title TEXT NOT NULL CHECK (length(title) > 0),
-      UNIQUE (workspace_id, slug)
-    )`)
-    sqlite.run('INSERT INTO workspaces (id) VALUES (1)')
-    sqlite.run(`INSERT INTO pages (id, workspace_id, slug, title) VALUES (1, 1, 'intro', 'Intro')`)
-    const db = drizzle(sqlite)
-
-    const exit = await Effect.runPromiseExit(
-      dbMutation(db, async (tx) => tx.run(sql.raw(statement)))
-    )
-    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : null
-
-    expect(Predicate.isTagged(failure, 'Some') && failure.value).toMatchObject({
-      _tag: 'DatabaseConstraintViolation',
-      constraint,
-    })
-  })
-
-  test('classifies a SQLite constraint message without an extended code', async () => {
-    const exit = await Effect.runPromiseExit(
-      dbMutation({}, async () => {
-        throw new Error('D1_ERROR: UNIQUE constraint failed: pages.workspace_id, pages.slug: SQLITE_CONSTRAINT')
-      })
-    )
-    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : null
-
-    expect(Predicate.isTagged(failure, 'Some') && failure.value).toMatchObject({
-      _tag: 'DatabaseConstraintViolation',
-      constraint: 'unique',
-    })
   })
 })
 

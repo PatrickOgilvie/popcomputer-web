@@ -16,6 +16,9 @@ import {
   authorize,
   bound,
   currentUser,
+  dbBatch,
+  dbQuery,
+  dbTransaction,
   type DefaultAuthUser,
 } from '@popcomputer/web/effect'
 import { signedIn } from '@popcomputer/web/testing'
@@ -31,7 +34,25 @@ interface Member {
   readonly session: DefaultAuthUser['session']
 }
 
+interface ProjectRow {
+  readonly id: string
+  readonly userId: string
+}
+
+/** An asynchronous database client with transactions and batches. */
+interface AppDatabase {
+  findProject(id: string): Promise<ProjectRow>
+  transaction<A>(run: (tx: AppDatabase) => Promise<A>): Promise<A>
+  batch<const Statements extends readonly [Promise<unknown>, ...Promise<unknown>[]]>(
+    statements: Statements
+  ): Promise<{ -readonly [K in keyof Statements]: Awaited<Statements[K]> }>
+}
+
 declare module '@popcomputer/web/effect' {
+  interface WebDatabaseType {
+    type: AppDatabase
+  }
+
   interface WebRouteBindingsType {
     type: typeof routeBindings
   }
@@ -59,6 +80,15 @@ export const augmentedTypes = Effect.gen(function* () {
 
   const member = yield* AuthUserService
   expectType<Equals<typeof member, Member>>()
+
+  const row = yield* dbQuery((db) => db.findProject('project-1'))
+  expectType<Equals<typeof row, ProjectRow>>()
+
+  const inTransaction = yield* dbTransaction((tx) => tx.findProject('project-1'))
+  expectType<Equals<typeof inTransaction, ProjectRow>>()
+
+  const [first, second] = yield* dbBatch((db) => [db.findProject('a'), db.findProject('b')])
+  expectType<Equals<[typeof first, typeof second], [ProjectRow, ProjectRow]>>()
 })
 
 // Fields an application adds have no test default, so signedIn requires them.

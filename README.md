@@ -402,24 +402,23 @@ Hyperdrive binding, belongs in `services.request`: Workers forbid using it from
 another request. A request service replaces an application service with the
 same tag. For services only some routes need, use `routes.provide(layer)`.
 
-## Validation and safe writes
+## Validation and the database
 
 ```ts
 import { Effect, Schema as S } from 'effect'
 import {
   action,
-  asTrusted,
   authorize,
-  DatabaseService,
   dbMutation,
   redirect,
   validateRequest,
 } from '@popcomputer/web/effect'
-import { requiredString } from '@popcomputer/web/schema'
+import { alphaDash, requiredString } from '@popcomputer/web/schema'
 import { projects } from '../schema'
 
 const CreateProject = S.Struct({
   name: requiredString,
+  slug: alphaDash,
   description: S.optional(S.String),
 })
 
@@ -429,29 +428,49 @@ export const createProject = action(
     const input = yield* validateRequest(CreateProject, {
       errorComponent: 'Projects/Create',
     })
-    const db = yield* DatabaseService
 
-    const values = asTrusted({
-      ...input,
-      userId: auth.user.id,
-    })
-
-    yield* dbMutation(db, values, (tx, values) =>
-      tx.insert(projects).values(values)
+    const [project] = yield* dbMutation((db) =>
+      db.insert(projects)
+        .values({ ...input, id: crypto.randomUUID(), userId: auth.user.id })
+        .returning()
     )
 
-    return yield* redirect('/projects')
+    return yield* redirect(`/projects/${project.id}`)
   })
 )
 ```
 
-`validateRequest` reads route params, query and body, and returns branded
-validated data. A key that two sources provide with different values fails
-validation, so a body field cannot replace a route parameter; pass
-`request: { order: ['body'] }` to read only the body. `dbMutation` and
-`dbTransaction` accept validated or explicitly trusted mutation inputs, making
-the point where application-owned data becomes safe to write visible in code.
-Database failures remain typed Effect failures.
+`validateRequest` reads route params, query and body, and returns the decoded
+input with every key the schema does not declare removed. A key that two
+sources provide with different values fails validation, so a body field cannot
+replace a route parameter; pass `request: { order: ['body'] }` to read only the
+body.
+
+The database operations read the request's client from `DatabaseService` and
+give their callback the application's Drizzle client with its own types:
+
+| Operation | Use |
+| --- | --- |
+| `dbQuery((db) => ...)` | Reads. |
+| `dbMutation((db) => ...)` | One write, or writes that need not be atomic. |
+| `dbTransaction(async (tx) => ...)` | Writes that must succeed together, on a driver with asynchronous transactions (Postgres, MySQL, libsql). |
+| `dbBatch((db) => [...])` | Writes that must succeed together on Cloudflare D1, libsql or Neon HTTP: every statement applies, or none. |
+
+A synchronous driver such as `bun:sqlite` cannot run `dbTransaction`: it commits
+before an awaited write runs, so the transaction client is a type error naming
+the reason. Cloudflare D1 rejects interactive transactions; use `dbBatch`.
+
+A write that breaks a constraint fails with `DatabaseConstraintViolation`,
+which names the constraint kind (`unique`, `foreign-key`, `not-null`, `check`)
+and, when the driver reports them, its `columns`. Any other failure is a
+`DatabaseError`. `uniqueFieldErrors` turns a unique violation into field errors
+the form shows:
+
+```ts
+yield* dbMutation((db) => db.insert(projects).values(newProject)).pipe(
+  uniqueFieldErrors({ slug: 'A project with this slug already exists.' })
+)
+```
 
 ## Route model binding
 

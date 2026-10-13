@@ -34,10 +34,12 @@ To use this file, point the application's own `AGENTS.md` or `CLAUDE.md` at
    missing row is a 404.
 6. **Authorize with `authorize()` or `authorize((auth) => rule)`.** Use
    `currentUser` when signing in is optional.
-7. **Write only inside `dbMutation(db, asTrusted({ ... }), (tx, values) => ...)`**
-   or `dbTransaction`. Put exactly the columns being written in `asTrusted`,
-   pass `values` to `.values()` or `.set()`, and scope `where` clauses with
-   bound models.
+7. **Use the database only through `dbQuery`, `dbMutation`, `dbTransaction`
+   and `dbBatch`:** `yield* dbQuery((db) => db.select()...)` to read,
+   `dbMutation((db) => db.insert(...))` to write. Several writes that must
+   succeed together go in `dbTransaction` (Postgres, MySQL, libsql) or
+   `dbBatch` (Cloudflare D1). Write only validated input and values the server
+   derives, and scope `where` clauses with bound models.
 8. **Provide application services in `setupWeb`'s `services`:** `app` for
    services built once and shared (configuration, in-memory caches), `request`
    for anything that reads the request or its bindings (D1, KV, Hyperdrive).
@@ -64,10 +66,8 @@ import { eq } from 'drizzle-orm'
 import { Effect, Schema as S } from 'effect'
 import {
   action,
-  asTrusted,
   authorize,
   bound,
-  DatabaseService,
   dbMutation,
   redirect,
   validateRequest,
@@ -88,10 +88,9 @@ export const updateProject = action(
     const input = yield* validateRequest(UpdateProject, {
       errorComponent: 'Projects/Edit',
     })
-    const db = yield* DatabaseService
 
-    yield* dbMutation(db, asTrusted(input), (tx, values) =>
-      tx.update(projects).set(values).where(eq(projects.id, project.id))
+    yield* dbMutation((db) =>
+      db.update(projects).set(input).where(eq(projects.id, project.id))
     )
 
     return yield* redirect(`/projects/${project.id}`)
@@ -115,7 +114,8 @@ another user, and a `422` for an empty name.
 ## Do not use
 
 - `c.req.json()`, `c.req.parseBody()` or `c.env` inside actions.
-- `db.insert`, `db.update` or `db.delete` outside `dbMutation`/`dbTransaction`.
+- `DatabaseService` or raw `db` calls outside `dbQuery`, `dbMutation`,
+  `dbTransaction` and `dbBatch`.
 - Names from the old `honertia` package (`setupHonertia`, `HonertiaService`,
   `c.var.honertia`, ...): the README's migration table lists their
   replacements.

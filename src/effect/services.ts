@@ -275,20 +275,13 @@ export interface RequestContext<Bindings extends object = object> {
   readonly method: string
   readonly url: string
   readonly headers: Headers
-  /**
-   * Environment bindings (Cloudflare D1, KV, R2, etc.)
-   * Access via: `request.env.DB`, `request.env.KV`, etc.
-   *
-   * For full type safety, cast to your Bindings type:
-   * ```typescript
-   * const { DB, KV } = request.env as Bindings
-   * ```
-   */
+  /** The request's bindings. Actions read typed bindings with `BindingsService`. */
   readonly env: Bindings
   param(name: string): string | undefined
   params(): Record<string, string>
   query(): Record<string, string>
-  json<T>(): Promise<T>
+  /** The parsed JSON body. Decode it with a schema, as `validateRequest` does. */
+  json(): Promise<unknown>
   parseBody(): Promise<Record<string, string | File>>
   header(name: string): string | undefined
 }

@@ -52,8 +52,7 @@ export {
   AuthRateLimitError,
   AuthRedirect,
   HttpError,
-  DatabaseMutationFailed,
-  DatabaseTransactionFailed,
+  DatabaseError,
   DatabaseConstraintViolation,
   SessionLookupUnavailable,
   InvalidAuthSession,
@@ -78,9 +77,6 @@ export {
   createBodyParseValidationError,
   validateUnknown,
   validateRequest,
-  asTrusted,
-  type Validated,
-  type Trusted,
   type RequestValidationSource,
   type RequestValidationConflict,
   type RequestValidationOptions,
@@ -89,15 +85,21 @@ export {
 // Bridge
 export { effectBridge, type EffectBridgeConfig } from './bridge.js'
 
-// Action Composables
+// Actions
+export { action } from './action.js'
+
+// Database operations
 export {
-  action,
+  dbQuery,
   dbMutation,
   dbTransaction,
-  mergeMutationInput,
-  type SafeTx,
-  type MutationInput,
-} from './action.js'
+  dbBatch,
+  uniqueFieldErrors,
+  type DatabaseWriteError,
+  type TransactionClient,
+  type BatchArgument,
+  type BatchResults,
+} from './database.js'
 
 // Runtime-owned background work
 export { background } from './background.js'

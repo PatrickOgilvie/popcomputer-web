@@ -114,7 +114,7 @@ function createRequestContext<E extends Env>(
       return S.is(S.String)(params) ? {} : params
     },
     query: () => c.req.query(),
-    json: <T>() => c.req.json<T>(),
+    json: (): Promise<unknown> => c.req.json(),
     parseBody: () => c.req.parseBody(),
     header: (name: string) => {
       markPageDynamic(c)

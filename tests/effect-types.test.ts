@@ -15,20 +15,13 @@ import {
   effectRoutes,
   RequireAuthLayer,
   bound,
-  asTrusted,
   validateUnknown,
-  dbMutation,
-  dbTransaction,
-  mergeMutationInput,
   type DatabaseType,
   type SchemaType,
   type AuthType,
   type AuthUser,
   type DefaultAuthUser,
   type BoundModel,
-  type Validated,
-  type Trusted,
-  type SafeTx,
 } from '../src/effect/index.js'
 import { pluralize } from '../src/effect/binding.js'
 
@@ -271,150 +264,6 @@ const _testParsedBound = Effect.gen(function* () {
 })
 
 // ============================================================================
-// Validated/Trusted Branding Tests
-// ============================================================================
-
-interface UserInput {
-  name: string
-  email: string
-}
-
-// Plain object should NOT be assignable to Validated
-type PlainToValidated = UserInput extends Validated<UserInput> ? true : false
-
-const _plainNotValidated: PlainToValidated = false
-
-// Plain object should NOT be assignable to Trusted
-type PlainToTrusted = UserInput extends Trusted<UserInput> ? true : false
-
-const _plainNotTrusted: PlainToTrusted = false
-
-// Validated should extend the base type
-type ValidatedExtendsBase = Validated<UserInput> extends UserInput ? true : false
-
-const _validatedExtendsBase: ValidatedExtendsBase = true
-
-// Trusted should extend the base type
-type TrustedExtendsBase = Trusted<UserInput> extends UserInput ? true : false
-
-const _trustedExtendsBase: TrustedExtendsBase = true
-
-// Spreading a Validated object should NOT produce Validated
-// (This is the key safety feature - spreading drops the brand)
-// We test this by checking that a plain Record can't satisfy Validated
-type SpreadResult = object extends Validated<UserInput> ? true : false
-
-const _spreadDropsBrand: SpreadResult = false
-
-// asTrusted creates Trusted type
-const trustedInput = asTrusted({ name: 'test', email: 'test@test.com' })
-
-const _trustedType: Trusted<{ name: string; email: string }> = trustedInput
-
-// ============================================================================
-// SafeTx Type Tests
-// ============================================================================
-
-// Mock database type for testing SafeTx
-interface MockInsertBuilder<T> {
-  values: (v: T | T[]) => { execute: () => Promise<void> }
-}
-
-interface MockUpdateBuilder<T> {
-  set: (v: Partial<T>) => { where: <Condition>(c: Condition) => { execute: () => Promise<void> } }
-}
-
-interface MockDB {
-  insert: <Table>(table: Table) => MockInsertBuilder<UserInput>
-  update: <Table>(table: Table) => MockUpdateBuilder<UserInput>
-  query: (sql: string) => Promise<unknown[]>
-}
-
-// SafeTx should wrap insert().values() to require branded input
-type SafeDB = SafeTx<MockDB>
-
-// Verify SafeTx wraps the values method
-type SafeValuesParam = SafeDB extends {
-  insert: <Table>(table: Table) => { values: (v: infer V) => object }
-} ? V : never
-
-// SafeValuesParam should NOT accept plain UserInput
-type _PlainAccepted = UserInput extends SafeValuesParam ? true : false
-// Note: Due to how the type works, we can't easily assert this at compile time
-// but the runtime behavior enforces it
-
-// dbMutation and dbTransaction should work with SafeTx
-const _testDbMutation = Effect.gen(function* () {
-  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  const mockDb = {} as MockDB
-
-  // This should compile - validated input is accepted
-  yield* dbMutation(mockDb, async (_db) => {
-    // db is SafeTx<MockDB> here
-    return Promise.resolve()
-  })
-})
-
-const _testScopedDbMutation = Effect.gen(function* () {
-  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  const mockDb = {} as MockDB
-
-  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  const txInput = asTrusted({
-    createUser: {
-      name: 'test',
-      email: 'test@test.com',
-      id: undefined as string | undefined,
-    },
-  })
-
-  yield* dbMutation(mockDb, txInput, async (db, scoped) => {
-    const scopedUser = mergeMutationInput(scoped.createUser, {
-      id: 'user-123',
-    })
-
-    const _scopedUserIdNarrowed: AssertEqual<typeof scopedUser.id, string> = true
-    void scopedUser
-
-    // @ts-expect-error extra keys must be declared in the scoped schema
-    mergeMutationInput(scoped.createUser, { note: 'nope' })
-
-    // @ts-expect-error scoped mode rejects ad-hoc trusted payloads
-    void db.insert(projects).values(asTrusted({ name: 'x', email: 'x@test.com' }))
-
-    return Promise.resolve()
-  })
-})
-
-const _testValidateTyping = Effect.gen(function* () {
-  const transactionSchema = S.Struct({
-    status: S.Literal('pending'),
-    quantity: S.FiniteFromString,
-  })
-
-
-  const raw = {
-    status: 'pending',
-    quantity: '2',
-  }
-
-  // Unknown payloads are still supported via validateUnknown
-  yield* validateUnknown(transactionSchema, raw)
-})
-
-const _testDbTransaction = Effect.gen(function* () {
-  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  const mockDb = {
-    transaction: <T>(fn: (tx: MockDB) => Promise<T>) => fn({} as MockDB)
-  }
-
-  yield* dbTransaction(mockDb, async (_tx) => {
-    // tx is SafeTx<MockDB> here
-    return Promise.resolve({ success: true })
-  })
-})
-
-// ============================================================================
 // Runtime Tests
 // ============================================================================
 
@@ -455,27 +304,5 @@ describe('Effect type tests', () => {
     expect(_testAuthUserService).toBeDefined()
     expect(_testBound).toBeDefined()
     expect(_testBoundCategory).toBeDefined()
-  })
-
-  test('Validated/Trusted branding assertions passed', () => {
-    // Plain objects should NOT be assignable to branded types
-    expect(_plainNotValidated).toBe(false)
-    expect(_plainNotTrusted).toBe(false)
-
-    // Branded types should extend base types
-    expect(_validatedExtendsBase).toBe(true)
-    expect(_trustedExtendsBase).toBe(true)
-
-    // Spreading should drop the brand
-    expect(_spreadDropsBrand).toBe(false)
-
-    // asTrusted creates a properly branded value
-    expect(_trustedType).toBeDefined()
-  })
-
-  test('dbMutation and dbTransaction are properly typed', () => {
-    expect(_testDbMutation).toBeDefined()
-    expect(_testScopedDbMutation).toBeDefined()
-    expect(_testDbTransaction).toBeDefined()
   })
 })

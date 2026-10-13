@@ -74,9 +74,8 @@ export const ErrorCodes = {
   HTTP_503_SERVICE_UNAVAILABLE: 'WEB_HTTP_503_SERVICE_UNAVAILABLE',
 
   // Database Errors (DB)
-  DB_501_QUERY_FAILED: 'WEB_DB_501_QUERY_FAILED',
+  DB_501_OPERATION_FAILED: 'WEB_DB_501_OPERATION_FAILED',
   DB_502_CONSTRAINT_VIOLATION: 'WEB_DB_502_CONSTRAINT_VIOLATION',
-  DB_503_TRANSACTION_FAILED: 'WEB_DB_503_TRANSACTION_FAILED',
 
   // Routing Errors (RTE)
   RTE_600_BINDING_NOT_FOUND: 'WEB_RTE_600_BINDING_NOT_FOUND',
@@ -349,12 +348,12 @@ export const ErrorCatalog = {
 
   // Database Errors
 
-  [ErrorCodes.DB_501_QUERY_FAILED]: {
-    code: ErrorCodes.DB_501_QUERY_FAILED,
-    tag: 'DatabaseMutationFailed',
+  [ErrorCodes.DB_501_OPERATION_FAILED]: {
+    code: ErrorCodes.DB_501_OPERATION_FAILED,
+    tag: 'DatabaseError',
     category: 'database',
-    title: 'Database Query Failed',
-    messageTemplate: 'Database query failed: {reason}',
+    title: 'Database Error',
+    messageTemplate: 'The database {operation} failed.',
     httpStatus: 500,
     defaultFixes: [],
   },
@@ -366,16 +365,6 @@ export const ErrorCatalog = {
     title: 'Constraint Violation',
     messageTemplate: 'Database constraint violation: {constraint}',
     httpStatus: 409,
-    defaultFixes: [],
-  },
-
-  [ErrorCodes.DB_503_TRANSACTION_FAILED]: {
-    code: ErrorCodes.DB_503_TRANSACTION_FAILED,
-    tag: 'DatabaseTransactionFailed',
-    category: 'database',
-    title: 'Transaction Failed',
-    messageTemplate: 'Database transaction failed and was rolled back: {reason}',
-    httpStatus: 500,
     defaultFixes: [],
   },
 

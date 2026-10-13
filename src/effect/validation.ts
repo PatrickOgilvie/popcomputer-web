@@ -195,7 +195,7 @@ function getValidationDataWithOptions(
       const isJson = isJsonContentType(contentType)
 
       const parsed = yield* Effect.tryPromise(() =>
-        isJson ? request.json<unknown>() : request.parseBody()
+        isJson ? request.json() : request.parseBody()
       ).pipe(
         Effect.mapError((error) =>
           createBodyParseValidationError(error, contentType)
@@ -350,36 +350,6 @@ export function formatSchemaErrors(
 }
 
 /**
- * Nominal brand marker for validated data.
- * Unique symbol prevents the brand from surviving object spreads.
- */
-export const ValidatedBrand = Symbol('ValidatedBrand')
-
-export type Validated<A> = A & { readonly [ValidatedBrand]: true }
-
-/** Mark data as validated (type-level only), immediately after schema validation. */
-const asValidated = <A>(input: A): Validated<A> => {
-  // SAFETY: Validated is a type-only brand applied immediately after schema validation.
-  return input as Validated<A>
-}
-
-/**
- * Nominal brand marker for trusted (server-derived) data.
- * Unique symbol prevents the brand from surviving object spreads.
- */
-export const TrustedBrand = Symbol('TrustedBrand')
-
-export type Trusted<A> = A & { readonly [TrustedBrand]: true }
-
-/**
- * Mark data as trusted (type-level only).
- */
-export const asTrusted = <A>(input: A): Trusted<A> => {
-  // SAFETY: Trusted is a type-only brand applied only by server-side trusted-data helpers.
-  return input as Trusted<A>
-}
-
-/**
  * Options for validation functions.
  */
 export interface ValidateOptions {
@@ -485,7 +455,7 @@ function runValidation<A, I, Input>(
   schema: S.Codec<A, I>,
   data: Input,
   options: ValidateOptions
-): Effect.Effect<Validated<A>, ValidationError, never> {
+): Effect.Effect<A, ValidationError, never> {
   // Report every invalid field, so a form shows all of its errors at once.
   return S.decodeUnknownEffect(schema, { errors: 'all', ...options.parseOptions })(data).pipe(
     Effect.mapError((error) => {
@@ -502,8 +472,7 @@ function runValidation<A, I, Input>(
         component: options.errorComponent,
         code: determineValidationCode(details),
       })
-    }),
-    Effect.map((value) => asValidated(value))
+    })
   )
 }
 

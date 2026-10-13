@@ -7,8 +7,9 @@ import { json } from '@popcomputer/web/effect'
 import manifest from '../dist/manifest.json'
 import { createAuth, createStatelessAuth } from './auth'
 import { createDb } from './db'
+import { projects } from './schema'
 
-export { createAuth, createDb, createStatelessAuth, manifest }
+export { createAuth, createDb, createStatelessAuth, manifest, projects }
 
 export const version = createVersion(manifest)
 export const template = createTemplate({ title: 'Projects' })
@@ -27,6 +28,7 @@ export declare function loadProjects(
 ): Promise<ReadonlyArray<typeof ProjectSummary.Type>>
 
 export const Task = S.Struct({ id: S.String, projectId: S.String, title: S.String })
+export declare const newProject: typeof projects.$inferInsert
 
 export interface AuditEvent {
   readonly action: string

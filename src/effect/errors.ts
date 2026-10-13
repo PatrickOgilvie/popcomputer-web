@@ -379,13 +379,18 @@ export class AuthRedirect extends Data.TaggedClass('AuthRedirect')<{
   readonly headers: Headers
 }> {}
 
-/** A database write failed outside a transaction. */
-export class DatabaseMutationFailed extends Schema.TaggedError<DatabaseMutationFailed>()('DatabaseMutationFailed', {
-  operation: Schema.Literal('mutation'),
+/** The database operations an action runs: see `dbQuery`, `dbMutation`, `dbTransaction` and `dbBatch`. */
+const DatabaseOperation = Schema.Literals(['query', 'mutation', 'transaction', 'batch'])
+
+/** A database operation failed for a reason other than a constraint. */
+export class DatabaseError extends Schema.TaggedError<DatabaseError>()('DatabaseError', {
+  operation: DatabaseOperation,
   cause: Schema.Unknown,
 }) implements StructuredErrorCapable {
   get message(): string {
-    return 'Database mutation failed.'
+    return this.operation === 'transaction' || this.operation === 'batch'
+      ? `Database ${this.operation} failed and was rolled back.`
+      : `Database ${this.operation} failed.`
   }
 
   get httpStatus(): number {
@@ -394,45 +399,29 @@ export class DatabaseMutationFailed extends Schema.TaggedError<DatabaseMutationF
 
   toStructured(context: ErrorContext = emptyContext()): StructuredError {
     return structured(
-      ErrorCodes.DB_501_QUERY_FAILED,
-      { reason: 'mutation failed' },
+      ErrorCodes.DB_501_OPERATION_FAILED,
+      { operation: this.operation },
       context,
       { message: this.message }
     )
   }
 }
 
-/** A database transaction failed and was rolled back. */
-export class DatabaseTransactionFailed extends Schema.TaggedError<DatabaseTransactionFailed>()('DatabaseTransactionFailed', {
-  operation: Schema.Literal('transaction'),
-  cause: Schema.Unknown,
-}) implements StructuredErrorCapable {
-  get message(): string {
-    return 'Database transaction failed and was rolled back.'
-  }
-
-  get httpStatus(): number {
-    return 500
-  }
-
-  toStructured(context: ErrorContext = emptyContext()): StructuredError {
-    return structured(
-      ErrorCodes.DB_503_TRANSACTION_FAILED,
-      { reason: 'transaction failed' },
-      context,
-      { message: this.message }
-    )
-  }
-}
-
-/** A database constraint rejected a mutation or transaction. */
+/**
+ * A database constraint rejected a write. `columns` names the columns of a
+ * unique, not-null or foreign-key constraint when the driver reports them.
+ */
 export class DatabaseConstraintViolation extends Schema.TaggedError<DatabaseConstraintViolation>()('DatabaseConstraintViolation', {
-  operation: Schema.Literals(['mutation', 'transaction']),
+  operation: DatabaseOperation,
   constraint: Schema.Literals(['unique', 'foreign-key', 'not-null', 'check', 'unknown']),
+  columns: Schema.Array(Schema.String),
+  constraintName: Schema.optional(Schema.String),
   cause: Schema.Unknown,
 }) implements StructuredErrorCapable {
   get message(): string {
-    return 'Database constraint violation.'
+    return this.constraint === 'unique'
+      ? 'A record with these values already exists.'
+      : 'The change conflicts with existing data.'
   }
 
   get httpStatus(): number {
@@ -736,8 +725,7 @@ export type AppError =
   | ForbiddenError
   | AuthRateLimitError
   | HttpError
-  | DatabaseMutationFailed
-  | DatabaseTransactionFailed
+  | DatabaseError
   | DatabaseConstraintViolation
   | SessionLookupUnavailable
   | InvalidAuthSession

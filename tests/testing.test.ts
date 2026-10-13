@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 import { describe, expect, test } from 'bun:test'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Effect, Layer, Schema as S } from 'effect'
 import { TestClock } from 'effect/testing'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
@@ -9,6 +9,42 @@ import { authorize, AuthUserService } from '../src/effect/services.js'
 import { json, render } from '../src/effect/responses.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import { signedIn, testEnv } from '../src/testing.js'
+import { Database } from 'bun:sqlite'
+import { eq } from 'drizzle-orm'
+import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite'
+import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { bound } from '../src/effect/binding.js'
+import { dbMutation } from '../src/effect/database.js'
+import { redirect } from '../src/effect/responses.js'
+import { nullableString, requiredString } from '../src/effect/schema.js'
+import { validateRequest } from '../src/effect/validation.js'
+
+// The README Quick start's application types: a SQLite projects table and the
+// project route binding.
+const projects = sqliteTable('projects', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description'),
+  userId: text('user_id').notNull(),
+})
+const projectsSchema = { projects }
+const Project = S.Struct({ id: S.String, name: S.String, userId: S.String })
+const routeBindings = { project: Project }
+const UpdateProject = S.Struct({ name: requiredString, description: nullableString })
+
+type ProjectsEnv = { Bindings: { readonly DATABASE_PATH: string } }
+
+declare module '../src/effect/services.js' {
+  interface WebDatabaseType {
+    type: BunSQLiteDatabase<typeof projectsSchema>
+  }
+}
+
+declare module '../src/effect/binding.js' {
+  interface WebRouteBindingsType {
+    type: typeof routeBindings
+  }
+}
 
 class Greeter extends Context.Service<Greeter, { readonly greet: (name: string) => string }>()(
   'tests/Greeter'
@@ -110,30 +146,9 @@ describe('the README route test', () => {
   // Mirrors README.md "Testing": the Quick start app, its project route with
   // route model binding, and a migrated SQLite database owned by the test.
   const createProjectsApp = async () => {
-    const { Database } = await import('bun:sqlite')
-    const { drizzle } = await import('drizzle-orm/bun-sqlite')
-    const { sqliteTable, text } = await import('drizzle-orm/sqlite-core')
-    const { Schema: S } = await import('effect')
-    const { eq } = await import('drizzle-orm')
-    const { bound } = await import('../src/effect/binding.js')
-    const { redirect, render } = await import('../src/effect/responses.js')
-    const { asTrusted, validateRequest, validateUnknown } = await import('../src/effect/validation.js')
-    const { dbMutation } = await import('../src/effect/action.js')
-    const { requiredString, nullableString } = await import('../src/effect/schema.js')
-
-    const projects = sqliteTable('projects', {
-      id: text('id').primaryKey(),
-      name: text('name').notNull(),
-      description: text('description'),
-      userId: text('user_id').notNull(),
-    })
-    const schema = { projects }
-    const Project = S.Struct({ id: S.String, name: S.String, userId: S.String })
-
-    type ProjectsEnv = { Bindings: { readonly DATABASE_PATH: string } }
     const sqlite = new Database(':memory:')
     sqlite.run('CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, user_id TEXT NOT NULL)')
-    const db = drizzle(sqlite, { schema })
+    const db = drizzle(sqlite, { schema: projectsSchema })
     db.insert(projects).values({ id: 'project-1', name: 'Apollo', userId: 'user-1' }).run()
 
     const openDatabase = (path: string) => {
@@ -147,40 +162,33 @@ describe('the README route test', () => {
       version: '1',
       render: (page) => JSON.stringify(page),
       database: (c) => openDatabase(c.env.DATABASE_PATH),
-      schema,
-      bindings: { project: Project },
+      schema: projectsSchema,
+      bindings: routeBindings,
       errors: { component: 'Error' },
     })
 
     effectRoutes(app).get('/projects/{project}', action(Effect.gen(function* () {
-      // This test does not augment WebRouteBindingsType, so `bound` leaves the
-      // model untyped; the parser registered for `project` types it here.
-      const project = yield* validateUnknown(Project, yield* bound('project'))
+      const project = yield* bound('project')
       yield* authorize((auth) => auth.user.id === project.userId)
 
       return yield* render('Projects/Show', { project })
     })))
 
     // AGENTS.md "A complete action".
-    const UpdateProject = S.Struct({ name: requiredString, description: nullableString })
-
     effectRoutes(app).put('/projects/{project}', action(Effect.gen(function* () {
       const project = yield* bound('project')
-      const projectId = String(Reflect.get(project, 'id'))
-      yield* authorize((auth) => auth.user.id === Reflect.get(project, 'userId'))
+      yield* authorize((auth) => auth.user.id === project.userId)
 
       const input = yield* validateRequest(UpdateProject, { errorComponent: 'Projects/Edit' })
 
-      // The suite does not augment WebDatabaseType, so this uses the typed
-      // database directly where the application reads DatabaseService.
-      yield* dbMutation(db, asTrusted(input), (tx, values) =>
-        tx.update(projects).set(values).where(eq(projects.id, projectId))
+      yield* dbMutation((db) =>
+        db.update(projects).set(input).where(eq(projects.id, project.id))
       )
 
-      return yield* redirect(`/projects/${projectId}`)
+      return yield* redirect(`/projects/${project.id}`)
     })))
 
-    return { app, db, projects, testBindings: { DATABASE_PATH: 'test.sqlite' } }
+    return { app, db, testBindings: { DATABASE_PATH: 'test.sqlite' } }
   }
 
   test('shows a project to its owner', async () => {
@@ -210,9 +218,8 @@ describe('the README route test', () => {
   })
 
   const update = (body: unknown, userId: string) =>
-    createProjectsApp().then(async ({ app, db, projects, testBindings }) => ({
+    createProjectsApp().then(async ({ app, db, testBindings }) => ({
       db,
-      projects,
       res: await app.request(
         '/projects/project-1',
         {
@@ -225,7 +232,7 @@ describe('the README route test', () => {
     }))
 
   test('the AGENTS.md update action saves and redirects to the project', async () => {
-    const { db, projects, res } = await update({ name: 'Renamed', description: null }, 'user-1')
+    const { db, res } = await update({ name: 'Renamed', description: null }, 'user-1')
 
     expect(res.status).toBe(303)
     expect(res.headers.get('location')).toBe('/projects/project-1')
