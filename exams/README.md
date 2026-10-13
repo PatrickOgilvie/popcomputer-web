@@ -66,3 +66,9 @@ Each exam's safety suite also checks that guessing a password is cut short.
 | Round | Version | clinic | expenses | shop |
 | --- | --- | --- | --- | --- |
 | 13 | 0.8.0-next.5 | 21/21, 21/21 (22/22 each with the throttle test added after) | 18/18, 18/18 (18/19 each: no throttle) | — |
+| 14 | 1.0.0-next.6 | 22/22 | 19/19 | 21/21, 21/21 |
+
+Triage notes: in round 14 the expenses OpenAPI test required the document to
+describe exactly the four expense paths; a builder that also described its
+sign-in endpoints failed it, though the spec allows that. The test now
+requires those paths, not only those.
