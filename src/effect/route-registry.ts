@@ -1,44 +1,16 @@
 /**
  * Route Registry
  *
- * Stores route metadata for introspection, CLI tooling, and test generation.
+ * Records every route an application registers, so the application, its
+ * tests and its agents can list them.
  */
 
-import type { Schema as S } from 'effect'
-import * as SchemaAST from 'effect/SchemaAST'
 import type { ParsedBinding } from './binding.js'
 
 /**
  * HTTP methods supported by the router.
  */
 export type HttpMethod = 'get' | 'post' | 'put' | 'patch' | 'delete' | 'all'
-
-export interface RoutesByMethod {
-  get: readonly RouteMetadata[]
-  post: readonly RouteMetadata[]
-  put: readonly RouteMetadata[]
-  patch: readonly RouteMetadata[]
-  delete: readonly RouteMetadata[]
-  all: readonly RouteMetadata[]
-}
-
-export interface RoutesByPrefix {
-  [prefix: string]: readonly RouteMetadata[]
-}
-
-function getSchemaMetadata(schema: S.Top): SchemaMetadata | undefined {
-  const identifier = SchemaAST.resolveIdentifier(schema.ast)
-  const title = SchemaAST.resolveTitle(schema.ast)
-  const description = SchemaAST.resolveDescription(schema.ast)
-
-  if (!identifier && !title && !description) return undefined
-
-  return {
-    ...(identifier && { identifier }),
-    ...(title && { title }),
-    ...(description && { description }),
-  }
-}
 
 /**
  * Metadata stored for each registered route.
@@ -54,58 +26,21 @@ export interface RouteMetadata {
   readonly fullPath: string
   /** Parsed route model bindings */
   readonly bindings: readonly ParsedBinding[]
-  /** Route params validation schema (if configured) */
-  readonly paramsSchema?: S.Top
-  /** Route body validation schema (if configured) */
-  readonly bodySchema?: S.Top
-  /** Route query validation schema (if configured) */
-  readonly querySchema?: S.Top
-  /** Route response schema (if configured) */
-  readonly responseSchema?: S.Top
   /** Path prefix applied to this route */
   readonly prefix: string
   /** Optional route name for named routes */
   readonly name?: string
-  /** Handler name extracted from function (if available) */
-  readonly handlerName?: string
-  /** File location where route was registered (if captured) */
-  readonly sourceLocation?: {
-    readonly file: string
-    readonly line: number
-  }
 }
 
 /**
- * Safe schema metadata for CLI output.
- * Avoids exposing full schema shape outside explicit generators.
- */
-export interface SchemaMetadata {
-  identifier?: string
-  title?: string
-  description?: string
-}
-
-/**
- * JSON-serializable route metadata for CLI output.
+ * JSON-serializable route metadata.
  */
 export interface RouteMetadataJson {
   method: HttpMethod
   path: string
-  honoPath: string
   fullPath: string
   bindings: Array<{ param: string; column: string }>
-  hasParamsSchema: boolean
-  hasBodySchema: boolean
-  hasQuerySchema: boolean
-  hasResponseSchema: boolean
-  paramsSchema?: SchemaMetadata
-  bodySchema?: SchemaMetadata
-  querySchema?: SchemaMetadata
-  responseSchema?: SchemaMetadata
-  prefix: string
   name?: string
-  handlerName?: string
-  sourceLocation?: { file: string; line: number }
 }
 
 /**
@@ -118,24 +53,19 @@ export interface FindRouteOptions {
   prefix?: string
   /** Filter by route name */
   name?: string
-  /** Match path pattern (supports wildcards) */
+  /** Match path pattern (`*` matches anything, `{param}` one segment) */
   pathPattern?: string
 }
 
 /**
- * Route Registry for storing and querying route metadata.
+ * The routes registered on one application.
  *
  * @example
  * ```typescript
- * const registry = new RouteRegistry()
+ * const { routes } = setupWeb(app, config)
  *
- * // Register routes with the registry
- * effectRoutes(app, { registry })
- *   .get('/projects/{project}', showProject)
- *
- * // Query routes for CLI output
- * registry.all() // => RouteMetadata[]
- * registry.toJson() // => RouteMetadataJson[]
+ * routes.toJson() // => [{ method: 'get', fullPath: '/projects/:project', ... }]
+ * routes.findByName('projects.show')
  * ```
  */
 export class RouteRegistry {
@@ -172,6 +102,15 @@ export class RouteRegistry {
    * Get routes filtered by criteria.
    */
   find(options: FindRouteOptions = {}): readonly RouteMetadata[] {
+    const pattern = options.pathPattern === undefined
+      ? undefined
+      : new RegExp(
+          `^${options.pathPattern
+            .replace(/[.+?^$()|[\]\\]/g, '\\$&')
+            .replace(/\*/g, '.*')
+            .replace(/\{[^}]+\}/g, '[^/]+')}$`
+        )
+
     return this.routes.filter((route) => {
       if (options.method && route.method !== options.method) return false
 
@@ -179,20 +118,7 @@ export class RouteRegistry {
 
       if (options.name && route.name !== options.name) return false
 
-      if (options.pathPattern) {
-        try {
-          const pattern = options.pathPattern
-            .replace(/\*/g, '.*')
-            .replace(/\{[^}]+\}/g, '[^/]+')
-
-          const regex = new RegExp(`^${pattern}$`)
-
-          if (!regex.test(route.fullPath)) return false
-        } catch {
-          // Invalid regex pattern, skip matching
-          return false
-        }
-      }
+      if (pattern && !pattern.test(route.fullPath)) return false
 
       return true
     })
@@ -203,51 +129,6 @@ export class RouteRegistry {
    */
   findByName(name: string): RouteMetadata | undefined {
     return this.routes.find((route) => route.name === name)
-  }
-
-  /**
-   * Find a route by exact path and method.
-   */
-  findByPathAndMethod(path: string, method: HttpMethod): RouteMetadata | undefined {
-    return this.routes.find(
-      (route) => route.fullPath === path && route.method === method
-    )
-  }
-
-  /**
-   * Get routes grouped by method.
-   */
-  byMethod(): RoutesByMethod {
-    const grouped = {
-      get: new Array<RouteMetadata>(),
-      post: new Array<RouteMetadata>(),
-      put: new Array<RouteMetadata>(),
-      patch: new Array<RouteMetadata>(),
-      delete: new Array<RouteMetadata>(),
-      all: new Array<RouteMetadata>(),
-    } satisfies Record<HttpMethod, RouteMetadata[]>
-
-    for (const route of this.routes) {
-      grouped[route.method].push(route)
-    }
-
-    return grouped
-  }
-
-  /**
-   * Get routes grouped by prefix.
-   */
-  byPrefix(): RoutesByPrefix {
-    const grouped: Record<string, RouteMetadata[]> = {}
-
-    for (const route of this.routes) {
-      const prefix = route.prefix || '/'
-
-      if (!grouped[prefix]) grouped[prefix] = []
-      grouped[prefix].push(route)
-    }
-
-    return grouped
   }
 
   /**
@@ -268,106 +149,21 @@ export class RouteRegistry {
   }
 
   /**
-   * Clear all registered routes.
-   * Useful for testing.
-   */
-  clear(): void {
-    this.routes = []
-  }
-
-  /**
    * Convert all routes to JSON-serializable format.
    */
   toJson(): RouteMetadataJson[] {
-    return this.routes.map((route) => {
-      const paramsSchema = route.paramsSchema
-        ? getSchemaMetadata(route.paramsSchema)
-        : undefined
-
-      const bodySchema = route.bodySchema ? getSchemaMetadata(route.bodySchema) : undefined
-      const querySchema = route.querySchema ? getSchemaMetadata(route.querySchema) : undefined
-
-      const responseSchema = route.responseSchema
-        ? getSchemaMetadata(route.responseSchema)
-        : undefined
-
-      return {
-        ...(paramsSchema && { paramsSchema }),
-        ...(bodySchema && { bodySchema }),
-        ...(querySchema && { querySchema }),
-        ...(responseSchema && { responseSchema }),
+    return this.routes.map((route) => ({
       method: route.method,
       path: route.path,
-      honoPath: route.honoPath,
       fullPath: route.fullPath,
-      bindings: route.bindings.map((b) => ({ param: b.param, column: b.column })),
-      hasParamsSchema: route.paramsSchema !== undefined,
-      hasBodySchema: route.bodySchema !== undefined,
-      hasQuerySchema: route.querySchema !== undefined,
-      hasResponseSchema: route.responseSchema !== undefined,
-      prefix: route.prefix,
+      bindings: route.bindings.map((binding) => ({
+        param: binding.param,
+        column: binding.column,
+      })),
       ...(route.name && { name: route.name }),
-      ...(route.handlerName && { handlerName: route.handlerName }),
-      ...(route.sourceLocation && { sourceLocation: route.sourceLocation }),
-      }
-    })
-  }
-
-  /**
-   * Format routes as a table string for CLI display.
-   */
-  toTable(): string {
-    if (this.routes.length === 0) {
-      return 'No routes registered.'
-    }
-
-    // Calculate column widths
-    const methodWidth = Math.max(6, ...this.routes.map((r) => r.method.length))
-    const pathWidth = Math.max(4, ...this.routes.map((r) => r.fullPath.length))
-    const nameWidth = Math.max(4, ...this.routes.map((r) => r.name?.length ?? 0))
-
-    const lines: string[] = []
-
-    // Header
-    const header = [
-      'METHOD'.padEnd(methodWidth),
-      'PATH'.padEnd(pathWidth),
-      nameWidth > 4 ? 'NAME'.padEnd(nameWidth) : null,
-      'BINDINGS',
-    ]
-      .filter((segment) => segment !== null && segment.length > 0)
-      .join('  ')
-
-    lines.push(header)
-    lines.push('-'.repeat(header.length))
-
-    // Routes
-    for (const route of this.routes) {
-      const bindings =
-        route.bindings.length > 0
-          ? route.bindings.map((b) => `{${b.param}:${b.column}}`).join(', ')
-          : '-'
-
-      const row = [
-        route.method.toUpperCase().padEnd(methodWidth),
-        route.fullPath.padEnd(pathWidth),
-        nameWidth > 4 ? (route.name ?? '').padEnd(nameWidth) : null,
-        bindings,
-      ]
-        .filter((segment) => segment !== null && segment.length > 0)
-        .join('  ')
-
-      lines.push(row)
-    }
-
-    return lines.join('\n')
+    }))
   }
 }
-
-/**
- * Global route registry instance.
- * Used when no custom registry is provided to effectRoutes().
- */
 
 const appRegistries = new WeakMap<object, RouteRegistry>()
 

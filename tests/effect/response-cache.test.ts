@@ -14,6 +14,7 @@ import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { Effect, Layer, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
+import { validateRequest } from '../../src/effect/validation.js'
 import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import {
@@ -610,11 +611,12 @@ describe('purges route option', () => {
 
     effectRoutes(app, { services: () => layer }).post(
       '/refresh',
-      Effect.succeed(new Response('ok')),
-      {
-        body: S.Struct({ name: S.String }),
-        purges: ['marketing'],
-      }
+      Effect.gen(function* () {
+        yield* validateRequest(S.Struct({ name: S.String }))
+
+        return new Response('ok')
+      }),
+      { purges: ['marketing'] }
     )
 
     const res = await app.request('/refresh', {

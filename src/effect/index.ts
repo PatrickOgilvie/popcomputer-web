@@ -86,14 +86,6 @@ export {
   type RequestValidationOptions,
 } from './validation.js'
 
-// Validated Request Services
-export {
-  ValidatedBodyService,
-  ValidatedQueryService,
-  validatedBody,
-  validatedQuery,
-} from './validated-services.js'
-
 // Bridge
 export { effectBridge, type EffectBridgeConfig } from './bridge.js'
 

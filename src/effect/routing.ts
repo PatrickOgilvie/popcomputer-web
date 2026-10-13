@@ -4,10 +4,9 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Predicate, Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
-import type { ParseOptions } from 'effect/SchemaAST'
+import { Predicate, Effect, Exit, Layer, ManagedRuntime, Schema as S } from 'effect'
 import type { Context as HonoContext, Hono, MiddlewareHandler, Env } from 'hono'
-import { errorToResponse, runEffectWithRuntime } from './handler.js'
+import { runEffectWithRuntime } from './handler.js'
 import {
   buildContextLayer,
   disposeRequestRuntime,
@@ -24,7 +23,6 @@ import {
   NotFoundError,
   Redirect,
   RouteConfigurationError,
-  ValidationError,
 } from './errors.js'
 import { openWebContext } from '../request-context.js'
 import { allowDefaultPageCache } from '../page-cache.js'
@@ -50,8 +48,6 @@ import type {
   ResponseFactoryService,
   BindingsService,
 } from './services.js'
-import { ValidatedBodyService, ValidatedQueryService } from './validated-services.js'
-import { createBodyParseValidationError, validateUnknown } from './validation.js'
 import {
   parseBindings,
   toHonoPath,
@@ -96,8 +92,6 @@ export type BaseServices =
   | AuthService
   | BindingsService
   | BoundModels
-  | ValidatedBodyService
-  | ValidatedQueryService
 
 /**
  * Route-level configuration options.
@@ -130,37 +124,6 @@ export interface EffectRouteOptions {
    * ```
    */
   name?: string
-  /**
-   * Validate request body with the provided schema.
-   * Automatically returns a 422 ValidationError on failure.
-   */
-  body?: S.Codec<unknown, unknown, never, never>
-  /**
-   * Validate query params with the provided schema.
-   * Automatically returns a 422 ValidationError on failure.
-   */
-  query?: S.Codec<unknown, unknown, never, never>
-  /**
-   * Response schema used for type safety and OpenAPI generation.
-   * Runtime validation is opt-in via validateResponse.
-   */
-  response?: S.Codec<unknown, unknown, never, never>
-  /**
-   * Enable/disable automatic body validation.
-   * Defaults to true when a body schema is provided.
-   */
-  validateBody?: boolean
-  /**
-   * Enable/disable runtime response validation.
-   * Defaults to false.
-   */
-  validateResponse?: boolean
-  /**
-   * Effect Schema ParseOptions applied to body and query validation.
-   * Use `{ onExcessProperty: 'error' }` to reject request payloads that
-   * carry fields the schema does not declare (mass-assignment hardening).
-   */
-  parseOptions?: ParseOptions
   /**
    * Leave unset for the default page cache: a page that reads no bindings,
    * headers or request state is cached at the edge until the next deploy.
@@ -215,45 +178,6 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
   )
 }
 
-
-// oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits request parsing and runtime completion, then maps the result to an HTTP response.
-async function parseRequestBody<E extends Env>(
-  c: HonoContext<E>
-): Promise<S.Schema.Type<typeof S.Unknown>> {
-  const contentType = c.req.header('Content-Type') ?? ''
-  const isJson = contentType.includes('application/json')
-
-  try {
-    if (isJson) {
-      return await c.req.json<S.Schema.Type<typeof S.Unknown>>()
-    }
-
-    return await c.req.parseBody()
-  } catch (error) {
-    throw createBodyParseValidationError(error, contentType)
-  }
-}
-
-// oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary converts completed Effect failures and defects into the framework exception contract.
-async function runValidation<A>(
-  effect: Effect.Effect<A, ValidationError, never>
-): Promise<A> {
-  const exit = await Effect.runPromiseExit(effect)
-
-  if (Exit.isSuccess(exit)) {
-    return exit.value
-  }
-
-  const error = Cause.findErrorOption(exit.cause)
-
-  if (Option.isSome(error)) {
-    throw error.value
-  }
-
-  const cause = Cause.squash(exit.cause)
-
-  throw cause instanceof Error ? cause : new Error('Validation effect failed', { cause })
-}
 
 /**
  * Effect Route Builder with layer composition.
@@ -576,48 +500,6 @@ export class EffectRouteBuilder<
 
       if (validation) return validation
 
-      const bodySchema = options?.body
-      const querySchema = options?.query
-      const shouldValidateBody = bodySchema !== undefined && (options?.validateBody ?? true)
-
-      let validatedBody: unknown
-      let validatedQuery: unknown
-      let hasValidatedBody = false
-      let hasValidatedQuery = false
-
-      try {
-        if (
-          bodySchema !== undefined &&
-          shouldValidateBody &&
-          !BODYLESS_METHODS.has(c.req.method.toUpperCase())
-        ) {
-          const body = await parseRequestBody(c)
-          validatedBody = await runValidation(
-            validateUnknown(bodySchema, body, {
-              parseOptions: options?.parseOptions,
-            })
-          )
-          hasValidatedBody = true
-        }
-
-        if (querySchema) {
-          const query = c.req.query()
-          validatedQuery = await runValidation(
-            validateUnknown(querySchema, query, {
-              parseOptions: options?.parseOptions,
-            })
-          )
-          hasValidatedQuery = true
-        }
-      } catch (error) {
-        if (error instanceof ValidationError) {
-          return errorToResponse(error, c)
-        }
-
-        throw error instanceof Error ? error : new Error('Request validation failed', { cause: error })
-      }
-
-      // Build context layer from Hono context
       const requestRuntime = getEffectRuntime(c)
 
       let contextLayer = requestRuntime
@@ -720,20 +602,6 @@ export class EffectRouteBuilder<
       )
 
       let fullLayer: Layer.Layer<never, AppError, never> = Layer.merge(contextLayer, boundModelsLayer)
-
-      if (hasValidatedBody) {
-        fullLayer = Layer.merge(
-          fullLayer,
-          Layer.succeed(ValidatedBodyService, validatedBody)
-        )
-      }
-
-      if (hasValidatedQuery) {
-        fullLayer = Layer.merge(
-          fullLayer,
-          Layer.succeed(ValidatedQueryService, validatedQuery)
-        )
-      }
 
       for (const layer of layers) {
         fullLayer = Layer.provideMerge(layer, fullLayer)
@@ -855,10 +723,6 @@ export class EffectRouteBuilder<
       honoPath,
       fullPath,
       bindings,
-      paramsSchema: options?.params,
-      bodySchema: options?.body,
-      querySchema: options?.query,
-      responseSchema: options?.response,
       prefix: this.pathPrefix,
       name: options?.name,
     }

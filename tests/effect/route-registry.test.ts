@@ -54,21 +54,6 @@ describe('RouteRegistry', () => {
       expect(registry.all()[0].path).toBe('/projects/{project}')
     })
 
-    test('clear removes all routes', () => {
-      const registry = new RouteRegistry()
-      registry.register({
-        method: 'get',
-        path: '/test',
-        honoPath: '/test',
-        fullPath: '/test',
-        bindings: [],
-        prefix: '',
-      })
-      expect(registry.count()).toBe(1)
-
-      registry.clear()
-      expect(registry.count()).toBe(0)
-    })
   })
 
   describe('Finding Routes', () => {
@@ -126,22 +111,6 @@ describe('RouteRegistry', () => {
       expect(route).toBeUndefined()
     })
 
-    test('findByPathAndMethod returns correct route', () => {
-      const route = registry.findByPathAndMethod('/projects', 'get')
-      expect(route).toBeDefined()
-      assert.ok(route)
-      expect(route.name).toBe('projects.index')
-    })
-
-    test('findByPathAndMethod distinguishes methods', () => {
-      const getRoute = registry.findByPathAndMethod('/projects', 'get')
-      const postRoute = registry.findByPathAndMethod('/projects', 'post')
-      assert.ok(getRoute)
-      expect(getRoute.name).toBe('projects.index')
-      assert.ok(postRoute)
-      expect(postRoute.name).toBe('projects.store')
-    })
-
     test('find filters by method', () => {
       const routes = registry.find({ method: 'get' })
       expect(routes.length).toBe(3)
@@ -177,52 +146,6 @@ describe('RouteRegistry', () => {
     })
   })
 
-  describe('Grouping', () => {
-    let registry: RouteRegistry
-
-    beforeEach(() => {
-      registry = new RouteRegistry()
-      registry.register({
-        method: 'get',
-        path: '/projects',
-        honoPath: '/projects',
-        fullPath: '/projects',
-        bindings: [],
-        prefix: '',
-      })
-      registry.register({
-        method: 'post',
-        path: '/projects',
-        honoPath: '/projects',
-        fullPath: '/projects',
-        bindings: [],
-        prefix: '',
-      })
-      registry.register({
-        method: 'delete',
-        path: '/projects/{project}',
-        honoPath: '/projects/:project',
-        fullPath: '/api/projects/:project',
-        bindings: [{ param: 'project', column: 'id' }],
-        prefix: '/api',
-      })
-    })
-
-    test('byMethod groups correctly', () => {
-      const grouped = registry.byMethod()
-      expect(grouped.get.length).toBe(1)
-      expect(grouped.post.length).toBe(1)
-      expect(grouped.delete.length).toBe(1)
-      expect(grouped.put.length).toBe(0)
-    })
-
-    test('byPrefix groups correctly', () => {
-      const grouped = registry.byPrefix()
-      expect(grouped['/'].length).toBe(2)
-      expect(grouped['/api'].length).toBe(1)
-    })
-  })
-
   describe('JSON Serialization', () => {
     test('toJson converts routes to serializable format', () => {
       const registry = new RouteRegistry()
@@ -241,14 +164,8 @@ describe('RouteRegistry', () => {
         {
           method: 'get',
           path: '/projects/{project}',
-          honoPath: '/projects/:project',
           fullPath: '/projects/:project',
           bindings: [{ param: 'project', column: 'id' }],
-          hasParamsSchema: false,
-          hasBodySchema: false,
-          hasQuerySchema: false,
-          hasResponseSchema: false,
-          prefix: '',
           name: 'projects.show',
         },
       ])
@@ -272,41 +189,6 @@ describe('RouteRegistry', () => {
     })
   })
 
-  describe('Table Formatting', () => {
-    test('toTable returns empty message for no routes', () => {
-      const registry = new RouteRegistry()
-      expect(registry.toTable()).toBe('No routes registered.')
-    })
-
-    test('toTable formats routes as table', () => {
-      const registry = new RouteRegistry()
-      registry.register({
-        method: 'get',
-        path: '/projects',
-        honoPath: '/projects',
-        fullPath: '/projects',
-        bindings: [],
-        prefix: '',
-      })
-      registry.register({
-        method: 'post',
-        path: '/projects/{project}',
-        honoPath: '/projects/:project',
-        fullPath: '/projects/:project',
-        bindings: [{ param: 'project', column: 'id' }],
-        prefix: '',
-      })
-
-      const table = registry.toTable()
-      expect(table).toContain('METHOD')
-      expect(table).toContain('PATH')
-      expect(table).toContain('BINDINGS')
-      expect(table).toContain('GET')
-      expect(table).toContain('POST')
-      expect(table).toContain('/projects')
-      expect(table).toContain('{project:id}')
-    })
-  })
 })
 
 describe('effectRoutes Integration', () => {

@@ -22,6 +22,7 @@ import {
   type EffectErrorEvent,
 } from '../../src/effect/error-observer.js'
 import { uuid } from '../../src/effect/schema.js'
+import { validateRequest } from '../../src/effect/validation.js'
 
 interface TestDatabase {
   readonly name: string
@@ -115,41 +116,6 @@ describe('effectRoutes', () => {
   })
 })
 
-describe('route-level body validation parseOptions', () => {
-  const postJson = <Body>(app: Hono<TestEnv>, body: Body) =>
-    app.request('/users', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify(body),
-    })
-
-  test('excess body properties are ignored by default', async () => {
-    const app = createApp()
-
-    effectRoutes(app).post('/users', Effect.succeed(new Response('Created')), {
-      body: S.Struct({ name: S.String }),
-    })
-
-    const res = await postJson(app, { name: 'Test', role: 'admin' })
-    expect(res.status).toBe(200)
-  })
-
-  test('excess body properties are rejected with onExcessProperty error', async () => {
-    const app = createApp()
-
-    effectRoutes(app).post('/users', Effect.succeed(new Response('Created')), {
-      body: S.Struct({ name: S.String }),
-      parseOptions: { onExcessProperty: 'error' },
-    })
-
-    const res = await postJson(app, { name: 'Test', role: 'admin' })
-    expect(res.status).toBe(422)
-  })
-})
-
 describe('Effect Route Error Observation', () => {
   test('observes validation failures exactly once', async () => {
     const events: EffectErrorEvent[] = []
@@ -166,10 +132,11 @@ describe('Effect Route Error Observation', () => {
 
     effectRoutes(app).post(
       '/users',
-      Effect.succeed(new Response('Created')),
-      {
-        body: S.Struct({ name: S.String }),
-      }
+      Effect.gen(function* () {
+        yield* validateRequest(S.Struct({ name: S.String }))
+
+        return new Response('Created')
+      })
     )
 
     const res = await app.request('/users', {

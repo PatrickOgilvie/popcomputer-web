@@ -120,8 +120,6 @@ another user, and a `422` for an empty name.
 
 ## Do not use
 
-- `validatedBody` and `validatedQuery`: they return whatever type the caller
-  names. Use `validateRequest`.
 - `c.req.json()`, `c.req.parseBody()` or `c.env` inside actions.
 - `db.insert`, `db.update` or `db.delete` outside `dbMutation`/`dbTransaction`.
 - Names from the old `honertia` package (`setupHonertia`, `HonertiaService`,
