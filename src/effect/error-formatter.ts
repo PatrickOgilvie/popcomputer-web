@@ -90,7 +90,7 @@ function projectValidationExtension(value: ValidationErrorData | undefined): obj
   const fields: Record<string, {
     expected: string
     message: string
-    path: string[]
+    path: readonly string[]
     schemaType?: string
   }> = {}
 

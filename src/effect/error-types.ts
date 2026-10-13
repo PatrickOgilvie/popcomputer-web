@@ -113,7 +113,7 @@ export interface FieldError {
   /** Human-readable error message */
   message: string
   /** Path to the field (e.g., ["user", "address", "zip"]) */
-  path: string[]
+  path: readonly string[]
   /** Effect Schema type that failed */
   schemaType?: string
 }

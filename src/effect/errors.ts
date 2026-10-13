@@ -1,7 +1,8 @@
 /**
  * Typed errors for actions and the request boundary
  *
- * Using Effect's Data.TaggedError for type-safe error handling.
+ * Each error is a Schema.TaggedError: yieldable in Effect.gen, matched by
+ * `_tag`, with fields checked when it is constructed.
  * All errors support conversion to structured format via toStructured().
  */
 
@@ -20,6 +21,21 @@ import {
 } from './error-catalog.js'
 import { emptyContext } from './error-context.js'
 import type { ResponseCachePurgeError } from './response-cache.js'
+
+/** An optional error code from the catalog. */
+const OptionalErrorCode = Schema.optional(Schema.Literals(Object.values(ErrorCodes)))
+
+/** Response headers a failure carries, such as cookies from an auth provider. */
+const OptionalHeaders = Schema.optional(Schema.instanceOf(Headers))
+
+/** One field's validation failure; see FieldError. */
+const FieldErrorSchema = Schema.Struct({
+  value: Schema.Unknown,
+  expected: Schema.String,
+  message: Schema.String,
+  path: Schema.Array(Schema.String),
+  schemaType: Schema.optional(Schema.String),
+})
 
 /**
  * Interface for errors that can be converted to structured format.
@@ -63,14 +79,14 @@ function structured(
  * })
  * ```
  */
-export class ValidationError extends Data.TaggedError('ValidationError')<{
-  readonly errors: Record<string, string>
-  readonly component?: string
-  readonly fieldDetails?: FieldErrors
-  readonly code?: ErrorCode
+export class ValidationError extends Schema.TaggedError<ValidationError>()('ValidationError', {
+  errors: Schema.Record(Schema.String, Schema.String),
+  component: Schema.optional(Schema.String),
+  fieldDetails: Schema.optional(Schema.Record(Schema.String, FieldErrorSchema)),
+  code: OptionalErrorCode,
   /** Verified response headers accumulated by an external provider. */
-  readonly headers?: Headers
-}> implements StructuredErrorCapable {
+  headers: OptionalHeaders,
+}) implements StructuredErrorCapable {
   get httpStatus(): number {
     return 422
   }
@@ -129,11 +145,11 @@ export class ValidationError extends Data.TaggedError('ValidationError')<{
  * })
  * ```
  */
-export class UnauthorizedError extends Data.TaggedError('UnauthorizedError')<{
-  readonly message: string
-  readonly redirectTo?: string
-  readonly code?: ErrorCode
-}> implements StructuredErrorCapable {
+export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()('UnauthorizedError', {
+  message: Schema.String,
+  redirectTo: Schema.optional(Schema.String),
+  code: OptionalErrorCode,
+}) implements StructuredErrorCapable {
   get httpStatus(): number {
     return 401
   }
@@ -175,11 +191,11 @@ export class UnauthorizedError extends Data.TaggedError('UnauthorizedError')<{
  * yield* new NotFoundError({ resource: 'User', id: userId })
  * ```
  */
-export class NotFoundError extends Data.TaggedError('NotFoundError')<{
-  readonly resource: string
-  readonly id?: string | number
-  readonly code?: ErrorCode
-}> implements StructuredErrorCapable {
+export class NotFoundError extends Schema.TaggedError<NotFoundError>()('NotFoundError', {
+  resource: Schema.String,
+  id: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
+  code: OptionalErrorCode,
+}) implements StructuredErrorCapable {
   get httpStatus(): number {
     return 404
   }
@@ -212,10 +228,10 @@ export class NotFoundError extends Data.TaggedError('NotFoundError')<{
  * yield* new ForbiddenError({ message: 'You do not have permission to edit this post.' })
  * ```
  */
-export class ForbiddenError extends Data.TaggedError('ForbiddenError')<{
-  readonly message: string
-  readonly code?: ErrorCode
-}> implements StructuredErrorCapable {
+export class ForbiddenError extends Schema.TaggedError<ForbiddenError>()('ForbiddenError', {
+  message: Schema.String,
+  code: OptionalErrorCode,
+}) implements StructuredErrorCapable {
   get httpStatus(): number {
     return 403
   }
@@ -242,12 +258,11 @@ export class ForbiddenError extends Data.TaggedError('ForbiddenError')<{
  * delay, the HTTP adapter emits it as `Retry-After` and in the structured
  * response body.
  */
-export class AuthRateLimitError extends Data.TaggedError('AuthRateLimitError')<{
-  readonly retryAfterSeconds: number | undefined
-  readonly cause: unknown
-  /** Verified response headers accumulated before provider rejection. */
-  readonly headers?: Headers
-}> implements StructuredErrorCapable {
+export class AuthRateLimitError extends Schema.TaggedError<AuthRateLimitError>()('AuthRateLimitError', {
+  retryAfterSeconds: Schema.UndefinedOr(Schema.Number),
+  cause: Schema.Unknown,
+  headers: OptionalHeaders,
+}) implements StructuredErrorCapable {
   get httpStatus(): number {
     return 429
   }
@@ -292,15 +307,14 @@ export class AuthRateLimitError extends Data.TaggedError('AuthRateLimitError')<{
  * })
  * ```
  */
-export class HttpError extends Data.TaggedError('HttpError')<{
-  readonly status: number
-  readonly message: string
-  readonly body?: unknown
-  readonly code?: ErrorCode
-  readonly cause?: unknown
-  /** Verified response headers that the HTTP boundary must preserve. */
-  readonly headers?: Headers
-}> implements StructuredErrorCapable {
+export class HttpError extends Schema.TaggedError<HttpError>()('HttpError', {
+  status: Schema.Number,
+  message: Schema.String,
+  body: Schema.optional(Schema.Unknown),
+  code: OptionalErrorCode,
+  cause: Schema.optional(Schema.Unknown),
+  headers: OptionalHeaders,
+}) implements StructuredErrorCapable {
   get httpStatus(): number {
     return this.status
   }
@@ -365,10 +379,10 @@ export class AuthRedirect extends Data.TaggedClass('AuthRedirect')<{
 }> {}
 
 /** A database write failed outside a transaction. */
-export class DatabaseMutationFailed extends Data.TaggedError('DatabaseMutationFailed')<{
-  readonly operation: 'mutation'
-  readonly cause: unknown
-}> implements StructuredErrorCapable {
+export class DatabaseMutationFailed extends Schema.TaggedError<DatabaseMutationFailed>()('DatabaseMutationFailed', {
+  operation: Schema.Literal('mutation'),
+  cause: Schema.Unknown,
+}) implements StructuredErrorCapable {
   get message(): string {
     return 'Database mutation failed.'
   }
@@ -388,10 +402,10 @@ export class DatabaseMutationFailed extends Data.TaggedError('DatabaseMutationFa
 }
 
 /** A database transaction failed and was rolled back. */
-export class DatabaseTransactionFailed extends Data.TaggedError('DatabaseTransactionFailed')<{
-  readonly operation: 'transaction'
-  readonly cause: unknown
-}> implements StructuredErrorCapable {
+export class DatabaseTransactionFailed extends Schema.TaggedError<DatabaseTransactionFailed>()('DatabaseTransactionFailed', {
+  operation: Schema.Literal('transaction'),
+  cause: Schema.Unknown,
+}) implements StructuredErrorCapable {
   get message(): string {
     return 'Database transaction failed and was rolled back.'
   }
@@ -411,11 +425,11 @@ export class DatabaseTransactionFailed extends Data.TaggedError('DatabaseTransac
 }
 
 /** A database constraint rejected a mutation or transaction. */
-export class DatabaseConstraintViolation extends Data.TaggedError('DatabaseConstraintViolation')<{
-  readonly operation: 'mutation' | 'transaction'
-  readonly constraint: 'unique' | 'foreign-key' | 'not-null' | 'check' | 'unknown'
-  readonly cause: unknown
-}> implements StructuredErrorCapable {
+export class DatabaseConstraintViolation extends Schema.TaggedError<DatabaseConstraintViolation>()('DatabaseConstraintViolation', {
+  operation: Schema.Literals(['mutation', 'transaction']),
+  constraint: Schema.Literals(['unique', 'foreign-key', 'not-null', 'check', 'unknown']),
+  cause: Schema.Unknown,
+}) implements StructuredErrorCapable {
   get message(): string {
     return 'Database constraint violation.'
   }
@@ -435,10 +449,10 @@ export class DatabaseConstraintViolation extends Data.TaggedError('DatabaseConst
 }
 
 /** Better Auth could not determine the current session. */
-export class SessionLookupUnavailable extends Data.TaggedError('SessionLookupUnavailable')<{
-  readonly operation: 'getSession'
-  readonly cause: unknown
-}> implements StructuredErrorCapable {
+export class SessionLookupUnavailable extends Schema.TaggedError<SessionLookupUnavailable>()('SessionLookupUnavailable', {
+  operation: Schema.Literal('getSession'),
+  cause: Schema.Unknown,
+}) implements StructuredErrorCapable {
   get message(): string {
     return 'Authentication service is unavailable.'
   }
@@ -458,10 +472,10 @@ export class SessionLookupUnavailable extends Data.TaggedError('SessionLookupUna
 }
 
 /** Better Auth returned a session that did not satisfy the configured parser. */
-export class InvalidAuthSession extends Data.TaggedError('InvalidAuthSession')<{
-  readonly operation: 'parseSession'
-  readonly cause: unknown
-}> implements StructuredErrorCapable {
+export class InvalidAuthSession extends Schema.TaggedError<InvalidAuthSession>()('InvalidAuthSession', {
+  operation: Schema.Literal('parseSession'),
+  cause: Schema.Unknown,
+}) implements StructuredErrorCapable {
   get message(): string {
     return 'Authentication provider returned an invalid session.'
   }
@@ -492,16 +506,16 @@ export class InvalidAuthSession extends Data.TaggedError('InvalidAuthSession')<{
  * })
  * ```
  */
-export class RouteConfigurationError extends Data.TaggedError('RouteConfigurationError')<{
-  readonly message: string
-  readonly hint?: string
-  readonly code?: ErrorCode
-  readonly binding?: string
-  readonly table?: string
-  readonly parent?: string
-  readonly child?: string
-  readonly cause?: unknown
-}> implements StructuredErrorCapable {
+export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurationError>()('RouteConfigurationError', {
+  message: Schema.String,
+  hint: Schema.optional(Schema.String),
+  code: OptionalErrorCode,
+  binding: Schema.optional(Schema.String),
+  table: Schema.optional(Schema.String),
+  parent: Schema.optional(Schema.String),
+  child: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) implements StructuredErrorCapable {
   get httpStatus(): number {
     return 500
   }
@@ -631,12 +645,12 @@ export class RouteConfigurationError extends Data.TaggedError('RouteConfiguratio
  * })
  * ```
  */
-export class ConfigurationError extends Data.TaggedError('ConfigurationError')<{
-  readonly message: string
-  readonly hint?: string
-  readonly code?: ErrorCode
-  readonly service?: string
-}> implements StructuredErrorCapable {
+export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()('ConfigurationError', {
+  message: Schema.String,
+  hint: Schema.optional(Schema.String),
+  code: OptionalErrorCode,
+  service: Schema.optional(Schema.String),
+}) implements StructuredErrorCapable {
   get httpStatus(): number {
     return 500
   }

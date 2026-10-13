@@ -476,10 +476,10 @@ export interface ResponseCachePurgeInput {
  * a swallowed purge is a stale-forever bug — so this flows through the
  * standard error pipeline.
  */
-export class ResponseCachePurgeError extends Data.TaggedError('ResponseCachePurgeError')<{
-  readonly input: ResponseCachePurgeInput
-  readonly cause: unknown
-}> {
+export class ResponseCachePurgeError extends S.TaggedError<ResponseCachePurgeError>()('ResponseCachePurgeError', {
+  input: S.Struct({ tags: S.optional(S.Array(S.String)), everything: S.optional(S.Boolean) }),
+  cause: S.Unknown,
+}) {
   get httpStatus(): number {
     return 500
   }
