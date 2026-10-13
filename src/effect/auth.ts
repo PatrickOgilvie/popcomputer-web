@@ -27,13 +27,11 @@ import type { PagePropValue, PageProps } from '../types.js'
 
 
 /**
- * Layer that requires an authenticated user.
- * Fails with UnauthorizedError if no user is present.
+ * Layer that requires an authenticated user: a signed-out visit goes to
+ * setupWeb's `auth.signInPath`, and a JSON client is answered 401.
  *
  * @example
- * effectRoutes(app)
- *   .provide(RequireAuthLayer)
- *   .get('/dashboard', showDashboard)
+ * routes.provide(RequireAuthLayer).get(paths.dashboard, showDashboard)
  */
 export const RequireAuthLayer = Layer.effect(
   AuthUserService,
@@ -50,25 +48,23 @@ export const RequireAuthLayer = Layer.effect(
 )
 
 /**
- * Layer that requires no authenticated user (guest only).
- * Fails if a user is present, succeeds (as a no-op) if no user.
+ * Layer for pages only guests see, such as signing in: a signed-in visitor
+ * goes to setupWeb's `auth.homePath` (default `/`).
  *
- * For more flexibility (e.g., allowing anonymous users), use `createGuestLayer`.
+ * To let some signed-in users through, such as anonymous ones, use
+ * `createGuestLayer`.
  *
  * @example
- * effectRoutes(app)
- *   .provide(RequireGuestLayer)
- *   .get('/login', showLogin)
+ * routes.provide(RequireGuestLayer)
+ *   .get(paths.login, action(render('Auth/Login')))
+ *   .post(paths.login, signIn)
  */
 export const RequireGuestLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const maybeUser = yield* Effect.serviceOption(AuthUserService)
 
     if (Option.isSome(maybeUser)) {
-      return yield* new UnauthorizedError({
-        message: 'Already authenticated',
-        redirectTo: '/',
-      })
+      return yield* new UnauthorizedError({ message: 'Already authenticated', home: true })
     }
 
     // Guest confirmed - no user present, succeed silently
@@ -87,29 +83,17 @@ export const RequireGuestLayer = Layer.effectDiscard(
  *
  * @param allowUser - Predicate that returns true if the user should be allowed access.
  *                    Receives the full AuthUser object (user + session).
- * @param redirectTo - Where to redirect blocked users (default: '/')
+ * @param redirectTo - Where a blocked user goes: by default setupWeb's `auth.homePath`.
  *
  * @example
- * // Allow anonymous users to access login/register pages
- * const AllowAnonymousGuestLayer = createGuestLayer(
- *   (authUser) => authUser.user.isAnonymous === true
- * )
+ * // Let anonymous users reach the sign-up page to upgrade their accounts
+ * const AllowAnonymous = createGuestLayer((authUser) => authUser.user.isAnonymous === true)
  *
- * effectRoutes(app)
- *   .provide(AllowAnonymousGuestLayer)
- *   .get('/login', showLogin)
- *
- *
- * @example
- * // Custom redirect for blocked users
- * const GuestOrAnonymousLayer = createGuestLayer(
- *   (authUser) => authUser.user.isAnonymous,
- *   '/dashboard'  // Redirect fully authenticated users to dashboard
- * )
+ * routes.provide(AllowAnonymous).get(paths.register, action(render('Auth/Register')))
  */
-export function createGuestLayer<const Path extends string = '/'>(
+export function createGuestLayer<const Path extends string = string>(
   allowUser: (authUser: AuthUser) => boolean,
-  redirectTo: Path & PathTarget<Path> = '/' as Path & PathTarget<Path>
+  redirectTo?: Path & PathTarget<Path>
 ): Layer.Layer<never, UnauthorizedError, never> {
   return Layer.effectDiscard(
     Effect.gen(function* () {
@@ -120,10 +104,11 @@ export function createGuestLayer<const Path extends string = '/'>(
 
         // Check if this user is allowed through
         if (!allowUser(authUser)) {
-          return yield* new UnauthorizedError({
-            message: 'Already authenticated',
-            redirectTo,
-          })
+          return yield* new UnauthorizedError(
+            redirectTo === undefined
+              ? { message: 'Already authenticated', home: true }
+              : { message: 'Already authenticated', redirectTo }
+          )
         }
         // User is allowed (e.g., anonymous user) - continue
       }
@@ -142,7 +127,7 @@ export function createGuestLayer<const Path extends string = '/'>(
  *
  * @example
  * const redirectTo = yield* intendedUrl(paths.dashboard)
- * return yield* betterAuthRedirect((auth, request) => auth.api.signInEmail({ ... }), { redirectTo })
+ * return yield* betterAuthRedirect('signInEmail', { body: input }, { redirectTo })
  */
 export const intendedUrl = <const Path extends string>(
   fallback: Path & PathTarget<Path>

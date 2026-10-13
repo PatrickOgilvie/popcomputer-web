@@ -216,7 +216,7 @@ export async function renderErrorResponse<E extends Env>(
     }
 
     return finalize(c.redirect(
-      error.redirectTo ?? signInUrl(c),
+      error.redirectTo ?? (error.home === true ? openWebContext(c).homePath ?? '/' : signInUrl(c)),
       c.req.header('X-Inertia') === 'true' ? 303 : 302
     ))
   }

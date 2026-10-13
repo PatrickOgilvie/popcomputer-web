@@ -41,6 +41,7 @@ import {
   coercedDate,
   isoDate,
   isoDateTime,
+  currentPassword,
   nullableDate,
   after,
   afterOrEqual,
@@ -975,5 +976,18 @@ describe('isoDate and isoDateTime', () => {
     expect(S.toJsonSchemaDocument(S.Struct({ day: isoDate, at: isoDateTime })).schema).toMatchObject({
       properties: { day: { type: 'string', format: 'date' }, at: { type: 'string', format: 'date-time' } },
     })
+  })
+})
+
+describe('currentPassword and password', () => {
+  test('currentPassword keeps the password exactly as typed, and requires one', () => {
+    expect(S.decodeUnknownSync(currentPassword)('  spaced out  ')).toBe('  spaced out  ')
+    expect(Option.isNone(S.decodeUnknownOption(currentPassword)(''))).toBe(true)
+  })
+
+  test("password's minimum reads as a count", async () => {
+    const failure = await Effect.runPromise(Effect.flip(validateUnknown(S.Struct({ secret: password({ min: 1 }) }), { secret: '' })))
+
+    expect(failure.errors.secret).toBe('Password must be at least 1 character')
   })
 })

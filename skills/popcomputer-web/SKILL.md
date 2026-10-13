@@ -98,7 +98,10 @@ TypeScript example here and in the README type-checks against the package.
    prefix has `{project}`, in an action or in a layer guarding it.
 7. **Authorize with `authorize()` or `authorize((auth) => rule, message)`.** Use
    `currentUser` when signing in is optional. Guard a group of routes with
-   `routes.provide(RequireAuthLayer)` or `routes.provide(RequireGuestLayer)`.
+   `routes.provide(RequireAuthLayer)`, which sends a signed-out visitor to
+   `auth.signInPath`, or `routes.provide(RequireGuestLayer)`, which sends a
+   signed-in one to `auth.homePath`. Validate a sign-in's password with
+   `currentPassword`, which never trims it, and a new one with `password(...)`.
    Sign users in and up with an action that validates its form and returns
    `betterAuthRedirect('signInEmail', { body: input }, { redirectTo, errors })`
    from `@popcomputer/web/auth`, which sends the call through Better Auth's

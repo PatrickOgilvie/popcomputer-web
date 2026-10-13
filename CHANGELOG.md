@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The README's sign-in schema validated the password with `requiredString`, which trims it, while sign-up kept it as typed: a password chosen with outer spaces never signed in. `currentPassword` from `@popcomputer/web/schema` validates a password to sign in with, required and never trimmed, and the README uses it. `password({ min: 1 })` reads "at least 1 character".
+- The type declarations' examples for `RequireAuthLayer`, `RequireGuestLayer`, `createGuestLayer`, `intendedUrl` and `setupWeb` show the current APIs.
 - The lint rule `no-auth-api-in-action` also reports Better Auth endpoints called through `effectifyBetterAuth(auth).api` in an action, which skip Better Auth's rate limits as `auth.api` does.
 
 ### Changed
 
+- `setupWeb`'s `auth.homePath` names where a signed-in visitor goes from a page for guests; `RequireGuestLayer`, and `createGuestLayer` without its own destination, send them there instead of always to `/`.
 - The application's own services are given after the registration, `export const { app, routes } = web.services({ app, request })`, in place of `setupWeb`'s `services` option, which is now a type error and throws with directions. `setupWeb`'s type no longer includes them, so a service layer's type is inferred even when it uses `dbQuery`, `config` or `bound`: the annotation every such layer needed, and the `'web' implicitly has type 'any'` (TS7022) error reported at `web` without it, are gone. The routes `web.services` returns accept actions using the services; `web.routes` remains for an application without services of its own. `services.app` is still built once per isolate, a request service still replaces an application service with the same tag, and `testEnv`'s layers replace both.
 - The README follows services moving to `web.services(...)`. Layers' types are inferred, so the advice to annotate them and the tradeoff it described are gone. The type-error table names the `services` option `setupWeb` no longer takes. Upgrade step 5 moves `effect.services`, and a pre-release's `services`, to `web.services`. The data cache, scheduled work and testing say "the `app` and `request` layers".
 - The README's caching section opens with subsections for the data cache, tagging cached data, store failures and work after the response, and its first example caches a `dbQuery` rather than a promise read outside it.

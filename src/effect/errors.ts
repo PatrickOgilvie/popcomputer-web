@@ -160,6 +160,11 @@ export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()('
    * that sent a bearer token is told `Bearer`.
    */
   challenge: Schema.optional(Schema.String),
+  /**
+   * A signed-in visitor on a page for guests: a page visit goes to
+   * setupWeb's `auth.homePath` (default `/`) rather than to sign in.
+   */
+  home: Schema.optional(Schema.Boolean),
 }) implements StructuredErrorCapable {
   get httpStatus(): number {
     return 401

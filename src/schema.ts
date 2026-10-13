@@ -74,6 +74,7 @@ export {
   max,
   // Password
   password,
+  currentPassword,
   // Files
   upload,
   nullableUpload,

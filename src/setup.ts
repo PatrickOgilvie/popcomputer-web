@@ -77,6 +77,11 @@ export interface WebAuthOptions<
    * and `RequireAuthLayer` redirect here. Defaults to `/login`.
    */
   readonly signInPath?: SignInPath
+  /**
+   * Where a signed-in visitor goes from a page for guests, such as the
+   * sign-in page: `RequireGuestLayer` redirects here. Defaults to `/`.
+   */
+  readonly homePath?: SignInPath
 }
 
 interface WebSetupOptions<E extends Env> extends WebConfig {
@@ -304,9 +309,13 @@ export interface WebApplication<
  *   render: createTemplate({ title: 'My App' }),
  *   database: (c) => createDb(c.env.DATABASE_URL),
  *   schema,
- *   bindings: { workspace: Workspace },
+ *   bindings: { workspace: schema.workspaces },
  *   pages,
- *   auth: { client: (_c, { db }) => createAuth({ db }), session: AuthSession },
+ *   paths,
+ *   auth: {
+ *     client: (c, { db }) => createAuth({ db, secret: c.env.BETTER_AUTH_SECRET }),
+ *     session: betterAuthSession(tableSchema(schema.user)),
+ *   },
  * })
  *
  * declare module '@popcomputer/web' {
@@ -315,7 +324,10 @@ export interface WebApplication<
  *   }
  * }
  *
- * web.routes.get('/workspaces/{workspace}', showWorkspace)
+ * // With services of the application's own; without, `export const { app, routes } = web`.
+ * export const { app, routes } = web.services({ app: ClockLive })
+ *
+ * routes.get(paths.workspace, showWorkspace)
  * ```
  */
 export function setupWeb<
@@ -407,6 +419,7 @@ function createSetupMiddleware<
     const requestCtx = openWebContext(c)
     requestCtx.errorBoundary = config.errors
     requestCtx.signInPath = config.auth?.signInPath
+    requestCtx.homePath = config.auth?.homePath
     const executionContext = getRequestExecutionContextClient(c)
 
     const backgroundTasks: AuthBackgroundTasks = {

@@ -1001,8 +1001,22 @@ export const maxItems = <InputSchema extends S.Constraint>(
 // =============================================================================
 
 /**
- * Creates a password schema with configurable rules.
+ * A password a visitor chooses, as signing up or changing it asks for one:
+ * at least `min` characters (8 unless given), and the other rules given.
+ * It is kept exactly as typed. Sign a visitor in with `currentPassword`,
+ * which checks no rules: the password's strength was checked when it was
+ * chosen.
  */
+/**
+ * A password as the visitor typed it, to sign in with or to confirm a
+ * change: required, and kept exactly as typed, spaces included, so it
+ * matches the password `password(...)` accepted when it was chosen.
+ * `requiredString` trims, which would refuse a password with outer spaces.
+ */
+export const currentPassword = S.String.check(
+  S.makeFilter((value: string) => value !== '', { message: 'This field is required' })
+)
+
 export function password(options: {
   min?: number
   max?: number
@@ -1022,7 +1036,7 @@ export function password(options: {
 
   let schema = S.String.check(S.isMinLength(
     minLength,
-    { message: `Password must be at least ${minLength} characters` }
+    { message: `Password must be at least ${minLength} ${minLength === 1 ? 'character' : 'characters'}` }
   ))
 
   if (maxLength) {

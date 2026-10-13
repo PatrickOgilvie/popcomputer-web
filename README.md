@@ -603,7 +603,7 @@ so no server code reaches the bundle, and types its form with `FormInput`:
 ```ts
 // src/forms.ts
 import { Schema as S } from 'effect'
-import { alphaDash, coercedDate, email, nullable, nullableString, requiredString } from '@popcomputer/web/schema'
+import { alphaDash, coercedDate, currentPassword, email, nullable, nullableString, requiredString } from '@popcomputer/web/schema'
 
 export const CreateProject = S.Struct({
   name: requiredString,
@@ -620,7 +620,8 @@ export const ProjectFilters = S.Struct({
   beforeId: nullableString,
 })
 
-export const SignIn = S.Struct({ email, password: requiredString })
+// A password signs in exactly as it was chosen: currentPassword never trims it.
+export const SignIn = S.Struct({ email, password: currentPassword })
 ```
 
 A page reads its props, the shared props and `errors` from its declaration in
@@ -1424,7 +1425,12 @@ one's body and result, so a misspelled endpoint or a missing password is a
 type error. A sign-in refused for its rate limit fails with
 `AuthRateLimitError`, which the error page answers with a 429; show it on the
 form instead with
-`Effect.catchTag('AuthRateLimitError', (error) => invalid({ email: \`Too many attempts. Try again in ${error.retryAfterSeconds} seconds.\` }))`.
+`Effect.catchTag('AuthRateLimitError', () => invalid({ email: 'Too many attempts. Try again in a minute.' }))`.
+Validate a sign-in's password with `currentPassword`, which keeps it as typed:
+`requiredString` trims, so a password chosen with outer spaces would never
+sign in. `password({ min: 12 })` checks one a visitor chooses, on signing up.
+`RequireGuestLayer` sends a signed-in visitor from a guest page to
+`setupWeb`'s `auth.homePath`, `/` by default.
 In tests, each `testBrowser` is a client at its own address, so the limits
 count each browser apart.
 
