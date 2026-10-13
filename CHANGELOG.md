@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `routes.scheduled((event) => effect)` and `routes.queue(Schema, (body, message) => effect)` return the Worker's `scheduled` and `queue` handlers, running each job with the application's services and type-checking it as a registration does. The queue handler decodes each message's body with the schema, acknowledges a message whose work succeeds, and logs and retries one whose body does not decode or whose work fails. `testBatch(bodies)` from `@popcomputer/web/testing` makes a batch that records each message's outcome.
+
 ### Changed
+
+- `testBrowser(app, env).follow(res)` follows any redirect, keeping the cookies it set, including one a test requested with `app.request`. `followRedirect(app, res, env)` is removed: use `testBrowser(app, env).follow(res)`.
 
 - The README's upgrade guide from 0.7 shows the 0.7 code each step replaces. It adds the steps it missed: imports from one entrypoint and the removed synonyms, the removed route validation options, and the CLI. It also lists the changes no type error points at, such as origin verification and upload families. The webhook pattern refuses through `httpError` and acknowledges with `noContent`.
 

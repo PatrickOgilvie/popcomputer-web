@@ -10,7 +10,7 @@ import { describe, expect, test } from 'bun:test'
 import { Clock, Config, Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
-import { testClock, testEnv } from '../../src/testing.js'
+import { testBatch, testClock, testEnv } from '../../src/testing.js'
 
 class Counter extends Context.Service<Counter, { readonly next: Effect.Effect<number> }>()('test/Counter') {}
 
@@ -70,5 +70,53 @@ describe('routes.run', () => {
     const res = await app.request('/__popweb/run', {}, { REGION: 'weur' })
 
     expect(res.status).toBe(404)
+  })
+})
+
+describe('routes.scheduled', () => {
+  test('runs the job for the cron that fired, and rejects when it fails', async () => {
+    const { counted } = createApp()
+    const ran: string[] = []
+    const scheduled = counted.scheduled((event) =>
+      event.cron === '0 3 * * *'
+        ? Effect.flatMap(Counter, (counter) => Effect.map(counter.next, () => ran.push(event.cron)))
+        : Effect.fail(new SweepFailed({ reason: `no job for ${event.cron}` }))
+    )
+
+    await scheduled({ cron: '0 3 * * *', scheduledTime: 0 }, { REGION: 'weur' })
+
+    expect(ran).toEqual(['0 3 * * *'])
+    await expect(scheduled({ cron: '*/5 * * * *', scheduledTime: 0 }, { REGION: 'weur' })).rejects.toMatchObject({ _tag: 'SweepFailed' })
+  })
+})
+
+describe('routes.queue', () => {
+  const Reminder = S.Struct({ orderId: S.String })
+
+  test('acknowledges each message whose work succeeds, with its body decoded', async () => {
+    const { counted } = createApp()
+    const sent: string[] = []
+    const queue = counted.queue(Reminder, (reminder, message) =>
+      Effect.flatMap(Counter, (counter) => Effect.map(counter.next, (n) => sent.push(`${n}:${reminder.orderId}:${message.attempts}`)))
+    )
+    const batch = testBatch([{ orderId: 'order-1' }, { orderId: 'order-2' }])
+
+    await queue(batch, { REGION: 'weur' })
+
+    expect(sent).toEqual(['1:order-1:1', '2:order-2:1'])
+    expect(batch.acked()).toHaveLength(2)
+  })
+
+  test('leaves a message whose body does not decode or whose work fails for the queue to retry', async () => {
+    const { routes } = createApp()
+    const queue = routes.queue(Reminder, (reminder) =>
+      reminder.orderId === 'locked' ? Effect.fail(new SweepFailed({ reason: 'locked' })) : Effect.void
+    )
+    const batch = testBatch([{ orderId: 'order-1' }, { orderId: 42 }, { orderId: 'locked' }])
+
+    await queue(batch, { REGION: 'weur' })
+
+    expect(batch.acked()).toEqual([{ orderId: 'order-1' }])
+    expect(batch.retried()).toEqual([{ orderId: 42 }, { orderId: 'locked' }])
   })
 })

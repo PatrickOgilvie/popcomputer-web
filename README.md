@@ -1536,17 +1536,17 @@ effects but not a race between them; pass an execution context as
 
 ### Scheduled and queued work
 
-A Cron Trigger or a Queue consumer runs an Effect with the application's
-services through `routes.run(effect, env, ctx)`: the database, `services`,
-`Config` and `background()` work as they do in an action, and the layers a
-builder was given with `provide` apply. It resolves with the Effect's value
-and rejects with its failure, so the platform records a failed run.
+A Cron Trigger's and a Queue consumer's work runs with the application's
+services, as an action does: the database, `services`, `Config` and
+`background()`, and the layers a builder was given with `provide`.
+`routes.scheduled(job)` and `routes.queue(Schema, handle)` return the Worker's
+`scheduled` and `queue` handlers, and type-check the job as a registration
+does, so one that needs a service the routes do not provide is a
+`missingServices` error.
 
 ```ts
 import { lt } from 'drizzle-orm'
 import { DateTime } from 'effect'
-import type { ExecutionContext } from 'hono'
-import type { Bindings } from '../env'
 import { orders } from '../schema'
 
 const forgetAbandonedOrders = Effect.gen(function* () {
@@ -1555,33 +1555,48 @@ const forgetAbandonedOrders = Effect.gen(function* () {
   yield* dbMutation((db) => db.delete(orders).where(lt(orders.paidAt, cutoff)))
 })
 
-// A Queue consumer acknowledges each message once its work succeeds, and
-// leaves a failed one for the queue to retry.
-const sendReminder = (body: unknown) => Effect.log('reminder', body)
+// What the queue carries is declared once, as a schema.
+const Reminder = S.Struct({ orderId: S.String })
 
 export default {
   fetch: app.fetch,
-  // Partial, so a test calls the same handler with testEnv's bindings.
-  scheduled: async (_controller: unknown, env: Partial<Bindings>, ctx?: ExecutionContext) => {
-    await routes.run(forgetAbandonedOrders, env, ctx)
-  },
-  queue: async (
-    batch: { readonly messages: ReadonlyArray<{ readonly body: unknown; ack(): void; retry(): void }> },
-    env: Partial<Bindings>,
-    ctx?: ExecutionContext
-  ) => {
-    for (const message of batch.messages) {
-      await routes.run(sendReminder(message.body), env, ctx).then(() => message.ack(), () => message.retry())
-    }
-  },
+  scheduled: routes.scheduled((event) => event.cron === '0 3 * * *' ? forgetAbandonedOrders : Effect.void),
+  queue: routes.queue(Reminder, (reminder) => Effect.log('reminder', reminder.orderId)),
 }
 ```
 
-A handler awaits `routes.run` rather than returning it, since the platform
-expects no value, and types the queue batch by the parts it uses and its
-execution context as optional, so a test calls it with plain objects. A test runs the job the same way, with `testEnv`'s
-bindings, so its fakes, clock and database apply:
-`await routes.run(forgetAbandonedOrders, testEnv(time.layer, testBindings))`.
+A scheduled job that fails rejects, so the platform records a failed run. The
+queue handler decodes each message's body with the schema and handles the
+messages one at a time: one whose work succeeds is acknowledged, and one whose
+body does not decode, or whose work fails, is logged and left for the queue
+to retry, after which the queue drops it or moves it to its dead-letter
+queue. The handler also receives the message's `id` and `attempts`, for work
+that must happen once however often a message is delivered.
+
+A test calls the handlers as the platform does, with `testEnv`'s bindings, so
+its fakes, clock and database apply. `testBatch` from
+`@popcomputer/web/testing` makes a batch that records which messages were
+acknowledged and which were left to retry:
+
+```ts
+import { testBatch, testEnv } from '@popcomputer/web/testing'
+
+const worker = {
+  scheduled: routes.scheduled(() => Effect.log('nightly sweep')),
+  queue: routes.queue(S.Struct({ orderId: S.String }), (reminder) => Effect.log(reminder.orderId)),
+}
+
+const time = await testClock()
+await worker.scheduled({ cron: '0 3 * * *', scheduledTime: Date.now() }, testEnv(time.layer, testBindings))
+
+const batch = testBatch([{ orderId: 'order-1' }, { orderId: 42 }])
+await worker.queue(batch, testEnv(Layer.empty, testBindings))
+batch.acked() // [{ orderId: 'order-1' }]
+batch.retried() // [{ orderId: 42 }], which does not decode
+```
+
+`routes.run(effect, env, ctx)` runs any other Effect the same way, such as a
+one-off job from a script, resolving with its value.
 
 ### Page caching
 
@@ -1827,12 +1842,13 @@ page.props.project.createdAt // a string: the JSON the browser receives
 ```
 
 A form's next page receives its `flash` values and field errors through a
-cookie the redirect sets. `followRedirect` requests the redirect's
-`Location` as the browser would, sending that cookie. Post with a `Referer`,
-as a browser does, so a failed form goes back to it:
+cookie the redirect sets. `testBrowser(app, env).follow(res)` requests the
+redirect's `Location` as the browser would, with that cookie, whether the
+browser sent the form or the test posted it with `app.request`. Post with a
+`Referer`, as a browser does, so a failed form goes back to it:
 
 ```ts
-import { followRedirect, readPage, signedIn, testEnv } from '@popcomputer/web/testing'
+import { readPage, signedIn, testBrowser, testEnv } from '@popcomputer/web/testing'
 
 const env = testEnv(signedIn({ id: 'user-1' }), testBindings)
 const failed = await app.request(
@@ -1844,7 +1860,7 @@ const failed = await app.request(
   },
   env
 )
-const form = await readPage(await followRedirect(app, failed, env), 'Projects/Index')
+const form = await readPage(await testBrowser(app, env).follow(failed), 'Projects/Index')
 
 form.props.errors.name // 'This field is required'
 ```

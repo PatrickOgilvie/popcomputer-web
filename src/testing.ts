@@ -308,41 +308,6 @@ export interface TestApp {
 }
 
 /**
- * Follow a redirect as the browser would after a form: request its
- * `Location` as an Inertia visit, sending the cookies the response set. The
- * next page then receives what the redirect carried, such as `flash` values
- * and a failed form's `errors`.
- *
- * @example
- * const res = await app.request('/projects', { method: 'POST', body, headers: { Referer: 'http://localhost/projects/new' } }, env)
- * const form = await readPage(await followRedirect(app, res, env), 'Projects/New')
- * expect(form.props.errors.name).toBe('This field is required')
- */
-export async function followRedirect(
-  app: TestApp,
-  response: Response,
-  env?: TestBindings,
-  init: RequestInit = {}
-): Promise<Response> {
-  const location = response.headers.get('Location')
-
-  if (location === null || response.status < 300 || response.status >= 400) {
-    throw new Error(`Expected a redirect, but the response is ${response.status} without a Location.`)
-  }
-
-  const headers = new Headers(init.headers)
-  const cookies = [
-    ...(headers.get('Cookie')?.split(';').map((cookie) => cookie.trim()).filter(Boolean) ?? []),
-    ...setCookies(response),
-  ]
-
-  if (!headers.has('X-Inertia')) headers.set('X-Inertia', 'true')
-  if (cookies.length > 0) headers.set('Cookie', cookies.join('; '))
-
-  return app.request(location, { ...init, headers }, env)
-}
-
-/**
  * A browser for a test: it keeps the cookies responses set, drops the ones
  * they clear, and sends each to the paths it covers, so a session, a cart
  * cookie and flash carry across requests as they do for a visitor.
@@ -355,7 +320,13 @@ export async function followRedirect(
 export interface TestBrowser {
   /** Request a path, sending the cookies the browser holds for it, and keep the ones the response sets. */
   request(path: string, init?: RequestInit): Promise<Response>
-  /** Follow a redirect as an Inertia visit, as `followRedirect` does, with the browser's cookies. */
+  /**
+   * Follow a redirect as the browser would after a form: request its
+   * `Location` as an Inertia visit with the browser's cookies, and the ones
+   * the redirect set, so the next page receives its `flash` values and a
+   * failed form's `errors`. The redirect may be one the browser received, or
+   * one a test requested another way, such as with `app.request`.
+   */
   follow(response: Response, init?: RequestInit): Promise<Response>
   /** The cookies the browser holds, by name. */
   readonly cookies: ReadonlyMap<string, string>
@@ -410,10 +381,9 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
 
   return {
     request,
-    follow: (response, init = {}) => {
-      if (!received.has(response)) {
-        throw new Error('browser.follow takes a response this browser received, whose cookies it holds; follow one requested another way with followRedirect(app, res, env).')
-      }
+    follow: async (response, init = {}) => {
+      // A redirect requested another way hands its cookies to this browser first.
+      if (!received.has(response)) keep(response)
 
       const location = response.headers.get('Location')
 
@@ -433,14 +403,6 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
       jar.set(name, { value, path })
     },
   }
-}
-
-/** The `name=value` pairs a response's cookies set, without the ones it clears. */
-function setCookies(response: Response): readonly string[] {
-  return response.headers
-    .getSetCookie()
-    .filter((cookie) => !/;\s*max-age=0\b/i.test(cookie))
-    .map((cookie) => cookie.split(';', 1)[0].trim())
 }
 
 /**
@@ -604,5 +566,61 @@ export async function testClock(start: Date | number = Date.UTC(2026, 0, 1)): Pr
 
       return observed
     },
+  }
+}
+
+/** A queue message a test sends, recording whether the handler acknowledged it or left it to retry. */
+export interface TestQueueMessage {
+  readonly id: string
+  readonly body: unknown
+  readonly attempts: number
+  readonly outcome: 'pending' | 'acked' | 'retried'
+  ack(): void
+  retry(): void
+}
+
+/** A queue batch a test hands to `routes.queue(...)`'s handler. */
+export interface TestQueueBatch {
+  readonly messages: ReadonlyArray<TestQueueMessage>
+  /** The bodies of the messages the handler acknowledged. */
+  acked(): ReadonlyArray<unknown>
+  /** The bodies of the messages the handler left for the queue to retry. */
+  retried(): ReadonlyArray<unknown>
+}
+
+/**
+ * A queue batch of these bodies, as the platform delivers one to the Worker's
+ * `queue` handler, recording each message's outcome.
+ *
+ * @example
+ * const batch = testBatch([{ orderId: 'order-1' }, { orderId: 42 }])
+ * await worker.queue(batch, testEnv(fakeMailer, testBindings))
+ * expect(batch.acked()).toEqual([{ orderId: 'order-1' }])
+ * expect(batch.retried()).toEqual([{ orderId: 42 }])
+ */
+export function testBatch(bodies: ReadonlyArray<unknown>, options: { readonly attempts?: number } = {}): TestQueueBatch {
+  const messages = bodies.map((body, index): TestQueueMessage => {
+    let outcome: TestQueueMessage['outcome'] = 'pending'
+
+    return {
+      id: `message-${index + 1}`,
+      body,
+      attempts: options.attempts ?? 1,
+      get outcome() {
+        return outcome
+      },
+      ack: () => {
+        outcome = 'acked'
+      },
+      retry: () => {
+        outcome = 'retried'
+      },
+    }
+  })
+
+  return {
+    messages,
+    acked: () => messages.filter((message) => message.outcome === 'acked').map((message) => message.body),
+    retried: () => messages.filter((message) => message.outcome === 'retried').map((message) => message.body),
   }
 }

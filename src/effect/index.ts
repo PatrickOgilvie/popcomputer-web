@@ -161,6 +161,10 @@ export {
   type PathModels,
   type EffectRouteOptions,
   type EffectRoutesConfig,
+  type ScheduledEvent,
+  type QueueBatch,
+  type QueueMessage,
+  type QueueMessageInfo,
 } from './routing.js'
 
 // Route Registry

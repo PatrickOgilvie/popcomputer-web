@@ -16,7 +16,7 @@ import { back, flash, invalid, redirect, redirectNow, render } from '../src/effe
 import { positiveInt, requiredString } from '../src/effect/schema.js'
 import { validateRequest } from '../src/effect/validation.js'
 import { ValidationError } from '../src/effect/errors.js'
-import { followRedirect, readError, readErrorPage, readPage } from '../src/testing.js'
+import { readError, readErrorPage, readPage, testBrowser } from '../src/testing.js'
 
 const CreateProject = S.Struct({ name: requiredString })
 
@@ -274,11 +274,11 @@ describe('domain failures on a form', () => {
   })
 })
 
-describe('followRedirect', () => {
+describe('testBrowser.follow', () => {
   test('carries a failed form\'s errors to the page it goes back to', async () => {
     const app = createApp()
     const failed = await submit(app, { name: '' })
-    const form = await readPage(await followRedirect(app, failed), 'Projects/New')
+    const form = await readPage(await testBrowser(app).follow(failed), 'Projects/New')
 
     expect(form.props.errors.name).toBe('This field is required')
   })
@@ -286,24 +286,27 @@ describe('followRedirect', () => {
   test('carries flash to the page the redirect renders', async () => {
     const app = createApp()
     const created = await submit(app, { name: 'Apollo' })
-    const index = await readPage(await followRedirect(app, created), 'Projects/Index')
+    const index = await readPage(await testBrowser(app).follow(created), 'Projects/Index')
 
     expect(index.flash).toEqual({ success: 'Created Apollo.' })
   })
 
-  test('keeps the cookies the next request already sends', async () => {
+  test('keeps the cookies the browser already holds', async () => {
     const app = createApp()
     const signedIn = await app.request('/sessions', { method: 'POST', headers: page })
-    const next = await followRedirect(app, signedIn, undefined, { headers: { Cookie: 'theme=dark' } })
+    const browser = testBrowser(app)
+    browser.setCookie('theme', 'dark')
+    const next = await browser.follow(signedIn)
 
     expect(next.status).toBe(200)
+    expect(browser.cookies.get('theme')).toBe('dark')
   })
 
   test('rejects a response that is not a redirect', async () => {
     const app = createApp()
     const res = await app.request('/projects', { headers: page })
 
-    expect(followRedirect(app, res)).rejects.toThrow('Expected a redirect')
+    expect(testBrowser(app).follow(res)).rejects.toThrow('Expected a redirect')
   })
 })
 
@@ -337,7 +340,7 @@ describe('redirectNow', () => {
     expect(res.status).toBe(303)
     expect(res.headers.get('Location')).toBe('/stores/new')
 
-    const next = await readPage(await followRedirect(app, res), 'Stores/New')
+    const next = await readPage(await testBrowser(app).follow(res), 'Stores/New')
     expect(next.flash).toEqual({ notice: 'Set up your store first.' })
   })
 

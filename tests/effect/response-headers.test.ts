@@ -10,7 +10,6 @@ import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { json, noContent, notFound } from '../../src/effect/responses.js'
 import { responseHeader } from '../../src/effect/response-headers.js'
-import { testBrowser } from '../../src/testing.js'
 
 // Every answer of v1, success or failure, says it is deprecated.
 const DeprecatedVersion = Layer.effectDiscard(responseHeader('Deprecation', 'true'))
@@ -51,14 +50,5 @@ describe('routes.options and noContent', () => {
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://maps.example')
     expect(res.headers.get('Content-Type')).toBeNull()
     expect(await res.text()).toBe('')
-  })
-})
-
-describe('testBrowser.follow', () => {
-  test('refuses a response another browser received', async () => {
-    const app = createApp()
-    const foreign = await app.request('/api/v1/places')
-
-    expect(() => testBrowser(app).follow(foreign)).toThrow('browser.follow takes a response this browser received')
   })
 })

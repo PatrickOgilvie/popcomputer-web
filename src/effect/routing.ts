@@ -164,6 +164,33 @@ export type RouteActionCheck<R, Err, Services> = [ModelName<Exclude<R, Services>
       readonly fix: "bound('name') reads the model a {name} placeholder in the route path loads: register the action, and any route a layer reading it guards, on a path, or under a prefix, that has one."
     }
 
+/** A Cron Trigger's event, as the Worker's `scheduled` handler receives it. */
+export interface ScheduledEvent {
+  /** The cron expression that fired, as `wrangler.jsonc` lists it. */
+  readonly cron: string
+  /** When the run was scheduled, in milliseconds since the epoch. */
+  readonly scheduledTime: number
+}
+
+/** What a queue handler knows of the message it handles. */
+export interface QueueMessageInfo {
+  readonly id: string
+  /** How many times the queue has delivered it, this time included. */
+  readonly attempts: number
+}
+
+/** A message of a queue batch, as the Worker's `queue` handler receives it. */
+export interface QueueMessage extends QueueMessageInfo {
+  readonly body: unknown
+  ack(): void
+  retry(): void
+}
+
+/** A queue batch, as the Worker's `queue` handler receives it. */
+export interface QueueBatch {
+  readonly messages: ReadonlyArray<QueueMessage>
+}
+
 /** An Effect `routes.run` can run: one whose services the routes provide. */
 export type RunCheck<R, Services> = [ModelName<Exclude<R, Services>>] extends [never]
   ? [Exclude<R, Services>] extends [never]
@@ -452,6 +479,75 @@ export class EffectRouteBuilder<
 
     // SAFETY: the job's exit is the exit of `effect`, whose success is A.
     return result.value as A
+  }
+
+  /**
+   * The Worker's `scheduled` handler: runs the Effect `job` returns for each
+   * Cron Trigger with the application's services, as `run` does, so a failed
+   * run rejects and the platform records it. A test calls the handler with
+   * the event and `testEnv`'s bindings.
+   *
+   * @example
+   * export default {
+   *   fetch: app.fetch,
+   *   scheduled: routes.scheduled((event) => event.cron === '0 3 * * *' ? forgetAbandonedOrders : Effect.void),
+   * }
+   *
+   * // In a test:
+   * await worker.scheduled({ cron: '0 3 * * *', scheduledTime: Date.now() }, testEnv(time.layer, testBindings))
+   */
+  scheduled<Err, R>(
+    job: (event: ScheduledEvent) => Effect.Effect<unknown, Err, R> & RunCheck<R | Needs, Services>
+  ): (event: ScheduledEvent, env: Partial<E['Bindings']>, executionCtx?: ExecutionContext) => Promise<void> {
+    return async (event, env, executionCtx) => {
+      await this.run(job(event), env, executionCtx)
+    }
+  }
+
+  /**
+   * The Worker's `queue` handler: decodes each message's body with `schema`
+   * and runs the Effect `handle` returns for it with the application's
+   * services, one message at a time. A message whose Effect succeeds is
+   * acknowledged; one whose body does not decode, or whose Effect fails, is
+   * logged and left for the queue to retry, and after its retries the queue
+   * drops it or moves it to its dead-letter queue.
+   *
+   * @example
+   * const Reminder = S.Struct({ orderId: S.String })
+   *
+   * export default {
+   *   fetch: app.fetch,
+   *   queue: routes.queue(Reminder, (reminder) => sendReminder(reminder.orderId)),
+   * }
+   *
+   * // In a test, with testBatch from @popcomputer/web/testing:
+   * const batch = testBatch([{ orderId: 'order-1' }])
+   * await worker.queue(batch, testEnv(fakeMailer, testBindings))
+   * expect(batch.acked()).toHaveLength(1)
+   */
+  queue<A, I, Err, R>(
+    schema: S.Codec<A, I, never, never>,
+    handle: (body: A, message: QueueMessageInfo) => Effect.Effect<unknown, Err, R> & RunCheck<R | Needs, Services>
+  ): (batch: QueueBatch, env: Partial<E['Bindings']>, executionCtx?: ExecutionContext) => Promise<void> {
+    const decode = S.decodeUnknownEffect(schema)
+
+    return async (batch, env, executionCtx) => {
+      for (const message of batch.messages) {
+        const work = Effect.flatMap(decode(message.body), (body) => handle(body, message)).pipe(
+          Effect.tapCause((cause) => Effect.logError(`Queue message ${message.id} failed; the queue will retry it.`, cause))
+        )
+
+        // SAFETY: decoding adds only a SchemaError, which `run` reports like
+        // the handler's own failures; the services are the handler's, which
+        // RunCheck admitted.
+        const checked = work as Effect.Effect<unknown, unknown, R> & RunCheck<R | Needs, Services>
+
+        await this.run(checked, env, executionCtx).then(
+          () => message.ack(),
+          () => message.retry()
+        )
+      }
+    }
   }
 
   /**
