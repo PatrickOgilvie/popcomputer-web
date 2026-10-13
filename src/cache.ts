@@ -36,8 +36,7 @@ export type CacheOptions = {
   /**
    * The cache tags the value depends on, as a route's `purges`, `purgeCache`
    * and `recordCacheTag` name them: a route that purges one of them after a
-   * write also invalidates this entry, as it does a cached response. A tagged
-   * entry lives at most 30 days.
+   * write also invalidates this entry, as it does a cached response.
    */
   tags?: ReadonlyArray<string>
 }
@@ -73,20 +72,36 @@ type CacheEntry<V> = { v: V; t: number; g?: Readonly<Record<string, string>> }
 /** The store key holding a cache tag's generation, which each purge replaces. */
 const tagGenerationKey = (tag: string): string => `popweb:tag:${tag}`
 
-/** How long a purged tag's generation is kept, and so the longest a tagged entry lives. */
+/** How long a tag's generation is kept after it is created or replaced. */
 const TAG_GENERATION_TTL_SECONDS = 30 * 24 * 60 * 60
 
-/** A tag's generation before any purge. */
-const INITIAL_GENERATION = '0'
+/** A value no earlier generation of any tag has had. */
+const newGeneration: Effect.Effect<string> = Effect.gen(function* () {
+  return `${(yield* Clock.currentTimeMillis).toString(36)}.${(yield* Random.nextInt).toString(36)}`
+})
 
-/** Each tag's current generation: the value its last purge wrote. */
+/**
+ * Each tag's current generation. A tag no entry has used yet gets its first
+ * generation here, before the value is computed, so a purge that follows a
+ * write during the computation replaces it; a purge of a tag without one
+ * writes nothing.
+ */
 const readTagGenerations = (
   client: CacheClient,
   tags: ReadonlyArray<string>
 ): Effect.Effect<Readonly<Record<string, string>>, CacheError> =>
   Effect.forEach(
     tags,
-    (tag) => Effect.map(client.get(tagGenerationKey(tag)), (generation) => [tag, generation ?? INITIAL_GENERATION] as const),
+    (tag) => Effect.gen(function* () {
+      const current = yield* client.get(tagGenerationKey(tag))
+
+      if (current !== null) return [tag, current] as const
+
+      const first = yield* newGeneration
+      yield* client.put(tagGenerationKey(tag), first, { expirationTtl: TAG_GENERATION_TTL_SECONDS })
+
+      return [tag, first] as const
+    }),
     { concurrency: 'unbounded' }
   ).pipe(Effect.map((entries) => Object.fromEntries(entries)))
 
@@ -310,12 +325,10 @@ export const cache = <V, E, R>(
     const now = yield* Clock.currentTimeMillis
 
     // A purge of any of its tags since the entry was stored makes it a miss.
-    const entry = decoded !== undefined && Option.isSome(generations) && (
-      tags.length === 0 || (
-        now - decoded.t < TAG_GENERATION_TTL_SECONDS * 1000 &&
-        tags.every((tag) => (decoded.g?.[tag] ?? INITIAL_GENERATION) === generations.value[tag])
-      )
-    ) ? decoded : undefined
+    const entry = decoded !== undefined && Option.isSome(generations) &&
+      tags.every((tag) => decoded.g?.[tag] === generations.value[tag])
+      ? decoded
+      : undefined
 
     if (entry !== undefined) {
       const age = now - entry.t
@@ -513,24 +526,27 @@ export const cacheInvalidatePrefix = (
   )
 
 /**
- * Give each tag a new generation, so every entry `cache` stored with it is a
- * miss. A route runs it with its purges after a successful write. A store
- * failure is reported and the entries stay until they expire; without a
- * cache store it does nothing.
+ * Give each tag a cached entry uses a new generation, so every entry `cache`
+ * stored with it is a miss. A route runs it with its purges after a
+ * successful write. A tag no entry uses costs one store read and no write. A
+ * store failure is reported and the entries stay until they expire; without
+ * a cache store it does nothing.
  */
 export const invalidateCacheTags = (tags: ReadonlyArray<string>): Effect.Effect<void> =>
   Effect.flatMap(Effect.serviceOption(CacheService), (store) => {
     if (Option.isNone(store) || tags.length === 0) return Effect.void
 
-    return Effect.gen(function* () {
-      const generation = `${(yield* Clock.currentTimeMillis).toString(36)}.${(yield* Random.nextInt).toString(36)}`
+    const client = store.value
 
-      yield* Effect.forEach(
-        tags,
-        (tag) => store.value.put(tagGenerationKey(tag), generation, { expirationTtl: TAG_GENERATION_TTL_SECONDS }),
-        { concurrency: 'unbounded', discard: true }
-      )
-    }).pipe(Effect.catch(reportInvalidationFailure('cache.invalidateTags')))
+    return Effect.forEach(
+      tags,
+      (tag) => Effect.gen(function* () {
+        if ((yield* client.get(tagGenerationKey(tag))) === null) return
+
+        yield* client.put(tagGenerationKey(tag), yield* newGeneration, { expirationTtl: TAG_GENERATION_TTL_SECONDS })
+      }),
+      { concurrency: 'unbounded', discard: true }
+    ).pipe(Effect.catch(reportInvalidationFailure('cache.invalidateTags')))
   })
 
 export { CacheService, type CacheClient } from './effect/services.js'

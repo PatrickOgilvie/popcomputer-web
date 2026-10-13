@@ -1098,10 +1098,12 @@ const summary = yield* cache(
 )
 ```
 
-Each purge gives the tag a new generation in the store, and an entry stored
-under an older one is a miss. A tagged read costs one store read per tag
-besides the entry's own, a tagged entry lives at most 30 days, and KV takes up
-to a minute to show a write everywhere, as it does an invalidation.
+A tag gets a generation in the store when an entry first uses it, and each
+purge of the tag replaces it, so an entry stored under an older one is a miss.
+A tagged read costs one store read per tag besides the entry's own; a purge of
+a tag no entry uses costs a read and no write. KV accepts one write a second
+to a key and takes up to a minute to show a write everywhere, so tag data by
+the records it reads rather than by a table written many times a second.
 
 `cache` never fails because of the store: an unreachable store or an entry that
 no longer matches the schema computes the value instead, and the failure goes

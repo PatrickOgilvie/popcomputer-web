@@ -1363,6 +1363,21 @@ describe('cache tags', () => {
     expect(await evaluated()).toBe(3)
   })
 
+  it('writes nothing for a purged tag no entry uses', async () => {
+    const { layer, store } = makeTestCache()
+
+    await Effect.gen(function* () {
+      yield* invalidateCacheTags(['projects:p1'])
+      expect([...store.keys()]).toEqual([])
+
+      yield* cache('project:p1', Effect.succeed(1), S.Number, { ttl: Duration.hours(1), tags: ['projects:p1'] })
+      const first = store.get('popweb:tag:projects:p1')?.value
+
+      yield* invalidateCacheTags(['projects:p1'])
+      expect(store.get('popweb:tag:projects:p1')?.value).not.toBe(first)
+    }).pipe(Effect.provide(layer), Effect.runPromise)
+  })
+
   it('does nothing without a cache store', async () => {
     await Effect.runPromise(invalidateCacheTags(['projects']))
   })
