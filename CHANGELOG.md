@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-next.6] - 2026-10-13
+
+Changes since 1.0.0-next.5.
+
 ### Fixed
 
 - Production's 404 message reads "Nothing was found at this address.", for an API's client as for a visitor, in place of "The page you requested was not found."
