@@ -9,7 +9,7 @@
  * @example
  * const res = await app.request('/projects', {}, testEnv(signedIn({ id: 'user-1' })))
  */
-import { DateTime, Effect, Layer } from 'effect'
+import { DateTime, Effect, Layer, Redacted } from 'effect'
 import { AuthUserService, type AuthUser } from './effect/services.js'
 import { attachTestLayer } from './effect/test-env.js'
 
@@ -81,7 +81,7 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
       id: 'test-session',
       userId: user.id,
       expiresAt,
-      token: 'test-token',
+      token: Redacted.make('test-token'),
       // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture for the Better Auth session contract; it does not read the clock.
       createdAt: new Date(0),
       // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture for the Better Auth session contract; it does not read the clock.

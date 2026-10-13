@@ -1,6 +1,6 @@
 /** Effect services exposed by @popcomputer/web. */
 
-import { Context, Effect, Option } from 'effect'
+import { Context, Effect, Option, type Redacted } from 'effect'
 import { UnauthorizedError, ForbiddenError } from './errors.js'
 import type { PageProps, PagePropValue } from '../types.js'
 
@@ -205,7 +205,8 @@ export interface DefaultAuthUser {
     id: string
     userId: string
     expiresAt: Date
-    token: string
+    /** The session secret. Read it with `Redacted.value` only where it is needed. */
+    token: Redacted.Redacted<string>
     createdAt: Date
     updatedAt: Date
   }

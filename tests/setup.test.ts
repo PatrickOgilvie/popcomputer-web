@@ -12,14 +12,13 @@ import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- These teardown tests must yield the actual Hono/SDK Promise event loop; advancing an Effect TestClock cannot flush that native work.
 import { scheduler } from 'node:timers/promises'
-import { Option, Deferred, Effect, Schema as S } from 'effect'
-import { setupWeb, setupWeb, registerErrorHandlers } from '../src/setup.js'
+import { Option, Deferred, Effect, Redacted, Schema as S } from 'effect'
+import { setupWeb, registerErrorHandlers } from '../src/setup.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import {
   DatabaseService,
   AuthService,
   AuthUserService,
-  PageService,
   PageService,
 } from '../src/effect/services.js'
 import { bound, routeBinding } from '../src/effect/binding.js'
@@ -488,6 +487,60 @@ describe('setupWeb schema configuration', () => {
 })
 
 describe('setupWeb auth session loading', () => {
+  test('the default session parser keeps the session token out of responses', async () => {
+    const app = new Hono<TestEnv>()
+
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      auth: {
+        client: () => ({
+          api: {
+            getSession: async () => ({
+              user: {
+                id: 'user-7',
+                email: 'user7@example.com',
+                name: 'User 7',
+                emailVerified: true,
+                image: null,
+                // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+                createdAt: new Date('2026-01-01T00:00:00Z'),
+                // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+                updatedAt: new Date('2026-01-01T00:00:00Z'),
+              },
+              session: {
+                id: 'session-7',
+                userId: 'user-7',
+                // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+                expiresAt: new Date('2027-01-01T00:00:00Z'),
+                token: 'session-secret-7',
+                // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+                createdAt: new Date('2026-01-01T00:00:00Z'),
+                // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+                updatedAt: new Date('2026-01-01T00:00:00Z'),
+              },
+            }),
+          },
+        }),
+      },
+    })
+
+    effectRoutes(app).get('/whoami', Effect.gen(function* () {
+      const auth = yield* AuthUserService
+
+      return Response.json({ auth, token: Redacted.value(auth.session.token) === 'session-secret-7' })
+    }))
+
+    const res = await app.request('/whoami', {
+      headers: { Cookie: 'better-auth.session_token=abc' },
+    })
+    const body = await res.text()
+
+    expect(res.status).toBe(200)
+    expect(body).not.toContain('session-secret-7')
+    expect(JSON.parse(body).token).toBe(true)
+  })
+
   test('loaded session user reaches AuthUserService and shared auth props', async () => {
     const app = new Hono<TestEnv>()
 

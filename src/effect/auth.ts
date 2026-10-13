@@ -508,7 +508,9 @@ export function loadUser<E extends Env>(
     readonly session?: S.Codec<AuthUser, unknown, never, never>
   } = {}
 ): MiddlewareHandler<E> {
-  const { sessionCookie, session: sessionSchema = DefaultAuthSessionSchema } = config
+  const { sessionCookie } = config
+  const sessionSchema: S.Codec<AuthUser, unknown, never, never> =
+    config.session ?? defaultSessionSchema()
 
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return async (c, next) => {
@@ -596,11 +598,24 @@ const DefaultAuthSessionSchema = S.Struct({
     id: S.String,
     userId: S.String,
     expiresAt: S.Date,
-    token: S.String,
+    // Redacted, so serializing the auth user never exposes the session secret.
+    token: S.RedactedFromValue(S.String),
     createdAt: S.Date,
     updatedAt: S.Date,
   }),
 })
+
+/**
+ * The parser used when setupWeb has no `auth.session`. It decodes Better
+ * Auth's default user and session, which is AuthUser unless the application
+ * augments WebAuthUserType.
+ */
+function defaultSessionSchema(): S.Codec<AuthUser, unknown, never, never> {
+  // SAFETY: an application that augments WebAuthUserType passes a parser for
+  // its user shape as auth.session (README "Auth"); otherwise AuthUser is
+  // DefaultAuthUser, which this schema decodes.
+  return DefaultAuthSessionSchema as unknown as S.Codec<AuthUser, unknown, never, never>
+}
 
 export {
   effectifyBetterAuth,

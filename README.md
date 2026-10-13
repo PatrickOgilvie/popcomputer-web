@@ -198,7 +198,7 @@ const AuthSession = S.Struct({
     id: S.String,
     userId: S.String,
     expiresAt: S.Date,
-    token: S.String,
+    token: S.RedactedFromValue(S.String),
     createdAt: S.Date,
     updatedAt: S.Date,
   }),
@@ -465,7 +465,11 @@ predicate returns `false`, the second form fails with `ForbiddenError`.
 
 In the `setupWeb` auth configuration, use `auth.session` to parse the server
 session; do not trust a dependency response because it looks session-shaped.
-Use `auth.share` to deliberately choose the fields serialized into page props.
+An application that augments `WebAuthUserType` must pass `auth.session`, since
+the default parser decodes only Better Auth's default user. The session token
+is `Redacted`, so serializing the auth user never exposes it; read it with
+`Redacted.value` where it is needed. Use `auth.share` to deliberately choose the
+fields serialized into page props.
 
 For form endpoints, `betterAuthFormAction` maps validated Better Auth 4xx
 responses into form errors while keeping rate limits and dependency failures as

@@ -51,7 +51,7 @@ const TestAuthSession = S.Struct({
     id: S.String,
     userId: S.String,
     expiresAt: S.Date,
-    token: S.String,
+    token: S.RedactedFromValue(S.String),
     createdAt: S.Date,
     updatedAt: S.Date,
   }),
