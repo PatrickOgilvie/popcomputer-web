@@ -23,6 +23,14 @@ export const showProject = action(
 )
 ```
 
+## Contents
+
+- [Why this shape](#why-this-shape) · [Installation](#installation) · [Quick start](#quick-start)
+- Building: [Application services](#application-services) · [Validation and the database](#validation-and-the-database) · [Route model binding](#route-model-binding) · [Auth](#auth) · [Responses and failures](#responses-and-failures)
+- Running: [Caching and background work](#caching-and-background-work) · [Scheduled and queued work](#scheduled-and-queued-work) · [Page caching](#page-caching)
+- [Testing](#testing) · [Patterns from real applications](#patterns-from-real-applications)
+- Reference: [Lower-level composition](#lower-level-composition) · [Version values](#version-values) · [Upgrading](#upgrading) · [Migrating from `honertia`](#migrating-from-honertia) · [Tradeoffs and current limits](#tradeoffs-and-current-limits)
+
 ## Why this shape
 
 - **Declare once; the rest derives.** `setupWeb` takes each of the
@@ -95,101 +103,6 @@ The package supports Effect 4 (`^4.0.0`, tested with 4.0.3), Hono 4.10 or
 later 4.x (tested with 4.13.13), Better Auth 1.x (tested with 1.7.7), and
 Drizzle ORM 0.30 or later 0.x (tested with 0.45.4). Hono 5 and Drizzle 1.0 are
 not supported yet: both change APIs this package uses.
-
-### Upgrading from 0.7
-
-These steps take an application on the 0.7.0 release to the unreleased
-changes that follow it; skip any that name an API the application never
-used. The next release declares everything once, in `setupWeb`; the
-[changelog](CHANGELOG.md), shipped in the package as
-`node_modules/@popcomputer/web/CHANGELOG.md`, lists every change. In order:
-
-1. **Register the setup instead of augmenting.** Replace the
-   `WebDatabaseType`, `WebAuthType`, `WebBindingsType`, `WebAuthUserType`,
-   `WebRouteBindingsType` and `WebPagesType` augmentations with
-   `export const web = setupWeb(new Hono<Env>(), config)` and
-   `declare module '@popcomputer/web' { interface Register { web: typeof web } }`.
-   Declare the signed-in user in `auth.session`, the public user as the
-   `auth.share` schema, and `shared` and `flash` as schemas. A layer in
-   `services` that uses the database needs an explicit type.
-2. **Declare paths and tables.** Move route paths into `src/paths.ts`, pass it
-   as `setupWeb`'s `paths`, and build URLs with `redirect(paths.x, params)`
-   (always 303) and `href`. Name each binding's table:
-   `bindings: { project: schema.projects }`.
-3. **Use the new database operations.** `dbMutation(db, asTrusted(...),
-   (tx, values) => ...)` becomes `dbMutation((db) => ...)`; reads use
-   `dbQuery`; `dbTransaction` takes an Effect; on D1 use `dbBatch`.
-4. **Let failed forms go back.** Remove `errorComponent`: a failed form
-   redirects to its page with `errors`. Use `flash` for messages and
-   `invalid(...)` for domain errors on a field.
-5. **Move auth routes onto `routes`.** `effectAuthRoutes` and
-   `betterAuthFormAction` are replaced by ordinary actions that return
-   `betterAuthRedirect(...)`, and `betterAuthHandler` for Better Auth's API.
-6. **Move services.** `effect: { services }` is `services: { request }`, with
-   `services.app` for services built once; the KV data cache is
-   `kvCache(c.env.KV)` in `services.request`.
-7. **Check caching.** Cache tags name records (`{table}:{primary key}`), cached
-   responses vary on `Cookie`, and responses without `Cache-Control` get
-   `private, no-cache`.
-8. **Update tests** to `testEnv(layer, bindings, { database })`,
-   `signedIn(user)`, `readPage(res, 'Page')`, `followRedirect` and
-   `testClock()` from `@popcomputer/web/testing`. A field error in
-   `readPage(...).props.errors` is a message or an error bag's messages, and
-   `signedIn`'s default user is named `Test User`.
-9. **Remove handlers for failures that are gone.** `cacheInvalidate` and
-   `cacheInvalidatePrefix` no longer fail (they report a store failure), so
-   an `Effect.catchTag('CacheError', ...)` on them is a type error.
-
-Run `tsc --noEmit` after each step: the type errors name what is left.
-
-### Upgrading from 0.6
-
-Static pages are now cached at Cloudflare's edge by default; see
-[Page caching](#page-caching). Three things to check:
-
-- Bind version metadata in `wrangler.jsonc`
-  (`"version_metadata": { "binding": "CF_VERSION_METADATA" }`) so each deploy
-  starts from an empty cache.
-- Give `cache: false` to routes whose pages change without reading a binding or
-  request header, such as pages built from an external `fetch()` or the
-  current time.
-- Middleware that sets `Cache-Control` on every response, such as a blanket
-  `no-store`, now stops pages from being cached. Set it only when the response
-  has no `Cache-Control` yet.
-
-Workers builds no longer need `drizzle-orm` installed when the app has no
-route model binding.
-
-### Upgrading from 0.5
-
-Effect 4 is now stable, and the package requires it: the `effect` peer range is
-`^4.0.0`, which no longer accepts `4.0.0-rc.*` prereleases. Install
-`effect@^4.0.0` and apply Effect's own prerelease-to-stable renames in your
-application code (for example `SchemaTransformation.transformOrFail` became
-`transformEffect`, and `Schema.isLengthBetween` became `isBetweenLength`).
-
-`createTemplate` now renders `<title inertia>`, so `<Head title>` replaces the
-template title instead of adding a second `<title>`. Remove any client-side
-workaround that deletes the template title.
-
-`vite.script()` and `vite.hmrHead()` accept a dev-server origin as well as a
-port, for setups where a local proxy serves Vite under its own hostname:
-
-```ts
-const viteServer = 'https://vite.myapp.localhost'
-scripts: [vite.script('/src/main.tsx', viteServer)]
-head: vite.hmrHead(viteServer)
-```
-
-### Upgrading from 0.4
-
-`TestCaptureService.get` is now an Effect value. Replace
-`yield* capture.get()` with `yield* capture.get` in custom test layers and helpers.
-
-Numeric form values, numeric route bindings, and persisted cache timestamps
-reject non-finite numbers. `nullableString` accepts scalar values and rejects
-objects and arrays. `declined` now decodes `0`, `"0"`, `"false"`, `"no"`, and
-`"off"` to `false`.
 
 ## Quick start
 
@@ -1854,6 +1767,103 @@ Three different versions may appear around an application:
 paths. It is unrelated to the npm package version. An application without a
 client build yet, or a test, passes a constant (`version: '1'`) and changes it
 when the client does; export it so tests send the same `X-Inertia-Version`.
+
+## Upgrading
+
+### Upgrading from 0.7
+
+These steps take an application on the 0.7.0 release to the unreleased
+changes that follow it; skip any that name an API the application never
+used. The next release declares everything once, in `setupWeb`; the
+[changelog](CHANGELOG.md), shipped in the package as
+`node_modules/@popcomputer/web/CHANGELOG.md`, lists every change. In order:
+
+1. **Register the setup instead of augmenting.** Replace the
+   `WebDatabaseType`, `WebAuthType`, `WebBindingsType`, `WebAuthUserType`,
+   `WebRouteBindingsType` and `WebPagesType` augmentations with
+   `export const web = setupWeb(new Hono<Env>(), config)` and
+   `declare module '@popcomputer/web' { interface Register { web: typeof web } }`.
+   Declare the signed-in user in `auth.session`, the public user as the
+   `auth.share` schema, and `shared` and `flash` as schemas. A layer in
+   `services` that uses the database needs an explicit type.
+2. **Declare paths and tables.** Move route paths into `src/paths.ts`, pass it
+   as `setupWeb`'s `paths`, and build URLs with `redirect(paths.x, params)`
+   (always 303) and `href`. Name each binding's table:
+   `bindings: { project: schema.projects }`.
+3. **Use the new database operations.** `dbMutation(db, asTrusted(...),
+   (tx, values) => ...)` becomes `dbMutation((db) => ...)`; reads use
+   `dbQuery`; `dbTransaction` takes an Effect; on D1 use `dbBatch`.
+4. **Let failed forms go back.** Remove `errorComponent`: a failed form
+   redirects to its page with `errors`. Use `flash` for messages and
+   `invalid(...)` for domain errors on a field.
+5. **Move auth routes onto `routes`.** `effectAuthRoutes` and
+   `betterAuthFormAction` are replaced by ordinary actions that return
+   `betterAuthRedirect(...)`, and `betterAuthHandler` for Better Auth's API.
+6. **Move services.** `effect: { services }` is `services: { request }`, with
+   `services.app` for services built once; the KV data cache is
+   `kvCache(c.env.KV)` in `services.request`.
+7. **Check caching.** Cache tags name records (`{table}:{primary key}`), cached
+   responses vary on `Cookie`, and responses without `Cache-Control` get
+   `private, no-cache`.
+8. **Update tests** to `testEnv(layer, bindings, { database })`,
+   `signedIn(user)`, `readPage(res, 'Page')`, `followRedirect` and
+   `testClock()` from `@popcomputer/web/testing`. A field error in
+   `readPage(...).props.errors` is a message or an error bag's messages, and
+   `signedIn`'s default user is named `Test User`.
+9. **Remove handlers for failures that are gone.** `cacheInvalidate` and
+   `cacheInvalidatePrefix` no longer fail (they report a store failure), so
+   an `Effect.catchTag('CacheError', ...)` on them is a type error.
+
+Run `tsc --noEmit` after each step: the type errors name what is left.
+
+### Upgrading from 0.6
+
+Static pages are now cached at Cloudflare's edge by default; see
+[Page caching](#page-caching). Three things to check:
+
+- Bind version metadata in `wrangler.jsonc`
+  (`"version_metadata": { "binding": "CF_VERSION_METADATA" }`) so each deploy
+  starts from an empty cache.
+- Give `cache: false` to routes whose pages change without reading a binding or
+  request header, such as pages built from an external `fetch()` or the
+  current time.
+- Middleware that sets `Cache-Control` on every response, such as a blanket
+  `no-store`, now stops pages from being cached. Set it only when the response
+  has no `Cache-Control` yet.
+
+Workers builds no longer need `drizzle-orm` installed when the app has no
+route model binding.
+
+### Upgrading from 0.5
+
+Effect 4 is now stable, and the package requires it: the `effect` peer range is
+`^4.0.0`, which no longer accepts `4.0.0-rc.*` prereleases. Install
+`effect@^4.0.0` and apply Effect's own prerelease-to-stable renames in your
+application code (for example `SchemaTransformation.transformOrFail` became
+`transformEffect`, and `Schema.isLengthBetween` became `isBetweenLength`).
+
+`createTemplate` now renders `<title inertia>`, so `<Head title>` replaces the
+template title instead of adding a second `<title>`. Remove any client-side
+workaround that deletes the template title.
+
+`vite.script()` and `vite.hmrHead()` accept a dev-server origin as well as a
+port, for setups where a local proxy serves Vite under its own hostname:
+
+```ts
+const viteServer = 'https://vite.myapp.localhost'
+scripts: [vite.script('/src/main.tsx', viteServer)]
+head: vite.hmrHead(viteServer)
+```
+
+### Upgrading from 0.4
+
+`TestCaptureService.get` is now an Effect value. Replace
+`yield* capture.get()` with `yield* capture.get` in custom test layers and helpers.
+
+Numeric form values, numeric route bindings, and persisted cache timestamps
+reject non-finite numbers. `nullableString` accepts scalar values and rejects
+objects and arrays. `declined` now decodes `0`, `"0"`, `"false"`, `"no"`, and
+`"off"` to `false`.
 
 ## Migrating from `honertia`
 
