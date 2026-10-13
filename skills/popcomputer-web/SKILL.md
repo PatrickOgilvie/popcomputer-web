@@ -81,7 +81,10 @@ TypeScript example here and in the README type-checks against the package.
    for anything that holds the request's bindings (D1, KV, Hyperdrive).
    Define them with `Context.Service` and `Layer`, and read vars and secrets
    with Effect `Config` (`Config.String('NAME')`, `Config.Redacted('KEY')`),
-   which reads the Worker's bindings.
+   which reads the Worker's bindings. Give a layer whose service uses the
+   database its type (`export const ProjectsLive: Layer.Layer<Projects> =
+   ...`): `setupWeb`'s type includes its services and the database type comes
+   from `setupWeb`, so an inferred one refers to itself.
 10. **Run work that outlives the response with `background('name', effect)`.**
 11. **Give `cache: false` to routes whose page reads something the framework
     cannot see,** such as an external `fetch()` or the current time. Pages that
@@ -175,3 +178,5 @@ setup does not provide (configure them in `setupWeb`, or `routes.provide(layer)`
 and `unhandledErrors` lists failures that are not the package's errors (handle
 them with `Effect.catchTag`, or fail with `HttpError`). A type error at
 `render(...)` means the page or its props differ from `src/pages.ts`.
+`'web' implicitly has type 'any'` (TS7022) means a layer in `services` uses the
+database without a type annotation: annotate the layer, as rule 9 shows.

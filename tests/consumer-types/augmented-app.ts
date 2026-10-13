@@ -13,11 +13,12 @@
  *
  * Run: bun run build && tsc -p tests/consumer-types
  */
-import { Effect, Schema as S } from 'effect'
+import { Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '@popcomputer/web'
 import type { FlashData, SharedProps, WebPage } from '@popcomputer/web/react'
 import {
+  action,
   AuthUserService,
   authorize,
   BindingsService,
@@ -27,6 +28,9 @@ import {
   dbQuery,
   dbTransaction,
   flash,
+  json,
+  type DatabaseError,
+  type DatabaseService,
   render,
   share,
 } from '@popcomputer/web/effect'
@@ -80,6 +84,28 @@ declare function createDb(region: string): AppDatabase
 
 type Env = { Bindings: { readonly REGION: string; readonly MAX_LINKS: string } }
 
+/** A domain service that reads the database. */
+class Projects extends Context.Service<
+  Projects,
+  { readonly find: (id: string) => Effect.Effect<ProjectRow, DatabaseError, DatabaseService> }
+>()('app/Projects') {}
+
+// Its layer states its type: setupWeb's type includes its services, and the
+// database type comes from setupWeb, so an inferred one would refer to itself.
+const ProjectsLive: Layer.Layer<Projects> = Layer.succeed(
+  Projects,
+  Projects.of({ find: (id) => dbQuery((db) => db.findProject(id)) })
+)
+
+/** A service provided to a group of routes, after the registration. */
+class Audit extends Context.Service<
+  Audit,
+  { readonly latest: Effect.Effect<ProjectRow, DatabaseError, DatabaseService> }
+>()('app/Audit') {}
+
+// routes.provide is outside setupWeb's type, so its layer needs no annotation.
+const AuditLive = Layer.succeed(Audit, Audit.of({ latest: dbQuery((db) => db.findProject('latest')) }))
+
 // Every type the application uses is declared here, once.
 export const web = setupWeb(new Hono<Env>(), {
   version: '1',
@@ -90,6 +116,7 @@ export const web = setupWeb(new Hono<Env>(), {
   auth: { session: MemberSession, share: PublicMember },
   shared: S.Struct({ locale: S.String }),
   flash: S.Struct({ success: S.String }),
+  services: { app: ProjectsLive },
 })
 
 // ...and registered, once.
@@ -143,6 +170,23 @@ export const derivedTypes = Effect.gen(function* () {
   // @ts-expect-error a flashed success message is a string
   yield* flash('success', 1)
 })
+
+// Actions use services from setupWeb and from routes.provide alike.
+web.routes
+  .provide(AuditLive)
+  .get(
+    '/projects/{project}',
+    action(
+      Effect.gen(function* () {
+        const projects = yield* Projects
+        const audit = yield* Audit
+        const project = yield* projects.find('project-1')
+        const latest = yield* audit.latest
+
+        return yield* json({ project, latest })
+      })
+    )
+  )
 
 // Registered pages type render and the React component.
 export const showProject = render('Projects/Show', { project: { id: 'p1', createdAt: new Date() } })

@@ -486,6 +486,31 @@ Hyperdrive binding, belongs in `services.request`: Workers forbid using it from
 another request. A request service replaces an application service with the
 same tag. For services only some routes need, use `routes.provide(layer)`.
 
+Give a layer its type when its service uses the database, as a domain service
+whose methods call `dbQuery` does. `setupWeb`'s type includes its services, and
+the database's type comes from `setupWeb`, so an inferred layer type refers to
+itself and TypeScript reports `'web' implicitly has type 'any' because it ...
+is referenced directly or indirectly in its own initializer` (TS7022). A layer
+passed to `routes.provide` is outside `setupWeb`'s type and needs no
+annotation.
+
+```ts
+import { eq } from 'drizzle-orm'
+
+type Project = typeof projects.$inferSelect
+
+export class Projects extends Context.Service<Projects, {
+  readonly ownedBy: (
+    userId: string
+  ) => Effect.Effect<ReadonlyArray<Project>, DatabaseError, DatabaseService>
+}>()('app/Projects') {}
+
+export const ProjectsLive: Layer.Layer<Projects> = Layer.succeed(Projects, Projects.of({
+  ownedBy: (userId) =>
+    dbQuery((db) => db.select().from(projects).where(eq(projects.userId, userId))),
+}))
+```
+
 ## Validation and the database
 
 ```ts
