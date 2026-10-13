@@ -87,6 +87,7 @@ export const ErrorCodes = {
   SVC_700_SERVICE_UNAVAILABLE: 'WEB_SVC_700_SERVICE_UNAVAILABLE',
   SVC_701_SERVICE_ERROR: 'WEB_SVC_701_SERVICE_ERROR',
   SVC_702_CACHE_UNAVAILABLE: 'WEB_SVC_702_CACHE_UNAVAILABLE',
+  SVC_703_CACHE_PURGE_FAILED: 'WEB_SVC_703_CACHE_PURGE_FAILED',
 
   // Internal Errors (INT)
   INT_800_UNEXPECTED: 'WEB_INT_800_UNEXPECTED',
@@ -440,6 +441,16 @@ export const ErrorCatalog = {
     title: 'Cache Unavailable',
     messageTemplate: 'The cache store failed: {reason}',
     httpStatus: 503,
+    defaultFixes: [],
+  },
+
+  [ErrorCodes.SVC_703_CACHE_PURGE_FAILED]: {
+    code: ErrorCodes.SVC_703_CACHE_PURGE_FAILED,
+    tag: 'ResponseCachePurgeError',
+    category: 'service',
+    title: 'Cache Purge Failed',
+    messageTemplate: 'Workers Cache did not purge the requested entries.',
+    httpStatus: 500,
     defaultFixes: [],
   },
 

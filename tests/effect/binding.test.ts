@@ -21,6 +21,7 @@ import {
   decodeBoundRow,
   columnTypeToSchema,
   inferParamsSchema,
+  type ParsedBinding,
 } from '../../src/effect/binding.js'
 import { RouteConfigurationError } from '../../src/effect/errors.js'
 import { ErrorCodes } from '../../src/effect/error-catalog.js'
@@ -412,7 +413,8 @@ describe('pluralize', () => {
 describe('bound() accessor', () => {
   test('retrieves bound model from context', async () => {
     const effect = Effect.gen(function* () {
-      const project = yield* bound('project')
+      // This file does not augment WebRouteBindingsType, so the model is untyped.
+      const project: unknown = yield* bound('project')
 
       return project
     })
@@ -461,7 +463,7 @@ describe('parseBindings and toHonoPath consistency', () => {
     'route "%s" converts to "%s" with correct bindings',
     (input, expectedPath, expectedBindings) => {
       expect(toHonoPath(input)).toBe(expectedPath)
-      expect(parseBindings(input)).toEqual(expectedBindings)
+      expect(parseBindings(input)).toEqual<ReadonlyArray<ParsedBinding>>(expectedBindings)
     }
   )
 
@@ -795,7 +797,7 @@ describe('Route Model Binding Integration', () => {
 describe('columnTypeToSchema', () => {
   // Helper to decode with the dynamically returned schema
   // oxlint-disable-next-line effecttsgo/schema-sync -- These tests deliberately exercise the synchronous throwing decoder with toThrow; their schemas require no runtime services.
-  const decodeWith = (schema: S.Constraint) => S.decodeUnknownSync(schema)
+  const decodeWith = (schema: S.ConstraintDecoder<unknown>) => S.decodeUnknownSync(schema)
 
   describe('UUID types', () => {
     test('PgUUID returns UUID schema', () => {
@@ -918,7 +920,7 @@ describe('columnTypeToSchema', () => {
 describe('inferParamsSchema', () => {
   // Helper to decode with the dynamically returned schema
   // oxlint-disable-next-line effecttsgo/schema-sync -- These tests deliberately exercise the synchronous throwing decoder with toThrow; their schemas require no runtime services.
-  const decodeWith = (schema: S.Constraint) => S.decodeUnknownSync(schema)
+  const decodeWith = (schema: S.ConstraintDecoder<unknown>) => S.decodeUnknownSync(schema)
 
   // Mock Drizzle-like schema for testing
   const mockSchema = {

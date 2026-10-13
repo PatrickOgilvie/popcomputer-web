@@ -22,6 +22,9 @@
 import { Predicate, Context, Data, Effect, Option, Schema as S } from 'effect'
 import { HEADERS } from '../types.js'
 import { pluralize, type ParsedBinding } from './binding.js'
+import { createStructuredError, ErrorCodes } from './error-catalog.js'
+import { emptyContext } from './error-context.js'
+import type { ErrorContext, StructuredError } from './error-types.js'
 
 /**
  * Declarative caching for a route's responses via Workers Cache.
@@ -476,7 +479,15 @@ export interface ResponseCachePurgeInput {
 export class ResponseCachePurgeError extends Data.TaggedError('ResponseCachePurgeError')<{
   readonly input: ResponseCachePurgeInput
   readonly cause: unknown
-}> {}
+}> {
+  get httpStatus(): number {
+    return 500
+  }
+
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
+    return createStructuredError(ErrorCodes.SVC_703_CACHE_PURGE_FAILED, {}, context)
+  }
+}
 
 /**
  * Client interface for purging Workers Cache entries.

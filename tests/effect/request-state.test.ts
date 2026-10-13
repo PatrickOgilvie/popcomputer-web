@@ -16,7 +16,6 @@ import { effectRoutes } from '../../src/effect/routing.js'
 import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import { RequestStateService } from '../../src/effect/services.js'
-import type { PageProps } from '../../src/types.js'
 
 const createApp = () => {
   const app = new Hono()
@@ -34,8 +33,7 @@ describe('RequestStateService', () => {
     // Outer middleware: rewrites the response from state the action published
     app.use('*', async (c, next) => {
       await next()
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const environment = (c.var as PageProps).apiKeyEnvironment
+      const environment: unknown = Reflect.get(c.var, 'apiKeyEnvironment')
 
       if (S.is(S.String)(environment)) {
         c.res.headers.set('X-Api-Key-Environment', environment)

@@ -10,9 +10,12 @@ import {
 } from '../../src/effect/auth.js'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { ValidationError } from '../../src/effect/errors.js'
-import { AuthService, RequestService } from '../../src/effect/services.js'
+import {
+  AuthService,
+  RequestService,
+  type RequestContext,
+} from '../../src/effect/services.js'
 import { setupWeb } from '../../src/setup.js'
-import type { RequestData } from '../../src/effect/validation.js'
 
 const CredentialsSchema = S.Struct({
   email: S.String,
@@ -42,10 +45,16 @@ function createTestAuth() {
   })
 }
 
+declare module '../../src/effect/services.js' {
+  interface WebAuthType {
+    type: ReturnType<typeof createTestAuth>
+  }
+}
+
 function createAuthRequest(
   url: string,
-  body: Readonly<RequestData>
-) {
+  body: Readonly<Record<string, string>>
+): RequestContext {
   return {
     method: 'POST',
     url,

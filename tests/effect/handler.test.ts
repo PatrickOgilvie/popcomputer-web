@@ -29,6 +29,16 @@ import {
 } from '../../src/effect/error-observer.js'
 import { createErrorHandlers } from '../../src/setup.js'
 
+type TestDatabase = {
+  readonly name: string
+}
+
+declare module '../../src/effect/services.js' {
+  interface WebDatabaseType {
+    type: TestDatabase
+  }
+}
+
 // Helper to create test app with all middleware
 const createApp = (bridgeConfig?: EffectBridgeConfig<Env, never>) => {
   const app = new Hono()
@@ -41,8 +51,7 @@ const createApp = (bridgeConfig?: EffectBridgeConfig<Env, never>) => {
     })
   )
 
-  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  app.use('*', webServices(() => ({ db: { name: 'test-db' } as never })))
+  app.use('*', webServices(() => ({ db: { name: 'test-db' } })))
 
   app.use('*', effectBridge(bridgeConfig))
 
@@ -523,7 +532,7 @@ describe('EffectErrorObserverService', () => {
     expect(events[0]?.kind).toBe('failure')
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     expect(events[0] ? (events[0].error as { _tag?: string })._tag : undefined).toBe('ForbiddenError')
-    expect(events[0]?.structured.httpStatus).toBe(403)
+    expect(events[0]?.structured?.httpStatus).toBe(403)
   })
 
   test('swallows observer failures and preserves the original response', async () => {
@@ -581,7 +590,7 @@ describe('EffectErrorObserverService', () => {
     expect(events[0]?.kind).toBe('defect')
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     expect(events[0] ? (events[0].error as Error).message : undefined).toBe('boom')
-    expect(events[0]?.structured.code).toBe('WEB_INT_801_EFFECT_DEFECT')
+    expect(events[0]?.structured?.code).toBe('WEB_INT_801_EFFECT_DEFECT')
   })
 })
 
@@ -698,7 +707,7 @@ describe('Integration Patterns', () => {
         const db = yield* DatabaseService
         const page = yield* PageService
 
-        return yield* Effect.tryPromise(() =>
+        return yield* Effect.promise(() =>
           page.render('Projects/Show', { db, id: 'test' })
         )
       })

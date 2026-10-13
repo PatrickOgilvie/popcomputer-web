@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- `betterAuthFormAction`'s `call` receives the application's Better Auth client type (`WebAuthType`). The third type parameter, which cast the auth service to any client shape the caller named, is removed.
+- `signedIn(user)` accepts partial user fields only when Better Auth's default session fits the application's `AuthUser`; an application whose augmented session differs passes a complete `AuthUser`.
 - `auth.session` is required once an application augments `WebAuthUserType`, in `setupWeb` and in `loadUser`: the default parser decodes only Better Auth's default user, which it had silently assigned to the augmented type. `setupWeb` has one signature instead of overloads for applications with and without a database, so a configuration mistake is reported against the configuration rather than against the last overload; `WebSetupConfig` takes `E, DB, Auth, AppServices, RequestServices`, with `DB` absent when there is no `database`.
 - The data cache is an application service: provide a store with `kvCache(c.env.KV)` from `@popcomputer/web/cache` in `services.request`. Requests no longer get a `CacheService` backed by a binding named `KV`, or one that failed every call when that binding was absent. `cache()` fails only with its computation's errors: an unreachable store, or an entry that no longer matches the schema, computes the value instead and reports the failure to `EffectErrorObserverService`. `cacheGet` reads such an entry as absent. `cacheGet`, `cacheSet`, `cacheInvalidate` and `cacheInvalidatePrefix` fail with `CacheError`, now one of the package's errors (`WEB_SVC_702_CACHE_UNAVAILABLE`, 503). `CacheClientError` is removed; `CacheClient` implementations fail with `CacheError`.
 - `setupWeb`'s `effect: { services }` option is `services: { request }`, and `services.app` adds services built once per isolate and shared by every request. Passing `effect` is a type error and throws with directions. Request services replace application services with the same tag; test layers from `testEnv` replace both.
@@ -48,12 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ResponseCachePurgeError` is one of the package's errors (`WEB_SVC_703_CACHE_PURGE_FAILED`, 500), so an action that calls `ResponseCacheService.purge`, as the README shows, can be registered.
+- `WebPage` and `WithSharedProps` without props default to no page props instead of every prop being `never`, so shared props such as `errors` type-check.
 - Actions that call `background()` or `cache()` type-check when registered: the route service type omitted `ExecutionContextService` and `CacheService`, which every request provides.
 - A signed-out request could tell whether a route's record existed: route model bindings were queried before the action and its guards ran, so `/projects/{project}` answered 404 for a missing project and redirected to sign-in for an existing one, even behind `RequireAuthLayer`. Bindings now load when the action calls `bound()`, after the guards.
 - An error's own hint, such as which `{placeholder}` a route is missing or how to install `drizzle-orm`, is now its first fix suggestion; hints were dropped before reaching the output. Configuration fixes show code for the current API (`setupWeb(app, { database: (c) => createDb(c.env.DATABASE_URL) })`, an ESM schema import) instead of `require("./db/schema")` and `drizzle(c.env.DB)`.
 - Error context reads the matched route pattern with `routePath(c)` from `hono/route` instead of `c.req.routePath`, which Hono 5 removes.
 - A JSON request body that is not an object (`null`, an array, a string or a number) fails validation with `422` instead of crashing the request with `500`.
 - Route builder methods (`get`, `post`, `put`, `patch`, `delete`, `all`, `group`) return the builder, so registrations chain as the README shows. They returned `undefined`, and a chained call threw a `TypeError`.
+- Every test file type-checks, each in its own program, as part of `bun run test:types`. Bun runs tests without type-checking, and 22 files had drifted from the package's types.
 - README examples type-check against the package, and `bun run test:types` checks every TypeScript example in the README and `AGENTS.md`. Corrected examples: the `background` call takes an operation name, Workers Cache routes register through `effectRoutes(app)`, `src/routes.ts` imports its app, alternative setups read bindings the `Bindings` type declares, `authorize` predicates use a field of the default user, and the lower-level composition example is a complete module that passes its `Env` to `webServices`.
 
 ### Changed

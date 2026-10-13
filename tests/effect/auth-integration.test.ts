@@ -51,8 +51,7 @@ describe('Auth Integration Types', () => {
       // Create action using the factory
       const loginAction = betterAuthFormAction<
         S.Schema.Type<typeof LoginSchema>,
-        S.Schema.Encoded<typeof LoginSchema>,
-        MockAuthClient
+        S.Codec.Encoded<typeof LoginSchema>
       >({
         schema: LoginSchema,
         errorComponent: 'Auth/Login',
@@ -72,8 +71,7 @@ describe('Auth Integration Types', () => {
     test('registerAction accepts betterAuthFormAction result', () => {
       const registerAction = betterAuthFormAction<
         S.Schema.Type<typeof RegisterSchema>,
-        S.Schema.Encoded<typeof RegisterSchema>,
-        MockAuthClient
+        S.Codec.Encoded<typeof RegisterSchema>
       >({
         schema: RegisterSchema,
         errorComponent: 'Auth/Register',
@@ -111,8 +109,7 @@ describe('Auth Integration Types', () => {
 
       const loginAction = betterAuthFormAction<
         S.Schema.Type<typeof LoginSchema>,
-        S.Schema.Encoded<typeof LoginSchema>,
-        MockAuthClient
+        S.Codec.Encoded<typeof LoginSchema>
       >({
         schema: LoginSchema,
         errorComponent: 'Auth/Login',
@@ -121,8 +118,7 @@ describe('Auth Integration Types', () => {
 
       const registerAction = betterAuthFormAction<
         S.Schema.Type<typeof RegisterSchema>,
-        S.Schema.Encoded<typeof RegisterSchema>,
-        MockAuthClient
+        S.Codec.Encoded<typeof RegisterSchema>
       >({
         schema: RegisterSchema,
         errorComponent: 'Auth/Register',
@@ -157,8 +153,7 @@ describe('Auth Integration Types', () => {
 
       const forgotPasswordAction = betterAuthFormAction<
         S.Schema.Type<typeof ForgotPasswordSchema>,
-        S.Schema.Encoded<typeof ForgotPasswordSchema>,
-        MockAuthClient
+        S.Codec.Encoded<typeof ForgotPasswordSchema>
       >({
         schema: ForgotPasswordSchema,
         errorComponent: 'Auth/ForgotPassword',

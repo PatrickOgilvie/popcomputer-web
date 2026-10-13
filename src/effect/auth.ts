@@ -643,10 +643,11 @@ export {
 /**
  * Config for better-auth form actions (login/register).
  */
-export interface BetterAuthFormActionConfig<A, I, AuthClient = AuthType> {
+export interface BetterAuthFormActionConfig<A, I> {
   readonly schema: S.Codec<A, I, never, never>
   readonly errorComponent: string
-  readonly call: (auth: AuthClient, input: A, request: Request) => Promise<BetterAuthActionResult>
+  /** Call Better Auth through the application's client (WebAuthType). */
+  readonly call: (auth: AuthType, input: A, request: Request) => Promise<BetterAuthActionResult>
   readonly errorMapper?: (error: BetterAuthActionError) => Record<string, string>
   readonly redirectTo?: string | ((input: A, result: BetterAuthActionResult) => string)
 }
@@ -658,8 +659,8 @@ export interface BetterAuthFormActionConfig<A, I, AuthClient = AuthType> {
  * Maps expected Better Auth request rejections into ValidationError, rate
  * limits into AuthRateLimitError, and dependency failures into HttpError.
  */
-export function betterAuthFormAction<A, I, AuthClient = AuthType>(
-  config: BetterAuthFormActionConfig<A, I, AuthClient>
+export function betterAuthFormAction<A, I>(
+  config: BetterAuthFormActionConfig<A, I>
 ): Effect.Effect<
   Response,
   AuthRedirect | ValidationError | AuthRateLimitError | HttpError,
@@ -673,9 +674,8 @@ export function betterAuthFormAction<A, I, AuthClient = AuthType>(
       errorComponent: config.errorComponent,
     })
 
-    // SAFETY: The Better Auth boundary validated this representation before exposing the narrower adapter contract.
     const result = yield* runBetterAuthApiCall(() =>
-      config.call(auth as AuthClient, input, buildAuthRequest(request))
+      config.call(auth, input, buildAuthRequest(request))
     ).pipe(
       Effect.mapError((failure) =>
         toAuthActionError(failure, config.errorComponent, config.errorMapper)

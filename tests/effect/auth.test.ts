@@ -5,7 +5,7 @@
 
 import { describe, test, expect } from 'bun:test'
 import { APIError } from 'better-auth'
-import { Predicate, Effect, Layer, Exit, Cause, Option, Schema as S } from 'effect'
+import { Predicate, Effect, Layer, Exit, Cause, Option, Redacted, Schema as S } from 'effect'
 import type { PageProps } from '../../src/types.js'
 import {
   betterAuthFormAction,
@@ -23,13 +23,53 @@ import {
   PageService,
   type AuthUser,
   type PageRenderer,
+  type RequestContext,
 } from '../../src/effect/services.js'
 import {
   AuthRateLimitError,
   HttpError,
   ValidationError,
 } from '../../src/effect/errors.js'
-import type { BetterAuthActionError } from '../../src/effect/auth.js'
+import type { BetterAuthActionError, BetterAuthActionResult } from '../../src/effect/auth.js'
+
+/** The input Better Auth's email endpoints receive. */
+interface EmailCredentialsInput {
+  readonly body: { readonly email: string; readonly password: string }
+  readonly request?: Request
+  readonly returnHeaders?: boolean
+}
+
+/** The Better Auth endpoints the form action tests call. */
+interface TestCredentialsAuth {
+  readonly api: {
+    readonly signInEmail: (input: EmailCredentialsInput) => Promise<BetterAuthActionResult>
+    readonly signUpEmail: (input: EmailCredentialsInput) => Promise<BetterAuthActionResult>
+  }
+}
+
+/** The Better Auth endpoint the logout action calls. */
+interface TestSignOutAuth {
+  readonly api: {
+    readonly signOut: (input: {
+      readonly headers: Headers
+      readonly request?: Request
+      readonly returnHeaders?: boolean
+    }) => Promise<BetterAuthActionResult>
+  }
+}
+
+declare module '../../src/effect/services.js' {
+  interface WebAuthType {
+    type: TestCredentialsAuth | TestSignOutAuth
+  }
+}
+
+/** The sign-in endpoints of a test client that provides them. */
+const credentialsApi = (auth: TestCredentialsAuth | TestSignOutAuth): TestCredentialsAuth['api'] => {
+  if ('signInEmail' in auth.api) return auth.api
+
+  throw new Error('This test client has no credential endpoints.')
+}
 
 // Mock user data
 const createMockUser = (overrides: Partial<AuthUser['user']> = {}): AuthUser => ({
@@ -50,7 +90,7 @@ const createMockUser = (overrides: Partial<AuthUser['user']> = {}): AuthUser => 
     userId: 'user-123',
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     expiresAt: new Date('2024-12-31'),
-    token: 'test-token',
+    token: Redacted.make('test-token'),
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     createdAt: new Date('2024-01-01'),
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
@@ -90,7 +130,7 @@ describe('RequireAuthLayer', () => {
     )
 
     expect(result.user.id).toBe('user-123')
-    expect(result.session.token).toBe('test-token')
+    expect(Redacted.value(result.session.token)).toBe('test-token')
   })
 
   test('fails with UnauthorizedError when no AuthUserService is available', async () => {
@@ -233,15 +273,16 @@ describe('betterAuthFormAction', () => {
   const createAuthRequest = (options: {
     method?: string
     url?: string
-    body?: PageProps
+    body?: Record<string, string>
     headers?: Record<string, string>
-  } = {}) => ({
+  } = {}): RequestContext => ({
     method: options.method ?? 'POST',
     url: options.url ?? 'http://localhost/login',
     headers: new Headers({
       'Content-Type': 'application/json',
       ...options.headers,
     }),
+    env: {},
     param: () => undefined,
     params: () => ({}),
     query: () => ({}),
@@ -256,7 +297,7 @@ describe('betterAuthFormAction', () => {
     shouldSucceed?: boolean
     error?: { code?: string; message?: string }
     responseHeaders?: Headers
-  } = {}) => ({
+  } = {}): TestCredentialsAuth => ({
     api: {
       signInEmail: async () => {
         if (!options.shouldSucceed && options.error) {
@@ -295,8 +336,8 @@ describe('betterAuthFormAction', () => {
       schema: LoginSchema,
       errorComponent: 'Auth/Login',
       redirectTo: '/dashboard',
-      call: (auth: ReturnType<typeof createMockAuth>, input, request) =>
-        auth.api.signInEmail({
+      call: (auth, input, request) =>
+        credentialsApi(auth).signInEmail({
           body: { email: input.email, password: input.password },
           request,
           returnHeaders: true,
@@ -413,7 +454,7 @@ describe('betterAuthFormAction', () => {
       password: S.String,
     })
 
-    const errorMapper = (error: BetterAuthActionError) => {
+    const errorMapper = (error: BetterAuthActionError): Record<string, string> => {
       switch (error.code) {
         case 'INVALID_EMAIL_OR_PASSWORD':
           return { email: 'Invalid email or password' }
@@ -924,13 +965,14 @@ describe('betterAuthFormAction', () => {
 
 describe('betterAuthLogoutAction', () => {
   // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  const createLogoutRequest = () => ({
+  const createLogoutRequest = (): RequestContext => ({
     method: 'POST',
     url: 'http://localhost/logout',
     headers: new Headers({
       'Content-Type': 'application/json',
       'Cookie': 'better-auth.session_token=abc123',
     }),
+    env: {},
     param: () => undefined,
     params: () => ({}),
     query: () => ({}),

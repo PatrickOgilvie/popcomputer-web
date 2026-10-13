@@ -5,7 +5,7 @@
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { Effect, Layer, Context, Schema as S } from 'effect'
+import { Effect, Layer, Context, Redacted, Schema as S } from 'effect'
 import { effectRoutes, EffectRouteBuilder } from '../../src/effect/routing.js'
 import { web } from '../../src/middleware.js'
 import { webServices } from '../../src/request-context.js'
@@ -99,7 +99,7 @@ const createMockUser = (): AuthUser => ({
     userId: 'user-123',
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     expiresAt: new Date('2026-01-01T00:00:00Z'),
-    token: 'token',
+    token: Redacted.make('token'),
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     createdAt: new Date('2026-01-01T00:00:00Z'),
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.

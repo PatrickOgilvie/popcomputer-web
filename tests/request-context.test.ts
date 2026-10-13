@@ -21,6 +21,34 @@ import { effectBridge } from '../src/effect/bridge.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import { DatabaseService } from '../src/effect/services.js'
 
+interface TestDatabase {
+  readonly name: string
+}
+
+/** An opaque auth client the tests identify by name. */
+interface NamedTestAuth {
+  readonly name: string
+}
+
+/** The Better Auth endpoint loadUser reads the session from. */
+interface SessionTestAuth {
+  readonly api: {
+    readonly getSession: (input: {
+      readonly headers: Headers
+    }) => Promise<{ user: unknown; session: unknown } | null>
+  }
+}
+
+declare module '../src/effect/services.js' {
+  interface WebDatabaseType {
+    type: TestDatabase
+  }
+
+  interface WebAuthType {
+    type: NamedTestAuth | SessionTestAuth
+  }
+}
+
 describe('webServices + webContext', () => {
   test('services provided by webServices are readable in later middleware', async () => {
     const app = new Hono()
@@ -70,17 +98,15 @@ describe('webServices + webContext', () => {
   test('DatabaseService in an effect route resolves to the provided db', async () => {
     const app = new Hono()
     app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    app.use('*', webServices(() => ({ db: { name: 'holder-db' } as never })))
+    app.use('*', webServices(() => ({ db: { name: 'holder-db' } })))
     app.use('*', effectBridge())
 
     effectRoutes(app).get(
       '/db-name',
       Effect.gen(function* () {
         const db = yield* DatabaseService
-        const name = Object.getOwnPropertyDescriptor(db, 'name')?.value
 
-        return new Response(String(name))
+        return new Response(db.name)
       })
     )
 
@@ -150,15 +176,13 @@ describe('webServices + webContext', () => {
       },
     }
 
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    app.use('*', webServices(() => ({ auth: fakeAuth as never })))
+    app.use('*', webServices(() => ({ auth: fakeAuth })))
     app.use('*', loadUser())
 
     app.get('/whoami', (c) => {
       const { authUser } = webContext(c)
 
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      return c.json({ userId: (authUser?.user as { id?: string } | undefined)?.id ?? null })
+      return c.json({ userId: authUser?.user.id ?? null })
     })
 
     const res = await app.request('/whoami')

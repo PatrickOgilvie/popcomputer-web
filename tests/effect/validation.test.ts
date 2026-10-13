@@ -309,7 +309,7 @@ describe('validateUnknown with typed input', () => {
       validateUnknown(schema, { name: 'John', age: 30 })
     )
 
-    expect(result).toEqual({ name: 'John', age: 30 })
+    expect(result).toEqual<typeof schema.Type>({ name: 'John', age: 30 })
   })
 
   test('fails with ValidationError on invalid data', () => {
@@ -404,7 +404,7 @@ describe('validateUnknown', () => {
     const raw = { id: 'x', count: '3' }
 
     const result = Effect.runSync(validateUnknown(schema, raw))
-    expect(result).toEqual({ id: 'x', count: 3 })
+    expect(result).toEqual<typeof schema.Type>({ id: 'x', count: 3 })
   })
 })
 
@@ -418,7 +418,7 @@ describe('parseOptions', () => {
       validateUnknown(schema, { name: 'Test', extra: 'field' })
     )
 
-    expect(result).toEqual({ name: 'Test' })
+    expect(result).toEqual<typeof schema.Type>({ name: 'Test' })
   })
 
   test('validateUnknown rejects excess properties with onExcessProperty error', () => {
@@ -453,7 +453,6 @@ describe('parseOptions', () => {
 
     const exit = await runWithRequestAsync(
       validateRequest(schema, {
-        request: 'laravel',
         parseOptions: { onExcessProperty: 'error' },
       }),
       request
@@ -506,7 +505,7 @@ describe('validateRequest', () => {
     expect(Exit.isSuccess(exit)).toBe(true)
 
     if (Exit.isSuccess(exit)) {
-      expect(exit.value).toEqual({ id: '123', name: 'Test' })
+      expect(exit.value).toEqual<typeof schema.Type>({ id: '123', name: 'Test' })
     }
   })
 

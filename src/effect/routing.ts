@@ -125,7 +125,7 @@ export type RouteActionCheck<R, Err, Services> = [Exclude<R, Services>] extends 
       }
   : {
       readonly missingServices: ServiceKey<Exclude<R, Services>>
-      readonly fix: 'Configure the service in setupWeb (database, auth, effect.services), or add it with routes.provide(layer).'
+      readonly fix: 'Configure the service in setupWeb (database, auth, services.app, services.request), or add it with routes.provide(layer).'
     }
 
 /** An action a route with `Services` can run. */

@@ -107,7 +107,7 @@ describe('the README route test', () => {
     const { eq } = await import('drizzle-orm')
     const { bound } = await import('../src/effect/binding.js')
     const { redirect, render } = await import('../src/effect/responses.js')
-    const { asTrusted, validateRequest } = await import('../src/effect/validation.js')
+    const { asTrusted, validateRequest, validateUnknown } = await import('../src/effect/validation.js')
     const { dbMutation } = await import('../src/effect/action.js')
     const { requiredString, nullableString } = await import('../src/effect/schema.js')
 
@@ -143,9 +143,10 @@ describe('the README route test', () => {
     })
 
     effectRoutes(app).get('/projects/{project}', action(Effect.gen(function* () {
-      const project = yield* bound('project')
-      // This test does not augment WebRouteBindingsType, so `project` is untyped here.
-      yield* authorize((auth) => auth.user.id === Reflect.get(project, 'userId'))
+      // This test does not augment WebRouteBindingsType, so `bound` leaves the
+      // model untyped; the parser registered for `project` types it here.
+      const project = yield* validateUnknown(Project, yield* bound('project'))
+      yield* authorize((auth) => auth.user.id === project.userId)
 
       return yield* render('Projects/Show', { project })
     })))

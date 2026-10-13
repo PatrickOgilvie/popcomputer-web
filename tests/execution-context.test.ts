@@ -158,7 +158,7 @@ describe('ExecutionContextService', () => {
 
     it('preserves context in background tasks', async () => {
       const { layer, awaitAll } = makeTestExecutionContext()
-      let capturedValue: string | null = null
+      const captured: { value: string | null } = { value: null }
 
       // Create a test service to verify context is preserved
       const TestService = Context.Service<{ readonly value: string }>('TestService')
@@ -170,13 +170,13 @@ describe('ExecutionContextService', () => {
         yield* ctx.runInBackground(
           Effect.gen(function* () {
             const test = yield* TestService
-            capturedValue = test.value
+            captured.value = test.value
           })
         )
       }).pipe(Effect.provide(Layer.merge(layer, testLayer)), Effect.runPromise)
 
       await awaitAll()
-      expect(capturedValue).toBe('from-context')
+      expect(captured.value).toBe('from-context')
     })
 
     it('can schedule multiple background tasks', async () => {

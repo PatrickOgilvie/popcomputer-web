@@ -31,3 +31,4 @@ npm-debug.log*
 .env.*.local
 .npmrc
 reference
+tests/.typecheck/

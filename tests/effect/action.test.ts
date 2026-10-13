@@ -5,9 +5,8 @@ import assert from 'node:assert/strict'
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Option, Predicate, Effect, Schema as S, Layer, Exit, Cause } from 'effect'
+import { Option, Predicate, Effect, Schema as S, Layer, Exit, Cause, Redacted } from 'effect'
 import type { PageProps } from '../../src/types.js'
-import type { RequestData } from '../../src/effect/validation.js'
 import {
   action,
   dbMutation,
@@ -50,7 +49,7 @@ const createMockUser = (overrides: Partial<AuthUser['user']> = {}): AuthUser => 
     userId: 'user-123',
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     expiresAt: new Date('2024-12-31'),
-    token: 'test-token',
+    token: Redacted.make('test-token'),
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
     createdAt: new Date('2024-01-01'),
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
@@ -92,17 +91,27 @@ const createMockDb = () => ({
   },
 })
 
+type MockDatabase = ReturnType<typeof createMockDb>
+
+declare module '../../src/effect/services.js' {
+  interface WebDatabaseType {
+    // Tests provide either the mock client or a named stub they serialize.
+    type: MockDatabase | { readonly name: string }
+  }
+}
+
 // Mock request context
 // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
 const createMockRequest = (options: {
   method?: string
-  body?: RequestData
+  body?: Record<string, string>
   params?: Record<string, string>
   query?: Record<string, string>
 } = {}): RequestContext => ({
   method: options.method ?? 'POST',
   url: 'http://localhost/',
   headers: new Headers({ 'Content-Type': 'application/json' }),
+  env: {},
   param: (name: string) => options.params?.[name],
   params: () => options.params ?? {},
   query: () => options.query ?? {},
@@ -196,7 +205,7 @@ describe('action', () => {
       name: S.String,
     })
 
-    let capturedData: { userId: string; name: string } | null = null
+    const captured: { data: { userId: string; name: string } | null } = { data: null }
 
     const myAction = action(
       Effect.gen(function* () {
@@ -204,7 +213,7 @@ describe('action', () => {
         const input = yield* validateRequest(schema)
         yield* DatabaseService
 
-        capturedData = { userId: user.user.id, name: input.name }
+        captured.data = { userId: user.user.id, name: input.name }
 
         return new Redirect({ url: '/', status: 303 })
       })
@@ -222,10 +231,10 @@ describe('action', () => {
 
     await Effect.runPromise(Effect.provide(myAction, layer))
 
-    expect(capturedData).not.toBeNull()
-    assert.ok(capturedData)
-    expect(capturedData.userId).toBe('user-123')
-    expect(capturedData.name).toBe('Project')
+    expect(captured.data).not.toBeNull()
+    assert.ok(captured.data)
+    expect(captured.data.userId).toBe('user-123')
+    expect(captured.data.name).toBe('Project')
   })
 })
 
@@ -307,7 +316,7 @@ describe('authorize', () => {
 describe('dbTransaction', () => {
   test('runs operations in a transaction', async () => {
     const mockDb = {
-      transaction: async <T, Transaction>(fn: (tx: Transaction) => Promise<T>) => {
+      transaction: async <T>(fn: (tx: { insert: () => Promise<{ id: number }> }) => Promise<T>) => {
         const tx = { insert: () => Promise.resolve({ id: 1 }) }
 
         return fn(tx)
@@ -315,8 +324,7 @@ describe('dbTransaction', () => {
     }
 
     const effect = dbTransaction(mockDb, async (tx) => {
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const result = await (tx as { insert: () => Promise<{ id: number }> }).insert()
+      const result = await tx.insert()
 
       return { inserted: result.id }
     })
@@ -330,7 +338,7 @@ describe('dbTransaction', () => {
     let rolledBack = false
 
     const mockDb = {
-      transaction: async <T, Transaction>(fn: (tx: Transaction) => Promise<T>) => {
+      transaction: async <T>(fn: (tx: Record<never, never>) => Promise<T>) => {
         try {
           return await fn({})
         } catch (e) {

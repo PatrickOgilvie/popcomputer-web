@@ -19,6 +19,7 @@ import {
   type ErrorCode,
 } from './error-catalog.js'
 import { emptyContext } from './error-context.js'
+import type { ResponseCachePurgeError } from './response-cache.js'
 
 /**
  * Interface for errors that can be converted to structured format.
@@ -729,6 +730,7 @@ export type AppError =
   | RouteConfigurationError
   | ConfigurationError
   | CacheError
+  | ResponseCachePurgeError
 
 /**
  * Cache Error - The cache store failed an explicit cache operation.

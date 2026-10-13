@@ -18,6 +18,17 @@ import { webServices } from '../../src/request-context.js'
 import { setupWeb } from '../../src/setup.js'
 import { DatabaseService } from '../../src/effect/services.js'
 
+/** The database stub these tests provide and read back. */
+interface TestDatabase {
+  readonly name: string
+}
+
+declare module '../../src/effect/services.js' {
+  interface WebDatabaseType {
+    type: TestDatabase
+  }
+}
+
 // =============================================================================
 // Custom Service Definitions (simulating Cloudflare Worker bindings)
 // =============================================================================
@@ -77,8 +88,7 @@ const createTestApp = () => {
     })
   )
 
-  // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-  app.use('*', webServices(() => ({ db: { name: 'test-db' } as never })))
+  app.use('*', webServices(() => ({ db: { name: 'test-db' } })))
   app.use('*', async (c, next) => {
     // Simulate Cloudflare Worker bindings
     // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
@@ -137,11 +147,11 @@ describe('Custom Services via effectBridge', () => {
       })
     )
 
-    effectRoutes(app).get(
+    effectRoutes<TestEnv, BindingsService>(app).get(
       '/user/:id',
       Effect.gen(function* () {
         const bindings = yield* BindingsService
-        const name = yield* Effect.tryPromise(() => bindings.KV.get('user:123'))
+        const name = yield* Effect.promise(() => bindings.KV.get('user:123'))
 
         return new Response(`User: ${name}`)
       })
@@ -169,13 +179,13 @@ describe('Custom Services via effectBridge', () => {
       })
     )
 
-    effectRoutes(app).get(
+    effectRoutes<TestEnv, BindingsService | LoggerService>(app).get(
       '/test',
       Effect.gen(function* () {
         const bindings = yield* BindingsService
         const logger = yield* LoggerService
 
-        const theme = yield* Effect.tryPromise(() =>
+        const theme = yield* Effect.promise(() =>
           bindings.KV.get('config:theme')
         )
 
@@ -207,8 +217,7 @@ describe('Custom Services via effectBridge', () => {
     )
 
     // Simulate Cloudflare Worker bindings and set up db
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    app.use('*', webServices(() => ({ db: { name: 'custom-db' } as never })))
+    app.use('*', webServices(() => ({ db: { name: 'custom-db' } })))
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       // oxlint-disable-next-line no-param-reassign -- This middleware supplies the Worker binding fixture consumed by the bridge.
@@ -232,13 +241,12 @@ describe('Custom Services via effectBridge', () => {
         const db = yield* DatabaseService
         const bindings = yield* BindingsService
 
-        const userName = yield* Effect.tryPromise(() =>
+        const userName = yield* Effect.promise(() =>
           bindings.KV.get('user:123')
         )
 
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         return Response.json({
-            dbName: (db).name,
+            dbName: db.name,
             userName,
           })
       })
@@ -256,8 +264,7 @@ describe('Custom Services via setupWeb', () => {
   test('injects custom services via effect config', async () => {
     const app = new Hono<TestEnv>()
 
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    app.use('*', webServices(() => ({ db: { name: 'test-db' } as never })))
+    app.use('*', webServices(() => ({ db: { name: 'test-db' } })))
     app.use('*', async (c, next) => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       // oxlint-disable-next-line no-param-reassign -- This middleware supplies the Worker binding fixture consumed by the bridge.
@@ -268,7 +275,7 @@ describe('Custom Services via setupWeb', () => {
       await next()
     })
 
-    setupWeb(app, {
+    const { routes } = setupWeb(app, {
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
       services: {
@@ -280,11 +287,11 @@ describe('Custom Services via setupWeb', () => {
       },
     })
 
-    effectRoutes(app).get(
+    routes.get(
       '/setup-web',
       Effect.gen(function* () {
         const bindings = yield* BindingsService
-        const name = yield* Effect.tryPromise(() => bindings.KV.get('user:123'))
+        const name = yield* Effect.promise(() => bindings.KV.get('user:123'))
 
         return new Response(name ?? 'missing')
       })
@@ -343,7 +350,7 @@ describe('Custom Services via effectRoutes config', () => {
           Effect.gen(function* () {
             const bindings = yield* BindingsService
 
-            const value = yield* Effect.tryPromise(() =>
+            const value = yield* Effect.promise(() =>
               bindings.KV.get('user:123')
             )
 
@@ -381,7 +388,7 @@ describe('Custom Services via effectRoutes config', () => {
           const bindings = yield* BindingsService
           const requestId = yield* RequestIdService
 
-          const userName = yield* Effect.tryPromise(() =>
+          const userName = yield* Effect.promise(() =>
             bindings.KV.get('user:123')
           )
 
@@ -413,7 +420,7 @@ describe('Custom Services via effectRoutes config', () => {
       Effect.gen(function* () {
         const bindings = yield* BindingsService
 
-        const theme = yield* Effect.tryPromise(() =>
+        const theme = yield* Effect.promise(() =>
           bindings.KV.get('config:theme')
         )
 
@@ -448,8 +455,7 @@ describe('buildContextLayer with custom services', () => {
       }).pipe(Effect.provide(layer))
 
       const result = await Effect.runPromise(program)
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      c.set('testResult', result)
+      c.set('testResult', result ?? 'missing')
       await next()
     })
 
@@ -499,12 +505,12 @@ describe('Real-world Cloudflare Workers patterns', () => {
       })
     )
 
-    effectRoutes(app).get(
+    effectRoutes<TestEnv, D1Service>(app).get(
       '/projects/:id',
       Effect.gen(function* () {
         const d1 = yield* D1Service
 
-        const project = yield* Effect.tryPromise(() =>
+        const project = yield* Effect.promise(() =>
           d1.prepare('SELECT * FROM projects WHERE id = ?').bind(1).first<{
             id: number
             name: string
@@ -547,7 +553,7 @@ describe('Real-world Cloudflare Workers patterns', () => {
       })
     )
 
-    effectRoutes(app).post(
+    effectRoutes<TestEnv, AnalyticsService>(app).post(
       '/track',
       Effect.gen(function* () {
         const analytics = yield* AnalyticsService
@@ -599,12 +605,12 @@ describe('Real-world Cloudflare Workers patterns', () => {
       })
     )
 
-    effectRoutes(app).post(
+    effectRoutes<TestEnv, QueueService>(app).post(
       '/enqueue',
       Effect.gen(function* () {
         const queue = yield* QueueService
 
-        yield* Effect.tryPromise(() =>
+        yield* Effect.promise(() =>
           queue.send(
             { type: 'email', to: 'user@example.com' },
             { contentType: 'json' }
@@ -636,8 +642,7 @@ describe('Edge cases', () => {
       Effect.gen(function* () {
         const db = yield* DatabaseService
 
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        return new Response(`DB: ${(db).name}`)
+        return new Response(`DB: ${db.name}`)
       })
     )
 
@@ -666,7 +671,7 @@ describe('Edge cases', () => {
       })
     )
 
-    effectRoutes(app).get(
+    effectRoutes<TestEnv, RequestCounterService>(app).get(
       '/count',
       Effect.gen(function* () {
         const counter = yield* RequestCounterService
@@ -705,7 +710,7 @@ describe('Edge cases', () => {
       })
     )
 
-    effectRoutes(app).get(
+    effectRoutes<TestEnv, ContextInfoService>(app).get(
       '/context-info',
       Effect.gen(function* () {
         const info = yield* ContextInfoService

@@ -10,7 +10,7 @@
  * const res = await app.request('/projects', {}, testEnv(signedIn({ id: 'user-1' })))
  */
 import { DateTime, Effect, Layer, Redacted } from 'effect'
-import { AuthUserService, type AuthUser } from './effect/services.js'
+import { AuthUserService, type AuthUser, type DefaultAuthUser } from './effect/services.js'
 import { attachTestLayer } from './effect/test-env.js'
 
 /**
@@ -35,10 +35,19 @@ export function testEnv<ROut>(layer: Layer.Layer<ROut>, bindings: object = {}): 
   return env
 }
 
-/** A complete `AuthUser`, or the user fields to set on a default test user. */
+/** Whether the default test session fits the application's AuthUser session. */
+type DefaultSessionFits = DefaultAuthUser['session'] extends AuthUser['session'] ? true : false
+
+/**
+ * A complete `AuthUser`, or the user fields to set on a default test user.
+ * The default session follows Better Auth's; when the application augments
+ * WebAuthUserType with a session it does not fit, pass a complete `AuthUser`.
+ */
 export type SignedInUser =
   | AuthUser
-  | (Partial<AuthUser['user']> & { readonly id: string })
+  | (DefaultSessionFits extends true
+      ? Partial<AuthUser['user']> & { readonly id: string }
+      : never)
 
 /**
  * A layer that signs the request in as `user`.
@@ -61,6 +70,10 @@ export function signedIn(user: SignedInUser): Layer.Layer<AuthUserService> {
 function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
   if ('session' in input && 'user' in input) return input
 
+  // The user fields given; `never` when the application's session rules out
+  // partial input (see SignedInUser).
+  const fields: Partial<AuthUser['user']> & { readonly id: string } = input
+
   const user = {
     email: 'test@example.com',
     name: null,
@@ -70,22 +83,26 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
     createdAt: new Date(0),
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture for the Better Auth user contract; it does not read the clock.
     updatedAt: new Date(0),
-    ...input,
+    ...fields,
+  }
+
+  const session = {
+    id: 'test-session',
+    userId: user.id,
+    expiresAt,
+    token: Redacted.make('test-token'),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture for the Better Auth session contract; it does not read the clock.
+    createdAt: new Date(0),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture for the Better Auth session contract; it does not read the clock.
+    updatedAt: new Date(0),
   }
 
   return {
     // SAFETY: an application that augments the user type with required fields
     // passes them in `input`; the defaults cover the fields of the default user.
     user: user as AuthUser['user'],
-    session: {
-      id: 'test-session',
-      userId: user.id,
-      expiresAt,
-      token: Redacted.make('test-token'),
-      // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture for the Better Auth session contract; it does not read the clock.
-      createdAt: new Date(0),
-      // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture for the Better Auth session contract; it does not read the clock.
-      updatedAt: new Date(0),
-    },
+    // SAFETY: SignedInUser admits partial input only when DefaultSessionFits,
+    // i.e. when this Better Auth-shaped session is an AuthUser['session'].
+    session: session as unknown as AuthUser['session'],
   }
 }

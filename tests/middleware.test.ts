@@ -664,7 +664,7 @@ describe('Page middleware', () => {
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
+      const json = (await res.json()) as PageObject<typeof deepProps>
       expect(json.props.level1.level2.level3.level4.value).toBe('deep')
     })
 
@@ -729,7 +729,7 @@ describe('Page middleware', () => {
       })
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
+      const json = (await res.json()) as PageObject<typeof largeData>
       expect(json.props.users).toHaveLength(1000)
       expect(json.props.meta.total).toBe(1000)
     })

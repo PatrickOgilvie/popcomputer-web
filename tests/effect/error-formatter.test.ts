@@ -16,7 +16,6 @@ import {
 } from '../../src/effect/error-formatter.js'
 import { createStructuredError, ErrorCodes } from '../../src/effect/error-catalog.js'
 import { HttpError, ValidationError } from '../../src/effect/errors.js'
-import type { PageProps } from '../../src/types.js'
 
 describe('structured error parameter formatting', () => {
   test('inserts scalar parameters literally', () => {
@@ -81,19 +80,17 @@ describe('getClientSafeMessage', () => {
 
 describe('JsonErrorFormatter safeMessages', () => {
   test('leaks raw internal message when safeMessages is off (dev)', () => {
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const out = new JsonErrorFormatter({ safeMessages: false }).format(
       internalError()
-    ) as PageProps
+    )
 
     expect(out.message).toContain('secret')
   })
 
   test('scrubs raw internal message when safeMessages is on (prod)', () => {
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const out = new JsonErrorFormatter({ safeMessages: true }).format(
       internalError()
-    ) as PageProps
+    )
 
     expect(out.message).toBe(SAFE_GENERIC)
     expect(JSON.stringify(out)).not.toContain('secret')
@@ -102,10 +99,9 @@ describe('JsonErrorFormatter safeMessages', () => {
   test('still surfaces validation messages in prod (not sensitive)', () => {
     const error = validationError()
 
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const out = new JsonErrorFormatter({ safeMessages: true }).format(
       error
-    ) as PageProps
+    )
 
     expect(out.message).toBe(error.message)
   })
@@ -145,10 +141,9 @@ describe('JsonErrorFormatter safeMessages', () => {
       body: { connection: 'db://user:secret@host' },
     }).toStructured()
 
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const out = new JsonErrorFormatter({ safeMessages: true }).format(
       error
-    ) as PageProps
+    )
 
     expect(out.message).toBe(SAFE_GENERIC)
     expect(out.body).toBeUndefined()
@@ -162,10 +157,9 @@ describe('JsonErrorFormatter safeMessages', () => {
       body: { trace: 'full detail' },
     }).toStructured()
 
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     const out = new JsonErrorFormatter({ safeMessages: false }).format(
       error
-    ) as PageProps
+    )
 
     expect(out.message).toBe('diagnostic detail')
     expect(out.body).toEqual({ trace: 'full detail' })

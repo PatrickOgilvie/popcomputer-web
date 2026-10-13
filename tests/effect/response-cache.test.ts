@@ -636,7 +636,7 @@ describe('resolveWorkersCachePurgeApi', () => {
       '../../src/effect/response-cache.js'
     )
 
-    const purge = async () => undefined
+    const purge = async () => ({ success: true, errors: [] })
     const executionCtx = { cache: { purge } }
 
     const api = await Effect.runPromise(resolveWorkersCachePurgeApi(executionCtx))
@@ -722,6 +722,7 @@ describe('Workers ResponseCacheClient', () => {
 
   test('fails when Workers Cache returns a malformed result', async () => {
     const client = createWorkersResponseCacheClient({
+      // @ts-expect-error Workers Cache resolving without a result object is the malformed result under test.
       purge: async () => undefined,
     })
 

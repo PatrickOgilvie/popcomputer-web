@@ -51,6 +51,24 @@ class FakeD1 {
   }
 }
 
+/** The Worker bindings the app reads. */
+type PageCacheEnv = {
+  Bindings: {
+    readonly DB: FakeD1
+  }
+}
+
+/** The database client the app builds from its D1 binding. */
+interface PageCacheDatabase {
+  readonly projects: () => { readonly sql: string }
+}
+
+declare module '../src/effect/services.js' {
+  interface WebDatabaseType {
+    type: PageCacheDatabase
+  }
+}
+
 let cache: MemoryCache
 
 beforeEach(() => {
@@ -70,7 +88,7 @@ interface AppOptions {
 }
 
 const createApp = (options: AppOptions = {}) => {
-  const app = new Hono()
+  const app = new Hono<PageCacheEnv>()
   const renders = new Map<string, number>()
   const count = (name: string) => Effect.sync(() => renders.set(name, (renders.get(name) ?? 0) + 1))
 
@@ -83,7 +101,7 @@ const createApp = (options: AppOptions = {}) => {
     render: (page) => `<html>${JSON.stringify(page)}</html>`,
     database: (c) => {
       // Building a client from a binding is not a read; querying it is.
-      const d1: FakeD1 = Reflect.get(c.env, 'DB')
+      const d1 = c.env.DB
 
       return { projects: () => d1.prepare('select * from projects') }
     },
@@ -149,7 +167,7 @@ const inertia = (version = '1.0.0'): RequestInit => ({
  * Request a page and read its body, as a browser would. A page is stored
  * once its body has streamed, after every middleware has run.
  */
-async function get(app: Hono, path: string, init: RequestInit, env: object) {
+async function get(app: Hono<PageCacheEnv>, path: string, init: RequestInit, env: object) {
   const res = await app.request(path, init, env)
   const body = await res.text()
   await cache.settled()

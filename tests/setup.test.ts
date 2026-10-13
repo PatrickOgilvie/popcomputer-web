@@ -23,6 +23,7 @@ import {
   AuthUserService,
   PageService,
 } from '../src/effect/services.js'
+import { RequireAuthLayer } from '../src/effect/auth.js'
 import { bound, routeBinding } from '../src/effect/binding.js'
 import { NotFoundError } from '../src/effect/errors.js'
 
@@ -35,6 +36,42 @@ type TestEnv = {
     DATABASE_URL: string
     AUTH_SECRET: string
     ENVIRONMENT: string
+  }
+}
+
+/** The database stub whose fields the tests read; other tests only pass DatabaseService through. */
+interface TestDatabase {
+  readonly name: string
+}
+
+/** The auth client whose fields the tests read; other tests only pass AuthService through. */
+interface TestAuth {
+  readonly dbName: string
+  readonly secret: string
+}
+
+declare module '../src/effect/services.js' {
+  interface WebDatabaseType {
+    type: TestDatabase
+  }
+
+  interface WebAuthType {
+    type: TestAuth
+  }
+}
+
+/** Bindings for the nested route-model test, whose decoded post it reads. */
+const nestedBindings = {
+  user: S.Struct({ id: S.String }),
+  post: routeBinding(
+    S.Struct({ id: S.String, userId: S.String }),
+    { scope: { user: { foreignKey: 'userId' } } }
+  ),
+}
+
+declare module '../src/effect/binding.js' {
+  interface WebRouteBindingsType {
+    type: typeof nestedBindings
   }
 }
 
@@ -130,8 +167,7 @@ describe('setupWeb basic configuration', () => {
       Effect.gen(function* () {
         const db = yield* DatabaseService
 
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        return Response.json({ dbName: (db).name })
+        return Response.json({ dbName: db.name })
       })
     )
 
@@ -163,10 +199,9 @@ describe('setupWeb basic configuration', () => {
       Effect.gen(function* () {
         const auth = yield* AuthService
 
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         return Response.json({
-            dbName: (auth as { readonly dbName: string }).dbName,
-            secret: (auth as { readonly secret: string }).secret,
+            dbName: auth.dbName,
+            secret: auth.secret,
           })
       })
     )
@@ -265,7 +300,7 @@ describe('setupWeb basic configuration', () => {
       return c.text('OK')
     })
 
-    const pendingResponse = app.request('/background-auth').then((response) => {
+    const pendingResponse = Promise.resolve(app.request('/background-auth')).then((response) => {
       responseSettled = true
 
       return response
@@ -312,7 +347,7 @@ describe('setupWeb basic configuration', () => {
     })
     app.get('/pre-bridge-failure', (c) => c.text('must not run'))
 
-    const pendingResponse = app.request('/pre-bridge-failure').then((response) => {
+    const pendingResponse = Promise.resolve(app.request('/pre-bridge-failure')).then((response) => {
       responseSettled = true
 
       return response
@@ -459,13 +494,7 @@ describe('setupWeb schema configuration', () => {
       render: (page) => JSON.stringify(page),
       database: () => mockDb,
       schema: mockSchema,
-      bindings: {
-        user: S.Struct({ id: S.String }),
-        post: routeBinding(
-          S.Struct({ id: S.String, userId: S.String }),
-          { scope: { user: { foreignKey: 'userId' } } }
-        ),
-      },
+      bindings: nestedBindings,
     })
 
     effectRoutes(app).get(
@@ -473,8 +502,7 @@ describe('setupWeb schema configuration', () => {
       Effect.gen(function* () {
         const post = yield* bound('post')
 
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        return new Response((post as { id: string }).id)
+        return new Response(post.id)
       })
     )
 
@@ -524,7 +552,7 @@ describe('setupWeb auth session loading', () => {
       },
     })
 
-    effectRoutes(app).get('/whoami', Effect.gen(function* () {
+    effectRoutes(app).provide(RequireAuthLayer).get('/whoami', Effect.gen(function* () {
       const auth = yield* AuthUserService
 
       return Response.json({ auth, token: Redacted.value(auth.session.token) === 'session-secret-7' })
@@ -586,14 +614,13 @@ describe('setupWeb auth session loading', () => {
       },
     })
 
-    effectRoutes(app).get(
+    effectRoutes(app).provide(RequireAuthLayer).get(
       '/me',
       Effect.gen(function* () {
         const authUser = yield* AuthUserService
         const page = yield* PageService
 
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        return yield* Effect.tryPromise(() =>
+        return yield* Effect.promise(() =>
           page.render('Auth/Me', {
             userId: authUser.user.id,
           })
@@ -751,14 +778,14 @@ describe('setupWeb configuration errors', () => {
   test('rejects the former effect option with directions to services.request', () => {
     const app = new Hono<TestEnv>()
 
-    const config = {
-      version: '1.0.0',
-      render: <Page>(page: Page) => JSON.stringify(page),
-      effect: { services: undefined, schema: {} },
-    }
-
-    // @ts-expect-error effect is not a setupWeb option.
-    expect(() => setupWeb(app, config)).toThrow('effect.services is now services.request')
+    expect(() =>
+      setupWeb(app, {
+        version: '1.0.0',
+        render: (page) => JSON.stringify(page),
+        // @ts-expect-error effect is not a setupWeb option.
+        effect: { services: undefined, schema: {} },
+      })
+    ).toThrow('effect.services is now services.request')
   })
 
   test('helpful error when using route model binding without schema', async () => {

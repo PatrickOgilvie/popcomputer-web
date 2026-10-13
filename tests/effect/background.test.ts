@@ -54,6 +54,7 @@ describe('background', () => {
       {
         waitUntil: (promise: Promise<unknown>) => waitUntilPromises.push(promise),
         passThroughOnException: () => {},
+        props: {},
       }
     )
 
@@ -135,6 +136,7 @@ describe('background', () => {
       {
         waitUntil: (promise: Promise<unknown>) => waitUntilPromises.push(promise),
         passThroughOnException: () => {},
+        props: {},
       }
     )
 
