@@ -967,7 +967,9 @@ export class EffectRouteBuilder<
 
             // Cached data tagged with them goes too, before the Workers Cache
             // purge, which can fail the request.
-            yield* invalidateCacheTags(tags)
+            // SAFETY: the route's tags are record and table tags of its bound
+            // tables, or tags the action passed to purgeCache, all CacheTags.
+            yield* invalidateCacheTags(tags as ReadonlyArray<CacheTag>)
 
             const cache = yield* ResponseCacheService
             yield* cache.purge({ tags: preparedTags.tags })
