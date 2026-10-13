@@ -3,7 +3,6 @@ import type { Context } from 'hono'
 import { action, AuthService, DatabaseService, dbMutation, dbQuery, json, RequestService, validateRequest } from '@popcomputer/web/effect'
 import { audit } from './schema'
 import { endpoint } from '@popcomputer/web/endpoint'
-import { effectifyBetterAuth } from '@popcomputer/web/auth'
 
 declare const c: Context
 declare const SomeLayer: never
@@ -45,9 +44,6 @@ export const signsInAround = action(Effect.gen(function* () {
   const auth = yield* AuthService
   const request = yield* RequestService
   yield* Effect.promise(() => auth.api.signInEmail({ body: { email: 'a@example.com', password: 'x' }, headers: request.headers })) // expect: no-auth-api-in-action
-  const authEffect = effectifyBetterAuth(auth)
-  yield* authEffect.api.signInEmail({ body: { email: 'a@example.com', password: 'x' } }) // expect: no-auth-api-in-action
-  yield* effectifyBetterAuth(auth).api.signUpEmail({ body: { email: 'a@example.com', password: 'x', name: 'A' } }) // expect: no-auth-api-in-action
   return yield* json({ ok: true })
 }))
 

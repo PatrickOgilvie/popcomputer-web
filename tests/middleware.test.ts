@@ -492,6 +492,36 @@ describe('Page middleware', () => {
 
       expect(res.status).toBe(302)
     })
+
+    test('sends an Inertia visit to another site with 409 and X-Inertia-Location, keeping its cookies', async () => {
+      const app = createApp()
+      app.post('/checkout', (c) => {
+        c.header('Set-Cookie', 'checkout=pending; Path=/; HttpOnly')
+
+        return c.redirect('https://pay.example/session/1', 303)
+      })
+
+      const res = await app.request('/checkout', { method: 'POST', headers: { [HEADERS.INERTIA]: 'true' } })
+
+      expect(res.status).toBe(409)
+      expect(res.headers.get(HEADERS.LOCATION)).toBe('https://pay.example/session/1')
+      expect(res.headers.get('Location')).toBeNull()
+      expect(res.headers.getSetCookie()).toEqual(['checkout=pending; Path=/; HttpOnly'])
+    })
+
+    test('leaves a redirect to another site alone for a visit that is not Inertia, and one within the site for Inertia', async () => {
+      const app = createApp()
+      app.get('/away', (c) => c.redirect('https://pay.example/session/1', 302))
+      app.get('/near', (c) => c.redirect('http://localhost/success', 302))
+
+      const away = await app.request('/away')
+      const near = await app.request('/near', { headers: { [HEADERS.INERTIA]: 'true' } })
+
+      expect(away.status).toBe(302)
+      expect(away.headers.get('Location')).toBe('https://pay.example/session/1')
+      expect(near.status).toBe(302)
+      expect(near.headers.get('Location')).toBe('http://localhost/success')
+    })
   })
 
   describe('Render Options', () => {

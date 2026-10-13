@@ -138,9 +138,14 @@ an app without them still bundles for Cloudflare Workers. Route model binding
 loads `drizzle-orm` when a bound route runs and reports a configuration error
 if it isn't installed.
 The package supports Effect 4 (`^4.0.0`, tested with 4.0.3), Hono 4.10 or
-later 4.x (tested with 4.13.13), Better Auth 1.x (tested with 1.7.7), and
-Drizzle ORM 0.30 or later 0.x (tested with 0.45.4). Hono 5 and Drizzle 1.0 are
-not supported yet: both change APIs this package uses.
+later 4.x (tested with 4.13.13), Better Auth 1.7 from 1.7.7, and Drizzle ORM
+0.30 or later 0.x (tested with 0.45.4). Hono 5 and Drizzle 1.0 are not
+supported yet: both change APIs this package uses. Better Auth's range is one
+minor version, the one the package's Better Auth tests pass against: they
+drive its sign-in, sessions, two-factor, magic links, OAuth providers,
+organizations, bearer tokens and admin plugins through an application, and
+check the README's tables against what Better Auth needs. A release supports
+a newer Better Auth once they pass against it.
 
 ## Quick start
 
@@ -643,29 +648,9 @@ Actions call Better Auth with `betterAuthRedirect` and `betterAuthCall`, as
 send the call through Better Auth's request handler, so its rate limits,
 origin checks and plugins' hooks apply. An action reads the signed-in user
 with `authorize()` or `currentUser`, never with a `getSession` call. Code
-outside an action that must ask Better Auth itself, such as a Durable Object
-reading the session from the headers a request handed it, wraps the concrete
-instance once and keeps plugin-added endpoint types:
-
-```ts
-// src/session-reader.ts
-import { effectifyBetterAuth } from '@popcomputer/web/auth'
-import type { createAuth } from './auth'
-
-// A Durable Object reads the session from the headers a request handed it.
-export const sessionFrom = (auth: ReturnType<typeof createAuth>, headers: Headers) => {
-  const authEffect = effectifyBetterAuth(auth)
-
-  return authEffect.api.getSession({ headers })
-}
-```
-
-The raw Better Auth instance remains available as `authEffect.raw`. Expected
-API failures stay typed in Effect, including cookies Better Auth attached while
-processing a rejected request. Better Auth's conditional return-mode overloads
-can lose precision when mirrored through the Effect mapped type; use
-`authEffect.raw.api` when TypeScript does not retain an `asResponse`,
-`returnHeaders`, or `returnStatus` result precisely.
+outside an action, such as a Durable Object reading the session from the
+headers a request handed it, calls Better Auth's own `auth.api`, as Better
+Auth documents.
 
 `setupWeb` installs the middleware stack and shared error boundary on the app
 and returns `{ app, routes }`. For manual Hono composition, see
@@ -1085,6 +1070,7 @@ and the lint rules name it where an action reaches for something else.
 | Call Better Auth for a result | `betterAuthCall('enableTwoFactor', { body }, { errors })` | [Signing in and out](#signing-in-and-out) |
 | Sign out | `betterAuthLogoutAction({ redirectTo, clear })` | [Signing in and out](#signing-in-and-out) |
 | Limit password guessing | `auth.signInLimits`, `sweepSignInFailures` | [Limiting password guessing](#limiting-password-guessing) |
+| Use a Better Auth plugin: organizations, two-factor, magic links, OAuth providers | its endpoints by name with `betterAuthRedirect` and `betterAuthCall`; `betterAuthHandler({ settable })` for callbacks | [Better Auth's plugins](#better-auths-plugins) |
 | Add a field to the user | a column on the user table, with `betterAuthFields` | [Auth](#auth) |
 | Authenticate an API key | a layer failing with `new UnauthorizedError({ message, challenge: 'Bearer' })` | [Caching an API](#caching-an-api-that-authenticates-each-request) |
 
@@ -1553,7 +1539,12 @@ user, so a dependency response is never trusted because it looks
 session-shaped. `betterAuthSession(tableSchema(schema.user))` takes the user
 from the `user` table, so a field the application adds, such as a `role`, is
 declared in the table, and `authorize()`, `currentUser` and `signedIn`
-follow. Better Auth learns of the field from the same table:
+follow. A plugin
+that adds session fields, such as the organization plugin's
+`activeOrganizationId`, adds their columns to the `session` table: give
+`betterAuthSession` that table too,
+`betterAuthSession(tableSchema(schema.user), tableSchema(schema.session))`,
+and `authorize()` returns them. Better Auth learns of the field from the same table:
 `user: { additionalFields: betterAuthFields(schema.user, { role: { input: false } }) }`
 in `createAuth` takes each field's type, enum values and whether it is
 required from its column, and `input` says whether a visitor may set it at
@@ -1646,17 +1637,42 @@ registered email, goes back to the form with the field errors `errors` returns; 
 failures stay separate typed errors. Sign-up works the same way with
 `'signUpEmail'`, after whatever else the action does with the input.
 
-Better Auth writes the new user itself, so records the application creates
-for a new user, such as a provider's profile, are a second write: create them
-in `redirectTo`'s Effect, which runs after the user exists, and make them
-idempotent (`onConflictDoNothing`), or create them on first use, so a failure
-between the two writes leaves nothing the next request cannot repair. Fields
-the server sets rather than the form, such as a role or a team, are `input:
-false` in `betterAuthFields`, so a sign-up cannot send them: set them in that
-Effect, or keep them in the application's own table, such as a membership,
-which a guard layer reads. `redirectTo` given a function receives the
-endpoint's result, sign-up's `{ token, user }`, so it reads the new user's id
-as `result.user.id`. A result is the JSON Better Auth's handler answered, and
+Better Auth writes the new user itself, so the application's own record of
+a member, such as a profile, is a second write. Make it on the member's first
+visit, in a guard layer on the routes that need it: a user Better Auth
+created from an OAuth provider or a magic link never passes through the
+application's sign-up action, and a failure between the two writes leaves
+nothing the next visit cannot repair:
+
+```ts
+// src/profiles.ts
+import { eq } from 'drizzle-orm'
+import { Effect, Layer } from 'effect'
+import { authorize, dbMutation, dbQuery } from '@popcomputer/web/effect'
+import { profiles } from './schema'
+
+// The application's own record of each member, however they signed up.
+export const EnsureProfile = Layer.effectDiscard(Effect.gen(function* () {
+  const auth = yield* authorize()
+  const [existing] = yield* dbQuery((db) => db.select().from(profiles).where(eq(profiles.userId, auth.user.id)).limit(1))
+
+  if (existing === undefined) {
+    yield* dbMutation((db) =>
+      db.insert(profiles).values({ userId: auth.user.id, displayName: auth.user.name }).onConflictDoNothing()
+    )
+  }
+}))
+```
+
+Provide it beside the guard:
+`routes.provide(RequireAuthLayer).provide(EnsureProfile).get(paths.dashboard, showDashboard)`.
+
+Fields the server sets rather than the form, such as a role or a team, are
+`input: false` in `betterAuthFields`, so a sign-up cannot send them: keep
+them in the application's own table, such as a membership, which a guard
+layer reads. `redirectTo` given a function receives the endpoint's result,
+sign-up's `{ token, user }`, so it reads the new user's id as
+`result.user.id`. A result is the JSON Better Auth's handler answered, and
 typed so: its dates are ISO strings.
 
 A Better Auth call whose result the action uses, such as enabling two-factor
@@ -1667,7 +1683,9 @@ failures the same way and returns the result. A link
 Better Auth emails, such as a reset link, points at its own `/api/auth/*`
 endpoint; build the application's own link from the token with `href`, so it
 lands on a page of the application. A failure Better Auth answers with a
-redirect, such as a used magic link, reaches the action as `AuthRedirect`.
+redirect, such as a used magic link's `?error=INVALID_TOKEN`, fails as a
+rejection does, with `error.code` naming it; any other redirect Better Auth
+answers reaches the action as `AuthRedirect`, which the error page follows.
 Better Auth keeps its own time: its token and session expiry follow the wall
 clock, not `testClock`, so a test of them starts the test clock at the
 present and the application's own rules read Effect's `Clock`. `signedIn`
@@ -1681,13 +1699,17 @@ and 303 on an Inertia visit, as Inertia requires; a test asserts the
 while signed out, as after a session expires, cannot be replayed, so
 `?redirect=` names the page the form was on, and a JSON client gets a 401.
 
-`betterAuthHandler` forwards a request to Better Auth's own API, for browser
-code that calls it directly (Better Auth's client SDK, OAuth callbacks):
-`routes.all(paths.authApi, betterAuthHandler)`, with `authApi: '/api/auth/*'`
-among the paths. Register it only if the
+`betterAuthHandler()` forwards a request to Better Auth's own API, for
+browser code that calls it directly (Better Auth's client SDK) and for an
+OAuth provider's callback: `routes.all(paths.authApi, betterAuthHandler())`,
+with `authApi: '/api/auth/*'` among the paths. Register it only if the
 application needs it: it exposes every endpoint Better Auth and its plugins
-define, so user fields declared with `input: true` become settable by anyone
-who signs up.
+define, including sign-up and update-user, which write the user fields
+declared `input: true` without the application's actions checking them.
+Once the registered Better Auth declares such a field, TypeScript asks for
+the ones visitors may set there, `betterAuthHandler({ settable: ['timeZone'] })`,
+and the handler refuses a request setting any other with a 400; `settable: []`
+keeps every field to the application's own forms.
 
 A guard can be any layer that fails. Turn an authorization rule into one for a
 group of routes with `Layer.effectDiscard`:
@@ -1705,6 +1727,38 @@ An application that authenticates some other way, such as API keys, provides
 its own user service through a layer that fails with `UnauthorizedError`:
 `routes.provide(ApiKeyAuth)` runs it before the action, so every route
 registered through it can read the service.
+
+### Better Auth's plugins
+
+Better Auth's plugins (organizations and teams, two-factor, magic links,
+OAuth providers, passkeys, admin) stay Better Auth's: add them to
+`betterAuth({ plugins })` and their tables to the schema, and call their
+endpoints by name, as `betterAuthRedirect` and `betterAuthCall` call any
+other, typed from the registered client. Where they meet the application:
+
+- A plugin's session fields, such as the organization plugin's
+  `activeOrganizationId` or the admin plugin's `impersonatedBy`, reach
+  `authorize()` once `betterAuthSession` is given the `session` table.
+- Two-factor: signing in a member with two-factor on answers
+  `{ twoFactorRedirect: true }` rather than a session, so the sign-in's
+  `redirectTo` is `(result) => 'twoFactorRedirect' in result ? paths.twoFactor : paths.dashboard`,
+  and the code form's action calls `betterAuthRedirect('verifyTOTP', { body: input }, { redirectTo, errors })`.
+- An OAuth provider: a sign-in button posts to an action returning
+  `betterAuthRedirect('signInSocial', { body: { provider: 'github', callbackURL: paths.dashboard } }, { redirectTo: (result) => result.url ?? paths.login })`.
+  The provider is another site, so an Inertia visit gets the 409 and
+  `X-Inertia-Location` Inertia asks for, and loads it as a full page. The
+  provider returns to Better Auth's callback, which `betterAuthHandler()` serves.
+- A magic link, or another link Better Auth emails: the action verifying its
+  token, `betterAuthRedirect('magicLinkVerify', { query: input }, { redirectTo })`,
+  fails as a rejection does once the link is used or expired, so it shows a
+  page instead: `.pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired')))`.
+- Organizations: the plugin's `member` table is the membership a guard reads,
+  as [Roles belong to memberships](#roles-belong-to-memberships-read-by-a-guard)
+  shows, with the organization bound by its route:
+  `bindings: { organization: schema.organization }`.
+
+The package's own tests drive each of these through an application on every
+Better Auth release it supports.
 
 ### Limiting password guessing
 
@@ -3128,7 +3182,9 @@ admin everywhere. Keep the role on a membership row, one per user and
 organization, and read it in a guard layer for the organization's routes.
 The guard answers a visitor who is not a member with 404, so the
 organization's existence stays private, and provides the membership as a
-service, so actions and `shareProps` read it without querying again:
+service, so actions and `shareProps` read it without querying again. With
+Better Auth's organization plugin, its `member` table is the membership row,
+read the same way:
 
 ```ts
 // src/memberships.ts
@@ -3852,7 +3908,7 @@ routes behind `RequireGuestLayer`:
 +   .get(paths.login, action(render('Auth/Login')))
 +   .post(paths.login, signIn)
 + routes.post(paths.logout, betterAuthLogoutAction({ redirectTo: paths.login }))
-+ routes.all(paths.authApi, betterAuthHandler) // only if browser code calls Better Auth directly
++ routes.all(paths.authApi, betterAuthHandler()) // only if browser code or an OAuth provider calls Better Auth
 ```
 
 [Signing in and out](#signing-in-and-out) shows `signIn`. A signed-out

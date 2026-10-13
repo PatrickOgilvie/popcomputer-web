@@ -43,8 +43,9 @@ TypeScript example here and in the README type-checks against the package.
    pass the object as `setupWeb`'s `pages`. Take a table's columns from the
    table: `tableSchema(schema.projects).mapFields(Struct.pick(['id',
    'name']))` from `@popcomputer/web/schema`, and declare the signed-in user
-   as `auth.session: betterAuthSession(tableSchema(schema.user))`, with
-   Better Auth's `additionalFields: betterAuthFields(schema.user, { role: {
+   as `auth.session: betterAuthSession(tableSchema(schema.user))` (with
+   `tableSchema(schema.session)` second when a plugin adds session fields),
+   with Better Auth's `additionalFields: betterAuthFields(schema.user, { role: {
    input: false } })`. Type each React page as `WebPage<'Projects/Show'>`
    from `@popcomputer/web/react`; its props, the shared `auth.user` and
    `errors` follow. Type a form's fields as `FormInput<typeof Schema>`, from
@@ -112,9 +113,17 @@ TypeScript example here and in the README type-checks against the package.
    (a Workers Rate Limiting binding, and Better Auth's `rateLimit` table for
    each account's failures), sweep the table with
    `routes.scheduled(() => sweepSignInFailures)`, and keep
-   `betterAuth({ rateLimit: { enabled: true, storage: 'memory' } })`. A role a user
+   `betterAuth({ rateLimit: { enabled: true, storage: 'memory' } })`. Better
+   Auth's plugins (organizations, two-factor, magic links, OAuth providers)
+   stay Better Auth's: call their endpoints by name the same way, and serve
+   OAuth callbacks and Better Auth's client SDK with
+   `routes.all(paths.authApi, betterAuthHandler({ settable }))`, naming the
+   `input: true` user fields visitors may set there. Make the application's
+   own record of a new member on their first visit, in a guard layer, since
+   users from OAuth providers and magic links never pass through a sign-up
+   action. A role a user
    holds per team or workspace lives on a membership row a guard layer
-   reads, not on the user. Register a JSON
+   reads (the organization plugin's `member` table), not on the user. Register a JSON
    API's routes on `routes.jsonApi()`, with their declared paths
    (`routes.jsonApi().provide(KeyAuth).get(paths.apiInvoices, ...)`), so every
    failure there answers JSON (a 401, not a redirect to sign in), and

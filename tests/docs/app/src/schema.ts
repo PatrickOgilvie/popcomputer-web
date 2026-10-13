@@ -64,3 +64,9 @@ export const memberships = pgTable(
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.userId] })]
 )
+
+// The README's first-visit record: the application's own row for each user.
+export const profiles = pgTable('profiles', {
+  userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
+  displayName: text('display_name').notNull(),
+})

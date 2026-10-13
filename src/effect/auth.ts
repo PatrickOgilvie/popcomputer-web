@@ -24,7 +24,6 @@ import {
   runBetterAuthApiCall,
   toAuthActionError,
   type BetterAuthActionError,
-  type BetterAuthActionResult,
 } from './better-auth-boundary.js'
 import { openWebContext } from '../request-context.js'
 import type { PagePropValue, PageProps } from '../types.js'
@@ -295,7 +294,8 @@ export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): Middl
           api?: {
             getSession?: (input: {
               headers: Headers
-            }) => Promise<{ user: unknown; session: unknown } | null>
+              returnHeaders: true
+            }) => Promise<unknown>
           }
         }
       | undefined
@@ -320,12 +320,22 @@ export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): Middl
       return c.res
     }
 
-    let session: { user: unknown; session: unknown } | null
+    let looked: unknown
 
     try {
-      session = await auth.api.getSession({ headers: c.req.raw.headers })
+      looked = await auth.api.getSession({ headers: c.req.raw.headers, returnHeaders: true })
     } catch (cause: unknown) {
       throw new SessionLookupUnavailable({ operation: 'getSession', cause })
+    }
+
+    // Better Auth answers with the cookies the lookup sets: the session's,
+    // renewed when it extends the session, or expired when the session is
+    // gone. They reach the response, so the browser's cookie lives as long
+    // as the session.
+    const { session, cookies } = sessionLookup(looked)
+
+    if (cookies.length > 0) {
+      requestCtx.responseCookies = [...(requestCtx.responseCookies ?? []), ...cookies]
     }
 
     if (session) {
@@ -348,30 +358,68 @@ export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): Middl
   }
 }
 
+/**
+ * A session lookup's result: `{ headers, response }` from Better Auth's
+ * `returnHeaders`, or the session itself from a client that returns it
+ * plainly.
+ */
+function sessionLookup(looked: unknown): { readonly session: unknown; readonly cookies: ReadonlyArray<string> } {
+  if (looked instanceof Object && Reflect.get(looked, 'headers') instanceof Headers && Object.hasOwn(looked, 'response')) {
+    const headers: Headers = Reflect.get(looked, 'headers')
+
+    return { session: Reflect.get(looked, 'response'), cookies: headers.getSetCookie() }
+  }
+
+  return { session: looked, cookies: [] }
+}
+
+/** The session's token, Redacted, so serializing the auth user never exposes it. */
+const SessionToken = S.RedactedFromValue(S.String)
+
 /** Better Auth's session record, as its `getSession` returns it. */
 export const BetterAuthSessionRecord = S.Struct({
   id: S.String,
   userId: S.String,
   expiresAt: S.Date,
-  // Redacted, so serializing the auth user never exposes the session secret.
-  token: S.RedactedFromValue(S.String),
+  token: SessionToken,
   createdAt: S.Date,
   updatedAt: S.Date,
 })
+
+/** A session table's fields, with its token Redacted. */
+export type BetterAuthSessionFields<Fields extends S.Struct.Fields> = {
+  readonly [Key in keyof Fields]: Key extends 'token' ? typeof SessionToken : Fields[Key]
+}
 
 /**
  * setupWeb's `auth.session` for an application whose users have fields of
  * their own: Better Auth's session with the user as `user` decodes it,
  * typically the `user` table's row, so the user's fields are declared once,
- * in the table.
+ * in the table. Give the `session` table's row too when plugins add session
+ * fields, such as the organization plugin's `activeOrganizationId`, and
+ * `authorize()` returns them; its token stays Redacted.
  *
  * @example
- * auth: { client, session: betterAuthSession(tableSchema(schema.user)) }
+ * auth: { client, session: betterAuthSession(tableSchema(schema.user), tableSchema(schema.session)) }
  */
 export function betterAuthSession<User extends S.Codec<unknown, unknown, never, never>>(
   user: User
-): S.Struct<{ readonly user: User; readonly session: typeof BetterAuthSessionRecord }> {
-  return S.Struct({ user, session: BetterAuthSessionRecord })
+): S.Struct<{ readonly user: User; readonly session: typeof BetterAuthSessionRecord }>
+export function betterAuthSession<
+  User extends S.Codec<unknown, unknown, never, never>,
+  Fields extends S.Struct.Fields & { readonly token: S.Codec<string, unknown, never, never> },
+>(
+  user: User,
+  session: S.Struct<Fields>
+): S.Struct<{ readonly user: User; readonly session: S.Struct<BetterAuthSessionFields<Fields>> }>
+export function betterAuthSession(
+  user: S.Codec<unknown, unknown, never, never>,
+  session?: S.Struct<S.Struct.Fields>
+): S.Struct<S.Struct.Fields> {
+  return S.Struct({
+    user,
+    session: session === undefined ? BetterAuthSessionRecord : S.Struct({ ...session.fields, token: SessionToken }),
+  })
 }
 
 // Better Auth's default user and session, which the signed-in user is unless
@@ -396,14 +444,7 @@ function defaultSessionSchema(): S.Codec<AuthUser, unknown, never, never> {
   return DefaultAuthSessionSchema as unknown as S.Codec<AuthUser, unknown, never, never>
 }
 
-export {
-  effectifyBetterAuth,
-  type BetterAuthActionError,
-  type BetterAuthActionResult,
-  type BetterAuthBoundaryFailure,
-  type BetterAuthEffectApi,
-  type BetterAuthEffectClient,
-} from './better-auth-boundary.js'
+export type { BetterAuthActionError } from './better-auth-boundary.js'
 
 /** Better Auth's server API, from the registered auth client, or none when no client is registered. */
 type AuthApi = AuthType extends { readonly api: infer Api } ? Api : never
@@ -684,22 +725,74 @@ export function betterAuthCall<const Name extends BetterAuthEndpoint>(
   )
 }
 
+/** The options the registered Better Auth was configured with. */
+type AuthOptions = AuthType extends { readonly options: infer Options } ? Options : never
+
+type InputFieldsOf<Options> = Options extends { readonly user?: { readonly additionalFields?: infer Fields } }
+  ? { readonly [Name in keyof NonNullable<Fields>]: NonNullable<Fields>[Name] extends { readonly input: false } ? never : Name }[keyof NonNullable<Fields>] & string
+  : never
+
+/**
+ * The user fields a visitor may set at sign-up, as the registered Better
+ * Auth's `user.additionalFields` declares them: each whose `input` is not
+ * false.
+ */
+export type BetterAuthInputField = [AuthOptions] extends [never] ? string : InputFieldsOf<AuthOptions>
+
+/** Options for {@link betterAuthHandler}. */
+export interface BetterAuthHandlerOptions {
+  /**
+   * The user fields declared `input: true` that a visitor may set through
+   * Better Auth's own API, at sign-up and later with its update-user, where
+   * the application's actions do not validate them. A request setting any
+   * other is refused.
+   */
+  readonly settable: ReadonlyArray<BetterAuthInputField>
+}
+
+/** Options are required once the registered Better Auth declares user fields a visitor may set. */
+type BetterAuthHandlerArguments = [InputFieldsOf<AuthOptions>] extends [never]
+  ? [options?: BetterAuthHandlerOptions]
+  : [options: BetterAuthHandlerOptions]
+
+/** Better Auth's endpoints that write the user from the request's body. */
+const writesUser = (path: string): boolean => path.startsWith('/sign-up/') || path === '/update-user'
+
+/** The user fields Better Auth lets a visitor set: its `additionalFields` whose `input` is not false. */
+function inputUserFields(auth: BetterAuthInstance): ReadonlyArray<string> {
+  const user: unknown = auth.options === undefined ? undefined : Reflect.get(auth.options, 'user')
+  const fields: unknown = user instanceof Object ? Reflect.get(user, 'additionalFields') : undefined
+
+  if (!(fields instanceof Object)) return []
+
+  return Object.entries(fields)
+    .filter(([, field]) => !(field instanceof Object && Reflect.get(field, 'input') === false))
+    .map(([name]) => name)
+}
+
 /**
  * Forward the request to Better Auth's own API, for browser code that calls
- * it directly (Better Auth's client SDK, OAuth callbacks). Register it under
- * Better Auth's base path:
+ * it directly (Better Auth's client SDK, an OAuth provider's callback).
+ * Register it under Better Auth's base path:
  *
  * ```ts
- * routes.all('/api/auth/*', betterAuthHandler)
+ * routes.all(paths.authApi, betterAuthHandler())
  * ```
  *
  * It exposes every endpoint Better Auth and its plugins define, including
- * sign-up: user fields declared with `input: true` become settable by anyone.
- * A server-rendered app that signs users in with `betterAuthRedirect` does
- * not need it.
+ * sign-up and update-user, which write user fields declared `input: true`
+ * without the application's validation. Name the ones a visitor may set there
+ * in `settable`, which TypeScript asks for once the registered Better Auth
+ * declares any; a request setting another is refused with a 400. A
+ * server-rendered app that signs users in with `betterAuthRedirect` needs it
+ * only for OAuth callbacks.
  */
-export const betterAuthHandler: Effect.Effect<Response, HttpError | AuthRateLimitError, RequestService | AuthService> =
-  Effect.gen(function* () {
+export function betterAuthHandler(
+  ...[options]: BetterAuthHandlerArguments
+): Effect.Effect<Response, HttpError | AuthRateLimitError, RequestService | AuthService> {
+  const settable = new Set<string>(options?.settable ?? [])
+
+  return Effect.gen(function* () {
     const auth = yield* AuthService
     const request = yield* RequestService
 
@@ -709,17 +802,29 @@ export const betterAuthHandler: Effect.Effect<Response, HttpError | AuthRateLimi
 
     const raw = request.raw()
     const path = yield* Effect.promise(() => handlerPath(auth, raw))
-    // A password sign-in's account, from its body, which the handler then reads itself.
-    const account = isPasswordSignIn(path) ? accountOf(yield* Effect.promise(() => bodyOf(raw))) : undefined
+    // The body, for the endpoints the framework checks; the handler then reads it itself.
+    const body = isPasswordSignIn(path) || writesUser(path) ? yield* Effect.promise(() => bodyOf(raw)) : undefined
+
+    if (writesUser(path) && body instanceof Object) {
+      const refused = inputUserFields(auth).filter((field) => !settable.has(field) && Object.hasOwn(body, field))
+
+      if (refused.length > 0) {
+        return yield* new HttpError({
+          status: 400,
+          message: `This request sets ${refused.join(', ')}, which visitors may not set through this API.`,
+        })
+      }
+    }
 
     return yield* withinSignInLimits(
-      { path, address: clientAddress(raw.headers), account },
+      { path, address: clientAddress(raw.headers), account: isPasswordSignIn(path) ? accountOf(body) : undefined },
       Effect.tryPromise({
         try: (): Promise<Response> => Promise.resolve(auth.handler(raw)),
         catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
       })
     )
   })
+}
 
 /** The request's path under Better Auth's base path, as its endpoints name theirs. */
 async function handlerPath(auth: BetterAuthInstance, request: Request): Promise<string> {
@@ -767,7 +872,10 @@ export interface BetterAuthLogoutConfig<Path extends string = string> {
 }
 
 /**
- * Create a better-auth logout action that clears cookies and redirects.
+ * Sign the visitor out and redirect. Signing out goes through Better Auth's
+ * request handler, as every call does, and the session cookies it expires
+ * reach the redirect; a sign-out Better Auth refuses, such as one without a
+ * session, still expires them.
  */
 export function betterAuthLogoutAction<const Path extends string = '/'>(
   config: BetterAuthLogoutConfig<Path> = {}
@@ -784,89 +892,17 @@ export function betterAuthLogoutAction<const Path extends string = '/'>(
       }
     }
 
-    const result = yield* runBetterAuthApiCall(() =>
-      callBetterAuthSignOut(auth, {
-        headers: request.headers,
-        request: buildAuthRequest(request),
-        returnHeaders: true,
-      })
-    ).pipe(Effect.orElseSucceed(() => undefined))
+    const answered = yield* Effect.tryPromise(() => sendThroughHandler(auth, request.raw(), 'signOut', {})).pipe(
+      Effect.orElseSucceed(() => undefined)
+    )
 
-    const responseHeaders = new Headers({
-      Location: config.redirectTo ?? '/',
-    })
+    const headers = new Headers({ Location: config.redirectTo ?? '/' })
 
-    const resultHeaders = getHeaders(result)
+    if (answered !== undefined) appendSetCookies(headers, answered.headers)
+    if (!headers.has('set-cookie')) appendLogoutCookies(headers, config.cookieNames)
 
-    if (resultHeaders) {
-      appendSetCookies(responseHeaders, resultHeaders)
-    }
-
-    if (!responseHeaders.has('set-cookie')) {
-      appendLogoutCookies(responseHeaders, config.cookieNames)
-    }
-
-    return new Response(null, {
-      status: 303,
-      headers: responseHeaders,
-    })
+    return new Response(null, { status: 303, headers })
   })
-}
-
-function buildAuthRequest(request: {
-  url: string
-  method: string
-  headers: Headers
-}): Request {
-  return new Request(request.url, {
-    method: request.method,
-    headers: request.headers,
-  })
-}
-
-function callBetterAuthSignOut<Auth>(
-  auth: Auth,
-  input: {
-    readonly headers: Headers
-    readonly request?: Request
-    readonly returnHeaders?: boolean
-  }
-): Promise<BetterAuthActionResult> {
-  if (!(auth instanceof Object)) {
-    return Promise.reject(new Error('Better Auth client is not configured'))
-  }
-
-  const api = Object.getOwnPropertyDescriptor(auth, 'api')?.value
-
-  if (!(api instanceof Object)) {
-    return Promise.reject(new Error('Better Auth API is not configured'))
-  }
-
-  const signOut = Object.getOwnPropertyDescriptor(api, 'signOut')?.value
-
-  if (!(signOut instanceof Function)) {
-    return Promise.reject(new Error('Better Auth signOut endpoint is not configured'))
-  }
-
-  return Promise.resolve(signOut.apply(api, [input]))
-}
-
-function getHeaders(result: BetterAuthActionResult | undefined): Headers | undefined {
-  if (!result) return undefined
-
-  if (result instanceof Headers) return result
-
-  if (result instanceof Response) return result.headers
-
-  if (result instanceof Object && 'headers' in result && result.headers) {
-    return coerceHeaders(result.headers)
-  }
-
-  return undefined
-}
-
-function coerceHeaders(value: Headers | HeadersInit): Headers {
-  return value instanceof Headers ? value : new Headers(value)
 }
 
 function appendSetCookies(target: Headers, source: Headers): void {

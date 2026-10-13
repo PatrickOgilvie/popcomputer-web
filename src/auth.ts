@@ -12,18 +12,16 @@ export {
   betterAuthCall,
   betterAuthHandler,
   betterAuthLogoutAction,
-  effectifyBetterAuth,
   loadUser,
   betterAuthSession,
   BetterAuthSessionRecord,
   type LoadUserConfig,
   type BetterAuthRedirectOptions,
+  type BetterAuthHandlerOptions,
+  type BetterAuthInputField,
+  type BetterAuthSessionFields,
   type BetterAuthLogoutConfig,
-  type BetterAuthActionResult,
   type BetterAuthActionError,
-  type BetterAuthBoundaryFailure,
-  type BetterAuthEffectApi,
-  type BetterAuthEffectClient,
 } from './effect/auth.js'
 
 // Better Auth's additionalFields, from the user table

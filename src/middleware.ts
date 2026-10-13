@@ -235,6 +235,23 @@ export function web(config: WebConfig): MiddlewareHandler {
       }
     }
 
+    // An Inertia visit follows a redirect inside its request, which cannot
+    // reach another site, such as an OAuth provider or a payment page:
+    // Inertia asks for those with 409 and X-Inertia-Location, and loads the
+    // site as a full page. The redirect's cookies, such as an OAuth state,
+    // stay on the response.
+    const elsewhere = isInertia && c.res ? otherSiteLocation(c.res, c.req.url) : undefined
+
+    if (elsewhere !== undefined && c.res) {
+      const headers = new Headers({ [HEADERS.LOCATION]: elsewhere, Vary: HEADERS.INERTIA })
+      for (const cookie of c.res.headers.getSetCookie()) headers.append('Set-Cookie', cookie)
+
+      // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
+      c.res = undefined
+      // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
+      c.res = new Response(null, { status: 409, headers })
+    }
+
     const committed = c.res
       ? withResponseHeaders(withResponseCookies(flash.commit(c.res), openWebContext(c).responseCookies), openWebContext(c).responseHeaders)
       : undefined
@@ -276,4 +293,19 @@ function withResponseHeaders(response: Response, added: ReadonlyArray<readonly [
   for (const [name, value] of added) headers.append(name, value)
 
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
+/** The redirect's location when it leads to another site than the request's, which an Inertia visit cannot follow. */
+function otherSiteLocation(response: Response, requestUrl: string): string | undefined {
+  const location = response.status >= 300 && response.status < 400 ? response.headers.get('Location') : null
+
+  if (location === null) return undefined
+
+  try {
+    const target = new URL(location, requestUrl)
+
+    return target.origin === new URL(requestUrl).origin ? undefined : target.href
+  } catch {
+    return undefined
+  }
 }

@@ -30,7 +30,7 @@ import {
   HttpError,
   ValidationError,
 } from '../../src/effect/errors.js'
-import type { BetterAuthActionError, BetterAuthActionResult } from '../../src/effect/auth.js'
+import type { BetterAuthActionError, BetterAuthActionResult } from '../../src/effect/better-auth-boundary.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import type { AuthType } from '../../src/effect/services.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
@@ -96,15 +96,12 @@ interface TestCredentialsAuth {
   readonly handler: (request: Request) => Promise<Response>
 }
 
-/** The Better Auth endpoint the logout action calls. */
+/** The Better Auth endpoint the logout action sends through the handler. */
 interface TestSignOutAuth {
   readonly api: {
-    readonly signOut: (input: {
-      readonly headers: Headers
-      readonly request?: Request
-      readonly returnHeaders?: boolean
-    }) => Promise<BetterAuthActionResult>
+    readonly signOut: ((input: unknown) => Promise<BetterAuthActionResult>) & { readonly path: string }
   }
+  readonly handler: (request: Request) => Promise<Response>
 }
 
 declare module '../../src/effect/register.js' {
@@ -992,11 +989,13 @@ describe('betterAuthLogoutAction', () => {
     },
   })
 
-  const createMockAuthForLogout = (options: { responseHeaders?: Headers } = {}) => ({
-    api: {
-      signOut: async () => {
-        return options.responseHeaders ?? new Headers()
-      },
+  /** A Better Auth whose handler answers sign-out with `responseHeaders`, or fails. */
+  const createMockAuthForLogout = (options: { responseHeaders?: Headers; fails?: boolean } = {}): TestSignOutAuth => ({
+    api: { signOut: endpointAt('/sign-out', async () => options.responseHeaders ?? new Headers()) },
+    handler: async () => {
+      if (options.fails === true) throw new Error('Session not found')
+
+      return new Response('{"success":true}', { headers: options.responseHeaders ?? new Headers() })
     },
   })
 
@@ -1133,14 +1132,7 @@ describe('betterAuthLogoutAction', () => {
       redirectTo: '/login',
     })
 
-    // Auth that throws on signOut
-    const failingAuth = {
-      api: {
-        signOut: async () => {
-          throw new Error('Session not found')
-        },
-      },
-    }
+    const failingAuth = createMockAuthForLogout({ fails: true })
 
     const mockRequest = createLogoutRequest()
 

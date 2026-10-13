@@ -351,9 +351,6 @@ export const noValidationInEndpoint: LintRule = {
   },
 }
 
-/** The framework's Better Auth integration, whose `effectifyBetterAuth` wraps `auth.api`. */
-const AUTH = new Set(['@popcomputer/web/auth'])
-
 export const noAuthApiInAction: LintRule = {
   meta: {
     type: 'problem',
@@ -373,12 +370,6 @@ export const noAuthApiInAction: LintRule = {
         const init = node.init === null ? undefined : unwrap(node.init)
 
         if (init === undefined || !isIdentifier(node.id)) return
-
-        // const authEffect = effectifyBetterAuth(auth): its api runs the same endpoints.
-        if (isCall(init) && imports.calledName(init, AUTH) === 'effectifyBetterAuth') {
-          clients.add(node.id.name)
-          return
-        }
 
         if (init.type !== 'YieldExpression') return
 
@@ -402,9 +393,8 @@ export const noAuthApiInAction: LintRule = {
         if (!isMember(api) || propertyName(api) !== 'api' || name === undefined) return
 
         const client = unwrap(api.object)
-        const effectified = isCall(client) && imports.calledName(client, AUTH) === 'effectifyBetterAuth'
 
-        if (effectified || (isIdentifier(client) && (clients.has(client.name) || client.name === 'auth'))) {
+        if (isIdentifier(client) && (clients.has(client.name) || client.name === 'auth')) {
           context.report({ node, messageId: 'api', data: { name } })
         }
       },

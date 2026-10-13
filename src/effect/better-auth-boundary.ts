@@ -1,12 +1,11 @@
 /**
  * Better Auth failure boundary.
  *
- * Better Auth server API calls fail in three shapes: thrown `APIError`
- * values, resolved HTTP error `Response`s (returned instead of thrown when a
- * `Request` is passed), and `{ status, response }` envelopes. This module
- * classifies those unknown boundary values and translates them into
- * the package's typed errors so `betterAuthFormAction` never has to inspect raw
- * Better Auth output.
+ * The framework sends every call through Better Auth's request handler, whose
+ * answer is a Response: an error status, a redirect, or a thrown failure of
+ * the handler itself. This module classifies those boundary values and
+ * translates them into the package's typed errors, so actions never inspect
+ * raw Better Auth output.
  */
 
 import { Data, Effect, Match, Schema as S } from 'effect'
@@ -102,6 +101,10 @@ interface BetterAuthFailureHints {
 export function inspectBetterAuthActionResult<A>(
   result: A
 ): Effect.Effect<A, BetterAuthBoundaryFailure> {
+  if (result instanceof Response && result.status >= 300 && result.status < 400) {
+    return Effect.fail(classifyBetterAuthRedirect(result))
+  }
+
   if (result instanceof Response && result.status >= 400) {
     return Effect.promise(() => readBetterAuthResponseBody(result)).pipe(
       Effect.flatMap((body) =>
@@ -153,133 +156,6 @@ export function runBetterAuthApiCall<A>(
   return options.inspectResult === false
     ? result
     : result.pipe(Effect.flatMap(inspectBetterAuthActionResult))
-}
-
-type BetterAuthServer = {
-  readonly api: object
-  readonly handler: (request: Request) => Response | Promise<Response>
-}
-
-/**
- * Effect-returning mirror of a Better Auth instance's plugin-aware API.
- *
- * Known, accepted TypeScript limitation: Better Auth's generic conditional
- * overloads for `asResponse`, `returnHeaders`, and `returnStatus` can collapse
- * when mirrored through a mapped type. Use `raw.api` when a call site's
- * inferred return mode is not retained precisely.
- */
-export type BetterAuthEffectApi<Api> = {
-  readonly [K in keyof Api]: Api[K] extends (
-    ...args: infer Args
-  ) => Promise<infer Result>
-    ? (...args: Args) => Effect.Effect<Result, BetterAuthBoundaryFailure>
-    : never
-}
-
-interface BetterAuthApiProxy {
-  readonly __betterAuthApiProxy?: never
-}
-
-function restoreBetterAuthEffectApi<Api>(api: BetterAuthApiProxy): BetterAuthEffectApi<Api> {
-  // SAFETY: effectifyBetterAuth creates one wrapper per reflected API endpoint with matching arguments and success values.
-  return api as BetterAuthEffectApi<Api>
-}
-
-/**
- * Effect-native façade over a concrete Better Auth server instance.
- *
- * Calls with `asResponse: true` preserve Better Auth's raw response semantics,
- * including 4xx/5xx responses in the success channel. Other resolved HTTP
- * failures are normalized into `BetterAuthBoundaryFailure`.
- *
- * The raw instance remains available as an explicit escape hatch for call
- * forms whose conditional overloads cannot be preserved by TypeScript.
- */
-export interface BetterAuthEffectClient<Auth extends BetterAuthServer> {
-  readonly raw: Auth
-  readonly api: BetterAuthEffectApi<Auth['api']>
-  readonly fetch: (
-    request: Request
-  ) => Effect.Effect<Response, HttpError>
-}
-
-/**
- * Effectify a Better Auth server instance once while retaining plugin-added
- * endpoint parameter and success types.
- *
- * An explicit `asResponse: true` keeps raw HTTP responses, including error
- * statuses, in the success channel. Other Better Auth protocol failures enter
- * the typed failure channel.
- */
-export function effectifyBetterAuth<Auth extends BetterAuthServer>(
-  auth: Auth
-): BetterAuthEffectClient<Auth> {
-  const wrappers = new Map<PropertyKey, unknown>()
-
-  const readEndpoint = (
-    key: PropertyKey
-  ): ((...args: unknown[]) => BetterAuthBoundaryProperty) | undefined => {
-    if (!S.is(S.String)(key) || key === 'then') return undefined
-    const endpoint = Object.getOwnPropertyDescriptor(auth.api, key)?.value
-
-    if (!(endpoint instanceof Function)) return undefined
-
-    // SAFETY: runtime reflection established callability. The wrapper owns
-    // classification; the exported mapped type restores each endpoint's
-    // concrete arguments and success value.
-    return endpoint as (...args: unknown[]) => BetterAuthBoundaryProperty
-  }
-
-  const api = new Proxy<BetterAuthApiProxy>({}, {
-    get: (_target, key) => {
-      const existing = wrappers.get(key)
-
-      if (existing !== undefined) return existing
-
-      const endpoint = readEndpoint(key)
-
-      if (!endpoint) return undefined
-
-      const wrapper = (...args: unknown[]) =>
-        runBetterAuthApiCall(
-          () => Promise.resolve(endpoint.apply(auth.api, args)),
-          { inspectResult: !requestsRawBetterAuthResponse(args) }
-        )
-
-      wrappers.set(key, wrapper)
-
-      return wrapper
-    },
-    has: (_target, key) => readEndpoint(key) !== undefined,
-    ownKeys: () => Reflect.ownKeys(auth.api).filter(
-      (key) => readEndpoint(key) !== undefined
-    ),
-    getOwnPropertyDescriptor: (_target, key) =>
-      readEndpoint(key) === undefined
-        ? undefined
-        : { configurable: true, enumerable: true },
-  })
-
-  return {
-    raw: auth,
-    api: restoreBetterAuthEffectApi<Auth['api']>(api),
-    fetch: (request) =>
-      Effect.tryPromise({
-        try: () => Promise.resolve(auth.handler(request)),
-        catch: (cause) =>
-          new HttpError({
-            status: 502,
-            message: 'Authentication service failed.',
-            cause,
-          }),
-      }),
-  }
-}
-
-function requestsRawBetterAuthResponse(args: readonly unknown[]): boolean {
-  const options = args.at(-1)
-
-  return getBoundaryProperty(options, 'asResponse') === true
 }
 
 export function classifyBetterAuthFailure(
@@ -382,6 +258,57 @@ export function classifyBetterAuthFailure(
     headers,
     setCookies
   })
+}
+
+/**
+ * A redirect Better Auth's handler answered. Some endpoints report a failure
+ * by redirecting with `?error=CODE`, as a used magic link does: that is a
+ * rejection, carrying only the redirect's cookies, so the action can show it.
+ * Any other redirect is where Better Auth sends the browser next.
+ */
+function classifyBetterAuthRedirect(response: Response): BetterAuthBoundaryFailure {
+  const headers = collectBetterAuthHeaders(response, undefined)
+  const setCookies = readSetCookies(headers)
+  const target = parseLocation(response.headers.get('Location'))
+  const code = target?.searchParams.get('error') ?? null
+
+  if (code === null || code === '') {
+    return BetterAuthBoundaryFailure.BetterAuthRedirected({ status: response.status, cause: response, headers, setCookies })
+  }
+
+  const cookies = new Headers()
+  for (const cookie of setCookies) cookies.append('set-cookie', cookie)
+
+  return BetterAuthBoundaryFailure.BetterAuthRequestRejected({
+    error: {
+      status: response.status,
+      code,
+      message: target?.searchParams.get('error_description') || describeErrorCode(code),
+      body: undefined,
+      cause: response,
+      headers: cookies,
+      setCookies,
+    },
+    headers: cookies,
+    setCookies,
+  })
+}
+
+function parseLocation(location: string | null): URL | undefined {
+  if (location === null) return undefined
+
+  try {
+    return new URL(location, 'http://localhost')
+  } catch {
+    return undefined
+  }
+}
+
+/** Better Auth's error code as a sentence: `INVALID_TOKEN` reads "Invalid token". */
+function describeErrorCode(code: string): string {
+  const words = code.replaceAll('_', ' ').toLowerCase()
+
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`
 }
 
 export function toAuthActionError(

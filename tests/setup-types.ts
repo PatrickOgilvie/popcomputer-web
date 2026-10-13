@@ -20,11 +20,7 @@ import {
   NotFoundError,
   validateRequest,
 } from '@popcomputer/web/effect'
-import {
-  betterAuthRedirect,
-  effectifyBetterAuth,
-  type BetterAuthBoundaryFailure,
-} from '@popcomputer/web/auth'
+import { betterAuthRedirect } from '@popcomputer/web/auth'
 import type { WebDeclaration } from '@popcomputer/web'
 
 type TestDatabase = {
@@ -211,29 +207,6 @@ const typedAuthAction = Effect.gen(function* () {
 })
 
 void typedAuthAction
-
-const customBetterAuth = {
-  api: {
-    customEndpoint: async (input: { readonly value: string }) => ({
-      echoed: input.value,
-    }),
-  },
-  handler: async (_request: Request) => new Response('OK'),
-}
-
-const effectAuth = effectifyBetterAuth(customBetterAuth)
-
-const customEndpointEffect: Effect.Effect<
-  { readonly echoed: string },
-  BetterAuthBoundaryFailure
-> = effectAuth.api.customEndpoint({ value: 'typed' })
-
-void customEndpointEffect
-
-// @ts-expect-error Plugin endpoint arguments remain required and typed.
-const invalidEndpointEffect = effectAuth.api.customEndpoint({ value: 123 })
-
-void invalidEndpointEffect
 
 // ---------------------------------------------------------------------------
 // The routes setupWeb returns accept exactly the services it configures.

@@ -4,10 +4,7 @@ import { APIError, betterAuth } from 'better-auth'
 import { memoryAdapter, type MemoryDB } from 'better-auth/adapters/memory'
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import { Hono } from 'hono'
-import {
-  betterAuthRedirect,
-  effectifyBetterAuth,
-} from '../../src/effect/auth.js'
+import { betterAuthRedirect } from '../../src/effect/auth.js'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { ValidationError } from '../../src/effect/errors.js'
 import {
@@ -17,7 +14,7 @@ import {
 } from '../../src/effect/services.js'
 import { setupWeb } from '../../src/setup.js'
 import { validateRequest } from '../../src/effect/validation.js'
-import type { BetterAuthActionError, BetterAuthActionResult } from '../../src/effect/auth.js'
+import type { BetterAuthActionError, BetterAuthActionResult } from '../../src/effect/better-auth-boundary.js'
 import type { AuthType } from '../../src/effect/services.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
@@ -125,64 +122,6 @@ function getValidationError(
 }
 
 describe('betterAuthRedirect in a form action with Better Auth', () => {
-  test('retains custom endpoint types and values through the Effect façade', async () => {
-    const auth = {
-      api: {
-        pluginEndpoint: async (input: { readonly value: string }) => ({
-          echoed: input.value,
-        }),
-      },
-      handler: async (_request: Request) => new Response('OK'),
-    }
-
-    const authEffect = effectifyBetterAuth(auth)
-
-    const result = await Effect.runPromise(
-      authEffect.api.pluginEndpoint({ value: 'from-plugin' })
-    )
-
-    expect(result).toEqual({ echoed: 'from-plugin' })
-    expect(authEffect.raw).toBe(auth)
-    expect(authEffect.api.pluginEndpoint).toBe(authEffect.api.pluginEndpoint)
-    expect('pluginEndpoint' in authEffect.api).toBe(true)
-    expect('missingEndpoint' in authEffect.api).toBe(false)
-    expect(Object.keys(authEffect.api)).toEqual(['pluginEndpoint'])
-  })
-
-  test('preserves explicit asResponse error responses in the success channel', async () => {
-    const auth = {
-      api: {
-        pluginEndpoint: async (_input: { readonly asResponse: true }) =>
-          new Response('Unauthorized', { status: 401 }),
-      },
-      handler: async (_request: Request) => new Response('OK'),
-    }
-
-    const authEffect = effectifyBetterAuth(auth)
-
-    const response = await Effect.runPromise(
-      authEffect.api.pluginEndpoint({ asResponse: true })
-    )
-
-    expect(response.status).toBe(401)
-    expect(await response.text()).toBe('Unauthorized')
-  })
-
-  test('does not treat a plugin domain status as an HTTP envelope', async () => {
-    const auth = {
-      api: {
-        pluginEndpoint: async () => ({ status: 451, state: 'awaiting-review' }),
-      },
-      handler: async (_request: Request) => new Response('OK'),
-    }
-
-    const authEffect = effectifyBetterAuth(auth)
-
-    const result = await Effect.runPromise(authEffect.api.pluginEndpoint())
-
-    expect(result).toEqual({ status: 451, state: 'awaiting-review' })
-  })
-
   test('normalizes invalid credentials when a Request makes Better Auth return a Response', async () => {
     const auth = createTestAuth()
     await auth.api.signUpEmail({

@@ -109,7 +109,7 @@ async function createApp(rateLimit?: { readonly enabled: boolean }) {
 
   routes
     .post('/sign-out', betterAuthLogoutAction())
-    .all('/api/auth/*', betterAuthHandler)
+    .all('/api/auth/*', betterAuthHandler())
 
   return app
 }
