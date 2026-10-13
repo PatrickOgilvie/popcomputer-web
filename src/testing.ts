@@ -381,6 +381,12 @@ export interface TestTime {
   set(time: Date | number): Promise<void>
   /** Move the clock forward, as `advance('7 days')` or `advance(Duration.hours(2))`. */
   advance(duration: Duration.Input): Promise<void>
+  /**
+   * Move the clock forward by `step` until `work` settles, such as a request
+   * whose retries wait on `Schedule.exponential`: each wait ends when the
+   * clock passes it. Rejects after `maxSteps` steps without settling.
+   */
+  settle<A>(work: A | PromiseLike<A>, step?: Duration.Input, maxSteps?: number): Promise<A>
 }
 
 /**
@@ -412,5 +418,37 @@ export async function testClock(start: Date | number = Date.UTC(2026, 0, 1)): Pr
     now: () => new Date(clock.currentTimeMillisUnsafe()),
     set,
     advance: (duration) => Effect.runPromise(clock.adjust(duration)),
+    settle: async (work, step = '1 second', maxSteps = 10_000) => {
+      let settled = false
+      const observed = Promise.resolve(work).then(
+        (value) => {
+          settled = true
+
+          return value
+        },
+        (error: unknown) => {
+          settled = true
+
+          throw error
+        }
+      )
+
+      for (let steps = 0; !settled; steps += 1) {
+        if (steps >= maxSteps) {
+          // The timeout is the failure this test reports; a later rejection of
+          // the abandoned work is not.
+          observed.catch(() => undefined)
+
+          throw new Error(`The work did not settle within ${maxSteps} steps of the test clock.`)
+        }
+
+        // Let the work run until it waits on the clock, then move the clock.
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        if (!settled) await Effect.runPromise(clock.adjust(step))
+      }
+
+      return observed
+    },
   }
 }

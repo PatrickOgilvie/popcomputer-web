@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `testClock`'s `settle(request, step?, maxSteps?)` moves the test clock until a request that waits on it answers, such as an action retrying with `Schedule.exponential`.
 - `WebErrorPage` from `@popcomputer/web/react` types the error page component, and `readErrorPage(response)` from `@popcomputer/web/testing` reads it in a test, with the invalid fields of a page visit as `errors`.
 - `betterAuthRedirect`'s and `betterAuthLogoutAction`'s `redirectTo`, and `auth.signInPath`, take declared paths, as `redirect` does.
 - `tableSchema(table, overrides)` checks the columns `overrides` names with the schemas given, such as a JSON column's or a `$type<...>()` narrowing's, and derives the rest from the table.

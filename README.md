@@ -1391,6 +1391,10 @@ const env = testEnv(Layer.merge(signedIn({ id: 'user-1' }), time.layer), testBin
 
 await time.advance('8 days')
 const expired = await app.request('/invites/abc', {}, env)
+
+// A request that waits on the clock, such as a delivery retrying with
+// Schedule.exponential: settle moves the clock until it answers.
+const delivered = await time.settle(app.request('/webhooks/deliver', { method: 'POST' }, env))
 ```
 
 Bun runs every test file in one module registry, so a clock or a test

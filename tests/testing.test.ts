@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 import { describe, expect, test } from 'bun:test'
-import { Clock, Context, DateTime, Effect, Layer, Schema as S } from 'effect'
+import { Clock, Context, DateTime, Effect, Layer, Schedule, Schema as S } from 'effect'
 import { TestClock } from 'effect/testing'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
@@ -349,6 +349,44 @@ describe('testClock', () => {
     const res = await app.request('/me', {}, testEnv(Layer.merge(signedIn({ id: 'user-1' }), time.layer)))
 
     expect(await res.json()).toEqual({ id: 'user-1', at: Date.UTC(2026, 0, 1) })
+  })
+})
+
+describe('testClock settle', () => {
+  test('moves the clock until a request that waits on it finishes', async () => {
+    const time = await testClock(new Date('2026-01-01T00:00:00Z'))
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+    let attempts = 0
+
+    // Fails twice, then succeeds, waiting 1s then 2s between attempts.
+    const deliver = Effect.suspend(() => {
+      attempts += 1
+
+      return attempts < 3 ? Effect.fail('unavailable' as const) : Effect.succeed(attempts)
+    }).pipe(Effect.retry(Schedule.exponential('1 second')), Effect.orDie)
+
+    routes.post('/deliver', action(Effect.gen(function* () {
+      const delivered = yield* deliver
+      const at = yield* Clock.currentTimeMillis
+
+      return yield* json({ delivered, at })
+    })))
+
+    const res = await time.settle(app.request('/deliver', { method: 'POST' }, testEnv(time.layer)))
+
+    expect(await res.json()).toEqual({ delivered: 3, at: Date.parse('2026-01-01T00:00:03Z') })
+  })
+
+  test('rejects when the request does not answer within the steps', async () => {
+    const time = await testClock(new Date('2026-01-01T00:00:00Z'))
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    routes.get('/stuck', action(Effect.sleep('1 hour').pipe(Effect.flatMap(() => json({ ok: true })))))
+
+    await expect(time.settle(app.request('/stuck', {}, testEnv(time.layer)), '1 second', 3))
+      .rejects.toThrow('did not settle within 3 steps')
   })
 })
 

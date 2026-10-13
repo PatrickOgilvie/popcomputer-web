@@ -125,7 +125,8 @@ TypeScript example here and in the README type-checks against the package.
     Miniflare's D1 for D1, migrated with `applyMigrations`. Replace a service
     that reaches another system with `Layer.succeed(Service, fake)` in the
     layer, and move time with `testClock()`, which works when rules read the
-    time through Effect's `Clock` or `DateTime.now`.
+    time through Effect's `Clock` or `DateTime.now`; `time.settle(request)`
+    runs a request whose retries wait on the clock.
 
 Every name has one entrypoint: `@popcomputer/web` for `setupWeb`, template
 helpers and Hono middleware; `@popcomputer/web/effect` for actions, routes,
