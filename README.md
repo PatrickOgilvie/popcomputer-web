@@ -200,8 +200,9 @@ type error on the side that drifted.
 
 A row joined from several tables spreads `columnsOf` for each table, which
 takes the fields that table has: `{ ...columnsOf(stockLevels, StockLine),
-...columnsOf(products, StockLine) }`. A field both tables have comes from the
-later one, so select it by name instead.
+...columnsOf(products, StockLine) }`. A field both tables have, such as `id`,
+comes from the later one, so leave it out of the other table's:
+`columnsOf(products, MovementRow.mapFields(Struct.omit(['id'])))`.
 
 A query reads exactly the columns a page shows with `columnsOf`, which takes
 them from the page's schema, beside any values it computes:
