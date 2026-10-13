@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-next.5] - 2026-10-13
+
+Changes since 0.8.0-next.4.
+
 ### Added
 
 - Endpoint contracts, from the new `@popcomputer/web/endpoint` entrypoint, which imports only `effect`: `endpoint.get/post/put/patch/delete(path, { query, body, headers, success, status, errors })` declares a JSON endpoint once. `action(endpoint, ({ params, query, body, headers }) => effect)` implements it with its input decoded (invalid input answers 422 before the handler runs) and returns the success value, which is encoded through `success`, so only declared fields leave the server; a failure declared under `errors` (a tagged schema) is answered with its status, its `_tag` as the envelope's `tag` and its fields as `body`. `routes.endpoint(action)` registers it on the contract's method and path and answers JSON, and reports an undeclared failure as `unhandledErrors`. `call(endpoint, input, { fetch })` sends typed input and reads `{ ok, value }` or `{ ok: false, error }`, with declared failures decoded and the rest as `EndpointFailure`; `endpointRequest` and `readEndpoint` are its two halves. `openApi(endpoints, info)` describes every endpoint as an OpenAPI 3.1 document, giving validators that accept form posts the JSON type a client sends.
