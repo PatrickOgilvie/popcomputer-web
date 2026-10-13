@@ -818,6 +818,10 @@ export class EffectRouteBuilder<
     const honoPath = toHonoPath(path)
     const fullPath = this.resolvePath(honoPath)
 
+    if (options?.purges === true && bindings.length === 0) {
+      throw RouteConfigurationError.purgesWithoutBindings(path)
+    }
+
     // Register route metadata
     const metadata: RouteMetadata = {
       method,

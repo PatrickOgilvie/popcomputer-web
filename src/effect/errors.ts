@@ -544,6 +544,15 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     })
   }
 
+  /** Create an error for `purges: true` on a route whose path names no record. */
+  static purgesWithoutBindings(path: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route '${path}' has purges: true, but its path has no {param} whose record it could purge.`,
+      hint: "List the tags it changes instead, such as purges: ['posts'] for the table a create route writes.",
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
   /** Create an error for bound(key) in an action whose route has no {key} placeholder. */
   static bindingNotInRoute(binding: string): RouteConfigurationError {
     return new RouteConfigurationError({

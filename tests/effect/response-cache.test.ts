@@ -619,6 +619,15 @@ describe('purges route option', () => {
     expect(purges).toEqual([{ tags: ['posts:post-1', 'posts'] }])
   })
 
+  test('purges: true on a route without a {param} fails at registration', () => {
+    const register = () =>
+      effectRoutes(createApp()).post('/posts', Effect.succeed(new Redirect({ url: '/posts', status: 303 })), {
+        purges: true,
+      })
+
+    expect(register).toThrow("Route '/posts' has purges: true")
+  })
+
   test('static purge tags are used verbatim', async () => {
     const { purges, layer } = recordingCacheLayer()
 
