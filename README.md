@@ -2038,9 +2038,10 @@ when the client does; export it so tests send the same `X-Inertia-Version`.
 
 ### Upgrading from 0.7
 
-These steps take an application on the 0.7.0 release to the unreleased
-changes that follow it; skip any that name an API the application never
-used. The next release declares everything once, in `setupWeb`; the
+These steps take an application on the 0.7.0 release to the 0.8.0
+pre-releases; skip any that name an API the application never used. Each
+pre-release has its own section in the changelog, so an application on one
+pre-release reads the sections newer than its installed version. The next release declares everything once, in `setupWeb`; the
 [changelog](CHANGELOG.md), shipped in the package as
 `node_modules/@popcomputer/web/CHANGELOG.md`, lists every change. In order:
 
