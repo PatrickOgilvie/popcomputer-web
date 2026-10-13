@@ -243,6 +243,25 @@ describe('safety', () => {
     expect(await list(ada)).toEqual([])
   })
 
+  test('guessing a password is cut short', async () => {
+    const env = await freshEnv()
+    await signUp(env, 'Ada', 'ada@acme.test')
+    const guesser = testBrowser(app, env as never)
+    const signIn = (password: string) => guesser.request('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ email: 'ada@acme.test', password }),
+    })
+
+    for (let attempt = 0; attempt < 10; attempt += 1) await signIn(`guess-${attempt}`)
+
+    // The right password, straight after ten wrong ones from the same client, does not sign it in.
+    await signIn('correct horse battery')
+    const listed = await guesser.request('/api/expenses', { headers: JSON_HEADERS })
+
+    expect(listed.status).toBe(401)
+  })
+
   test('responses carry no credentials', async () => {
     const { ada, jo } = await setUp()
     await log(ada)

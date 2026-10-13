@@ -291,6 +291,22 @@ describe('safety', () => {
     expect(await bookingsOf(ada)).toEqual([])
   })
 
+  test('guessing a password is cut short', async () => {
+    const env = await freshEnv()
+    await register(env, 'Ada Patient', 'ada@example.com')
+    const guesser = testBrowser(app, env as never)
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await guesser.request('/login', post({ email: 'ada@example.com', password: `guess-${attempt}` }))
+    }
+
+    // The right password, straight after ten wrong ones from the same client, does not sign it in.
+    await guesser.request('/login', post({ email: 'ada@example.com', password: 'correct horse battery' }))
+    const bookings = await guesser.request('/bookings', { headers: { 'X-Inertia': 'true' } })
+
+    expect(bookings.status).not.toBe(200)
+  })
+
   test('a booking that does not exist is not found', async () => {
     const { ada } = await setUp()
     await visit(ada, '/bookings')

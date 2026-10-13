@@ -57,3 +57,12 @@ or the test wrong. Fix the exam, and note it, rather than the score.
 | --- | --- | --- |
 | `clinic` | Patients book appointment slots that staff open; Inertia pages and forms | D1 |
 | `expenses` | Employees log expenses and managers decide them; a JSON API with idempotent creates and an OpenAPI description | Postgres (PGlite) |
+| `shop` | Staff list products with photos; customers order from stock and pay through a signed, retried webhook | D1 |
+
+Each exam's safety suite also checks that guessing a password is cut short.
+
+## Scores
+
+| Round | Version | clinic | expenses | shop |
+| --- | --- | --- | --- | --- |
+| 13 | 0.8.0-next.5 | 21/21, 21/21 (22/22 each with the throttle test added after) | 18/18, 18/18 (18/19 each: no throttle) | — |
