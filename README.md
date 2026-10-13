@@ -847,6 +847,11 @@ serializing the auth user never exposes it; read it with `Redacted.value`
 where it is needed. `auth.share` names the fields pages receive as
 `auth.user`.
 
+Machine clients, such as a door scanner calling a JSON API, authenticate with
+Better Auth's `bearer()` plugin: a request with `Authorization: Bearer
+<token>` loads its user as a session cookie does, with no setup of the
+framework's own.
+
 ### Signing in and out
 
 Sign-in, sign-up and sign-out are ordinary routes on the `routes` setupWeb
@@ -971,6 +976,30 @@ Typed failures, defects, Hono exceptions, and not-found responses share the
 configured error boundary. Use `EffectErrorObserverService` as the integration
 point for Sentry, PostHog, or another reporting system; observation does not
 change the failure channel.
+
+A JSON client gets every failure in one envelope, whatever its status:
+
+```json
+{
+  "code": "WEB_VAL_004_SCHEMA_MISMATCH",
+  "tag": "ValidationError",
+  "message": "This field is required",
+  "httpStatus": 422,
+  "errors": { "name": "This field is required" }
+}
+```
+
+`errors` names each invalid field's message, as a form's page receives them.
+An `HttpError` with a body adds it as `body`, so a domain error a JSON action
+maps with `httpError(409, 'Already checked in.', { code: 'ticket_already_used' })`
+reaches the client as `{ ..., "httpStatus": 409, "body": { "code":
+"ticket_already_used" } }`. Production replaces the message of a 5xx or an
+internal failure with a generic one. Test the envelope a client receives with
+`ENVIRONMENT: 'production'` in the test bindings.
+
+The error page is rendered by the boundary, after the action, so it receives
+`auth.user` and flash values but not the props `shareProps` computes; give
+its layout defaults for them.
 
 ## Caching and background work
 
@@ -1279,6 +1308,11 @@ const FakeMailer = Layer.succeed(Mailer, Mailer.of({
 const env = testEnv(Layer.merge(signedIn({ id: 'user-1' }), FakeMailer), testBindings)
 ```
 
+Effect `Config` reads the request's bindings, so a test sets a var or secret
+in `testEnv`'s bindings. `services.app` is built once per test process, from
+the first request's bindings: a test that needs another value for an
+application service gives it a layer in `testEnv` instead.
+
 Rules that depend on the time, such as an invitation that expires after seven
 days, read it from Effect's `Clock` (`DateTime.now`, `Clock.currentTimeMillis`)
 rather than `new Date()`. `testClock(start)` gives a test one clock that every
@@ -1311,10 +1345,20 @@ and constraint errors behave the same:
   ['DB'] })`, migrate `await miniflare.getD1Database('DB')` with
   `applyMigrations('./drizzle', (sql) => d1.prepare(sql).run())`, and pass it
   as the `DB` binding. `getKVNamespace` and `getR2Bucket` give the other
-  bindings the same way. Dispose of Miniflare when the test process ends.
+  bindings the same way; their types differ slightly from
+  `@cloudflare/workers-types`', so provide a KV store to the data cache as
+  `kvCache(kv)` in the test layer rather than as a binding. Create Miniflare
+  once and dispose of it once, in a file `bunfig.toml`'s `preload` names:
+  Bun shares modules between test files, so an `afterAll` in a shared module
+  disposes of it while other files still use it.
 
 `bun:sqlite` is a synchronous driver: it can stand in for neither, since
 `dbTransaction` and `dbBatch` are type errors for it.
+
+An application on D1 adds Cloudflare's types to `tsconfig.json`'s
+`compilerOptions.types` (`"@cloudflare/workers-types"`, or the file
+`wrangler types` writes). Drizzle's D1 results name them, and without them a
+result is `any`, which the database operations report as a type error.
 
 ```ts
 // src/test-db.ts
@@ -1468,10 +1512,19 @@ A handler whose branches end differently, as this one does, branches inside
 `Effect.gen`: TypeScript combines the branches of one generator, but not a
 plain function that returns a different Effect from each branch.
 
-On D1, write the same statements as one `dbBatch((db) => [...])`. When a limit
-cannot be a constraint, put it in the write's own `WHERE` clause, such as
-`UPDATE ... WHERE (SELECT count(*) ...) < 100`, and treat a statement that
-changed no row (`meta.changes === 0`) as the limit refusing it.
+On D1, write the same statements as one `dbBatch((db) => [...])`. A batch
+cannot branch on an earlier statement's result, so a write that depends on
+one carries its condition: `db.insert(table).select(...)` with the condition
+in the select's `WHERE`, or `UPDATE ... WHERE EXISTS (...)`, and
+`.returning()` on the first statement tells the action whether it applied.
+When a limit cannot be a constraint, put it in the write's own `WHERE`
+clause, such as `UPDATE ... WHERE (SELECT count(*) ...) < 100`, and treat a
+statement that changed no row (`meta.changes === 0`) as the limit refusing
+it. A value the database computes, such as the next ticket number in an
+organization, belongs in the insert:
+``sql`(SELECT coalesce(max(number), 0) + 1 FROM ...)` ``. Write every
+statement with the query builder: Drizzle's D1 batch fails at runtime on
+`db.run(sql)`, which is a type error there.
 
 ### A layer guards a group of routes
 
@@ -1492,11 +1545,38 @@ const OwnProject = Layer.effectDiscard(Effect.gen(function* () {
 routes.provide(OwnProject).get(paths.project, showProject)
 ```
 
+A guard that finds something the actions need, such as the visitor's
+membership of an organization, provides it as a service instead of discarding
+it, so every action in the group, and a `shareProps` provided after it, reads
+it without querying again:
+
+```ts
+class CurrentProject extends Context.Service<CurrentProject, {
+  readonly project: typeof projects.$inferSelect
+}>()('app/CurrentProject') {}
+
+const OwnedProject = Layer.effect(CurrentProject, Effect.gen(function* () {
+  const auth = yield* authorize()
+  const project = yield* bound('project')
+
+  if (project.userId !== auth.user.id) return yield* notFound('Project')
+
+  return CurrentProject.of({ project })
+}))
+
+routes.provide(OwnedProject).get(paths.task, action(Effect.gen(function* () {
+  const { project } = yield* CurrentProject
+
+  return yield* render('Projects/Show', { project })
+})))
+```
+
 ### Webhooks verify the raw body, then record the event once
 
 A webhook's signature covers the exact bytes sent, so read the raw body with
-`RequestService`'s `raw()` rather than `validateRequest`, verify it with Web
-Crypto (`crypto.subtle.verify` compares in constant time), and only then decode
+`RequestService`'s `raw()` rather than `validateRequest` (read
+`raw().clone().text()` when `validateRequest` reads the body afterwards),
+verify it with Web Crypto (`crypto.subtle.verify` compares in constant time), and only then decode
 it. Read the secret with `Config.Redacted`, which reads the Worker's binding
 and keeps it out of logs. Providers retry, so record each event id under a
 unique key and treat a duplicate as already handled:

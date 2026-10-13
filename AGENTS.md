@@ -60,9 +60,11 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
 6. **Load route models with `{param}` placeholders and `bound('param')`.**
    Name each model's Drizzle table in `setupWeb`'s `bindings`
    (`bindings: { project: schema.projects }`); the model is the table's row,
-   checked against its columns. Never query by a route parameter yourself.
-   Call `authorize()` before `bound()`: models load on the first `bound()`
-   call, and a missing row is a 404. A record the user may not
+   checked against its columns. Never query by a route parameter yourself;
+   to lock a bound record inside `dbTransaction`, read it again by its id with
+   `.for('update')`. On a route that needs a signed-in user, call
+   `authorize()` before `bound()`: models load on the first `bound()` call,
+   and a missing row is a 404. A record the user may not
    see answers `notFound(...)`, so its existence stays private; use
    `authorize((auth) => rule)` (a 403) for a record the user can see but not
    change.

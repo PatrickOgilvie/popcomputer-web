@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A JSON client's 422 carries `errors`, each invalid field's message by name, as a form's page receives them, beside `validation`.
 - `redirectNow(path, params)` redirects from anywhere in an action, such as a helper or a guard layer, by failing with the redirect, which the boundary answers; values flashed before it reach the next page. `Redirect` is one of the package's errors.
 - `routes.run(effect, env, ctx)` runs an Effect with the application's services outside a request, from a Worker's `scheduled` or `queue` handler: the database, `services`, `Config` from the bindings, `background()` and the builder's provided layers work as in an action. It resolves with the Effect's value and rejects with its failure; an Effect needing a service the setup does not provide is a type error naming it.
 - `tableSchema(table)` from `@popcomputer/web/schema` is an Effect Schema struct of a Drizzle table's row, each column checked against its type, nullability and enum values, so page props and the signed-in user take their fields from the table: `tableSchema(schema.projects).mapFields(Struct.pick(['id', 'name']))`. Table route bindings check rows with it.

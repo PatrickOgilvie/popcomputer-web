@@ -49,6 +49,8 @@ interface FormattedError {
   requestId?: string
   context?: StructuredError['context']
   fixes?: StructuredError['fixes']
+  /** Each invalid field's message, as a form's page receives them as `errors`. */
+  errors?: Readonly<Record<string, string>>
   validation?: object
   body?: unknown
 }
@@ -167,6 +169,12 @@ export class JsonErrorFormatter implements ErrorFormatter {
 
     if (this.options.includeFixes && error.fixes.length > 0) {
       output.fixes = error.fixes
+    }
+
+    if (error.validation) {
+      output.errors = Object.fromEntries(
+        Object.entries(error.validation.fields).map(([name, field]) => [name, field.message])
+      )
     }
 
     if (this.options.safeMessages) {

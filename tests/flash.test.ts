@@ -237,10 +237,14 @@ describe('domain failures on a form', () => {
     expect((await form.json()).props.errors).toEqual({ amount: 'Offers start at 10.' })
   })
 
-  test('invalid() answers a JSON client with 422', async () => {
+  test('invalid() answers a JSON client with 422 and each field\'s message', async () => {
     const res = await offer(offersApp(), 5, { 'X-Inertia': '', Accept: 'application/json' })
 
     expect(res.status).toBe(422)
+    expect(await res.json()).toMatchObject({
+      code: 'WEB_VAL_004_SCHEMA_MISMATCH',
+      errors: { amount: 'Offers start at 10.' },
+    })
   })
 
   test('back() returns to the page the request came from', async () => {
