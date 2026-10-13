@@ -10,7 +10,7 @@ import type { ParsedBinding } from './binding.js'
 /**
  * HTTP methods supported by the router.
  */
-export type HttpMethod = 'get' | 'post' | 'put' | 'patch' | 'delete' | 'all'
+export type HttpMethod = 'get' | 'post' | 'put' | 'patch' | 'delete' | 'options' | 'all'
 
 /**
  * Metadata stored for each registered route.

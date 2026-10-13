@@ -224,7 +224,9 @@ export function web(config: WebConfig): MiddlewareHandler {
       }
     }
 
-    const committed = c.res ? withResponseCookies(flash.commit(c.res), openWebContext(c).responseCookies) : undefined
+    const committed = c.res
+      ? withResponseHeaders(withResponseCookies(flash.commit(c.res), openWebContext(c).responseCookies), openWebContext(c).responseHeaders)
+      : undefined
 
     if (committed !== undefined && committed !== c.res) {
       // Assigning c.res copies the previous response's Set-Cookie headers over
@@ -250,6 +252,17 @@ function withResponseCookies(response: Response, cookies: readonly string[] | un
   const headers = new Headers(response.headers)
 
   for (const cookie of cookies) headers.append('Set-Cookie', cookie)
+
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
+/** The response with the headers an action or layer added with responseHeader. */
+function withResponseHeaders(response: Response, added: ReadonlyArray<readonly [string, string]> | undefined): Response {
+  if (added === undefined || added.length === 0) return response
+
+  const headers = new Headers(response.headers)
+
+  for (const [name, value] of added) headers.append(name, value)
 
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
 }

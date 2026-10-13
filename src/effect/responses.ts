@@ -153,6 +153,16 @@ export function json(
 }
 
 /**
+ * Answer `204 No Content`: a success with no body, such as a deletion or a
+ * CORS preflight, carrying only the headers given.
+ *
+ * @example
+ * return yield* noContent({ 'Access-Control-Allow-Origin': origin })
+ */
+export const noContent = (headers?: HeadersInit): Effect.Effect<Response> =>
+  Effect.succeed(new Response(null, { status: 204, headers }))
+
+/**
  * Return a text response.
  *
  * @example

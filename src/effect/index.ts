@@ -117,6 +117,7 @@ export {
   flash,
   json,
   text,
+  noContent,
   file,
   type ResponseOptions,
   type FileOptions,
@@ -199,6 +200,9 @@ export {
 
 // Application cookies, each declared once with its value's schema
 export { cookie, CookieService, type Cookie, type CookieJar, type CookieOptions, type CookieWrite } from './cookies.js'
+
+// Headers added to whatever response the request ends with
+export { responseHeader, ResponseHeaders } from './response-headers.js'
 
 // Config for the Worker's vars and secrets, named as the bindings declare them
 export { config, type BindingConfig, type BindingName } from './config.js'

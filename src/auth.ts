@@ -9,6 +9,7 @@ export {
   shareAuth,
   shareAuthMiddleware,
   betterAuthRedirect,
+  betterAuthCall,
   betterAuthHandler,
   betterAuthLogoutAction,
   effectifyBetterAuth,

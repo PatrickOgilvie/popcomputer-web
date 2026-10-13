@@ -9,12 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `responseHeader(name, value)` adds a header to whatever response the request ends with, failures included, from an action or a guard layer.
+- `routes.options(path, action)` registers an OPTIONS route, such as a CORS preflight, and `noContent(headers)` answers 204 with no body or content type.
+- `betterAuthCall(call, { errors })` from `@popcomputer/web/auth` calls Better Auth for a result the action uses, mapping its failures as `betterAuthRedirect` does.
+- `ACTIVE_CONTENT_TYPES` is exported from `@popcomputer/web/schema`.
 - `UnauthorizedError`'s `challenge`, such as `'Bearer'`, is sent as `WWW-Authenticate` on a JSON 401, whatever headers the request carried.
 - `FormErrors<typeof Schema>` from `@popcomputer/web/react` types a form's field errors by the fields of its schema.
 - `testBrowser` names the page it last showed as the `Referer` of a form it posts, and `setCookie(name, value, path)` gives it a cookie.
 
 ### Fixed
 
+- A write run in `dbQuery` by mistake that breaks a constraint is a defect naming `dbMutation`, rather than a `DatabaseError` that field-error mappings silently missed.
+- `testBrowser.follow` refuses a response the browser did not receive, rather than following it without its cookies.
 - `betterAuthRedirect` keeps Better Auth's session cookie when `redirectTo` fails after Better Auth signed the visitor in, such as a sign-up whose follow-up refuses; the visitor was left signed out of the account just created.
 - The development error page of a violation of a named constraint shows the `constraintFieldErrors` entry that would map it.
 

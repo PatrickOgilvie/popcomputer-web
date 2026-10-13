@@ -15,8 +15,8 @@ import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { intendedUrl, RequireAuthLayer, RequireGuestLayer } from '../../src/effect/auth.js'
-import { betterAuthHandler, betterAuthLogoutAction, betterAuthRedirect } from '../../src/auth.js'
-import { render } from '../../src/effect/responses.js'
+import { betterAuthCall, betterAuthHandler, betterAuthLogoutAction, betterAuthRedirect } from '../../src/auth.js'
+import { json, render } from '../../src/effect/responses.js'
 import { requiredString } from '../../src/effect/schema.js'
 import { ValidationError } from '../../src/effect/errors.js'
 import { validateRequest } from '../../src/effect/validation.js'
@@ -89,6 +89,17 @@ const signUpThenRefuse = action(Effect.gen(function* () {
   )
 }))
 
+// A password check whose result the action uses.
+const checkPassword = action(Effect.gen(function* () {
+  const input = yield* validateRequest(SignIn)
+  const result = yield* betterAuthCall(
+    (auth, request) => auth.api.signInEmail({ body: input, headers: request.headers, returnHeaders: true }),
+    { errors: (error) => ({ password: error.message }) }
+  )
+
+  return yield* json({ checked: result.headers instanceof Headers })
+}))
+
 function createApp() {
   const app = new Hono()
   const { routes } = setupWeb(app, {
@@ -103,6 +114,7 @@ function createApp() {
     .post('/sign-in', signIn)
     .post('/sign-up', signUp)
     .post('/sign-up-refused', signUpThenRefuse)
+    .post('/check-password', checkPassword)
 
   routes
     .provide(RequireAuthLayer)
@@ -125,6 +137,23 @@ const submitSignIn = (app: Hono, password: string) =>
   })
 
 describe('auth flow on routes', () => {
+  test('betterAuthCall returns the result, or the rejection as field errors', async () => {
+    const app = createApp()
+    const check = (password: string) => app.request('/check-password', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ada@example.com', password }),
+    })
+
+    const passed = await check('correct horse')
+    const failed = await check('wrong')
+
+    expect(await passed.json()).toEqual({ checked: true })
+    expect(passed.headers.getSetCookie().some((cookie) => cookie.startsWith('better-auth.session_token='))).toBe(true)
+    expect(failed.status).toBe(422)
+    expect((await failed.json()).errors).toEqual({ password: 'Invalid email or password' })
+  })
+
   test('a sign-up whose redirectTo fails keeps the session Better Auth created', async () => {
     const res = await createApp().request('/sign-up-refused', {
       method: 'POST',

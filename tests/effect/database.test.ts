@@ -354,6 +354,17 @@ describe('uniqueFieldErrors', () => {
     })
   })
 
+  test('a write run in dbQuery that breaks a constraint is a defect naming dbMutation', async () => {
+    const { layer, db } = openDatabase()
+    await db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Intro' })
+
+    const exit = await Effect.runPromiseExit(
+      dbQuery((db) => db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Again' })).pipe(Effect.provide(layer))
+    )
+
+    expect(Exit.isFailure(exit) && String(Cause.squash(exit.cause))).toContain('Write with dbMutation')
+  })
+
   test('reports a SQLite index on an expression by its name', async () => {
     const { layer, db, sqlite } = openDatabase()
     sqlite.run('CREATE UNIQUE INDEX pages_title_lower_unique ON pages (lower(title))')

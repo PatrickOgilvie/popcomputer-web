@@ -8,6 +8,7 @@ import { Cause, Config, ConfigProvider, Duration, Effect, Exit, Layer, ManagedRu
 import { getCookie } from 'hono/cookie'
 import { serialize } from 'hono/utils/cookie'
 import { CookieService, type CookieJar } from './cookies.js'
+import { ResponseHeaders } from './response-headers.js'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { WebRequestContext } from '../request-context.js'
@@ -541,6 +542,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   | RequestStateService
   | ResponseFactoryService
   | CookieService
+  | ResponseHeaders
   | PageService
   | DatabaseService
   | AuthService
@@ -560,6 +562,12 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
 
   const responseLayer = Layer.succeed(ResponseFactoryService, createResponseFactory(c))
   const cookieLayer = Layer.succeed(CookieService, createCookieJar(c))
+  const headersLayer = Layer.succeed(ResponseHeaders, ResponseHeaders.of({
+    append: (name, value) => {
+      const context = openWebContext(c)
+      context.responseHeaders = [...(context.responseHeaders ?? []), [name, value]]
+    },
+  }))
   const pageLayer = Layer.succeed(PageService, createPageRenderer(c, config))
 
   // Bindings layer - always available, typed by the registered application's environment
@@ -603,6 +611,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     requestStateLayer,
     responseLayer,
     cookieLayer,
+    headersLayer,
     pageLayer,
     bindingsLayer,
     executionContextLayer,
@@ -636,6 +645,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     | RequestStateService
     | ResponseFactoryService
     | CookieService
+    | ResponseHeaders
     | PageService
     | BindingsService
     | ExecutionContextService

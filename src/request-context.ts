@@ -64,6 +64,8 @@ export interface WebRequestContext<E extends Env = Env> {
   jsonApi?: boolean
   /** Application cookies an action set, which web() writes on the response. */
   responseCookies?: string[]
+  /** Headers an action or layer added with responseHeader, which web() writes on the response. */
+  responseHeaders?: ReadonlyArray<readonly [string, string]>
 }
 
 

@@ -387,6 +387,8 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
 
   // The page the browser shows, which a form posted from it names as its Referer.
   let page: string | undefined
+  // The responses this browser received, whose cookies it holds.
+  const received = new WeakSet<Response>()
 
   const request = async (path: string, init: RequestInit = {}): Promise<Response> => {
     const headers = new Headers(init.headers)
@@ -399,6 +401,7 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
     if (page !== undefined && !headers.has('Referer')) headers.set('Referer', page)
 
     const response = keep(await app.request(path, { ...init, headers }, env))
+    received.add(response)
 
     if (method === 'GET' && response.status < 300) page = url.href
 
@@ -408,6 +411,10 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
   return {
     request,
     follow: (response, init = {}) => {
+      if (!received.has(response)) {
+        throw new Error('browser.follow takes a response this browser received, whose cookies it holds; follow one requested another way with followRedirect(app, res, env).')
+      }
+
       const location = response.headers.get('Location')
 
       if (location === null || response.status < 300 || response.status >= 400) {

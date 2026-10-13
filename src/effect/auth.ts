@@ -495,6 +495,41 @@ export function betterAuthRedirect<
 }
 
 /**
+ * Call Better Auth for a result the action uses, such as the secret that
+ * enabling two-factor returns or a password check, with its failures mapped
+ * as `betterAuthRedirect` maps them: a rejection becomes the field errors
+ * `errors` returns, and a rate limit a typed error. Cookies the call sets,
+ * from `returnHeaders: true`, reach the response the request ends with.
+ *
+ * @example
+ * const enrolment = yield* betterAuthCall(
+ *   (auth, request) => auth.api.enableTwoFactor({ body: { password }, headers: request.headers }),
+ *   { errors: (error) => ({ password: error.message }) }
+ * )
+ */
+export function betterAuthCall<Result>(
+  call: (auth: AuthType, request: Request) => Promise<Result>,
+  options: { readonly errors?: (error: BetterAuthActionError) => Record<string, string> } = {}
+): Effect.Effect<Result, AuthRedirect | ValidationError | AuthRateLimitError | HttpError, RequestService | AuthService> {
+  return Effect.gen(function* () {
+    const auth = yield* AuthService
+    const request = yield* RequestService
+    const result = yield* runBetterAuthApiCall(() => call(auth, buildAuthRequest(request))).pipe(
+      Effect.mapError((failure) => toAuthActionError(failure, options.errors))
+    )
+    // A call made with returnHeaders: true answers { headers, response }.
+    const headers: unknown = result instanceof Object ? Reflect.get(result, 'headers') : undefined
+    const jar = yield* Effect.serviceOption(CookieService)
+
+    if (headers instanceof Headers && Option.isSome(jar)) {
+      for (const cookie of headers.getSetCookie()) jar.value.append(cookie)
+    }
+
+    return result
+  }).pipe(Effect.withSpan('Web.betterAuthCall'))
+}
+
+/**
  * Forward the request to Better Auth's own API, for browser code that calls
  * it directly (Better Auth's client SDK, OAuth callbacks). Register it under
  * Better Auth's base path:

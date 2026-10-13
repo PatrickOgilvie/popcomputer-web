@@ -94,3 +94,6 @@ export {
 
 // The JSON body every failure answers a JSON client with, for clients to decode
 export { ErrorResponse, errorResponseWith } from './effect/error-response.js'
+
+// Media types a browser runs script in, which upload families leave out
+export { ACTIVE_CONTENT_TYPES } from './effect/schema.js'

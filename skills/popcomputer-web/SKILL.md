@@ -68,7 +68,9 @@ TypeScript example here and in the README type-checks against the package.
 5. **Read request input only through `validateRequest(Schema)`.** Build schemas
    from `@popcomputer/web/schema` validators (`requiredString`,
    `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, ...), which
-   accept form posts as well as JSON, `nullable(...)` for a filter a GET form
+   accept form posts as well as JSON (an API rejects undeclared query
+   parameters with `request: { order: ['query'] }, parseOptions: {
+   onExcessProperty: 'error' }`), `nullable(...)` for a filter a GET form
    may send empty, and `upload({ types: [...] })` for files, served back with
    `file(...)`. A form that
    fails validation goes back to the page it came from, which receives the
@@ -79,8 +81,9 @@ TypeScript example here and in the README type-checks against the package.
    Name each model's Drizzle table in `setupWeb`'s `bindings`
    (`bindings: { project: schema.projects }`); the model is the table's row,
    checked against its columns. Never query by a bound route parameter
-   yourself (a plain parameter, such as an invitation token, is read with
-   `validateRequest` and looked up like any input);
+   yourself (a plain parameter, such as an invitation token, or the id of a
+   record served from the data cache, is read with `validateRequest` and
+   looked up like any input);
    to lock a bound record inside `dbTransaction`, read it again by its id with
    `.for('update')`. On a route that needs a signed-in user, call
    `authorize()` before `bound()`: models load on the first `bound()` call,
@@ -93,7 +96,10 @@ TypeScript example here and in the README type-checks against the package.
    `currentUser` when signing in is optional. Guard a group of routes with
    `routes.provide(RequireAuthLayer)` or `routes.provide(RequireGuestLayer)`.
    Sign users in and up with an action that validates its form and returns
-   `betterAuthRedirect(...)` from `@popcomputer/web/auth`. Register a JSON
+   `betterAuthRedirect(...)` from `@popcomputer/web/auth`; call Better Auth
+   for a result the action uses with `betterAuthCall(...)`. A role a user
+   holds per team or workspace lives on a membership row a guard layer
+   reads, not on the user. Register a JSON
    API's routes on `routes.jsonApi()`, with their declared paths
    (`routes.jsonApi().provide(KeyAuth).get(paths.apiInvoices, ...)`), so every
    failure there answers JSON (a 401, not a redirect to sign in), and
@@ -243,7 +249,8 @@ with that tag: remove the handler. The same error, or `... | { readonly _tag:
 unknown }` is not assignable, at a `catchTag` written apart from an Effect,
 as a reusable helper, means TypeScript cannot see the errors it handles:
 write it inside `.pipe(...)`, or use `Effect.mapError` with an `instanceof`
-check. `not assignable to type '{ EntitlementRequired: never; }'` at an
+check (`Effect.catchIf((error) => error instanceof X, ...)` when the error
+type is a type parameter). `not assignable to type '{ EntitlementRequired: never; }'` at an
 `Effect.catchTags` means the same of that tag: remove its handler. A registration, `routes.run` or an
 `action(...)` reporting an `Effect<..., unknown, unknown>`, or
 `missingServices: "unnamed service"`, means an earlier type error in the

@@ -28,6 +28,7 @@ import {
 import { openWebContext } from '../request-context.js'
 import { invalidateCacheTags } from '../cache.js'
 import type { CookieService } from './cookies.js'
+import type { ResponseHeaders } from './response-headers.js'
 import { allowDefaultPageCache } from '../page-cache.js'
 import {
   applyCachePolicy,
@@ -107,6 +108,7 @@ export type CoreServices =
   | PendingPurges
   | PendingCacheTags
   | CookieService
+  | ResponseHeaders
 
 /**
  * Every service the framework can provide to a route: the core services plus
@@ -157,7 +159,7 @@ export type RouteActionCheck<R, Err, Services> = [ModelName<Exclude<R, Services>
       }
   : {
       readonly missingRouteModels: ModelName<Exclude<R, Services>>
-      readonly fix: "bound('name') reads the model a {name} placeholder in the route path loads: register the action on a path, or under a prefix, that has one."
+      readonly fix: "bound('name') reads the model a {name} placeholder in the route path loads: register the action, and any route a layer reading it guards, on a path, or under a prefix, that has one."
     }
 
 /** An Effect `routes.run` can run: one whose services the routes provide. */
@@ -1184,6 +1186,20 @@ export class EffectRouteBuilder<
     options?: EffectRouteOptions
   ): this {
     this.registerRoute('delete', path, checkedAction(effect), options)
+
+    return this
+  }
+
+  /**
+   * Register an OPTIONS route, such as a CORS preflight answering which
+   * origins, methods and headers a browser may use.
+   */
+  options<const P extends Path, R, Err>(
+    path: P,
+    effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
+    options?: EffectRouteOptions
+  ): this {
+    this.registerRoute('options', path, checkedAction(effect), options)
 
     return this
   }

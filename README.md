@@ -971,6 +971,21 @@ Effect, or keep them in the application's own table, such as a membership,
 which a guard layer reads. Sign-up passes `returnHeaders: true` to
 `auth.api.signUpEmail`, and reads the new user from `result.response.user`.
 
+A Better Auth call whose result the action uses, such as enabling two-factor
+(which returns the secret) or checking a password, goes through
+`betterAuthCall(call, { errors })` from `@popcomputer/web/auth`, which maps
+its failures as `betterAuthRedirect` does and returns the result. A link
+Better Auth emails, such as a reset link, points at its own `/api/auth/*`
+endpoint; build the application's own link from the token with `href`, so it
+lands on a page of the application. A failure Better Auth answers with a
+redirect, such as a used magic link, reaches the action as `AuthRedirect`.
+Better Auth keeps its own time: its token and session expiry follow the wall
+clock, not `testClock`, so a test of them starts the test clock at the
+present and the application's own rules read Effect's `Clock`. `signedIn`
+signs a request in without a Better Auth session, so a Better Auth endpoint
+that needs one, such as deleting the account, is tested after a real sign-in
+through `testBrowser`.
+
 A signed-out visitor to a guarded page is redirected with 302 on a page load
 and 303 on an Inertia visit, as Inertia requires; a test asserts the
 `Location`, `/login?redirect=...`, rather than the status. A form posted
@@ -1104,7 +1119,15 @@ way. An API whose clients may send neither header, such as a scanner that
 forgot its key, registers its routes on `routes.jsonApi()`, with their
 declared paths, `routes.jsonApi().provide(ApiKeyAuth).get(paths.apiInvoices, listInvoices)`:
 every request to them is a JSON client. An `HttpError` adds its `headers` to the response, as
-`HttpError.rateLimited(30)` adds `Retry-After`.
+`HttpError.rateLimited(30)` adds `Retry-After`. A guard layer adds a header to
+every response of its routes, failures included, with
+`responseHeader('Deprecation', 'true')`, as for an API's rate-limit headers.
+`routes.options(path, action)` answers a CORS preflight, with `noContent(headers)`
+for its 204. An API that rejects query parameters it does not declare passes
+`validateRequest(Query, { request: { order: ['query'] }, parseOptions: {
+onExcessProperty: 'error' } })`; reading only the query keeps the route's own
+parameters from counting as excess. `Jsonify<typeof Schema.Type>` from
+`@popcomputer/web/effect` types a JSON response as React reads it.
 
 ```json
 {
@@ -1447,7 +1470,7 @@ export const projectTasks = action(Effect.gen(function* () {
     { ttl: Duration.seconds(30), tags: [recordCacheTag('projects', project.id)] }
   )
 
-  return yield* json({ tasks })
+  return yield* json(S.Struct({ tasks: S.Array(Task) }), { tasks })
 }))
 ```
 

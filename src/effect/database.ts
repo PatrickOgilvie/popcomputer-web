@@ -47,7 +47,17 @@ export function dbQuery<A, T>(
   query: (db: DatabaseType) => A,
   schema?: S.Codec<T, unknown, never, never>
 ): Effect.Effect<Awaited<A> | T, DatabaseError, DatabaseService> {
-  const rows = run('query', query, (cause) => Effect.fail(new DatabaseError({ operation: 'query', cause })))
+  // A read breaks no constraint, so a broken one means a write ran here by
+  // mistake: a defect naming dbMutation, whose violations map to field errors.
+  const rows = run('query', query, (cause) =>
+    Effect.catchTag(classifyFailure(cause, 'query'), 'DatabaseConstraintViolation', (violation) =>
+      Effect.die(new Error(
+        `A write in dbQuery broke a ${violation.constraint} constraint${violation.constraintName === undefined ? '' : ` (${violation.constraintName})`}. ` +
+          'Write with dbMutation, whose constraint violations uniqueFieldErrors and constraintFieldErrors map to field errors.',
+        { cause }
+      ))
+    )
+  )
 
   return schema === undefined
     ? rows
@@ -421,7 +431,7 @@ const SPANS: Readonly<Record<Operation, string>> = {
  */
 function classifyFailure(
   cause: unknown,
-  operation: Exclude<Operation, 'query'>
+  operation: Operation
 ): Effect.Effect<never, DatabaseWriteError> {
   const chain = causeChain(cause)
 
