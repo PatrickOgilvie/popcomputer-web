@@ -932,7 +932,9 @@ between the two writes leaves nothing the next request cannot repair.
 
 A signed-out visitor to a guarded page is redirected with 302 on a page load
 and 303 on an Inertia visit, as Inertia requires; a test asserts the
-`Location`, `/login?redirect=...`, rather than the status.
+`Location`, `/login?redirect=...`, rather than the status. A form posted
+while signed out, as after a session expires, cannot be replayed, so
+`?redirect=` names the page the form was on, and a JSON client gets a 401.
 
 `betterAuthHandler` forwards a request to Better Auth's own API, for browser
 code that calls it directly (Better Auth's client SDK, OAuth callbacks):
@@ -1205,9 +1207,10 @@ so server-only changes still appear.
 - Browsers always revalidate cached pages. A page is stored only if the final
   response, after all middleware, still allows it: no `Set-Cookie`, and no
   other `Cache-Control`.
-- The `X-Popweb-Cache` response header reports `HIT`, `MISS`, `DYNAMIC` or
-  `BYPASS` on the pages the default page cache considers; a route with a
-  `{param}` placeholder, or with a `cache` option of its own, carries none.
+- The `X-Popweb-Cache` response header reports `BYPASS` on any request the
+  page cache skips, such as a signed-in one, and `HIT`, `MISS` or `DYNAMIC`
+  on the pages the default page cache considers; a route with a `{param}`
+  placeholder, or with a `cache` option of its own, is not one of them.
 - A test of the default page cache stubs the Cache API
   (`Reflect.set(globalThis, 'caches', { default: store })`) and reads each response's body
   before the next request: a page is stored once its body has streamed. A test
@@ -1262,7 +1265,7 @@ A bound route's cached page carries the Cache-Tag of each record it reads,
 `recordCacheTag(table, primaryKey)` such as `projects:project-1`, whichever
 column the route looks the record up by. `purges` removes cached entries after
 a successful write. `purges: true` purges the records the route's bindings name
-and the table of the record it writes, so a write by id purges the page read by
+and the table of its last binding, so a write by id purges the page read by
 slug, and the table's tag purges an index that declares it:
 
 ```ts
@@ -1272,9 +1275,11 @@ routes
   .put(paths.project, updateProject, { purges: true })
 ```
 
-`purges: true` names only the route's own records. When an action changes
-another record, such as the listing an accepted offer sold, it adds that
-record's tag with `purgeCache`. The route purges it after the action
+`purges: true` names only the route's own records, which for a route that
+creates a record under its parent, such as `POST /threads/{thread}/posts`,
+are the parent and its table (`threads`), not the new post's. When an action
+creates or changes another record, such as a reply's post or the listing an
+accepted offer sold, it adds that record's tag with `purgeCache`. The route purges it after the action
 succeeds, together with its own `purges` if it has any, and not at all when
 the action fails:
 

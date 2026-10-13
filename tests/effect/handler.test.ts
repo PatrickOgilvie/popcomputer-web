@@ -259,6 +259,24 @@ describe('Error Handling', () => {
       expect(res.headers.get('Location')).toBe('/login?redirect=%2F')
     })
 
+    test('returns a form post to the page the form was on after signing in', async () => {
+      const app = createApp()
+
+      effectRoutes(app).post('/projects/p1/tasks', Effect.fail(new UnauthorizedError({ message: 'Login required' })))
+
+      const fromForm = await app.request('/projects/p1/tasks', {
+        method: 'POST',
+        headers: { Referer: 'http://localhost/projects/p1?tab=tasks' },
+      })
+      const offSite = await app.request('/projects/p1/tasks', {
+        method: 'POST',
+        headers: { Referer: 'https://elsewhere.example/form' },
+      })
+
+      expect(fromForm.headers.get('Location')).toBe('/login?redirect=%2Fprojects%2Fp1%3Ftab%3Dtasks')
+      expect(offSite.headers.get('Location')).toBe('/login')
+    })
+
     test('redirects to custom URL', async () => {
       const app = createApp()
 

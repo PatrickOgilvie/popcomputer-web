@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A unique index on an expression, such as `lower(handle)`, is reported by its name on SQLite and D1 (`UNIQUE constraint failed: index '...'`), so `uniqueFieldErrors`'s `constraints` map it to its field; it was read as a column named `index`.
+- A form posted while signed out goes to sign in with the page the form was on as `?redirect=`.
 - `ErrorResponse` from `@popcomputer/web/schema` is the JSON error envelope as an Effect Schema, which a client decodes failures with; `ErrorResponseBody` is its type. `httpError(status, message, Schema, body)` checks and encodes an error's body through a schema, a test reads it with `readError(res, Schema)`, and a client decodes it with `errorResponseWith(Schema)`.
 - `cache(key, effect, schema, { ttl, tags })` tags an entry with the cache tags a route's `purges` and `purgeCache` name: the route that purges one of them after a write invalidates the data along with the cached responses. `purgeCache` also works in `routes.run`.
 - `testClock`'s `settle(request, maxTurns?)` runs a request that waits on the test clock to the end, moving the clock to the end of each pending sleep in turn, so an action retrying with `Schedule.exponential` waits exactly its delays.

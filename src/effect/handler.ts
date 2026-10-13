@@ -256,12 +256,14 @@ export async function renderErrorResponse<E extends Env>(
  */
 function signInUrl<E extends Env>(c: HonoContext<E>): string {
   const signInPath = openWebContext(c).signInPath ?? '/login'
+  // A visit returns to its page after signing in. A form post cannot be
+  // replayed, so it returns to the page the form was on.
+  const url = new URL(c.req.url)
+  const intended = c.req.method.toUpperCase() === 'GET'
+    ? `${url.pathname}${url.search}`
+    : sameOriginReferer(c.req.header('Referer'), c.req.url)
 
-  if (c.req.method.toUpperCase() !== 'GET') return signInPath
-
-  const intended = new URL(c.req.url)
-
-  return `${signInPath}?redirect=${encodeURIComponent(`${intended.pathname}${intended.search}`)}`
+  return intended === undefined ? signInPath : `${signInPath}?redirect=${encodeURIComponent(intended)}`
 }
 
 /** The same-origin page the request came from, or the home page. */

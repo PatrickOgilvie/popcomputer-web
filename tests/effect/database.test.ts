@@ -307,6 +307,21 @@ describe('uniqueFieldErrors', () => {
     expect(violation.toStructured().message).toContain('"contacts_email_lower_unique"')
   })
 
+  test('reports a SQLite index on an expression by its name', async () => {
+    const { layer, db, sqlite } = openDatabase()
+    sqlite.run('CREATE UNIQUE INDEX pages_title_lower_unique ON pages (lower(title))')
+    await db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Intro' })
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'other', title: 'INTRO' })).pipe(
+        uniqueFieldErrors({ title: 'A page has this title.' }, { constraints: { pages_title_lower_unique: 'title' } }),
+        Effect.provide(layer)
+      )
+    )
+
+    expect(failureOf(exit)).toMatchObject({ value: { errors: { title: 'A page has this title.' } } })
+  })
+
   test('reports a composite key by its columns, as SQLite reports it, on another field', async () => {
     const { layer, db } = openDatabase()
     await db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Intro' })

@@ -499,6 +499,14 @@ interface ConstraintDetails {
  */
 function readConstraintDetails(error: object): ConstraintDetails {
   const message = messageOf(error)
+  // `UNIQUE constraint failed: index 'user_handle_lower_unique'`, for an
+  // index on an expression, such as lower(handle), which has no columns
+  const sqliteIndex = /(?:UNIQUE|NOT NULL) constraint failed: index '([^']+)'/.exec(message)
+
+  if (sqliteIndex) {
+    return { columns: [], constraintName: sqliteIndex[1] }
+  }
+
   // `UNIQUE constraint failed: pages.workspace_id, pages.slug`
   const sqliteColumns = /(?:UNIQUE|NOT NULL) constraint failed: ((?:\w+\.)?\w+(?:, (?:\w+\.)?\w+)*)/.exec(message)
 
