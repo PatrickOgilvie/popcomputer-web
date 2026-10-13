@@ -162,19 +162,34 @@ export function dbBatch<const Items extends BatchArgument>(
   )
 }
 
+/** Unique constraints `uniqueFieldErrors` reports by name, with the form field each belongs to. */
+export interface UniqueFieldErrorsOptions<Field extends string> {
+  /**
+   * Constraint names whose violation belongs on a field: an index on an
+   * expression, such as `lower(email)`, reports no columns, and a composite
+   * key, such as `(org_id, user_id)`, may belong on another field.
+   */
+  readonly constraints?: Readonly<Record<string, Field>>
+}
+
 /**
  * Report a unique violation on any of the given columns as field errors, so
  * a form shows the message beside the field instead of an error page. Keys
- * are column names, in the schema's camelCase or the database's snake_case.
- * Other failures pass through unchanged.
+ * are column names, in the schema's camelCase or the database's snake_case;
+ * `constraints` names unique constraints by the field they belong on. Other
+ * failures pass through unchanged.
  *
  * @example
  * yield* dbMutation((db) => db.insert(pages).values(page)).pipe(
  *   uniqueFieldErrors({ slug: 'A page with this slug already exists.' })
  * )
+ * yield* dbMutation((db) => db.insert(contacts).values(contact)).pipe(
+ *   uniqueFieldErrors({ email: 'A contact has this email.' }, { constraints: { contacts_email_lower_unique: 'email' } })
+ * )
  */
-export function uniqueFieldErrors(
-  messages: Readonly<Record<string, string>>
+export function uniqueFieldErrors<const Field extends string>(
+  messages: Readonly<Record<Field, string>>,
+  options: UniqueFieldErrorsOptions<Field> = {}
 ): <A, E, R>(
   self: Effect.Effect<A, E, R>
 ) => Effect.Effect<A, E | ValidationError, R> {
@@ -184,9 +199,10 @@ export function uniqueFieldErrors(
         return Effect.fail(error)
       }
 
+      const named = error.constraintName === undefined ? undefined : options.constraints?.[error.constraintName]
       const errors = Object.fromEntries(
-        Object.entries(messages).filter(([field]) =>
-          error.columns.includes(field) || error.columns.includes(snakeCase(field))
+        Object.entries<string>(messages).filter(([field]) =>
+          field === named || error.columns.includes(field) || error.columns.includes(snakeCase(field))
         )
       )
 

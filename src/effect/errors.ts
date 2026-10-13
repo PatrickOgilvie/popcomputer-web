@@ -460,11 +460,17 @@ export class DatabaseConstraintViolation extends Schema.TaggedError<DatabaseCons
   }
 
   toStructured(context: ErrorContext = emptyContext()): StructuredError {
+    const name = this.constraintName === undefined ? '' : ` "${this.constraintName}"`
+    const columns = this.columns.length === 0 ? '' : ` on ${this.columns.join(', ')}`
+
+    // Database messages are sensitive: production replaces this one, so the
+    // constraint's name and columns reach only development pages and logs,
+    // where they say which field a uniqueFieldErrors mapping belongs on.
     return structured(
       ErrorCodes.DB_502_CONSTRAINT_VIOLATION,
       { constraint: this.constraint },
       context,
-      { message: this.message }
+      { message: `${this.message} (${this.constraint} constraint${name}${columns})` }
     )
   }
 }

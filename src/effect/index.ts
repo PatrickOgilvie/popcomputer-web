@@ -95,6 +95,7 @@ export {
   dbTransaction,
   dbBatch,
   uniqueFieldErrors,
+  type UniqueFieldErrorsOptions,
   type DatabaseWriteError,
   type TransactionClient,
   type BatchArgument,

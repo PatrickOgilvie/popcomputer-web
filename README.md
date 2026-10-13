@@ -88,6 +88,9 @@ pages, and Cloudflare's types for its bindings (`bun init` writes neither):
 }
 ```
 
+The examples read a row from `.returning()` as `const [project] = ...`; with
+`noUncheckedIndexedAccess` on, guard the row before using it.
+
 Coding agents should read `node_modules/@popcomputer/web/AGENTS.md`, a short
 rulebook naming the one API to use for each task. Reference it from the
 application's own `AGENTS.md` or `CLAUDE.md`. The same rules ship as a Claude
@@ -178,6 +181,13 @@ const Show: WebPage<'Projects/Show'> = ({ project, auth, errors }) => (
 
 export default Show
 ```
+
+The client resolves each page by name. A map of every page to its component,
+checked with `satisfies { readonly [Name in PageName]: unknown }` (`PageName`
+from `@popcomputer/web/effect`), makes a page without a component a type error,
+and `createInertiaApp({ resolve: (name) => components[name as PageName] })`
+reads it. A page component typed `WebPage<'Name'>` is a React function
+component.
 
 A component a page renders takes its props from the same declaration:
 `PagePropsFor<'Projects/Show'>['project']` from `@popcomputer/web/react` is the
@@ -351,7 +361,10 @@ export function createStatelessAuth(options: CreateStatelessAuthOptions) {
 
 On Cloudflare D1, `createDb` takes the binding instead,
 `drizzle(c.env.DB, { schema })` from `drizzle-orm/d1`, and the adapter's
-`provider` is `'sqlite'`.
+`provider` is `'sqlite'`; `npx @better-auth/cli generate` writes Better Auth's
+tables for either. Type the database as `ReturnType<typeof createDb>` or
+Drizzle's `DrizzleD1Database<typeof schema>`: either way `dbTransaction` is a
+type error on D1, which has no interactive transactions.
 
 The configuration is deliberately flat. `setupWeb({ web: { ... } })` would
 repeat the framework boundary without clarifying ownership.
@@ -973,7 +986,10 @@ configured error boundary. Use `EffectErrorObserverService` as the integration
 point for Sentry, PostHog, or another reporting system; observation does not
 change the failure channel.
 
-A JSON client gets every failure in one envelope, whatever its status:
+A JSON client, one that sends `Accept: application/json` or a JSON body, gets
+every failure in one envelope, whatever its status; an API's clients send that
+header. An `HttpError` adds its `headers` to the response, as
+`HttpError.rateLimited(30)` adds `Retry-After`.
 
 ```json
 {
@@ -1132,7 +1148,13 @@ so server-only changes still appear.
   response, after all middleware, still allows it: no `Set-Cookie`, and no
   other `Cache-Control`.
 - The `X-Popweb-Cache` response header reports `HIT`, `MISS`, `DYNAMIC` or
-  `BYPASS`.
+  `BYPASS` on the pages the default page cache considers; a bound route, or one
+  with a `cache` option of its own, carries none.
+- A test of the default page cache stubs the Cache API
+  (`globalThis.caches = { default: store }`) and reads each response's body
+  before the next request: a page is stored once its body has streamed. A test
+  request signed in with `signedIn` sends no session cookie, so it can be
+  served a guest's cached page; send the session cookie a browser would.
 
 The framework can't see data a page gets another way, such as an external
 `fetch()` or the current time. Give those routes `cache: false`, or call
@@ -1217,7 +1239,9 @@ middleware, route and action; `testEnv(layer, bindings)` builds the request
 env. Services in the layer replace the ones the request would otherwise get, so
 `signedIn(user)` signs the request in without a session cookie and
 `Layer.succeed(Service, fake)` swaps a service the application provides. A layer
-a route registers with `.provide()` still takes precedence for that route.
+a route registers with `.provide()` still takes precedence for that route. The
+application's own `services` are still built, so the test bindings include the
+vars and secrets those layers read even when a fake replaces them.
 
 ```ts
 // src/routes.test.ts
@@ -1556,7 +1580,11 @@ plain function that returns a different Effect from each branch.
 
 `columns` names the columns as the database reports them: snake_case SQL
 names on D1 (`['idempotency_key']`), which `uniqueFieldErrors` matches against
-the schema's camelCase keys too.
+the schema's camelCase keys too. An index on an expression, such as
+`lower(email)`, reports no columns, only its name: `uniqueFieldErrors({ email:
+'A contact has this email.' }, { constraints: { contacts_email_lower_unique:
+'email' } })` puts it on its field, as it does a composite key that belongs on
+another field.
 
 On D1, write the same statements as one `dbBatch((db) => [...])`. A batch
 cannot branch on an earlier statement's result, so a write that depends on
@@ -1594,7 +1622,10 @@ When a limit cannot be a constraint, a guarded update such as
 organization, belongs in the insert:
 ``sql`(SELECT coalesce(max(number), 0) + 1 FROM ...)` ``. Write every
 statement with the query builder: Drizzle's D1 batch fails at runtime on
-`db.run(sql)`, which is a type error there.
+`db.run(sql)`, which is a type error there. An insert's select lists every
+column the insert writes in the table's order, defaulted ones included. D1
+binds at most 100 parameters to a statement, so an `IN (...)` over many ids,
+or an insert of many rows, goes in chunks.
 
 ### A layer guards a group of routes
 

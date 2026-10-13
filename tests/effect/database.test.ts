@@ -21,7 +21,7 @@ import {
   uniqueFieldErrors,
 } from '../../src/effect/database.js'
 import { DatabaseService } from '../../src/effect/services.js'
-import { DatabaseError } from '../../src/effect/errors.js'
+import { DatabaseConstraintViolation, DatabaseError } from '../../src/effect/errors.js'
 import assert from 'node:assert/strict'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
@@ -286,6 +286,25 @@ describe('uniqueFieldErrors', () => {
 
     expect(failureOf(duplicateSlug)).toMatchObject({ value: { errors: { workspaceId: 'Taken in this workspace.' } } })
     expect(failureOf(duplicateId)).toMatchObject({ value: { _tag: 'DatabaseConstraintViolation', columns: ['id'] } })
+  })
+  test('reports a constraint named by its field, such as an index on lower(email)', async () => {
+    // Postgres names the constraint but no columns for an expression index.
+    const violation = new DatabaseConstraintViolation({
+      operation: 'mutation',
+      constraint: 'unique',
+      columns: [],
+      constraintName: 'contacts_email_lower_unique',
+      cause: null,
+    })
+
+    const exit = await Effect.runPromiseExit(
+      Effect.fail(violation).pipe(
+        uniqueFieldErrors({ email: 'A contact has this email.' }, { constraints: { contacts_email_lower_unique: 'email' } })
+      )
+    )
+
+    expect(failureOf(exit)).toMatchObject({ value: { _tag: 'ValidationError', errors: { email: 'A contact has this email.' } } })
+    expect(violation.toStructured().message).toContain('"contacts_email_lower_unique"')
   })
 })
 
