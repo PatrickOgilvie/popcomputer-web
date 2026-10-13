@@ -20,19 +20,36 @@ export type TableFields<T extends Table> = {
   readonly [Key in keyof T['$inferSelect'] & string]: S.Codec<T['$inferSelect'][Key], unknown, never, never>
 }
 
+/** Schemas that replace the derived field of the columns they name. */
+export type ColumnOverrides<T extends Table> = {
+  readonly [Key in keyof T['$inferSelect']]?: S.Codec<unknown, unknown, never, never>
+}
+
+/** The table's fields, with the overridden columns' schemas in place of theirs. */
+export type TableSchemaFields<T extends Table, Overrides> = {
+  readonly [Key in keyof TableFields<T>]: Key extends keyof Overrides
+    ? Overrides[Key] extends S.Codec<unknown, unknown, never, never> ? Overrides[Key] : TableFields<T>[Key]
+    : TableFields<T>[Key]
+}
+
 /**
  * An Effect Schema struct of a Drizzle table's row: each column checked
  * against its database type, nullability and enum values. Use it where a
  * schema restates a table, such as a page's props or the signed-in user, and
  * pick the columns a page shows with `mapFields(Struct.pick([...]))`.
  *
- * A narrowing declared only in TypeScript, such as `text('role').$type<Role>()`,
- * is typed but not checked: give the column an enum to check it.
+ * A JSON column, or a narrowing declared only in TypeScript such as
+ * `text('role').$type<Role>()`, is typed but not checked: give the column an
+ * enum, or name its schema in `overrides`, which replace the derived field.
  *
  * @example
  * const PublicCourse = tableSchema(schema.courses).mapFields(Struct.pick(['id', 'title', 'slug']))
+ * const Contact = tableSchema(schema.contacts, { custom: CustomValues })
  */
-export function tableSchema<T extends Table>(table: T): S.Struct<TableFields<T>> {
+export function tableSchema<T extends Table, const Overrides extends ColumnOverrides<T> = {}>(
+  table: T,
+  overrides?: Overrides
+): S.Struct<TableSchemaFields<T, Overrides>> {
   const columns: unknown = Reflect.get(table, DRIZZLE_COLUMNS)
   const fields: Record<string, S.Codec<unknown, unknown, never, never>> = {}
 
@@ -40,15 +57,24 @@ export function tableSchema<T extends Table>(table: T): S.Struct<TableFields<T>>
     for (const [key, column] of Object.entries(columns)) {
       if (!isColumn(column)) continue
 
+      const override: unknown = overrides ? Reflect.get(overrides, key) : undefined
+
+      if (override !== undefined && S.isSchema(override)) {
+        // SAFETY: ColumnOverrides admits only schemas without services.
+        fields[key] = override as S.Codec<unknown, unknown, never, never>
+        continue
+      }
+
       const value = columnValueSchema(column.dataType, column.enumValues)
       fields[key] = column.notNull ? value : S.NullOr(value)
     }
   }
 
   // SAFETY: each field checks its column's values as Drizzle reads them, which
-  // the table's $inferSelect types; a $type<...>() narrowing, documented
-  // above, is the one difference the database cannot check.
-  return S.Struct(fields) as unknown as S.Struct<TableFields<T>>
+  // the table's $inferSelect types, or is the override the caller named; a
+  // $type<...>() narrowing without an override, documented above, is the one
+  // difference the database cannot check.
+  return S.Struct(fields) as unknown as S.Struct<TableSchemaFields<T, Overrides>>
 }
 
 function isColumn(value: unknown): value is ColumnShape {

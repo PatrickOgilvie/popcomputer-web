@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tableSchema(table, overrides)` checks the columns `overrides` names with the schemas given, such as a JSON column's or a `$type<...>()` narrowing's, and derives the rest from the table.
 - `uniqueFieldErrors(messages, { constraints })` names unique constraints by the field they belong on, for an index on an expression such as `lower(email)`, which reports no columns, or a composite key that belongs on another field. A constraint violation's message on development pages names the constraint and its columns.
 - Once setupWeb declares `paths`, a path literal given to `redirect`, `redirectNow`, `back`, `href` or `intendedUrl` must be a declared path or an absolute URL, so a misspelled path is a type error naming the fix; a URL computed at runtime is a string and passes. `back(fallback, params)` fills its fallback's placeholders.
 - `json(Schema, value)` answers with a value checked against a schema and encoded through its JSON form, as page props are, and `readJson(response, Schema)` from `@popcomputer/web/testing` decodes it in a test, so a JSON API's response shape is declared once. `readError` explains a response that is not JSON.

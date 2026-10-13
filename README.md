@@ -761,9 +761,10 @@ const task = yield* bound('task')
 
 `bound('task')` is the table's row, checked against the table's columns as it
 loads, and a parameter name need not match its table: `bindings: { author:
-schema.users }` loads `{author}` from `users`. To parse a row differently, such
-as a text column narrowed with `$type<Role>()`, which the table cannot check,
-name an Effect Schema for the binding instead.
+schema.users }` loads `{author}` from `users`. A JSON column, or a text column
+narrowed with `$type<Role>()`, is typed but not checked by its column: name an
+Effect Schema for the binding, such as `tableSchema(schema.contacts, { custom:
+CustomValues })`, whose overrides check those columns and derive the rest.
 
 The package parses route parameters and database rows before exposing them.
 A route loads its models the first time the action calls `bound()`, so a guard

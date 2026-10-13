@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { Redacted, Schema as S, Struct } from 'effect'
-import { boolean, integer, pgEnum, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+import { boolean, integer, jsonb, pgEnum, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 import { columnsOf, tableSchema } from '../../src/effect/table-schema.js'
 import { Database } from 'bun:sqlite'
 import { count, eq } from 'drizzle-orm'
@@ -53,6 +53,25 @@ describe('tableSchema', () => {
       title: 'Effect',
       publishedAt: '2026-01-01T00:00:00.000Z',
     })
+  })
+})
+
+describe('tableSchema overrides', () => {
+  const CustomValues = S.Record(S.String, S.Union([S.String, S.Number]))
+  const contacts = pgTable('contacts', {
+    id: text('id').primaryKey(),
+    custom: jsonb('custom').$type<typeof CustomValues.Type>().notNull(),
+  })
+
+  test('check a JSON column with the schema named for it', () => {
+    const Contact = tableSchema(contacts, { custom: CustomValues })
+    const decode = S.decodeUnknownExit(Contact)
+
+    expect(decode({ id: 'c1', custom: { tier: 'gold', seats: 3 } })._tag).toBe('Success')
+    expect(decode({ id: 'c1', custom: { tier: true } })._tag).toBe('Failure')
+
+    const contact: typeof Contact.Type = { id: 'c1', custom: { tier: 'gold' } }
+    expect(contact.custom.tier).toBe('gold')
   })
 })
 
