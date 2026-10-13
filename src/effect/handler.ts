@@ -173,7 +173,9 @@ export async function renderErrorResponse<E extends Env>(
   const finalize = (response: Response): Response =>
     appendVerifiedErrorHeaders(response, error)
 
-  if (config.log ?? true) {
+  // Expected failures (validation, not found, forbidden) are answers, not
+  // server errors; only a 5xx is logged.
+  if ((config.log ?? true) && structured.httpStatus >= 500) {
     logStructuredError(structured, isDev)
   }
 

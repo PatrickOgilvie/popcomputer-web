@@ -25,7 +25,7 @@ import {
   render,
   type DefaultAuthUser,
 } from '@popcomputer/web/effect'
-import { signedIn } from '@popcomputer/web/testing'
+import { signedIn, testEnv } from '@popcomputer/web/testing'
 
 const Project = S.Struct({ id: S.String, userId: S.String })
 const routeBindings = { project: Project }
@@ -71,6 +71,10 @@ declare module '@popcomputer/web/effect' {
   interface WebPagesType {
     type: typeof pages
   }
+
+  interface WebBindingsType {
+    type: { readonly REGION: string; readonly MAX_LINKS: string }
+  }
 }
 
 type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
@@ -112,6 +116,11 @@ expectType<Equals<Parameters<WebPage<'Projects/Show'>>[0]['project']['createdAt'
 export const configured = setupWeb(new Hono(), { version: '1', render: () => '', pages, auth: { session: S.Any } })
 // @ts-expect-error pages is required
 setupWeb(new Hono(), { version: '1', render: () => '', auth: { session: S.Any } })
+
+// testEnv takes any of the application's bindings, with their declared types.
+testEnv(signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' }), { REGION: 'weur' })
+// @ts-expect-error REGIO is not a binding
+testEnv(signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' }), { REGIO: 'weur' })
 
 // Fields an application adds have no test default, so signedIn requires them.
 signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' })

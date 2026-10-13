@@ -876,3 +876,29 @@ describe('Utility', () => {
     })
   })
 })
+
+describe('Absent form fields', () => {
+  // A form omits an unchecked checkbox and a query string omits filters, so a
+  // validator for optional input takes its empty value when the key is absent.
+  test.each([
+    ['nullableString', nullableString, null],
+    ['nullableDate', nullableDate, null],
+    ['nullableEmail', nullableEmail, null],
+    ['nullableUrl', nullableUrl, null],
+    ['nullableUuid', nullableUuid, null],
+    ['nullable(positiveInt)', nullable(positiveInt), null],
+    ['filled(positiveInt, 1)', filled(positiveInt, 1), 1],
+    ['checkbox', checkbox, false],
+    ['ensureArray(S.String)', ensureArray(S.String), []],
+  ] as const)('%s decodes an absent key to its empty value', (_name, field, empty) => {
+    expect(S.decodeUnknownSync(S.Struct({ field }))({})).toEqual({ field: empty })
+  })
+
+  test('a required validator still rejects an absent key', () => {
+    expect(() => S.decodeUnknownSync(S.Struct({ field: requiredString }))({})).toThrow('Missing key')
+  })
+
+  test('optional validators still decode values inside arrays', () => {
+    expect(S.decodeUnknownSync(S.Array(nullableString))(['a', ' ', null])).toEqual(['a', null, null])
+  })
+})

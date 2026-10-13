@@ -58,7 +58,7 @@ export const nullableString = S.Unknown.pipe(
       encode: Effect.succeed,
     })
   )
-)
+).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(null)))
 
 /**
  * A required string that is trimmed. Empty strings fail validation.
@@ -202,7 +202,7 @@ export const checkbox = S.Unknown.pipe(
       encode: (b) => b,
     })
   )
-)
+).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(false)))
 
 // =============================================================================
 // Date Types
@@ -274,7 +274,7 @@ export const nullableDate = S.Unknown.pipe(
       encode: Effect.succeed,
     })
   )
-)
+).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(null)))
 
 // =============================================================================
 // Array Types
@@ -310,7 +310,7 @@ export const ensureArray = <InputSchema extends S.Constraint>(schema: InputSchem
           Effect.forEach(values, (value) => encodeItem(value, options)),
       })
     )
-  )
+  ).pipe(S.withDecodingDefaultTypeKey(Effect.succeed([])))
 }
 
 // =============================================================================
@@ -362,7 +362,7 @@ export const nullableEmail = S.Unknown.pipe(
       encode: Effect.succeed,
     })
   )
-)
+).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(null)))
 
 /**
  * A URL with trimming.
@@ -421,7 +421,7 @@ export const nullableUrl = S.Unknown.pipe(
       encode: Effect.succeed,
     })
   )
-)
+).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(null)))
 
 // =============================================================================
 // Laravel-style String Rules
@@ -652,7 +652,7 @@ export const nullableUuid = S.Unknown.pipe(
       encode: Effect.succeed,
     })
   )
-)
+).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(null)))
 
 /**
  * Validates an IPv4 address.
@@ -1058,7 +1058,7 @@ export const nullable = <InputSchema extends S.Constraint>(schema: InputSchema) 
             : encodeValue(value, options),
       })
     )
-  )
+  ).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(null)))
 }
 
 /**
@@ -1071,7 +1071,7 @@ export const filled = <InputSchema extends S.Constraint>(
   const decodeValue = SchemaParser.decodeUnknownEffect(schema)
   const encodeValue = SchemaParser.encodeEffect(schema)
 
-  return S.Unknown.pipe(
+  const field = S.Unknown.pipe(
     S.decodeTo(
       S.toType(schema),
       SchemaTransformation.transformEffect({
@@ -1083,4 +1083,6 @@ export const filled = <InputSchema extends S.Constraint>(
       })
     )
   )
+
+  return field.pipe(S.withDecodingDefaultTypeKey<typeof field>(Effect.succeed(defaultValue)))
 }

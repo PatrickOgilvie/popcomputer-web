@@ -10,8 +10,14 @@
  * const res = await app.request('/projects', {}, testEnv(signedIn({ id: 'user-1' })))
  */
 import { DateTime, Effect, Layer, Redacted } from 'effect'
-import { AuthUserService, type AuthUser, type DefaultAuthUser } from './effect/services.js'
+import { AuthUserService, type AuthUser, type DefaultAuthUser, type WebBindingsType } from './effect/services.js'
 import { attachTestLayer } from './effect/test-env.js'
+
+/**
+ * The bindings a test passes to `testEnv`: any of the application's bindings
+ * (WebBindingsType), each with its declared type, once it declares them.
+ */
+export type TestBindings = WebBindingsType extends { type: infer Bindings } ? Partial<Bindings> : object
 
 /**
  * Build a request env that adds `layer` to the request's Effect runtime.
@@ -21,14 +27,9 @@ import { attachTestLayer } from './effect/test-env.js'
  * application provides through `setupWeb`'s `services`. A layer that a
  * route registers with `.provide()` still takes precedence for that route.
  *
- * @param bindings - Bindings the request reads from `c.env`.
+ * @param bindings - Bindings the request reads from `c.env` and Effect `Config`.
  */
-export function testEnv<ROut>(layer: Layer.Layer<ROut>): Record<never, never>
-export function testEnv<ROut, Bindings extends object>(
-  layer: Layer.Layer<ROut>,
-  bindings: Bindings
-): Bindings
-export function testEnv<ROut>(layer: Layer.Layer<ROut>, bindings: object = {}): object {
+export function testEnv<ROut>(layer: Layer.Layer<ROut>, bindings: TestBindings = {}): TestBindings {
   const env = { ...bindings }
   attachTestLayer(env, layer)
 

@@ -69,6 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Validators for optional input accept an absent key: `checkbox` decodes it to `false`, the `nullable*` validators to `null`, `filled(schema, value)` to its default and `ensureArray` to `[]`. They failed with "Missing key", so a plain HTML form with an unchecked checkbox, or a page whose query string omitted a filter, failed validation.
+- Expected failures (4xx) are no longer logged as errors; only 5xx responses are.
 - `ForbiddenError`, `AuthRateLimitError` and `HttpError` render the application's error page for page and HTML requests, with their status, as `NotFoundError` does. They answered every client with JSON, which an Inertia client shows as an invalid-response modal. An `HttpError` with a `body` still answers with JSON.
 - An `HttpError` with a 4xx status the catalog does not list (403, 409, 418, ...) has the code `WEB_HTTP_4XX_CLIENT_ERROR` and the title "Request Failed" instead of `WEB_HTTP_500_INTERNAL_ERROR` and "Internal Server Error".
 - A request that `testEnv(signedIn(user))` signs in shares that user as the `auth.user` page prop, and the page cache does not store its response, as for a session cookie. Pages saw `auth.user: null`.
@@ -88,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `testEnv(layer, bindings)` takes any of the bindings the application declares in `WebBindingsType`, with their declared types, so a misspelled or mistyped binding is a type error.
 - `validateRequest` and `validateUnknown` report every invalid field (`errors: 'all'`) instead of the first, so a form shows all of its errors at once. Pass `parseOptions: { errors: 'first' }` for the previous behavior.
 - Public operations run in spans named after them: `Web.authorize`, `Web.validateUnknown`, `Web.validateRequest`, `Web.bound`, `Web.background`, `Web.dbMutation`, `Web.dbTransaction`, `Web.cache`, `Web.cacheGet`, `Web.cacheSet`, `Web.cacheInvalidate` and `Web.cacheInvalidatePrefix`. An application that installs an Effect tracer, such as an OpenTelemetry exporter, sees where request time goes.
 - The package's errors are `Schema.TaggedError` classes instead of `Data.TaggedError`, so their fields are checked when they are constructed. Construction, `_tag`, `Effect.catchTag` and the fields are unchanged; `FieldError.path` is `readonly string[]`.
