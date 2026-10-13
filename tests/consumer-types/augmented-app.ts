@@ -99,7 +99,7 @@ export const augmentedTypes = Effect.gen(function* () {
   const row = yield* dbQuery((db) => db.findProject('project-1'))
   expectType<Equals<typeof row, ProjectRow>>()
 
-  const inTransaction = yield* dbTransaction((tx) => tx.findProject('project-1'))
+  const inTransaction = yield* dbTransaction(dbQuery((db) => db.findProject('project-1')))
   expectType<Equals<typeof inTransaction, ProjectRow>>()
 
   const [first, second] = yield* dbBatch((db) => [db.findProject('a'), db.findProject('b')])

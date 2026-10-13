@@ -26,8 +26,8 @@ export const writes = Effect.gen(function* () {
   // Single writes work on any driver.
   yield* dbMutation((db) => db.run('DELETE FROM pages'))
 
-  // @ts-expect-error the transaction client is SynchronousTransactionsNotSupported
-  yield* dbTransaction(async (tx) => tx.run('DELETE FROM pages'))
+  // @ts-expect-error a synchronous driver commits before awaited writes run
+  yield* dbTransaction(dbMutation((db) => db.run('DELETE FROM pages')))
 
   // @ts-expect-error bun:sqlite has no batch()
   yield* dbBatch((db) => [db.run('DELETE FROM pages')])

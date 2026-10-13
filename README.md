@@ -522,12 +522,56 @@ give their callback the application's Drizzle client with its own types:
 | --- | --- |
 | `dbQuery((db) => ...)` | Reads. |
 | `dbMutation((db) => ...)` | One write, or writes that need not be atomic. |
-| `dbTransaction(async (tx) => ...)` | Writes that must succeed together, on a driver with asynchronous transactions (Postgres, MySQL, libsql). |
+| `dbTransaction(effect)` | An Effect whose database operations must succeed together, on a driver with asynchronous transactions (Postgres, MySQL, libsql). |
 | `dbBatch((db) => [...])` | Writes that must succeed together on Cloudflare D1, libsql or Neon HTTP: every statement applies, or none. |
 
-A synchronous driver such as `bun:sqlite` cannot run `dbTransaction`: it commits
-before an awaited write runs, so the transaction client is a type error naming
-the reason. Cloudflare D1 rejects interactive transactions; use `dbBatch`.
+Inside `dbTransaction`, `DatabaseService` is the transaction, so every
+`dbQuery` and `dbMutation` the Effect runs takes part, including those of the
+services it calls. Domain logic between the writes stays ordinary Effect code:
+the transaction commits when the Effect succeeds, and rolls back when it fails
+with the Effect's own typed error.
+
+```ts
+// src/actions/projects/destroy.ts
+import { eq } from 'drizzle-orm'
+import { Effect } from 'effect'
+import {
+  action,
+  authorize,
+  bound,
+  dbMutation,
+  dbTransaction,
+  flash,
+  notFound,
+  redirect,
+} from '@popcomputer/web/effect'
+import { projects, tasks } from '../../schema'
+
+export const destroyProject = action(
+  Effect.gen(function* () {
+    const auth = yield* authorize()
+    const project = yield* bound('project')
+
+    if (project.userId !== auth.user.id) return yield* notFound('Project')
+
+    yield* dbTransaction(Effect.gen(function* () {
+      yield* dbMutation((db) => db.delete(tasks).where(eq(tasks.projectId, project.id)))
+      yield* dbMutation((db) => db.delete(projects).where(eq(projects.id, project.id)))
+    }))
+    yield* flash('success', 'Project deleted.')
+
+    return yield* redirect('/projects')
+  })
+)
+```
+
+`dbTransaction` is a type error on Cloudflare D1, which rejects interactive
+transactions, and on synchronous drivers such as `bun:sqlite`, which commit
+before an awaited write runs. On D1, use `dbBatch`. A batch cannot decide
+from a read, so a rule such as "at most 100 open tasks" belongs in the write
+itself (`INSERT ... SELECT ... WHERE (SELECT count(*) ...) < 100`, then check
+the number of rows changed); a count followed by an insert lets concurrent
+requests pass the limit together.
 
 A write that breaks a constraint fails with `DatabaseConstraintViolation`,
 which names the constraint kind (`unique`, `foreign-key`, `not-null`, `check`)

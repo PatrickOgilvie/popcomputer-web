@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- `dbTransaction` runs an Effect instead of a promise callback: `dbTransaction(Effect.gen(function* () { ... }))`. Inside it `DatabaseService` is the transaction, so every `dbQuery` and `dbMutation` the Effect runs, including those of services it calls, takes part, and domain logic between writes stays Effect code. The transaction commits when the Effect succeeds and rolls back when it fails, failing with the Effect's own typed error instead of a `DatabaseError`.
 - Auth routes are ordinary routes on `routes`. `effectAuthRoutes`, which registered pages, actions and Better Auth's API on the Hono app, is removed with `AuthRoutesConfig` and `AuthActionEffect`, and `betterAuthFormAction` is replaced by `betterAuthRedirect(call, { redirectTo, errors })`, which a sign-in or sign-up action calls after its own `validateRequest`, so it can use the validated input for anything else first. `betterAuthHandler` forwards `routes.all('/api/auth/*', ...)` to Better Auth's API.
 - A signed-out visitor goes to setupWeb's `auth.signInPath` (default `/login`) instead of a hard-coded `/login`: `authorize()` and `RequireAuthLayer` fail with an `UnauthorizedError` without `redirectTo`, and the boundary resolves it. `betterAuthLogoutAction` redirects to `/` by default.
 - `RequestContext` has `raw()`, the request itself, for adapters that forward it.

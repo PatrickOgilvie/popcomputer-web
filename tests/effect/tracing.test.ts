@@ -92,7 +92,7 @@ const operations: ReadonlyArray<readonly [string, Effect.Effect<unknown, unknown
   ['Web.bound', bound('project').pipe(Effect.provide(BoundModels.fromModels({ project: { id: 'p1' } })))],
   ['Web.dbQuery', dbQuery(async () => 1).pipe(Effect.provide(database))],
   ['Web.dbMutation', dbMutation(async () => 1).pipe(Effect.provide(database))],
-  ['Web.dbTransaction', dbTransaction(async () => 1).pipe(Effect.provide(database))],
+  ['Web.dbTransaction', dbTransaction(Effect.succeed(1)).pipe(Effect.provide(database))],
   ['Web.dbBatch', dbBatch(() => [1]).pipe(Effect.provide(database))],
   ['Web.background', background('tracing-test', Effect.void).pipe(Effect.provide(inlineExecution))],
   ['Web.cache', cache('user:1', Effect.succeed(1), S.Number, ttl).pipe(Effect.provide(cacheLayers))],

@@ -11,7 +11,7 @@
  * driver reports them, its columns; anything else fails with `DatabaseError`.
  */
 
-import { Effect } from 'effect'
+import { Cause, Effect, Exit, Result } from 'effect'
 import { DatabaseService, type DatabaseType } from './services.js'
 import { DatabaseConstraintViolation, DatabaseError, ValidationError } from './errors.js'
 
@@ -51,31 +51,60 @@ export function dbMutation<A>(
 }
 
 /**
- * Run writes in an interactive transaction, which rolls back when the
- * callback rejects. Needs a driver whose transactions are asynchronous, such
- * as Postgres, MySQL or libsql. Cloudflare D1 has no interactive transactions:
- * use `dbBatch` there.
+ * Run an Effect in an interactive transaction. Inside it, `DatabaseService`
+ * is the transaction, so every `dbQuery` and `dbMutation` the Effect runs,
+ * including those of the services it calls, takes part. The transaction
+ * commits when the Effect succeeds; when it fails, the transaction rolls back
+ * and the Effect's own failure, typed, is the result.
+ *
+ * Needs a driver whose transactions are asynchronous, such as Postgres, MySQL
+ * or libsql: Cloudflare D1 and synchronous drivers are a type error. Use
+ * `dbBatch` on D1.
  *
  * @example
- * yield* dbTransaction(async (tx) => {
- *   await tx.delete(tasks).where(eq(tasks.projectId, project.id))
- *   await tx.delete(projects).where(eq(projects.id, project.id))
- * })
+ * yield* dbTransaction(Effect.gen(function* () {
+ *   const claim = yield* claims.lockForDecision(claimId)
+ *   const decision = yield* approvals.decide(claim, auth.user)
+ *   yield* dbMutation((db) => db.insert(auditLog).values(decision.audit))
+ * }))
  */
-export function dbTransaction<A>(
-  write: (tx: TransactionClient) => Promise<A>
-): Effect.Effect<A, DatabaseWriteError, DatabaseService> {
-  return run(
-    'transaction',
-    (db) => {
-      // SAFETY: TransactionClient is an error type unless DatabaseType has an
-      // asynchronous `transaction(run)` whose callback receives it.
-      const transactional = db as unknown as AsyncTransactions<TransactionClient>
+export function dbTransaction<A, E, R>(
+  transaction: Effect.Effect<A, E, R> & TransactionSupport
+): Effect.Effect<A, E | DatabaseWriteError, R | DatabaseService> {
+  return Effect.gen(function* () {
+    const db = yield* DatabaseService
+    const context = yield* Effect.context<R>()
+    // SAFETY: TransactionSupport admits the call only when DatabaseType has an
+    // asynchronous `transaction(run)`.
+    const transactional = db as unknown as AsyncTransactions<DatabaseType>
 
-      return transactional.transaction(write)
-    },
-    (cause) => classifyFailure(cause, 'transaction')
-  )
+    const outcome = yield* Effect.tryPromise({
+      try: (signal) =>
+        transactional.transaction((tx) =>
+          Effect.runPromiseExitWith(context)(
+            Effect.provideService(transaction, DatabaseService, tx),
+            { signal }
+          ).then((exit) => Exit.isSuccess(exit) ? exit.value : Promise.reject(new RolledBack(exit.cause)))
+        ),
+      catch: (cause) => cause,
+    }).pipe(Effect.result)
+
+    if (Result.isSuccess(outcome)) return outcome.success
+
+    // The Effect failed, and its failure rolled the transaction back.
+    if (outcome.failure instanceof RolledBack) {
+      // SAFETY: RolledBack carries the cause `transaction` failed with, whose
+      // errors are E.
+      return yield* Effect.failCause(outcome.failure.cause as Cause.Cause<E>)
+    }
+
+    return yield* classifyFailure(outcome.failure, 'transaction')
+  }).pipe(Effect.withSpan(SPANS.transaction))
+}
+
+/** Carries a failed transaction Effect's cause out of the driver's rollback. */
+class RolledBack {
+  constructor(readonly cause: Cause.Cause<unknown>) {}
 }
 
 /**
@@ -183,8 +212,9 @@ type IsD1 = [DriverClient] extends [never]
 
 /**
  * The client `transaction(run)` passes to its callback, when the driver
- * awaits the callback before committing. A synchronous driver's
- * `transaction` returns the callback's result instead of a promise.
+ * awaits the callback before committing, or an error type naming why it
+ * cannot. A synchronous driver's `transaction` returns the callback's result
+ * instead of a promise.
  */
 export type TransactionClient = [TransactionMethod] extends [never]
   ? TransactionsNotSupported
@@ -195,6 +225,12 @@ export type TransactionClient = [TransactionMethod] extends [never]
       ? Tx
       : SynchronousTransactionsNotSupported
     : TransactionsNotSupported
+
+/**
+ * What `dbTransaction` adds to its argument's type: nothing for a driver with
+ * asynchronous transactions, or the error type naming why the driver has none.
+ */
+export type TransactionSupport = TransactionClient extends { readonly __error: string } ? TransactionClient : unknown
 
 interface AsyncTransactions<Tx> {
   transaction<A>(run: (tx: Tx) => Promise<A>): Promise<A>

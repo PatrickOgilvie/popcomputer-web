@@ -9,7 +9,7 @@
  */
 import type { SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy'
 import { Effect } from 'effect'
-import { dbBatch, dbTransaction, type TransactionClient } from '../../src/effect/database.js'
+import { dbBatch, dbMutation, dbTransaction, type TransactionClient } from '../../src/effect/database.js'
 
 /** The shape of Cloudflare's D1Database binding. */
 interface D1Client {
@@ -32,8 +32,8 @@ declare function expectType<T extends true>(): void
 expectType<Equals<TransactionClient['__hint'], 'Use dbBatch((db) => [...statements]) to apply several writes atomically.'>>()
 
 export const writes = Effect.gen(function* () {
-  // @ts-expect-error the transaction client is D1TransactionsNotSupported
-  yield* dbTransaction(async (tx) => tx.run('DELETE FROM pages'))
+  // @ts-expect-error D1 has no interactive transactions
+  yield* dbTransaction(dbMutation((db) => db.run('DELETE FROM pages')))
 
   // Batches are D1's atomic writes.
   yield* dbBatch((db) => [db.run('DELETE FROM pages')])

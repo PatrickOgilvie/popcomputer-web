@@ -59,10 +59,12 @@ TypeScript example here and in the README type-checks against the package.
    `betterAuthRedirect(...)` from `@popcomputer/web/auth`.
 8. **Use the database only through `dbQuery`, `dbMutation`, `dbTransaction`
    and `dbBatch`:** `yield* dbQuery((db) => db.select()...)` to read,
-   `dbMutation((db) => db.insert(...))` to write. Several writes that must
-   succeed together go in `dbTransaction` (Postgres, MySQL, libsql) or
-   `dbBatch` (Cloudflare D1). Write only validated input and values the server
-   derives, and scope `where` clauses with bound models. Pipe a write through
+   `dbMutation((db) => db.insert(...))` to write. Operations that must
+   succeed together, with any Effect logic between them, go in
+   `dbTransaction(Effect.gen(...))` (Postgres, MySQL, libsql); on Cloudflare
+   D1, put the writes in one `dbBatch` and enforce limits inside the write
+   statement. Write only validated input and values the server derives, and
+   scope `where` clauses with bound models. Pipe a write through
    `uniqueFieldErrors({ column: 'message' })` to show a duplicate as a field
    error.
 9. **Provide application services in `setupWeb`'s `services`:** `app` for

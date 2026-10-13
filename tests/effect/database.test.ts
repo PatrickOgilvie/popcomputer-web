@@ -12,7 +12,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import { eq } from 'drizzle-orm'
 import { drizzle, type SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy'
 import { integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
-import { Cause, Effect, Exit, Layer, Option } from 'effect'
+import { Cause, Effect, Exit, Layer, Option, Schema } from 'effect'
 import {
   dbBatch,
   dbMutation,
@@ -249,33 +249,64 @@ describe('uniqueFieldErrors', () => {
   })
 })
 
+class SlugTaken extends Schema.TaggedError<SlugTaken>()('SlugTaken', { slug: Schema.String }) {}
+
 describe('dbTransaction', () => {
-  test('commits every write when the callback succeeds', async () => {
+  test('commits every write the Effect makes when it succeeds', async () => {
     const { layer, sqlite } = openDatabase()
 
     await Effect.runPromise(
-      dbTransaction(async (tx) => {
-        await tx.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'A' })
-        await tx.insert(pages).values({ workspaceId: 1, slug: 'b', title: 'B' })
-      }).pipe(Effect.provide(layer))
+      dbTransaction(Effect.gen(function* () {
+        yield* dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'A' }))
+        yield* dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'b', title: 'B' }))
+      })).pipe(Effect.provide(layer))
     )
 
     expect(countPages(sqlite)).toBe(2)
+  })
+
+  test('reads inside the transaction see its own writes', async () => {
+    const { layer } = openDatabase()
+
+    const titles = await Effect.runPromise(
+      dbTransaction(Effect.gen(function* () {
+        yield* dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'A' }))
+
+        return yield* dbQuery((db) => db.select({ title: pages.title }).from(pages))
+      })).pipe(Effect.provide(layer))
+    )
+
+    expect(titles).toEqual([{ title: 'A' }])
   })
 
   test('rolls back earlier writes when a later one fails', async () => {
     const { layer, sqlite } = openDatabase()
 
     const exit = await Effect.runPromiseExit(
-      dbTransaction(async (tx) => {
-        await tx.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'A' })
-        await tx.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'Duplicate' })
-      }).pipe(Effect.provide(layer))
+      dbTransaction(Effect.gen(function* () {
+        yield* dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'A' }))
+        yield* dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'Duplicate' }))
+      })).pipe(Effect.provide(layer))
     )
 
-    expect(failureOf(exit)).toMatchObject({
-      value: { _tag: 'DatabaseConstraintViolation', operation: 'transaction', constraint: 'unique' },
-    })
+    expect(failureOf(exit)).toMatchObject({ value: { _tag: 'DatabaseConstraintViolation', constraint: 'unique' } })
+    expect(countPages(sqlite)).toBe(0)
+  })
+
+  test("rolls back on the Effect's own typed failure, and fails with it", async () => {
+    const { layer, sqlite } = openDatabase()
+
+    const exit = await Effect.runPromiseExit(
+      dbTransaction(Effect.gen(function* () {
+        yield* dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'A' }))
+
+        return yield* new SlugTaken({ slug: 'a' })
+      })).pipe(Effect.provide(layer))
+    )
+
+    const failure = failureOf(exit)
+
+    expect(Option.isSome(failure) && failure.value).toBeInstanceOf(SlugTaken)
     expect(countPages(sqlite)).toBe(0)
   })
 
@@ -289,7 +320,7 @@ describe('dbTransaction', () => {
     // only the method this transaction calls exists.
     const layer = Layer.succeed(DatabaseService, d1 as unknown as TestDatabase)
 
-    const exit = await Effect.runPromiseExit(dbTransaction(async () => 1).pipe(Effect.provide(layer)))
+    const exit = await Effect.runPromiseExit(dbTransaction(Effect.succeed(1)).pipe(Effect.provide(layer)))
 
     expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true)
     expect(Exit.isFailure(exit) ? Cause.pretty(exit.cause) : '').toContain('dbBatch')
