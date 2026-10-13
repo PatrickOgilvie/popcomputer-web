@@ -37,6 +37,7 @@ export declare function sendAuditEvent(event: AuditEvent): Effect.Effect<void>
 
 export { showProject } from './actions/projects/show'
 export { updateProject } from './actions/projects/update'
+export { ClockLive, auditLogFor } from './services'
 export const showProjectBySlug = json({ page: 'Projects/Show' })
 export const showTask = json({ page: 'Tasks/Show' })
 export const showPricing = json({ page: 'Pricing' })

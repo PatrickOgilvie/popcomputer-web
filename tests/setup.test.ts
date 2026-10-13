@@ -12,9 +12,11 @@ import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- These teardown tests must yield the actual Hono/SDK Promise event loop; advancing an Effect TestClock cannot flush that native work.
 import { scheduler } from 'node:timers/promises'
-import { Option, Deferred, Effect, Redacted, Schema as S } from 'effect'
+import { Context, Option, Deferred, Effect, Layer, Redacted, Schema as S } from 'effect'
 import { setupWeb, registerErrorHandlers } from '../src/setup.js'
 import { effectRoutes } from '../src/effect/routing.js'
+import { action } from '../src/effect/action.js'
+import { json } from '../src/effect/responses.js'
 import {
   DatabaseService,
   AuthService,
@@ -746,7 +748,7 @@ describe('setupWeb configuration errors', () => {
     expect(() => setupWeb(app, config)).toThrow('pass the auth factory as auth.client')
   })
 
-  test('rejects a schema passed under effect instead of at the top level', () => {
+  test('rejects the former effect option with directions to services.request', () => {
     const app = new Hono<TestEnv>()
 
     const config = {
@@ -755,7 +757,8 @@ describe('setupWeb configuration errors', () => {
       effect: { services: undefined, schema: {} },
     }
 
-    expect(() => setupWeb(app, config)).toThrow('move effect.schema to top-level schema')
+    // @ts-expect-error effect is not a setupWeb option.
+    expect(() => setupWeb(app, config)).toThrow('effect.services is now services.request')
   })
 
   test('helpful error when using route model binding without schema', async () => {
@@ -1468,5 +1471,61 @@ describe('setupWeb middleware dispatcher (regression)', () => {
     const res = await app.request('/anything')
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('Catch all')
+  })
+})
+
+describe('setupWeb application services', () => {
+  class Counter extends Context.Service<Counter, { readonly id: number }>()('tests/Counter') {}
+
+  class Greeting extends Context.Service<Greeting, { readonly text: string }>()('tests/Greeting') {}
+
+  test('services.app is built once for every request; services.request for each request', async () => {
+    let appBuilds = 0
+    let requestBuilds = 0
+
+    const { app, routes } = setupWeb(new Hono(), {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      services: {
+        app: Layer.effect(Counter, Effect.sync(() => Counter.of({ id: ++appBuilds }))),
+        request: () =>
+          Layer.effect(Greeting, Effect.sync(() => Greeting.of({ text: `hello ${++requestBuilds}` }))),
+      },
+    })
+
+    routes.get('/services', action(Effect.gen(function* () {
+      const counter = yield* Counter
+      const greeting = yield* Greeting
+
+      return yield* json({ counter: counter.id, greeting: greeting.text })
+    })))
+
+    const first = await (await app.request('/services')).json()
+    const second = await (await app.request('/services')).json()
+
+    expect([first, second]).toEqual([
+      { counter: 1, greeting: 'hello 1' },
+      { counter: 1, greeting: 'hello 2' },
+    ])
+    expect(appBuilds).toBe(1)
+  })
+
+  test('request services replace application services with the same tag', async () => {
+    const { app, routes } = setupWeb(new Hono(), {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+      services: {
+        app: Layer.succeed(Greeting, Greeting.of({ text: 'from app' })),
+        request: () => Layer.succeed(Greeting, Greeting.of({ text: 'from request' })),
+      },
+    })
+
+    routes.get('/greeting', action(Effect.gen(function* () {
+      const greeting = yield* Greeting
+
+      return yield* json(greeting.text)
+    })))
+
+    expect(await (await app.request('/greeting')).json()).toBe('from request')
   })
 })

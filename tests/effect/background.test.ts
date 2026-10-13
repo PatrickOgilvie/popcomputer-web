@@ -26,8 +26,8 @@ describe('background', () => {
     setupWeb(app, {
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
-      effect: {
-        services: () =>
+      services: {
+        request: () =>
           Layer.succeed(EffectErrorObserverService, {
             observe: (event) => Effect.sync(() => events.push(event)),
           }),

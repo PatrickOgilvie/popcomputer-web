@@ -49,11 +49,15 @@ TypeScript example here and in the README type-checks against the package.
    or `dbTransaction`. Put exactly the columns being written in `asTrusted`,
    pass `values` to `.values()` or `.set()`, and scope `where` clauses with
    bound models.
-8. **Run work that outlives the response with `background('name', effect)`.**
-9. **Give `cache: false` to routes whose page reads something the framework
-   cannot see,** such as an external `fetch()` or the current time. Pages that
-   read bindings, headers or bound models are already rendered per request.
-10. **Test through the app.** `app.request(path, init, testEnv(layer,
+8. **Provide application services in `setupWeb`'s `services`:** `app` for
+   services built once and shared (configuration, in-memory caches), `request`
+   for anything that reads the request or its bindings (D1, KV, Hyperdrive).
+   Define them with `Context.Service` and `Layer`.
+9. **Run work that outlives the response with `background('name', effect)`.**
+10. **Give `cache: false` to routes whose page reads something the framework
+    cannot see,** such as an external `fetch()` or the current time. Pages that
+    read bindings, headers or bound models are already rendered per request.
+11. **Test through the app.** `app.request(path, init, testEnv(layer,
     bindings))` from `@popcomputer/web/testing` runs the real route;
     `signedIn(user)` signs the request in. Assert on `X-Inertia` JSON responses.
 

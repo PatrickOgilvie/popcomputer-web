@@ -3,7 +3,7 @@
 import { createMiddleware } from 'hono/factory'
 import type { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
-import type { Schema as S } from 'effect'
+import type { Layer, Schema as S } from 'effect'
 import { web } from './middleware.js'
 import { verifyOrigin, type VerifyOriginConfig } from './security.js'
 import type { PagePropValue, WebConfig } from './types.js'
@@ -61,7 +61,7 @@ interface WebAuthOptions<E extends Env, Auth, ClientServices> {
   readonly sessionCookie?: string
 }
 
-interface WebSetupOptions<E extends Env, CustomServices> extends WebConfig {
+interface WebSetupOptions<E extends Env, AppServices, RequestServices> extends WebConfig {
   /**
    * Drizzle schema for route model binding.
    *
@@ -77,10 +77,21 @@ interface WebSetupOptions<E extends Env, CustomServices> extends WebConfig {
   bindings?: RouteBindingsConfig
 
   /**
-   * Services every route can use, built for each request. Their types join
-   * the services the returned `routes` accept.
+   * Application services every route can use. Their types join the services
+   * the returned `routes` accept.
    */
-  effect?: Pick<EffectBridgeConfig<E, CustomServices>, 'services'>
+  services?: {
+    /**
+     * Built once, on the first request an isolate serves, and shared by every
+     * later request: configuration, clients that open no connection until
+     * used, in-memory caches. Never request-bound I/O objects (D1, KV or
+     * Hyperdrive handles, open sockets), which Workers forbid using from
+     * another request.
+     */
+    app?: Layer.Layer<AppServices>
+    /** Built for each request, from its context and bindings. */
+    request?: (c: Context<E>) => Layer.Layer<RequestServices>
+  }
 
   /**
    * Additional middleware to run after the framework middleware.
@@ -116,8 +127,9 @@ interface WebSetupWithDatabaseConfig<
   E extends Env = DefaultEnv,
   DB extends object = DatabaseType,
   Auth = never,
-  CustomServices = never,
-> extends WebSetupOptions<E, CustomServices> {
+  AppServices = never,
+  RequestServices = never,
+> extends WebSetupOptions<E, AppServices, RequestServices> {
   /**
    * Database factory function.
    * Creates the database client for each request.
@@ -139,8 +151,9 @@ interface WebSetupWithDatabaseConfig<
 interface WebSetupWithoutDatabaseConfig<
   E extends Env = DefaultEnv,
   Auth = never,
-  CustomServices = never,
-> extends WebSetupOptions<E, CustomServices> {
+  AppServices = never,
+  RequestServices = never,
+> extends WebSetupOptions<E, AppServices, RequestServices> {
   /**
    * A database factory is intentionally absent. This supports applications
    * without persistence and deliberately stateless authentication.
@@ -160,16 +173,17 @@ export type WebSetupConfig<
   E extends Env = DefaultEnv,
   DB = undefined,
   Auth = never,
-  CustomServices = never,
+  AppServices = never,
+  RequestServices = never,
 > = [DB] extends [undefined]
-  ? WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+  ? WebSetupWithoutDatabaseConfig<E, Auth, AppServices, RequestServices>
   : DB extends object
-    ? WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
+    ? WebSetupWithDatabaseConfig<E, DB, Auth, AppServices, RequestServices>
     : never
 
 /**
  * The services routes can use under a setup: the core services, the database
- * and auth services when configured, and `effect.services`.
+ * and auth services when configured, and `services.app` and `services.request`.
  */
 export type WebRouteServices<HasDatabase extends boolean, Auth, CustomServices> =
   | CoreServices
@@ -216,37 +230,40 @@ export function setupWeb<
   E extends Env = DefaultEnv,
   DB extends object = DatabaseType,
   Auth = never,
-  CustomServices = never,
+  AppServices = never,
+  RequestServices = never,
 >(
   app: Hono<E>,
-  config: WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
-): WebApplication<E, WebRouteServices<true, Auth, CustomServices>>
+  config: WebSetupWithDatabaseConfig<E, DB, Auth, AppServices, RequestServices>
+): WebApplication<E, WebRouteServices<true, Auth, AppServices | RequestServices>>
 export function setupWeb<
   E extends Env = DefaultEnv,
   Auth = never,
-  CustomServices = never,
+  AppServices = never,
+  RequestServices = never,
 >(
   app: Hono<E>,
-  config: WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
-): WebApplication<E, WebRouteServices<false, Auth, CustomServices>>
+  config: WebSetupWithoutDatabaseConfig<E, Auth, AppServices, RequestServices>
+): WebApplication<E, WebRouteServices<false, Auth, AppServices | RequestServices>>
 export function setupWeb<
   E extends Env,
   DB extends object,
   Auth,
-  CustomServices,
+  AppServices,
+  RequestServices,
 >(
   app: Hono<E>,
   config:
-    | WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
-    | WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
-): WebApplication<E, WebRouteServices<boolean, Auth, CustomServices>> {
+    | WebSetupWithDatabaseConfig<E, DB, Auth, AppServices, RequestServices>
+    | WebSetupWithoutDatabaseConfig<E, Auth, AppServices, RequestServices>
+): WebApplication<E, WebRouteServices<boolean, Auth, AppServices | RequestServices>> {
   assertSetupConfig(config)
   app.use('*', createSetupMiddleware(config))
   registerErrorHandlers(app, config.errors)
 
   return {
     app,
-    routes: new EffectRouteBuilder<E, WebRouteServices<boolean, Auth, CustomServices>>(app),
+    routes: new EffectRouteBuilder<E, WebRouteServices<boolean, Auth, AppServices | RequestServices>>(app),
   }
 }
 
@@ -254,11 +271,12 @@ function createSetupMiddleware<
   E extends Env,
   DB extends object,
   Auth,
-  CustomServices,
+  AppServices,
+  RequestServices,
 >(
   config:
-    | WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
-    | WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
+    | WebSetupWithDatabaseConfig<E, DB, Auth, AppServices, RequestServices>
+    | WebSetupWithoutDatabaseConfig<E, Auth, AppServices, RequestServices>
 ): MiddlewareHandler<E> {
   const webConfig: WebConfig = {
     version: config.version,
@@ -301,8 +319,9 @@ function createSetupMiddleware<
     }
   })
 
-  const effectConfig: EffectBridgeConfig<E, CustomServices> = {
-    services: config.effect?.services,
+  const effectConfig: EffectBridgeConfig<E, never> = {
+    app: config.services?.app,
+    services: config.services?.request,
     schema: config.schema,
     bindings: config.bindings,
   }
@@ -331,7 +350,7 @@ function createSetupMiddleware<
     shareAuthMiddleware<E>({
       project: config.auth?.share,
     }),
-    effectBridge<E, CustomServices>(effectConfig),
+    effectBridge<E, never>(effectConfig),
     ...(config.middleware ?? []),
   ]
 
@@ -367,27 +386,18 @@ function createSetupMiddleware<
   })
 }
 
-function assertSetupConfig(config: {
-  readonly auth?: unknown
-  readonly effect?: object
-}): void {
-  if (config.auth instanceof Function) {
+function assertSetupConfig(config: object): void {
+  const auth: unknown = Object.getOwnPropertyDescriptor(config, 'auth')?.value
+
+  if (auth instanceof Function) {
     throw new Error(
       'Invalid setupWeb configuration: pass the auth factory as auth.client.'
     )
   }
 
-  if (config.effect === undefined) return
-
-  if (Object.prototype.hasOwnProperty.call(config.effect, 'schema')) {
+  if (Object.hasOwn(config, 'effect')) {
     throw new Error(
-      'Invalid setupWeb configuration: move effect.schema to top-level schema.'
-    )
-  }
-
-  if (Object.prototype.hasOwnProperty.call(config.effect, 'bindings')) {
-    throw new Error(
-      'Invalid setupWeb configuration: move effect.bindings to top-level bindings.'
+      'Invalid setupWeb configuration: effect.services is now services.request, and schema and bindings are top-level options.'
     )
   }
 }

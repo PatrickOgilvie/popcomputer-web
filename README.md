@@ -357,6 +357,51 @@ services configured for that request. A missing database or auth service is
 reported as a configuration error rather than being silently replaced with an
 untyped value.
 
+## Application services
+
+Services an action needs beyond the framework's go in `setupWeb`'s
+`services`, as Effect layers. Their types join the services `routes` accepts.
+
+```ts
+// src/services.ts
+import { Context, Effect, Layer } from 'effect'
+
+export class Clock extends Context.Service<Clock, {
+  readonly today: Effect.Effect<string>
+}>()('app/Clock') {}
+
+export const ClockLive = Layer.succeed(Clock, Clock.of({
+  today: Effect.sync(() => new Date().toISOString().slice(0, 10)),
+}))
+
+export class AuditLog extends Context.Service<AuditLog, {
+  readonly record: (event: string) => Effect.Effect<void>
+}>()('app/AuditLog') {}
+
+export const auditLogFor = (kv: KVNamespace) => Layer.succeed(AuditLog, AuditLog.of({
+  record: (event) => Effect.promise(() => kv.put(`audit:${event}`, event)),
+}))
+```
+
+```ts
+setupWeb(app, {
+  version,
+  render: template,
+  services: {
+    app: ClockLive,
+    request: (c) => auditLogFor(c.env.KV),
+  },
+})
+```
+
+`services.app` is built once, on the first request an isolate serves, and
+shared by every later request: configuration, clients that open no connection
+until used, in-memory caches. `services.request` is built for each request from
+its context and bindings. Anything holding a request's I/O, such as a D1, KV or
+Hyperdrive binding, belongs in `services.request`: Workers forbid using it from
+another request. A request service replaces an application service with the
+same tag. For services only some routes need, use `routes.provide(layer)`.
+
 ## Validation and safe writes
 
 ```ts

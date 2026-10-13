@@ -64,8 +64,14 @@ import { observeEffectErrorEvent } from './error-observer.js'
  */
 export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
   /**
-   * Custom services to provide to all Effect handlers.
-   * Return a Layer that provides your custom services.
+   * Services built once, on the first request an isolate serves, and shared
+   * by every later request. They must not hold request-bound I/O objects
+   * (D1, KV or Hyperdrive handles, open sockets), which Workers forbid using
+   * from another request; build those in `services`.
+   */
+  app?: Layer.Layer<CustomServices, never, never>
+  /**
+   * Services built for each request, from its context and bindings.
    */
   services?: (c: HonoContext<E>) => Layer.Layer<CustomServices, never, never>
   /**
@@ -679,14 +685,24 @@ export function getEffectBridgeConfig<E extends Env>(
 export function effectBridge<E extends Env, CustomServices = never>(
   config?: EffectBridgeConfig<E, CustomServices>
 ): MiddlewareHandler<E> {
+  // Built lazily by the first request and kept for the isolate's lifetime.
+  const appRuntime = config?.app === undefined ? undefined : ManagedRuntime.make(config.app)
+
   // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
   return async (c, next) => {
     setEffectBridgeConfig(c, config)
-    const contextLayer = buildContextLayer(c, config)
-    // Services from testEnv (@popcomputer/web/testing) replace the request's own.
+    // Later layers win: request services replace app services, and services
+    // from testEnv (@popcomputer/web/testing) replace both.
+    const requestLayer = buildContextLayer(c, config)
+
+    const appAndRequestLayer = appRuntime === undefined
+      ? requestLayer
+      : Layer.merge(Layer.succeedContext(await appRuntime.context()), requestLayer)
+
     const testLayer = readTestLayer(c.env)
+
     const runtime = ManagedRuntime.make(
-      testLayer === undefined ? contextLayer : Layer.merge(contextLayer, testLayer)
+      testLayer === undefined ? appAndRequestLayer : Layer.merge(appAndRequestLayer, testLayer)
     )
 
     // Store runtime and binding schema on the request context

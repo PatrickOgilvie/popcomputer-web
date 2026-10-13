@@ -268,11 +268,11 @@ describe('Custom Services via setupWeb', () => {
       await next()
     })
 
-    setupWeb<TestEnv, unknown, BindingsService>(app, {
+    setupWeb(app, {
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
-      effect: {
-        services: (c) =>
+      services: {
+        request: (c) =>
           Layer.succeed(BindingsService, {
             KV: createMockKV(c.env.KV_DATA),
             ANALYTICS: createMockAnalytics(),

@@ -122,8 +122,8 @@ const inferredApplication = setupWeb(new Hono<TestEnv>(), {
     },
     session: TestAuthSession,
   },
-  effect: {
-    services: () =>
+  services: {
+    request: () =>
       Layer.succeed(TestSearchService, {
         search: () => 'ok',
       }),
@@ -174,9 +174,9 @@ setupWeb(new Hono<TestEnv>(), {
 setupWeb(new Hono<TestEnv>(), {
   version: 'type-test',
   render: (page) => JSON.stringify(page),
+  // @ts-expect-error effect.services is now services.request.
   effect: {
-    // @ts-expect-error Setup schema is a top-level setupWeb field.
-    schema: {},
+    services: () => Layer.empty,
   },
 })
 
@@ -326,8 +326,8 @@ const failsWithPackageError = action(Effect.gen(function* () {
     render: (page) => JSON.stringify(page),
     database: (context) => ({ name: context.env.DATABASE_NAME }),
     auth: { client: (_context, { db }) => ({ databaseName: db.name }) },
-    effect: {
-      services: () => Layer.succeed(TestMailer, TestMailer.of({ send: () => Effect.void })),
+    services: {
+      request: () => Layer.succeed(TestMailer, TestMailer.of({ send: () => Effect.void })),
     },
   })
 
