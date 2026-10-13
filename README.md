@@ -2516,7 +2516,7 @@ own, the whole row is required, so pass the seeded row. Its session id is
 ```ts
 // src/routes.test.ts
 import { describe, expect, test } from 'bun:test'
-import { signedIn, testEnv } from '@popcomputer/web/testing'
+import { readPage, signedIn, testEnv } from '@popcomputer/web/testing'
 import app from './app'
 import './routes'
 import { testBindings } from './test-bindings'
@@ -2529,11 +2529,9 @@ describe('GET /projects/{project}', () => {
       testEnv(signedIn({ id: 'user-1' }), testBindings)
     )
 
-    expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({
-      component: 'Projects/Show',
-      props: { project: { id: 'project-1' } },
-    })
+    const page = await readPage(res, 'Projects/Show')
+
+    expect(page.props.project.id).toBe('project-1')
   })
 
   test("answers 404 for another member's project", async () => {
@@ -2576,7 +2574,8 @@ page.props.project.createdAt // a string: the JSON the browser receives
 
 The other readers work the same way, each typed and each saying what the
 response was when it is not what the test expected: `readJson(res, Schema)`
-for a JSON response, `readError(res)` for a failure's envelope (and
+for a JSON response, where `await res.json()` is `unknown` and checks
+nothing, `readError(res)` for a failure's envelope (and
 `readError(res, Schema)` for a body declared by a schema), `readErrorPage(res)`
 for the error page a visit rendered, and `readCookie(res, cookie)` for the
 value a response set for a declared cookie.
@@ -2719,11 +2718,17 @@ and constraint errors behave the same:
   `kvCache(kv)` in the test layer rather than as a binding, and type a binding
   an application service reads by the methods it calls (`KVNamespaceLike`
   from `@popcomputer/web/cache`, or a small interface of the R2 methods), so
-  both objects fit. A Miniflare
-  created once at the top of a shared module is disposed of once, in a file
-  `bunfig.toml`'s `preload` names: Bun shares modules between test files, so
-  an `afterAll` in that module disposes of it while other files still use
-  it. A Miniflare each test file creates for itself can use `afterAll`.
+  both objects fit.
+
+  Starting Miniflare takes a moment, so create one for the whole run, with as
+  many D1 databases as tests need a fresh one, `d1Databases: ['DB_1', 'DB_2',
+  ...]`, and hand each test its own, migrated, as its `DB` binding. Dispose of
+  it once, with `await miniflare.dispose()` in an `afterAll` of a file
+  `bunfig.toml`'s `preload` names: a Miniflare left running keeps its
+  `workerd` process alive after `bun test` exits, and Bun shares modules
+  between test files, so an `afterAll` in the module that creates it disposes
+  of it while other files still use it. A Miniflare each test file creates
+  for itself can use that file's `afterAll`.
 
 `bun:sqlite` is a synchronous driver: it can stand in for neither, since
 `dbTransaction` and `dbBatch` are type errors for it.
@@ -2751,6 +2756,33 @@ export const testDb: Database = drizzle(client, { schema })
 ```ts
 const env = testEnv(signedIn({ id: 'user-1' }), testBindings, { database: testDb })
 ```
+
+One database shared by every test means each test seeds rows the others can
+see. For a fresh database per test, migrate once and start each test from a
+copy: PGlite saves a database's files with `dumpDataDir` and opens a copy with
+`loadDataDir`, which takes a fraction of the time migrating a new one does.
+
+```ts
+// src/test-databases.ts
+import { PGlite } from '@electric-sql/pglite'
+import { drizzle } from 'drizzle-orm/pglite'
+import { applyMigrations } from '@popcomputer/web/testing'
+import * as schema from './schema'
+
+const migrated = new PGlite()
+await applyMigrations('./drizzle', (sql) => migrated.exec(sql))
+const snapshot = await migrated.dumpDataDir('none')
+
+// A database of its own for one test, migrated, and how to close it.
+export function freshDatabase() {
+  const client = new PGlite({ loadDataDir: snapshot })
+
+  return { db: drizzle(client, { schema }), close: () => client.close() }
+}
+```
+
+A test opens one in `beforeEach`, passes `db` as `testEnv`'s `database`, and
+calls `close()` in `afterEach`.
 
 A test whose visitors sign in through the application, as a `testBrowser`
 does, needs no layer: `testEnv(testBindings, { database: testDb })`.
