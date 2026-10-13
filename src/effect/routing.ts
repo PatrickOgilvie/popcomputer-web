@@ -157,7 +157,7 @@ export type RouteActionCheck<R, Err, Services> = [ModelName<Exclude<R, Services>
         }
     : {
         readonly missingServices: ServiceKey<Exclude<R, Services>>
-        readonly fix: 'Configure the service in setupWeb (database, auth, services.app, services.request), or add it with routes.provide(layer).'
+        readonly fix: 'Configure the service: the database and auth in setupWeb, your own services with web.services({ app, request }), whose routes then accept it; or add it with routes.provide(layer).'
       }
   : {
       readonly missingRouteModels: ModelName<Exclude<R, Services>>
@@ -205,7 +205,7 @@ export type RunCheck<R, Services> = [ModelName<Exclude<R, Services>>] extends [n
     ? unknown
     : {
         readonly missingServices: ServiceKey<Exclude<R, Services>>
-        readonly fix: 'Configure the service in setupWeb (database, auth, services.app, services.request), or add it with routes.provide(layer).'
+        readonly fix: 'Configure the service: the database and auth in setupWeb, your own services with web.services({ app, request }), whose routes then accept it; or add it with routes.provide(layer).'
       }
   : {
       readonly missingRouteModels: ModelName<Exclude<R, Services>>

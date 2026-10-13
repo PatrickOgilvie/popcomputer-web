@@ -781,7 +781,7 @@ describe('setupWeb configuration errors', () => {
     expect(() => setupWeb(app, config)).toThrow('pass the auth factory as auth.client')
   })
 
-  test('rejects the former effect option with directions to services.request', () => {
+  test('rejects the former effect option with directions to web.services', () => {
     const app = new Hono<TestEnv>()
 
     expect(() =>
@@ -791,7 +791,23 @@ describe('setupWeb configuration errors', () => {
         // @ts-expect-error effect is not a setupWeb option.
         effect: { services: undefined, schema: {} },
       })
-    ).toThrow('effect.services is now services.request')
+    ).toThrow('effect.services is now web.services({ request })')
+  })
+
+  test('rejects services in setupWeb, with directions to web.services', () => {
+    expect(() =>
+      setupWeb(new Hono<TestEnv>(), {
+        // @ts-expect-error The application's services are given with web.services.
+        services: { app: Layer.empty },
+      })
+    ).toThrow('export const { app, routes } = web.services({ app, request })')
+  })
+
+  test('takes the services once', () => {
+    const web = setupWeb(new Hono<TestEnv>(), {})
+    web.services({})
+
+    expect(() => web.services({})).toThrow('web.services(...) was called twice')
   })
 
   test('helpful error when using route model binding without schema', async () => {
@@ -1519,11 +1535,10 @@ describe('setupWeb application services', () => {
     const { app, routes } = setupWeb(new Hono(), {
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
-      services: {
-        app: Layer.effect(Counter, Effect.sync(() => Counter.of({ id: ++appBuilds }))),
-        request: () =>
-          Layer.effect(Greeting, Effect.sync(() => Greeting.of({ text: `hello ${++requestBuilds}` }))),
-      },
+    }).services({
+      app: Layer.effect(Counter, Effect.sync(() => Counter.of({ id: ++appBuilds }))),
+      request: () =>
+        Layer.effect(Greeting, Effect.sync(() => Greeting.of({ text: `hello ${++requestBuilds}` }))),
     })
 
     routes.get('/services', action(Effect.gen(function* () {
@@ -1547,10 +1562,9 @@ describe('setupWeb application services', () => {
     const { app, routes } = setupWeb(new Hono(), {
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
-      services: {
-        app: Layer.succeed(Greeting, Greeting.of({ text: 'from app' })),
-        request: () => Layer.succeed(Greeting, Greeting.of({ text: 'from request' })),
-      },
+    }).services({
+      app: Layer.succeed(Greeting, Greeting.of({ text: 'from app' })),
+      request: () => Layer.succeed(Greeting, Greeting.of({ text: 'from request' })),
     })
 
     routes.get('/greeting', action(Effect.gen(function* () {

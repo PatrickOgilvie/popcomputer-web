@@ -281,13 +281,12 @@ describe('Custom Services via setupWeb', () => {
     const { routes } = setupWeb(app, {
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
-      services: {
-        request: (c) =>
-          Layer.succeed(BindingsService, {
-            KV: createMockKV(c.env.KV_DATA),
-            ANALYTICS: createMockAnalytics(),
-          }),
-      },
+    }).services({
+      request: (c) =>
+        Layer.succeed(BindingsService, {
+          KV: createMockKV(c.env.KV_DATA),
+          ANALYTICS: createMockAnalytics(),
+        }),
     })
 
     routes.get(

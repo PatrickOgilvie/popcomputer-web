@@ -30,14 +30,13 @@ function createApp() {
   const { routes } = setupWeb(app, {
     version: '1',
     render: (page) => JSON.stringify(page),
-    services: {
-      app: Layer.effect(Settings, Effect.gen(function* () {
-        builds.app += 1
+  }).services({
+    app: Layer.effect(Settings, Effect.gen(function* () {
+      builds.app += 1
 
-        return Settings.of({ baseUrl: yield* Config.String('BASE_URL') })
-      })),
-      request: () => Layer.effect(Region, Effect.map(Config.String('REGION'), (name) => Region.of({ name }))),
-    },
+      return Settings.of({ baseUrl: yield* Config.String('BASE_URL') })
+    })),
+    request: () => Layer.effect(Region, Effect.map(Config.String('REGION'), (name) => Region.of({ name }))),
   })
 
   routes

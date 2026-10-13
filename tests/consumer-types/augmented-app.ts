@@ -106,9 +106,9 @@ class Projects extends Context.Service<
   { readonly find: (id: string) => Effect.Effect<ProjectRow, DatabaseError, DatabaseService> }
 >()('app/Projects') {}
 
-// Its layer states its type: setupWeb's type includes its services, and the
-// database type comes from setupWeb, so an inferred one would refer to itself.
-const ProjectsLive: Layer.Layer<Projects> = Layer.succeed(
+// Its layer's type is inferred: web.services comes after the registration,
+// so the database type dbQuery reads does not depend on the layer.
+const ProjectsLive = Layer.succeed(
   Projects,
   Projects.of({ find: (id) => dbQuery((db) => db.findProject(id)) })
 )
@@ -134,7 +134,6 @@ export const web = setupWeb(new Hono<Env>(), {
   auth: { session: MemberSession, share: PublicMember },
   shared: S.Struct({ locale: S.String }),
   flash: S.Struct({ success: S.String }),
-  services: { app: ProjectsLive },
 })
 
 // ...and registered, once.
@@ -143,6 +142,21 @@ declare module '@popcomputer/web' {
     web: typeof web
   }
 }
+
+// The application's own services, given after the registration: their routes accept actions using them.
+export const { routes } = web.services({ app: ProjectsLive })
+
+const usesProjects = action(Effect.gen(function* () {
+  const project = yield* (yield* Projects).find('p1')
+
+  return yield* json({ id: project.id })
+}))
+routes.get(paths.project, usesProjects)
+// @ts-expect-error web.routes, from before the services, does not provide Projects.
+web.routes.get(paths.project, usesProjects)
+
+// @ts-expect-error The application's services go to web.services, not setupWeb.
+setupWeb(new Hono<Env>(), { services: { app: ProjectsLive } })
 
 type Member = typeof MemberSession.Type
 
@@ -197,8 +211,8 @@ web.routes.provide(shareProps(Effect.map(dbQuery((db) => db.findProject('p1')), 
 // @ts-expect-error 'theme' is not a shared prop
 web.routes.provide(shareProps(Effect.succeed({ theme: 'dark' })))
 
-// Actions use services from setupWeb and from routes.provide alike.
-web.routes
+// Actions use the services web.services gives and routes.provide adds alike.
+routes
   .provide(AuditLive)
   .get(
     paths.project,

@@ -988,8 +988,9 @@ untyped value.
 
 ## Application services
 
-Services an action needs beyond the framework's go in `setupWeb`'s
-`services`, as Effect layers. Their types join the services `routes` accepts.
+Services an action needs beyond the framework's are Effect layers, given
+with `web.services(...)` once `web` is registered. It returns the routes,
+which accept actions that use them.
 
 ```ts
 // src/services.ts
@@ -1002,8 +1003,8 @@ export class Clock extends Context.Service<Clock, {
 }>()('app/Clock') {}
 
 // config reads the Worker's bindings, named as src/env.ts declares them:
-// here the TIME_ZONE var. A layer setupWeb takes states its type.
-export const ClockLive: Layer.Layer<Clock, Config.ConfigError> = Layer.effect(Clock, Effect.gen(function* () {
+// here the TIME_ZONE var.
+export const ClockLive = Layer.effect(Clock, Effect.gen(function* () {
   const timeZone = yield* config.string('TIME_ZONE').pipe(Config.withDefault('UTC'))
   // An unknown zone is a deployment mistake: the layer fails to build, naming it.
   const zone = yield* DateTime.zoneMakeNamedEffect(timeZone).pipe(Effect.orDie)
@@ -1024,14 +1025,13 @@ export const auditLogFor = (kv: KVNamespace) => Layer.succeed(AuditLog, AuditLog
 }))
 ```
 
+In `src/app.ts`, after the `Register` declaration, the routes come from
+`web.services(...)` in place of `export const { app, routes } = web`:
+
 ```ts
-setupWeb(app, {
-  version,
-  render: template,
-  services: {
-    app: ClockLive,
-    request: (c) => auditLogFor(c.env.KV),
-  },
+export const { app, routes } = web.services({
+  app: ClockLive,
+  request: (c) => auditLogFor(c.env.KV),
 })
 ```
 
@@ -1993,10 +1993,8 @@ treats it as fresh only for its `ttl`:
 ```ts
 import { kvCache } from '@popcomputer/web/cache'
 
-setupWeb(app, {
-  version,
-  render: template,
-  services: { request: (c) => kvCache(c.env.KV) },
+export const { app, routes } = web.services({
+  request: (c) => kvCache(c.env.KV),
 })
 ```
 

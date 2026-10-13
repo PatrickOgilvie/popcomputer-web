@@ -1345,8 +1345,7 @@ describe('cache tags', () => {
     const { routes } = setupWeb(app, {
       version: '1',
       render: (page) => JSON.stringify(page),
-      services: { request: () => storeLayer },
-    })
+    }).services({ request: () => storeLayer })
     let computations = 0
 
     routes

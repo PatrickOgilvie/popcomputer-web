@@ -27,12 +27,11 @@ describe('background', () => {
     setupWeb(app, {
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
-      services: {
-        request: () =>
-          Layer.succeed(EffectErrorObserverService, {
-            observe: (event) => Effect.sync(() => events.push(event)),
-          }),
-      },
+    }).services({
+      request: () =>
+        Layer.succeed(EffectErrorObserverService, {
+          observe: (event) => Effect.sync(() => events.push(event)),
+        }),
     })
 
     effectRoutes(app).post(

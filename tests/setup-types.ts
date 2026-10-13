@@ -115,12 +115,11 @@ const inferredApplication = setupWeb(new Hono<TestEnv>(), {
     },
     session: TestAuthSession,
   },
-  services: {
-    request: () =>
-      Layer.succeed(TestSearchService, {
-        search: () => 'ok',
-      }),
-  },
+}).services({
+  request: () =>
+    Layer.succeed(TestSearchService, {
+      search: () => 'ok',
+    }),
 })
 
 const inferredApplicationApp: Hono<TestEnv> = inferredApplication.app
@@ -315,9 +314,8 @@ const failsWithPackageError = action(Effect.gen(function* () {
     render: (page) => JSON.stringify(page),
     database: (context) => ({ name: context.env.DATABASE_NAME }),
     auth: { client: (_context, { db }) => ({ databaseName: db.name }), session: TestAuthSession },
-    services: {
-      request: () => Layer.succeed(TestMailer, TestMailer.of({ send: () => Effect.void })),
-    },
+  }).services({
+    request: () => Layer.succeed(TestMailer, TestMailer.of({ send: () => Effect.void })),
   })
 
   routes
@@ -361,8 +359,7 @@ const usesCache = action(Effect.gen(function* () {
   const { routes } = setupWeb(new Hono<TestEnv>(), {
     version: 'type-test',
     render: (page) => JSON.stringify(page),
-    services: { request: () => kvCache(kv) },
-  })
+  }).services({ request: () => kvCache(kv) })
 
   routes.get('/count', usesCache)
 }

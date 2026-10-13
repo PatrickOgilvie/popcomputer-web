@@ -1,7 +1,7 @@
 /**
  * `@popcomputer/web/cache`: a schema-checked data cache.
  *
- * Provide a store with `kvCache(c.env.KV)` in setupWeb's `services.request`,
+ * Provide a store with `kvCache(c.env.KV)` in `web.services({ request })`,
  * or any other CacheClient through CacheService. `cache()` wraps a
  * computation, with stale-while-revalidate, and never fails because of the
  * store: an unreachable store or an unreadable entry computes the value
@@ -200,7 +200,7 @@ export interface KVNamespaceLike {
  * at least 60 seconds; `cache()` still treats it as fresh only for its `ttl`.
  *
  * @example
- * setupWeb(app, { version, render, services: { request: (c) => kvCache(c.env.KV) } })
+ * export const { app, routes } = web.services({ request: (c) => kvCache(c.env.KV) })
  */
 /** The shortest expiry Workers KV accepts. */
 const KV_MINIMUM_TTL_SECONDS = 60

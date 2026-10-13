@@ -29,7 +29,8 @@ TypeScript example here and in the README type-checks against the package.
    declares. Do not add framework middleware or register routes on the Hono
    app by hand.
 2. **Every handler is an action.** Wrap an `Effect.gen` in `action(...)` and
-   register it on the `routes` that `setupWeb` returns:
+   register it on the `routes` that `setupWeb` returns, or that
+   `web.services(...)` returns with the application's own services:
    `routes.get/post/put/patch/delete(paths.project, action, { name })`.
    Declare every path once in `src/paths.ts` (`project: '/projects/{project}'`)
    and pass it as `setupWeb`'s `paths`, so `routes`, `redirect`, `back` and
@@ -128,16 +129,18 @@ TypeScript example here and in the README type-checks against the package.
    `constraintFieldErrors({ name: { field: 'message' } })`. Pipe a write through
    `uniqueFieldErrors({ column: 'message' })` to show a duplicate as a field
    error.
-9. **Provide application services in `setupWeb`'s `services`:** `app` for
-   services built once and shared (configuration, in-memory caches), `request`
-   for anything that holds the request's bindings (D1, KV, Hyperdrive).
-   Define them with `Context.Service` and `Layer`, and read vars and secrets
-   with `config.string('NAME')` and `config.redacted('KEY')`, Effect `Config`
+9. **Give the application's own services with `web.services({ app, request })`,**
+   after registering `web`, in place of `export const { app, routes } = web`:
+   `export const { app, routes } = web.services({ app: ProjectsLive, request:
+   (c) => auditLogFor(c.env.KV) })`. The `routes` it returns accept actions
+   that use them. `app` is for services built once and shared
+   (configuration, in-memory caches), `request` for anything that holds the
+   request's bindings (D1, KV, Hyperdrive). Define them with
+   `Context.Service` and `Layer`, and read vars and secrets with
+   `config.string('NAME')` and `config.redacted('KEY')`, Effect `Config`
    named by the Worker's bindings type, which reads the request's bindings.
-   Give every layer passed to `services` its type (`export const ProjectsLive:
-   Layer.Layer<Projects, ConfigError> = ...`): `setupWeb`'s type includes its
-   services, and the types `dbQuery`, `config` and `bound` read come from
-   `setupWeb`, so a layer whose type is inferred from them refers to itself.
+   A layer's type is inferred, even when it uses `dbQuery`, `config` or
+   `bound`.
 10. **Run work that outlives the response with `background('name', effect)`.**
     Give the Worker's `scheduled` and `queue` handlers as
     `routes.scheduled((event) => effect)` and
@@ -288,9 +291,10 @@ type is a type parameter). `not assignable to type '{ EntitlementRequired: never
 `action(...)` reporting an `Effect<..., unknown, unknown>`, or
 `missingServices: "unnamed service"`, means an earlier type error in the
 action made its types unknown: fix that one first.
-`'web' implicitly has type 'any'` (TS7022) means a layer in `services` has no
-type annotation and uses a type `setupWeb` declares (`dbQuery`, `config`,
-`bound`): annotate the layer, as rule 9 shows.
+`'web' implicitly has type 'any'` (TS7022) means a value in `setupWeb`'s
+configuration has a type that reads the registration, such as one using
+`dbQuery`: give services to `web.services(...)`, after the registration, as
+rule 9 shows.
 Many errors naming `DatabaseNotConfigured`, or `(c) => never` at `database`,
 while `setupWeb` has a database factory, mean one value in its configuration
 has a type error, such as a page schema using a deleted import: TypeScript

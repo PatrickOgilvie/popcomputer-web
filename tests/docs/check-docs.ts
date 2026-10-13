@@ -108,6 +108,14 @@ function localNames(source: string): Set<string> {
     names.add(match[1])
   }
 
+  // Destructured: const { app, routes } = web.services(...)
+  for (const match of source.matchAll(/(?:^|\s)(?:const|let|var)\s+\{([^}]*)\}\s*=/g)) {
+    for (const binding of match[1].split(',')) {
+      const name = binding.split(':').pop()?.split('=')[0]?.trim()
+      if (name) names.add(name)
+    }
+  }
+
   return names
 }
 
@@ -147,13 +155,15 @@ function buildFragment(
   const prelude =
     [...entrypointValues]
       .map(([entrypoint, names]) =>
-        importLine(free(names).filter((name) => !fromEffect.has(name)), entrypoint)
+        // A fragment's `web` is the application's, not the `web()` middleware.
+        importLine(free(names).filter((name) => !fromEffect.has(name) && name !== 'web'), entrypoint)
       )
       .join('') +
     importLine(effectNames, 'effect') +
     (taken.has('S') ? '' : "import { Schema as S } from 'effect'; ") +
     (taken.has('app') ? '' : "import app from '../app'; ") +
     (taken.has('routes') ? '' : "import { routes } from '../app'; ") +
+    (taken.has('web') ? '' : "import { web } from '../app'; ") +
     importLine(free(stubNames), '../doc-stubs')
 
   // Imports stay at module scope; everything after them may need wrapping.

@@ -79,28 +79,7 @@ export interface WebAuthOptions<
   readonly signInPath?: SignInPath
 }
 
-interface WebSetupOptions<E extends Env, AppServices, RequestServices> extends WebConfig {
-
-  /**
-   * Application services every route can use. Their types join the services
-   * the returned `routes` accept.
-   */
-  services?: {
-    /**
-     * Built once, on the first request an isolate serves, and shared by every
-     * later request: configuration, clients that open no connection until
-     * used, in-memory caches. Never request-bound I/O objects (D1, KV or
-     * Hyperdrive handles, open sockets), which Workers forbid using from
-     * another request. Effect `Config` reads the Worker's bindings, and a
-     * missing one fails requests with a configuration error naming it.
-     */
-    app?: Layer.Layer<AppServices, Config.ConfigError>
-    /**
-     * Built for each request, from its context and bindings. Effect `Config`
-     * reads the Worker's bindings here too.
-     */
-    request?: (c: Context<E>) => Layer.Layer<RequestServices, Config.ConfigError>
-  }
+interface WebSetupOptions<E extends Env> extends WebConfig {
 
   /**
    * Additional middleware to run after the framework middleware.
@@ -134,6 +113,26 @@ interface WebSetupOptions<E extends Env, AppServices, RequestServices> extends W
   pageCache?: boolean
 }
 
+/** The application's own services, which `web.services(...)` adds to every route. */
+export interface WebServices<E extends Env, AppServices, RequestServices> {
+  /**
+   * Built once, on the first request an isolate serves, and shared by every
+   * later request: configuration, clients that open no connection until
+   * used, in-memory caches. Never request-bound I/O objects (D1, KV or
+   * Hyperdrive handles, open sockets), which Workers forbid using from
+   * another request. Effect `Config` reads the Worker's bindings, and a
+   * missing one fails requests with a configuration error naming it. A
+   * build that fails is retried by the next request.
+   */
+  readonly app?: Layer.Layer<AppServices, Config.ConfigError>
+  /**
+   * Built for each request, from its context and bindings, replacing an
+   * application service with the same tag. Effect `Config` reads the
+   * Worker's bindings here too.
+   */
+  readonly request?: (c: Context<E>) => Layer.Layer<RequestServices, Config.ConfigError>
+}
+
 /**
  * Flat configuration accepted by {@link setupWeb}.
  *
@@ -147,8 +146,6 @@ export interface WebSetupConfig<
   E extends Env = Env,
   DB extends object = never,
   Auth = never,
-  AppServices = never,
-  RequestServices = never,
   User = DefaultAuthUser,
   PublicUser extends object = DefaultPublicUser,
   Schema extends object = never,
@@ -157,7 +154,7 @@ export interface WebSetupConfig<
   SharedFields extends S.Struct.Fields = never,
   FlashFields extends S.Struct.Fields = never,
   Paths extends RoutePaths = RoutePaths,
-> extends WebSetupOptions<E, AppServices, RequestServices> {
+> extends WebSetupOptions<E> {
   /**
    * Database factory function. Creates the database client for each request.
    * Leave it out for applications without persistence or with stateless auth.
@@ -229,7 +226,7 @@ type AuthClientServices<DB> = [DB] extends [never]
 
 /**
  * The services routes can use under a setup: the core services, the database
- * and auth services when configured, and `services.app` and `services.request`.
+ * and auth services when configured, and the services `web.services(...)` gives.
  */
 export type WebRouteServices<HasDatabase extends boolean, Auth, CustomServices> =
   | CoreServices
@@ -270,6 +267,26 @@ export interface WebApplication<
    * naming the missing service. `routes.toJson()` lists every route.
    */
   readonly routes: EffectRouteBuilder<E, Services, Path>
+  /**
+   * Give the application's own services, after the application is
+   * registered, and receive the routes that may use them: an action
+   * registered there may use them as it uses the database. Given here
+   * rather than in `setupWeb`, a service layer's type is inferred even when
+   * it reads `dbQuery`, `config` or `bound`, which `setupWeb`'s registration
+   * types. Call it once.
+   *
+   * @example
+   * export const { app, routes } = web.services({
+   *   app: ProjectsLive,
+   *   request: (c) => auditLogFor(c.env.KV),
+   * })
+   */
+  services<AppServices = never, RequestServices = never>(
+    services: WebServices<E, AppServices, RequestServices>
+  ): {
+    readonly app: Hono<E>
+    readonly routes: EffectRouteBuilder<E, Services | AppServices | RequestServices, Path>
+  }
 }
 
 /**
@@ -305,8 +322,6 @@ export function setupWeb<
   E extends Env = Env,
   DB extends object = never,
   Auth = never,
-  AppServices = never,
-  RequestServices = never,
   User = DefaultAuthUser,
   PublicUser extends object = DefaultPublicUser,
   Schema extends object = never,
@@ -318,30 +333,56 @@ export function setupWeb<
 >(
   app: Hono<E>,
   config: WebSetupConfig<
-    E, DB, Auth, AppServices, RequestServices, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields, Paths
+    E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields, Paths
   >
 ): WebApplication<
   E,
-  WebRouteServices<[DB] extends [never] ? false : true, Auth, AppServices | RequestServices>,
+  WebRouteServices<[DB] extends [never] ? false : true, Auth, never>,
   SetupTypes<E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields, Paths>,
   RoutePath<Paths>
 > {
   assertSetupConfig(config)
   if (config.bindings !== undefined) assertBindingsConfig(config.bindings, config.schema)
-  app.use('*', createSetupMiddleware(config))
+
+  // The application's own services, which `web.services(...)` gives after
+  // setup; requests read them from here.
+  const services: ServiceSlots<E> = {}
+  let servicesGiven = false
+
+  app.use('*', createSetupMiddleware(config, services))
   registerErrorHandlers(app, config.errors)
 
   declareAppBindings(app, { bindings: config.bindings, schema: config.schema })
 
-  return { app, routes: new EffectRouteBuilder(app) }
+  return {
+    app,
+    routes: new EffectRouteBuilder(app),
+    services: (given) => {
+      if (servicesGiven) {
+        throw new Error('web.services(...) was called twice: give every application service in one call.')
+      }
+
+      servicesGiven = true
+      // SAFETY: the bridge provides these layers to every request, whose
+      // services the returned routes' type adds.
+      services.app = given.app as Layer.Layer<never, Config.ConfigError> | undefined
+      services.request = given.request as ((c: Context<E>) => Layer.Layer<never, Config.ConfigError>) | undefined
+
+      return { app, routes: new EffectRouteBuilder(app) }
+    },
+  }
+}
+
+/** Where `web.services(...)` puts the application's services for the bridge to read on each request. */
+interface ServiceSlots<E extends Env> {
+  app?: Layer.Layer<never, Config.ConfigError>
+  request?: (c: Context<E>) => Layer.Layer<never, Config.ConfigError>
 }
 
 function createSetupMiddleware<
   E extends Env,
   DB extends object,
   Auth,
-  AppServices,
-  RequestServices,
   User,
   PublicUser extends object,
   Schema extends object,
@@ -351,8 +392,9 @@ function createSetupMiddleware<
   FlashFields extends S.Struct.Fields,
 >(
   config: WebSetupConfig<
-    E, DB, Auth, AppServices, RequestServices, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields
-  >
+    E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields
+  >,
+  services: ServiceSlots<E>
 ): MiddlewareHandler<E> {
   const webConfig: WebConfig = {
     version: config.version,
@@ -404,8 +446,13 @@ function createSetupMiddleware<
   })
 
   const effectConfig: EffectBridgeConfig<E, never> = {
-    app: config.services?.app,
-    services: config.services?.request,
+    // Read on each request, so services given after setup apply.
+    get app() {
+      return services.app
+    },
+    get services() {
+      return services.request
+    },
     schema: config.schema,
     bindings: config.bindings,
     pages: config.pages,
@@ -507,9 +554,15 @@ function assertSetupConfig(config: object): void {
     )
   }
 
+  if (Object.hasOwn(config, 'services')) {
+    throw new Error(
+      "Invalid setupWeb configuration: give the application's services after registering it, as `export const { app, routes } = web.services({ app, request })`."
+    )
+  }
+
   if (Object.hasOwn(config, 'effect')) {
     throw new Error(
-      'Invalid setupWeb configuration: effect.services is now services.request, and schema and bindings are top-level options.'
+      "Invalid setupWeb configuration: effect.services is now web.services({ request }), and schema and bindings are top-level options."
     )
   }
 }
