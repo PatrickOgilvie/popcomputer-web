@@ -28,6 +28,7 @@ import {
   isPageResponse,
   isPartialReloadRequest,
 } from './effect/response-cache.js'
+import { attachTestLayer, readTestLayer } from './effect/test-env.js'
 import { openWebContext } from './request-context.js'
 import { HEADERS } from './types.js'
 
@@ -486,6 +487,12 @@ export function trackBindings<T>(env: T, onRead: () => void): T {
       Reflect.defineProperty(tracked, key, descriptor)
     }
   }
+
+  // The copy carries the request's test layer, which testEnv keys by the env
+  // object itself.
+  const testLayer = readTestLayer(env)
+
+  if (testLayer !== undefined) attachTestLayer(tracked, testLayer)
 
   // SAFETY: `tracked` copies every own property of `env` onto the same
   // prototype, substituting only behaviour-preserving binding proxies.

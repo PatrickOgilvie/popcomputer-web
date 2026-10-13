@@ -153,6 +153,12 @@ interface SynchronousTransactionsNotSupported {
   readonly __hint: 'Use an asynchronous driver (libsql, Postgres, MySQL), or dbBatch for atomic writes.'
 }
 
+/** Shown where a transaction client is expected for Cloudflare D1. */
+interface D1TransactionsNotSupported {
+  readonly __error: 'Cloudflare D1 has no interactive transactions: it rejects BEGIN and SAVEPOINT.'
+  readonly __hint: 'Use dbBatch((db) => [...statements]) to apply several writes atomically.'
+}
+
 /** Shown where batch statements are expected when the driver cannot batch. */
 interface BatchNotSupported {
   readonly __error: 'This database client has no batch() method.'
@@ -161,6 +167,20 @@ interface BatchNotSupported {
 
 type TransactionMethod = DatabaseType extends { transaction: infer Method } ? Method : never
 
+/** The driver client Drizzle keeps as `$client`, when the database type exposes it. */
+type DriverClient = DatabaseType extends { $client: infer Client } ? Client : never
+
+/**
+ * Whether the driver is Cloudflare D1, whose client prepares, executes and
+ * batches statements but has no transactions. The SQLite drivers with
+ * transactions (bun:sqlite, better-sqlite3, libsql) expose `transaction`.
+ */
+type IsD1 = [DriverClient] extends [never]
+  ? false
+  : DriverClient extends { prepare: unknown; exec: unknown; batch: unknown }
+    ? DriverClient extends { transaction: unknown } ? false : true
+    : false
+
 /**
  * The client `transaction(run)` passes to its callback, when the driver
  * awaits the callback before committing. A synchronous driver's
@@ -168,6 +188,8 @@ type TransactionMethod = DatabaseType extends { transaction: infer Method } ? Me
  */
 export type TransactionClient = [TransactionMethod] extends [never]
   ? TransactionsNotSupported
+  : IsD1 extends true
+    ? D1TransactionsNotSupported
   : TransactionMethod extends (run: (tx: infer Tx) => infer _, ...config: infer _Config) => infer Result
     ? Result extends PromiseLike<unknown>
       ? Tx

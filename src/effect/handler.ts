@@ -13,6 +13,7 @@ import {
   buildContextLayer,
   disposeRequestRuntime,
 } from './bridge.js'
+import { readTestLayer } from './test-env.js'
 import {
   ValidationError,
   UnauthorizedError,
@@ -122,6 +123,12 @@ function isDevelopment<E extends Env>(
   const env = c.env ?? {}
   const configuredEnvironment = Object.getOwnPropertyDescriptor(env, envKey)?.value
   const nodeEnvironment = Object.getOwnPropertyDescriptor(env, 'NODE_ENV')?.value
+
+  // A test request (testEnv) that declares no environment shows development
+  // errors, so a failing test explains itself.
+  if (configuredEnvironment === undefined && nodeEnvironment === undefined) {
+    return showDevErrors && readTestLayer(env) !== undefined
+  }
 
   return showDevErrors && (
     configuredEnvironment === devValue ||

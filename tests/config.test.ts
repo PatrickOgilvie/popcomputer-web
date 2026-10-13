@@ -82,15 +82,28 @@ describe('Config from bindings', () => {
     expect(builds.app).toBe(1)
   })
 
-  test('a missing binding is a configuration error, named in development', async () => {
+  test('a failed application service build is retried by the next request', async () => {
+    const { app, builds } = createApp()
+
+    const missing = await app.request('/settings', api, testEnv(Layer.empty, { REGION: 'weur' }))
+    const configured = await app.request('/settings', api, testEnv(Layer.empty, bindings))
+
+    expect(missing.status).toBe(500)
+    expect(await configured.json()).toEqual({ baseUrl: 'https://example.com', region: 'weur' })
+    expect(builds.app).toBe(2)
+  })
+
+  test('a missing binding is a configuration error, named outside production', async () => {
     const { app } = createApp()
     const missingRegion = { BASE_URL: 'https://example.com' }
 
     const development = await app.request('/settings', api, testEnv(Layer.empty, { ...missingRegion, ENVIRONMENT: 'development' }))
-    const production = await app.request('/settings', api, testEnv(Layer.empty, missingRegion))
+    const test = await app.request('/settings', api, testEnv(Layer.empty, missingRegion))
+    const production = await app.request('/settings', api, testEnv(Layer.empty, { ...missingRegion, ENVIRONMENT: 'production' }))
 
     expect(development.status).toBe(500)
     expect(await development.json()).toMatchObject({ code: 'WEB_CFG_305_INVALID_CONFIG', message: expect.stringContaining('REGION') })
+    expect(await test.json()).toMatchObject({ message: expect.stringContaining('REGION') })
     expect(await production.json()).toMatchObject({ code: 'WEB_CFG_305_INVALID_CONFIG', message: expect.not.stringContaining('REGION') })
   })
 })

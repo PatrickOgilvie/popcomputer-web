@@ -16,6 +16,7 @@ import { effectRoutes } from '../src/effect/routing.js'
 import { render } from '../src/effect/responses.js'
 import { DatabaseService, RequestService, RequestStateService } from '../src/effect/services.js'
 import { PAGE_CACHE_HEADER, trackBindings, type PageCacheStore } from '../src/page-cache.js'
+import { signedIn, testEnv } from '../src/testing.js'
 
 /** An in-memory stand-in for caches.default. */
 class MemoryCache implements PageCacheStore {
@@ -363,6 +364,18 @@ describe('default page cache', () => {
     const res = await get(createApp().app, '/', {}, production())
     expect(res.res.status).toBe(200)
     expect(res.status).toBeNull()
+  })
+})
+
+describe('testEnv with the page cache', () => {
+  test('a test-signed-in visit stays signed in, and its page is not stored', async () => {
+    const { app } = createApp()
+
+    const member = await get(app, '/', inertia(), testEnv(signedIn({ id: 'user-1' }), production()))
+    const guest = await get(app, '/', inertia(), production())
+
+    expect(JSON.parse(member.body).props.auth.user).toMatchObject({ id: 'user-1' })
+    expect(JSON.parse(guest.body).props.auth.user).toBeNull()
   })
 })
 

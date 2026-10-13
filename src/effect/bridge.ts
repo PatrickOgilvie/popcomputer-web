@@ -645,10 +645,20 @@ export function effectBridge<E extends Env, CustomServices = never>(
     // from testEnv (@popcomputer/web/testing) replace both. A layer that
     // fails to build fails the action with its error.
     const requestLayer = Layer.merge(buildContextLayer(c, config, configuration), configuration)
+    const requestAppRuntime = appRuntime
 
-    const appAndRequestLayer = appRuntime === undefined
+    const appAndRequestLayer = requestAppRuntime === undefined
       ? requestLayer
-      : Layer.merge(Layer.effectContext(appRuntime.contextEffect), requestLayer)
+      : Layer.merge(
+          Layer.effectContext(requestAppRuntime.contextEffect.pipe(
+            // A failed build is not kept: the next request builds the
+            // application services again.
+            Effect.tapError(() => Effect.sync(() => {
+              if (appRuntime === requestAppRuntime) appRuntime = undefined
+            }))
+          )),
+          requestLayer
+        )
 
     const testLayer = readTestLayer(c.env)
 

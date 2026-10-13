@@ -69,6 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `testEnv` layers apply to page visits while the page cache is on: the cache tracks bindings through a copy of the request env, and the copy lost the layer, so a test-signed-in GET ran as a guest.
+- A `services.app` layer that fails to build, such as one reading a missing binding, is built again by the next request instead of failing every later request in the isolate.
 - Validators for optional input accept an absent key: `checkbox` decodes it to `false`, the `nullable*` validators to `null`, `filled(schema, value)` to its default and `ensureArray` to `[]`. They failed with "Missing key", so a plain HTML form with an unchecked checkbox, or a page whose query string omitted a filter, failed validation.
 - Expected failures (4xx) are no longer logged as errors; only 5xx responses are.
 - `ForbiddenError`, `AuthRateLimitError` and `HttpError` render the application's error page for page and HTML requests, with their status, as `NotFoundError` does. They answered every client with JSON, which an Inertia client shows as an invalid-response modal. An `HttpError` with a `body` still answers with JSON.
@@ -90,6 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `dbTransaction` is a type error on Cloudflare D1 (a database whose driver client prepares and batches statements but has no `transaction`), naming `dbBatch`. It failed at runtime.
+- A request built with `testEnv` that declares no `ENVIRONMENT` or `NODE_ENV` binding renders errors with development details, so a failing test shows why. Pass `ENVIRONMENT: 'production'` to test production error pages.
 - `AGENTS.md` and the README describe the page registry, flash and failed-form redirects, the database operations, Effect `Config` and the auth routes. The canonical action calls `authorize()` before `bound()` and answers another member's record with 404, so its existence stays private. React page examples are type-checked with the package's React types.
 - `testEnv(layer, bindings)` takes any of the bindings the application declares in `WebBindingsType`, with their declared types, so a misspelled or mistyped binding is a type error.
 - `validateRequest` and `validateUnknown` report every invalid field (`errors: 'all'`) instead of the first, so a form shows all of its errors at once. Pass `parseOptions: { errors: 'first' }` for the previous behavior.
