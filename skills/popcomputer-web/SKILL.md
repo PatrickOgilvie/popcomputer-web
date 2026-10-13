@@ -20,18 +20,23 @@ TypeScript example here and in the README type-checks against the package.
 
 ## Rules
 
-1. **Compose once.** `setupWeb(app, config)` in `src/app.ts` owns rendering,
-   the page registry, the database, auth, route binding parsers and the error
-   page. Do not add framework middleware or register routes on the Hono app
-   by hand.
+1. **Declare once, in `setupWeb`, and register it.** `export const web =
+   setupWeb(new Hono<Env>(), config)` in `src/app.ts` owns rendering, the
+   database, auth, route binding parsers, pages, shared props, flash and the
+   error page, and declares their types as values. Register it once with
+   `declare module '@popcomputer/web' { interface Register { web: typeof web } }`;
+   every other type derives from it. Never declare a type the config already
+   declares. Do not add framework middleware or register routes on the Hono
+   app by hand.
 2. **Every handler is an action.** Wrap an `Effect.gen` in `action(...)` and
    register it on the `routes` that `setupWeb` returns:
    `routes.get/post/put/patch/delete(path, action, { name })`. Registrations
    chain. `routes` accepts only actions whose services the setup provides.
-3. **Register every page's props as an Effect Schema** in `src/pages.ts`,
-   pass the object as `setupWeb`'s `pages`, and augment `WebPagesType` with
-   it. Type each React page as `WebPage<'Projects/Show'>` from
-   `@popcomputer/web/react`. Never declare a page's props twice.
+3. **Declare every page's props as an Effect Schema** in `src/pages.ts` and
+   pass the object as `setupWeb`'s `pages`. Type each React page as
+   `WebPage<'Projects/Show'>` from `@popcomputer/web/react`; its props, the
+   shared `auth.user` and `errors` follow. Declare props shared with every
+   page in `shared`, and flash values in `flash`.
 4. **End every branch with a response helper:** `return yield* render(...)`,
    `redirect(...)`, `json(...)`, `jsonOrRender(...)`, `file(...)`,
    `notFound(...)`, `forbidden(...)` or `httpError(...)`. `yield* flash(key, value)` before a
@@ -46,8 +51,7 @@ TypeScript example here and in the README type-checks against the package.
    params, query and body provide with different values fails validation.
    Read headers and a raw body (a webhook signature) with `RequestService`.
 6. **Load route models with `{param}` placeholders and `bound('param')`.**
-   Register each model's Effect Schema in `setupWeb`'s `bindings` and augment
-   `WebRouteBindingsType` with the same object. Never query by a route
+   Declare each model's Effect Schema in `setupWeb`'s `bindings`. Never query by a route
    parameter yourself. Call `authorize()` before `bound()`: models load on the
    first `bound()` call, and a missing row is a 404. A record the user may not
    see answers `notFound(...)`, so its existence stays private; use

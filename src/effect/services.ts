@@ -3,116 +3,44 @@
 import { Context, Effect, Option, type Redacted, type Schema as S } from 'effect'
 import { CacheError, UnauthorizedError, ForbiddenError } from './errors.js'
 import type { PageProps, PagePropValue } from '../types.js'
-import type { PageSchemas } from './pages.js'
+import type { DeclaredFields, PageSchemas } from './pages.js'
+import type { Registered } from './register.js'
 
-/**
- * Augmentable interface for database type.
- * Users can extend this via module augmentation:
- *
- * @example
- * ```typescript
- * // In your project's types.d.ts or similar
- * declare module '@popcomputer/web/effect' {
- *   interface WebDatabaseType {
- *     type: Database // Your database type (Drizzle, Prisma, Kysely, etc.)
- *     schema: typeof schema // Your Drizzle schema for route model binding
- *   }
- * }
- * ```
- *
- * Then use the `DatabaseService` tag to get your typed database.
- */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface WebDatabaseType {}
-
-/**
- * Error type shown when WebDatabaseType.type is not configured.
- * This provides a helpful error message in IDE tooltips.
- */
+/** Shown where the database is used when the application registers none. */
 interface DatabaseNotConfigured {
-  readonly __error: 'DatabaseService type not configured. Add module augmentation: declare module "@popcomputer/web/effect" { interface WebDatabaseType { type: YourDbType } }'
-  readonly __hint: 'See https://github.com/patrickogilvie/popcomputer-web#1-describe-application-owned-types'
+  readonly __error: 'No database is registered. Give setupWeb a database factory, and register setupWeb\'s result: declare module "@popcomputer/web" { interface Register { web: typeof web } }'
+  readonly __hint: 'See the README: Configure the application once.'
 }
 
-/**
- * Error type shown when WebDatabaseType.schema is not configured.
- */
+/** Shown where the Drizzle schema is used when the application registers none. */
 interface SchemaNotConfigured {
-  readonly __error: 'Schema not configured for route model binding. Add module augmentation: declare module "@popcomputer/web/effect" { interface WebDatabaseType { schema: typeof schema } }'
-  readonly __hint: 'This is optional - only needed if using bound() for route model binding'
+  readonly __error: 'No Drizzle schema is registered. Give setupWeb your schema (schema: ...) and register setupWeb\'s result.'
+  readonly __hint: 'Only route model binding reads the schema.'
 }
 
-/** Extract database type from augmented interface, shows error type if not configured */
-export type DatabaseType = WebDatabaseType extends { type: infer T }
-  ? T
-  : DatabaseNotConfigured
-
-/** Extract schema type from augmented interface, shows error type if not configured */
-export type SchemaType = WebDatabaseType extends { schema: infer T }
-  ? T
-  : SchemaNotConfigured
-
-/**
- * Augmentable interface for auth type.
- * Users can extend this via module augmentation:
- *
- * @example
- * ```typescript
- * declare module '@popcomputer/web/effect' {
- *   interface WebAuthType {
- *     type: ReturnType<typeof betterAuth> // Your auth instance type
- *   }
- * }
- * ```
- */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface WebAuthType {}
-
-/**
- * Error type shown when WebAuthType.type is not configured.
- */
+/** Shown where Better Auth is used when the application registers none. */
 interface AuthNotConfigured {
-  readonly __error: 'AuthService type not configured. Add module augmentation: declare module "@popcomputer/web/effect" { interface WebAuthType { type: YourAuthType } }'
-  readonly __hint: 'This is optional - only needed if using AuthService'
+  readonly __error: 'No auth client is registered. Give setupWeb auth.client, and register setupWeb\'s result.'
+  readonly __hint: 'Only AuthService and the Better Auth helpers need it.'
 }
 
-/** Extract auth type from augmented interface, shows error type if not configured */
-export type AuthType = WebAuthType extends { type: infer T }
-  ? T
-  : AuthNotConfigured
-
-/**
- * Augmentable interface for environment bindings type.
- * Users can extend this via module augmentation:
- *
- * @example
- * ```typescript
- * declare module '@popcomputer/web/effect' {
- *   interface WebBindingsType {
- *     type: {
- *       DB: D1Database
- *       KV: KVNamespace
- *       ANALYTICS: AnalyticsEngineDataset
- *     }
- *   }
- * }
- * ```
- */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface WebBindingsType {}
-
-/**
- * Error type shown when WebBindingsType.type is not configured.
- */
+/** Shown where bindings are read when the application registers none. */
 interface BindingsNotConfigured {
-  readonly __error: 'BindingsService type not configured. Add module augmentation: declare module "@popcomputer/web/effect" { interface WebBindingsType { type: YourBindingsType } }'
-  readonly __hint: 'Augment WebBindingsType with the Bindings type of your Hono environment to read bindings through BindingsService.'
+  readonly __error: 'No bindings are registered. Type the Hono app with your Worker bindings (new Hono<{ Bindings: Bindings }>()) and register setupWeb\'s result.'
+  readonly __hint: 'BindingsService, Config and testEnv read the bindings type.'
 }
 
-/** Extract bindings type from augmented interface, shows error type if not configured */
-export type BindingsType = WebBindingsType extends { type: infer T }
-  ? T
-  : BindingsNotConfigured
+/** The client setupWeb's `database` factory returns, as the application registered it. */
+export type DatabaseType = Registered<'database', DatabaseNotConfigured>
+
+/** The Drizzle schema setupWeb's `schema` names, as the application registered it. */
+export type SchemaType = Registered<'schema', SchemaNotConfigured>
+
+/** The Better Auth client setupWeb's `auth.client` returns, as the application registered it. */
+export type AuthType = Registered<'auth', AuthNotConfigured>
+
+/** The Worker's bindings, from the registered Hono app's environment. */
+export type BindingsType = Registered<'bindings', BindingsNotConfigured>
 
 /**
  * Database Service - Generic database client
@@ -137,22 +65,11 @@ const AuthService_base: Context.ServiceClass<
 export class AuthService extends AuthService_base {}
 
 /**
- * Bindings Service - Environment bindings (Cloudflare D1, KV, R2, etc.)
- *
- * Automatically provided by setupWeb. Use module augmentation for type safety:
+ * Bindings Service - the Worker's bindings (D1, KV, R2, ...), typed by the
+ * Hono environment of the registered application.
  *
  * @example
- * ```typescript
- * // In your types.d.ts
- * declare module '@popcomputer/web/effect' {
- *   interface WebBindingsType {
- *     type: { DB: D1Database; KV: KVNamespace }
- *   }
- * }
- *
- * // In your action
- * const { KV, DB } = yield* BindingsService
- * ```
+ * const { KV } = yield* BindingsService
  */
 const BindingsService_base: Context.ServiceClass<
   BindingsService,
@@ -163,34 +80,8 @@ const BindingsService_base: Context.ServiceClass<
 export class BindingsService extends BindingsService_base {}
 
 /**
- * Augmentable interface for custom auth user type.
- * Users can extend this via module augmentation to use their own AuthUser type
- * (e.g., with custom fields like isAnonymous, isAdmin, role, etc.):
- *
- * @example
- * ```typescript
- * // In your project's types.d.ts
- * import type { AuthUser as BetterAuthUser } from './auth' // Your custom auth user type
- *
- * declare module '@popcomputer/web/effect' {
- *   interface WebAuthUserType {
- *     type: BetterAuthUser // Your auth user type with custom fields
- *   }
- * }
- * ```
- *
- * Then authorize() and other auth functions will return your custom type:
- * ```typescript
- * const { user } = yield* authorize()
- * // user.isAnonymous, user.role, etc. are now typed correctly
- * ```
- */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface WebAuthUserType {}
-
-/**
- * Default auth user structure - used when WebAuthUserType is not configured.
- * Provides the standard Better Auth user and session shape.
+ * Better Auth's default user and session: the signed-in user when setupWeb's
+ * `auth.session` declares no other.
  */
 export interface DefaultAuthUser {
   user: {
@@ -214,30 +105,10 @@ export interface DefaultAuthUser {
 }
 
 /**
- * Authenticated User - Session with user data.
- * Uses a configured application type, otherwise uses DefaultAuthUser.
+ * The signed-in user and session: what setupWeb's `auth.session` decodes, or
+ * Better Auth's default user and session.
  */
-export type AuthUser = WebAuthUserType extends { type: infer T }
-  ? T
-  : DefaultAuthUser
-
-/**
- * The session parser option of setupWeb's `auth` and `loadUser`. It is
- * required once the application augments WebAuthUserType, because the default
- * parser decodes only Better Auth's default user and session.
- */
-export type SessionParserOption = WebAuthUserType extends { type: unknown }
-  ? {
-      /** Parse Better Auth's session response into the augmented AuthUser. */
-      readonly session: S.Codec<AuthUser, unknown, never, never>
-    }
-  : {
-      /**
-       * Parse Better Auth's session response before actions receive it.
-       * Defaults to Better Auth's default user and session.
-       */
-      readonly session?: S.Codec<AuthUser, unknown, never, never>
-    }
+export type AuthUser = Registered<'user', DefaultAuthUser>
 
 /**
  * Authenticated User Service - Provides the current user session
@@ -256,6 +127,10 @@ export class AuthUserService extends AuthUserService_base {}
 export interface PageRenderer {
   /** setupWeb's `pages` registry, when the application registered its pages. */
   readonly pages?: PageSchemas
+  /** setupWeb's `shared`, which `share` encodes values with. */
+  readonly shared?: DeclaredFields
+  /** setupWeb's `flash`, which `flash` encodes values with. */
+  readonly flashed?: DeclaredFields
   render<T extends PageProps>(
     component: string,
     props?: T
@@ -460,11 +335,6 @@ export class ExecutionContextService extends Context.Service<
  * Fails with ForbiddenError if the check returns false.
  * The check function is optional - if not provided, just requires authentication.
  *
- * NOTE: This function is defined in services.ts (same file as AuthUser)
- * to ensure module augmentation of WebAuthUserType works correctly.
- * If moved to a separate file, TypeScript resolves the AuthUser type
- * before the user's module augmentation is applied.
- *
  * @example
  * // Just require authentication
  * const auth = yield* authorize()
@@ -476,7 +346,7 @@ export class ExecutionContextService extends Context.Service<
  * const auth = yield* authorize((a) => a.user.id === project.userId)
  */
 // The annotation keeps `AuthUser` unresolved in the emitted declaration, so it
-// resolves against the application's WebAuthUserType.
+// resolves against the application's registered user.
 export const authorize: (
   check?: (user: AuthUser) => boolean
 ) => Effect.Effect<AuthUser, UnauthorizedError | ForbiddenError> = Effect.fn('Web.authorize')(function* (

@@ -88,22 +88,15 @@ interface CustomAuthUser {
 }
 
 // Augment interfaces for testing
-declare module '../src/effect/index.js' {
-  interface WebDatabaseType {
-    type: { query: (sql: string) => Promise<unknown[]> }
-    schema: typeof schema
-  }
-
-  interface WebRouteBindingsType {
-    type: typeof routeBindings
-  }
-
-  interface WebAuthType {
-  type: { getSession: () => Promise<object> }
-  }
-
-  interface WebAuthUserType {
-    type: CustomAuthUser
+declare module '../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: { query: (sql: string) => Promise<unknown[]> }
+      schema: typeof schema
+      routeBindings: typeof routeBindings
+      auth: { getSession: () => Promise<object> }
+      user: CustomAuthUser
+    }>
   }
 }
 
@@ -268,6 +261,7 @@ const _testParsedBound = Effect.gen(function* () {
 // ============================================================================
 
 import { describe, test, expect } from 'bun:test'
+import type { WebDeclaration } from '../src/effect/register.js'
 
 describe('Effect type tests', () => {
   test('pluralize function matches Pluralize type', () => {

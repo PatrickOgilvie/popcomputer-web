@@ -17,6 +17,7 @@ import { render } from '../src/effect/responses.js'
 import { DatabaseService, RequestService, RequestStateService } from '../src/effect/services.js'
 import { PAGE_CACHE_HEADER, trackBindings, type PageCacheStore } from '../src/page-cache.js'
 import { signedIn, testEnv } from '../src/testing.js'
+import type { WebDeclaration } from '../src/effect/register.js'
 
 /** An in-memory stand-in for caches.default. */
 class MemoryCache implements PageCacheStore {
@@ -64,9 +65,11 @@ interface PageCacheDatabase {
   readonly projects: () => { readonly sql: string }
 }
 
-declare module '../src/effect/services.js' {
-  interface WebDatabaseType {
-    type: PageCacheDatabase
+declare module '../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: PageCacheDatabase
+    }>
   }
 }
 

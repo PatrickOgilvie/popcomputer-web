@@ -22,6 +22,7 @@ import {
   UnauthorizedError,
   ValidationError,
 } from '../../src/effect/errors.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
 // Mock user
 const createMockUser = (overrides: Partial<AuthUser['user']> = {}): AuthUser => ({
@@ -86,10 +87,11 @@ const createMockDb = () => ({
 
 type MockDatabase = ReturnType<typeof createMockDb>
 
-declare module '../../src/effect/services.js' {
-  interface WebDatabaseType {
-    // Tests provide either the mock client or a named stub they serialize.
-    type: MockDatabase | { readonly name: string }
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: MockDatabase | { readonly name: string }
+    }>
   }
 }
 

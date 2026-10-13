@@ -19,6 +19,7 @@ import { setupWeb } from '../../src/setup.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import type { BetterAuthActionError, BetterAuthActionResult } from '../../src/effect/auth.js'
 import type { AuthType } from '../../src/effect/services.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
 /**
  * A sign-in form action: validate the form, then call Better Auth with the
@@ -69,9 +70,11 @@ function createTestAuth() {
   })
 }
 
-declare module '../../src/effect/services.js' {
-  interface WebAuthType {
-    type: ReturnType<typeof createTestAuth>
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      auth: ReturnType<typeof createTestAuth>
+    }>
   }
 }
 

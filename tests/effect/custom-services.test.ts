@@ -17,15 +17,18 @@ import { web } from '../../src/middleware.js'
 import { webServices } from '../../src/request-context.js'
 import { setupWeb } from '../../src/setup.js'
 import { DatabaseService } from '../../src/effect/services.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
 /** The database stub these tests provide and read back. */
 interface TestDatabase {
   readonly name: string
 }
 
-declare module '../../src/effect/services.js' {
-  interface WebDatabaseType {
-    type: TestDatabase
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: TestDatabase
+    }>
   }
 }
 

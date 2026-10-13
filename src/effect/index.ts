@@ -22,10 +22,6 @@ export {
   type RequestContext,
   type RequestStateClient,
   type ExecutionContextClient,
-  type WebDatabaseType,
-  type WebAuthType,
-  type WebBindingsType,
-  type WebAuthUserType,
   type DefaultAuthUser,
   type DatabaseType,
   type SchemaType,
@@ -125,7 +121,6 @@ export {
 
 // Pages
 export {
-  type WebPagesType,
   type PageName,
   type PagePropsOf,
   type ClientPageProps,
@@ -169,7 +164,6 @@ export {
   type RouteBindingDefinition,
   type RouteBindingConfig,
   type RouteBindingsConfig,
-  type WebRouteBindingsType,
 } from './binding.js'
 
 // Auth guards

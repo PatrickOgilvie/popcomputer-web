@@ -25,6 +25,7 @@ import {
   effectifyBetterAuth,
   type BetterAuthBoundaryFailure,
 } from '@popcomputer/web/auth'
+import type { WebDeclaration } from '@popcomputer/web'
 
 type TestDatabase = {
   readonly name: string
@@ -67,25 +68,15 @@ const TestAuthSession = S.Struct({
   }),
 })
 
-declare module '@popcomputer/web/effect' {
-  interface WebDatabaseType {
-    type: TestDatabase
-  }
-
-  interface WebAuthType {
-    type: TestAuth
-  }
-
-  interface WebBindingsType {
-    type: TestBindings
-  }
-
-  interface WebAuthUserType {
-    type: S.Schema.Type<typeof TestAuthSession>
-  }
-
-  interface WebRouteBindingsType {
-    type: typeof testRouteBindings
+declare module '@popcomputer/web' {
+  interface Register {
+    web: WebDeclaration<{
+      database: TestDatabase
+      auth: TestAuth
+      bindings: TestBindings
+      user: S.Schema.Type<typeof TestAuthSession>
+      routeBindings: typeof testRouteBindings
+    }>
   }
 }
 
@@ -192,21 +183,6 @@ setupWeb(new Hono<TestEnv>(), {
       databaseName: db.name,
     }),
     session: TestAuthSession,
-  },
-})
-
-// This file augments WebAuthUserType, so auth must say how to parse it.
-// (With unannotated factories TypeScript reports the same mistake less
-// precisely: inference of the whole configuration fails.)
-setupWeb(new Hono<TestEnv>(), {
-  version: 'type-test',
-  render: (page) => JSON.stringify(page),
-  database: (context: HonoContext<TestEnv>) => ({ name: context.env.DATABASE_NAME }),
-  // @ts-expect-error The augmented AuthUser needs auth.session.
-  auth: {
-    client: (_context: HonoContext<TestEnv>, { db }: { readonly db: TestDatabase }) => ({
-      databaseName: db.name,
-    }),
   },
 })
 

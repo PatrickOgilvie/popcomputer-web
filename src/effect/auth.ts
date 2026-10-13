@@ -6,7 +6,7 @@
 
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import type { MiddlewareHandler, Env } from 'hono'
-import { AuthUserService, AuthService, PageService, RequestService, type AuthType, type AuthUser, type SessionParserOption, type WebAuthUserType } from './services.js'
+import { AuthUserService, AuthService, PageService, RequestService, type AuthType, type AuthUser } from './services.js'
 import {
   InvalidAuthSession,
   HttpError,
@@ -189,68 +189,48 @@ export const currentUser: Effect.Effect<AuthUser | null, never, never> =
  * The default public shape contains only `id`, `name`, and `image`. Prefer an
  * explicit `project` function when the client needs a different shape.
  */
+/** The user pages receive as `auth.user` unless setupWeb's `auth.share` declares another. */
+export const DefaultPublicUser = S.Struct({
+  id: S.String,
+  name: S.NullOr(S.String),
+  image: S.NullOr(S.String),
+})
+
+/** The default public user: `id`, `name` and `image`. */
+export interface DefaultPublicUser extends S.Schema.Type<typeof DefaultPublicUser> {}
+
+/** How the signed-in user is shared with pages. */
 export interface ShareAuthUserConfig {
-  /** Project the parsed server-side auth session into public page data. */
-  readonly project?: (auth: AuthUser) => PagePropValue
   /**
-   * Whitelist of user fields to include in the shared `auth.user`.
-   * Ignored when `mapUser` is provided.
-   *
-   * @example { fields: ['id', 'name', 'image'] }
+   * The public user, as an Effect Schema the signed-in user is encoded
+   * through: fields it does not name never reach the browser. Defaults to
+   * `id`, `name` and `image`.
    */
-  fields?: string[]
-  /**
-   * Full control over the shared user shape. Receives the raw user record and
-   * returns the value placed at `auth.user`. Overrides `fields`.
-   *
-   * @example { mapUser: (u) => ({ id: u.id, name: u.name }) }
-   */
-  mapUser?: (user: AuthUser['user']) => PagePropValue
+  readonly schema?: S.Codec<object, unknown, never, never>
 }
 
-/**
- * Apply the field/map projection to a raw user record.
- */
+/** The signed-in user's public fields, encoded as JSON through `schema`. */
 function projectSharedUser(
   authUser: AuthUser | null | undefined,
-  config: ShareAuthUserConfig
+  schema: S.Codec<object, unknown, never, never>
 ): PagePropValue {
   if (!authUser) return null
 
-  if (config.project) return config.project(authUser)
+  const encoded = S.encodeUnknownExit(S.toCodecJson(schema))(authUser.user)
 
-  const user = authUser.user
-
-  if (config.mapUser) return config.mapUser(user)
-
-  if (config.fields) {
-    const picked: PageProps = {}
-
-    for (const key of config.fields) {
-      if (key in user) {
-        picked[key] = JSON.parse(JSON.stringify(
-          Object.getOwnPropertyDescriptor(user, key)?.value
-        ))
-      }
-    }
-
-    return picked
+  if (encoded._tag === 'Failure') {
+    // A schema that does not fit the user type is a programming error, which
+    // the error boundary reports with the schema's own message.
+    throw new Error(`setupWeb's auth.share schema does not match the signed-in user: ${String(encoded.cause)}`)
   }
 
-  return {
-    id: String(user.id),
-    name: user.name === undefined || user.name === null ? null : String(user.name),
-    image: user.image === undefined || user.image === null
-      ? null
-      : String(user.image),
-  }
+  // SAFETY: a JSON codec's encoded value is JSON, which is a page prop value.
+  return encoded.value as PagePropValue
 }
 
 /**
- * Share auth state with the page renderer.
- *
- * The safe default shares only `id`, `name`, and `image`. Pass `project` when
- * the application needs a different public contract.
+ * Share the signed-in user with the page as `auth.user`, encoded through the
+ * public user schema (by default `id`, `name` and `image`).
  */
 export function shareAuth(
   config: ShareAuthUserConfig = {}
@@ -259,7 +239,7 @@ export function shareAuth(
     const page = yield* PageService
     const user = yield* currentUser
     page.share('auth', {
-      user: projectSharedUser(user, config),
+      user: projectSharedUser(user, config.schema ?? DefaultPublicUser),
     })
   })
 }
@@ -268,9 +248,7 @@ export function shareAuth(
  * Middleware version of shareAuth for use with app.use().
  *
  * @example
- * app.use('*', shareAuthMiddleware({
- *   project: ({ user }) => ({ id: user.id, name: user.name }),
- * }))
+ * app.use('*', shareAuthMiddleware({ schema: S.Struct({ id: S.String, name: S.NullOr(S.String) }) }))
  */
 export function shareAuthMiddleware<E extends Env>(
   config: ShareAuthUserConfig = {}
@@ -284,7 +262,7 @@ export function shareAuthMiddleware<E extends Env>(
     // known only once effectBridge has built the request runtime.
     if (page) {
       page.share('auth', () => ({
-        user: projectSharedUser(requestContext.authUser, config),
+        user: projectSharedUser(requestContext.authUser, config.schema ?? DefaultPublicUser),
       }))
     }
 
@@ -298,27 +276,24 @@ export function shareAuthMiddleware<E extends Env>(
 /**
  * Middleware to load the authenticated user, for applications that compose
  * middleware by hand. setupWeb installs it.
- *
- * Pass `session` once the application augments WebAuthUserType.
  */
-export function loadUser<E extends Env>(
-  ...[config]: WebAuthUserType extends { type: unknown }
-    ? [config: LoadUserConfig]
-    : [config?: LoadUserConfig]
-): MiddlewareHandler<E> {
-  return loadUserMiddleware<E>(config ?? {})
+export function loadUser<E extends Env>(config: LoadUserConfig = {}): MiddlewareHandler<E> {
+  return loadUserMiddleware<E>(config)
 }
 
 /** Options for {@link loadUser}. */
-export type LoadUserConfig = { readonly sessionCookie?: string } & SessionParserOption
+export interface LoadUserConfig {
+  readonly sessionCookie?: string
+  /**
+   * Parse Better Auth's session response into the signed-in user. Defaults to
+   * Better Auth's default user and session; pass the schema the application
+   * registers as `auth.session` when it declares another.
+   */
+  readonly session?: S.Codec<AuthUser, unknown, never, never>
+}
 
-/** loadUser without the augmentation check, for setupWeb, whose own type enforces it. */
-export function loadUserMiddleware<E extends Env>(
-  config: {
-    readonly sessionCookie?: string
-    readonly session?: S.Codec<AuthUser, unknown, never, never>
-  }
-): MiddlewareHandler<E> {
+/** loadUser, for setupWeb. */
+export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): MiddlewareHandler<E> {
   const { sessionCookie } = config
   const sessionSchema: S.Codec<AuthUser, unknown, never, never> =
     config.session ?? defaultSessionSchema()
@@ -393,8 +368,8 @@ export function loadUserMiddleware<E extends Env>(
   }
 }
 
-// AuthUser is the augmentable public contract. Applications that add fields
-// provide `auth.session`; this default establishes DefaultAuthUser's shape.
+// Better Auth's default user and session, which the signed-in user is unless
+// setupWeb's `auth.session` declares another.
 const DefaultAuthSessionSchema = S.Struct({
   user: S.Struct({
     id: S.String,
@@ -418,13 +393,11 @@ const DefaultAuthSessionSchema = S.Struct({
 
 /**
  * The parser used when setupWeb has no `auth.session`. It decodes Better
- * Auth's default user and session, which is AuthUser unless the application
- * augments WebAuthUserType.
+ * Auth's default user and session, which the registered user then is.
  */
 function defaultSessionSchema(): S.Codec<AuthUser, unknown, never, never> {
-  // SAFETY: setupWeb and loadUser require a session parser once the
-  // application augments WebAuthUserType (SessionParserOption), so this
-  // default runs only when AuthUser is DefaultAuthUser, which it decodes.
+  // SAFETY: the registered user is what setupWeb's `auth.session` decodes, and
+  // Better Auth's default user when it has none, which is when this runs.
   return DefaultAuthSessionSchema as unknown as S.Codec<AuthUser, unknown, never, never>
 }
 

@@ -6,7 +6,7 @@ import type { MiddlewareHandler, Env, Context } from 'hono'
 import type { Config, Layer, Schema as S } from 'effect'
 import { web } from './middleware.js'
 import { verifyOrigin, type VerifyOriginConfig } from './security.js'
-import type { PagePropValue, WebConfig } from './types.js'
+import type { WebConfig } from './types.js'
 import { loadUserMiddleware, shareAuthMiddleware } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
 import { readTestDatabase } from './effect/test-env.js'
@@ -14,12 +14,13 @@ import { pageCache } from './page-cache.js'
 import type {
   AuthService,
   DatabaseService,
-  WebAuthUserType,
   DatabaseType,
   AuthType,
-  BindingsType,
   AuthUser,
+  DefaultAuthUser,
 } from './effect/services.js'
+import type { DefaultPublicUser } from './effect/auth.js'
+import type { WebDeclaration, WebTypes } from './effect/register.js'
 import {
   EffectRouteBuilder,
   type BaseServices,
@@ -37,24 +38,31 @@ import {
 } from './effect/handler.js'
 import { NotFoundError } from './effect/errors.js'
 import type { RouteBindingsConfig } from './effect/binding.js'
-import type { PagesOption } from './effect/pages.js'
-
-/** Default Hono environment derived from the application's bindings augmentation. */
-type DefaultEnv = {
-  Bindings: BindingsType
-}
+import type { PageSchemas } from './effect/pages.js'
 
 /** Better Auth-compatible owner for deferred promise work. */
 export interface AuthBackgroundTasks {
   readonly handler: (promise: Promise<unknown>) => void
 }
 
-/** Better Auth configuration: client construction, session parsing and projection. */
-interface WebAuthBaseOptions<E extends Env, Auth, ClientServices> {
+/** Better Auth: the client, the signed-in user it decodes, and the user pages see. */
+export interface WebAuthOptions<E extends Env, Auth, ClientServices, User, PublicUser extends object> {
   /** Build the Better Auth server client at the request composition seam. */
-  client?: (c: Context<E>, services: ClientServices) => Auth
-  /** Explicit public projection placed at `auth.user` in page props. */
-  share?: (auth: AuthUser) => PagePropValue
+  readonly client?: (c: Context<E>, services: ClientServices) => Auth
+  /**
+   * Decode Better Auth's session response into the signed-in user every action
+   * sees (`authorize`, `currentUser`, `AuthUserService`). Defaults to Better
+   * Auth's default user and session; an application that adds user fields
+   * declares them here, and the user type follows.
+   */
+  readonly session?: S.Codec<User, unknown, never, never>
+  /**
+   * The user pages receive as `auth.user`, as an Effect Schema. The signed-in
+   * user is encoded through it, so a field it does not name never reaches the
+   * browser, and `WebPage` types `auth.user` from it. Defaults to `id`, `name`
+   * and `image`.
+   */
+  readonly share?: S.Codec<PublicUser, unknown, never, never>
   readonly sessionCookie?: string
   /**
    * Where a signed-out visitor goes when a route needs a user: `authorize()`
@@ -63,47 +71,7 @@ interface WebAuthBaseOptions<E extends Env, Auth, ClientServices> {
   readonly signInPath?: string
 }
 
-interface WebAuthOptionsWithDefaultUser<E extends Env, Auth, ClientServices>
-  extends WebAuthBaseOptions<E, Auth, ClientServices> {
-  /**
-   * Parse Better Auth's session response before actions receive it.
-   * Defaults to Better Auth's default user and session.
-   */
-  readonly session?: S.Codec<AuthUser, unknown, never, never>
-}
-
-interface WebAuthOptionsWithCustomUser<E extends Env, Auth, ClientServices>
-  extends WebAuthBaseOptions<E, Auth, ClientServices> {
-  /**
-   * Parse Better Auth's session response into the augmented AuthUser.
-   * Required: the default parser decodes only Better Auth's default user.
-   */
-  readonly session: S.Codec<AuthUser, unknown, never, never>
-}
-
-/**
- * Better Auth configuration. `session` is required once the application
- * augments WebAuthUserType.
- */
-type WebAuthOptions<E extends Env, Auth, ClientServices> =
-  WebAuthUserType extends { type: unknown }
-    ? WebAuthOptionsWithCustomUser<E, Auth, ClientServices>
-    : WebAuthOptionsWithDefaultUser<E, Auth, ClientServices>
-
 interface WebSetupOptions<E extends Env, AppServices, RequestServices> extends WebConfig {
-  /**
-   * Drizzle schema for route model binding.
-   *
-   * @example
-   * ```typescript
-   * import * as schema from '~/db/schema'
-   *
-   * setupWeb(app, { version, render, schema })
-   * ```
-   */
-  schema?: object
-  /** Row parsers and optional scope metadata for route-model bindings. */
-  bindings?: RouteBindingsConfig
 
   /**
    * Application services every route can use. Their types join the services
@@ -158,17 +126,26 @@ interface WebSetupOptions<E extends Env, AppServices, RequestServices> extends W
 /**
  * Flat configuration accepted by {@link setupWeb}.
  *
- * Database, schema, rendering, auth and services are configured at one
- * application boundary. Types are inferred from the supplied factories: the
- * auth client receives the request's database only when `database` is set.
+ * Every type the application uses is declared here once and inferred from
+ * the values given: the database client, the Better Auth client, the
+ * signed-in and public user, the Drizzle schema, route model bindings,
+ * pages, shared props and flash data. `setupWeb`'s result carries them, and
+ * registering it types the rest of the application.
  */
 export interface WebSetupConfig<
-  E extends Env = DefaultEnv,
+  E extends Env = Env,
   DB extends object = never,
   Auth = never,
   AppServices = never,
   RequestServices = never,
-> extends WebSetupOptions<E, AppServices, RequestServices>, WebPagesOption {
+  User = DefaultAuthUser,
+  PublicUser extends object = DefaultPublicUser,
+  Schema extends object = never,
+  RouteBindings extends RouteBindingsConfig = never,
+  Pages extends PageSchemas = never,
+  SharedFields extends S.Struct.Fields = never,
+  FlashFields extends S.Struct.Fields = never,
+> extends WebSetupOptions<E, AppServices, RequestServices> {
   /**
    * Database factory function. Creates the database client for each request.
    * Leave it out for applications without persistence or with stateless auth.
@@ -178,18 +155,52 @@ export interface WebSetupConfig<
    * database: (c) => createDb(c.env.DATABASE_URL)
    * ```
    */
-  database?: (c: Context<E>) => DB
+  readonly database?: (c: Context<E>) => DB
   /** Authentication. The client factory receives the request's database when one is configured. */
   // NoInfer: DB comes from `database` alone, never from the client's parameters.
-  auth?: WebAuthOptions<E, Auth, AuthClientServices<NoInfer<DB>>>
+  readonly auth?: WebAuthOptions<E, Auth, AuthClientServices<NoInfer<DB>>, User, PublicUser>
+  /** The Drizzle schema route model binding reads tables and relations from. */
+  readonly schema?: Schema
+  /** Each route model binding's row parser, by route placeholder (`{project}`). */
+  readonly bindings?: RouteBindings
+  /** Each page component's props schema, which `render` checks and encodes props with. */
+  readonly pages?: Pages
+  /**
+   * Props shared with every page, besides `auth`, as an Effect Schema struct:
+   * `share(key, value)` takes its fields, and `WebPage` types them.
+   */
+  readonly shared?: S.Struct<SharedFields>
+  /**
+   * The values `flash(key, value)` hands to the next page, as an Effect Schema
+   * struct; the page's Inertia `flash` is typed from it.
+   */
+  readonly flash?: S.Struct<FlashFields>
 }
 
-/**
- * Each page component's props schema, which `render` checks and encodes props
- * with. Required once the application augments WebPagesType, and then the
- * same registry.
- */
-type WebPagesOption = PagesOption
+/** The types a setup declares, as its result carries them for registration. */
+export interface SetupTypes<
+  E extends Env,
+  DB,
+  Auth,
+  User,
+  PublicUser,
+  Schema,
+  RouteBindings,
+  Pages,
+  SharedFields extends S.Struct.Fields,
+  FlashFields extends S.Struct.Fields,
+> extends WebTypes {
+  readonly bindings: E extends { Bindings: infer Bindings } ? Bindings : never
+  readonly database: DB
+  readonly schema: Schema
+  readonly auth: Auth
+  readonly user: User
+  readonly publicUser: PublicUser
+  readonly routeBindings: RouteBindings
+  readonly pages: Pages
+  readonly shared: [SharedFields] extends [never] ? never : S.Struct.Type<SharedFields>
+  readonly flash: [FlashFields] extends [never] ? never : S.Struct.Type<FlashFields>
+}
 
 /** What the auth client factory receives: the database when one is configured. */
 type AuthClientServices<DB> = [DB] extends [never]
@@ -206,8 +217,22 @@ export type WebRouteServices<HasDatabase extends boolean, Auth, CustomServices> 
   | ([Auth] extends [never] ? never : AuthService)
   | CustomServices
 
-/** The configured application returned by {@link setupWeb}. */
-export interface WebApplication<E extends Env, Services = BaseServices> {
+/**
+ * The configured application returned by {@link setupWeb}. It carries the
+ * types its setup declares: register it once, and the rest of the
+ * application is typed by them.
+ *
+ * @example
+ * ```ts
+ * declare module '@popcomputer/web' {
+ *   interface Register {
+ *     web: typeof web
+ *   }
+ * }
+ * ```
+ */
+export interface WebApplication<E extends Env, Services = BaseServices, Types extends WebTypes = WebTypes>
+  extends WebDeclaration<Types> {
   readonly app: Hono<E>
   /**
    * Registers the application's routes. An action registered here may use
@@ -222,37 +247,52 @@ export interface WebApplication<E extends Env, Services = BaseServices> {
  *
  * Installs the framework middleware (page cache, database and auth clients,
  * Inertia rendering, session loading, the per-request Effect runtime) and the
- * shared error boundary on `app`, and returns the routes to register on.
+ * shared error boundary on `app`, and returns the app, the routes to register
+ * on, and the types the configuration declares.
  *
  * @example
  * ```ts
- * export const { app, routes } = setupWeb(new Hono<Env>(), {
+ * export const web = setupWeb(new Hono<Env>(), {
  *   version: createVersion(manifest),
  *   render: createTemplate({ title: 'My App' }),
  *   database: (c) => createDb(c.env.DATABASE_URL),
  *   schema,
  *   bindings: { workspace: Workspace },
- *   auth: {
- *     client: (_c, { db }) => createAuth({ db }),
- *     session: AuthSession,
- *   },
+ *   pages,
+ *   auth: { client: (_c, { db }) => createAuth({ db }), session: AuthSession },
  * })
  *
- * routes.get('/workspaces/{workspace}', showWorkspace)
+ * declare module '@popcomputer/web' {
+ *   interface Register {
+ *     web: typeof web
+ *   }
+ * }
+ *
+ * web.routes.get('/workspaces/{workspace}', showWorkspace)
  * ```
  */
 export function setupWeb<
-  E extends Env = DefaultEnv,
+  E extends Env = Env,
   DB extends object = never,
   Auth = never,
   AppServices = never,
   RequestServices = never,
+  User = DefaultAuthUser,
+  PublicUser extends object = DefaultPublicUser,
+  Schema extends object = never,
+  const RouteBindings extends RouteBindingsConfig = never,
+  const Pages extends PageSchemas = never,
+  SharedFields extends S.Struct.Fields = never,
+  FlashFields extends S.Struct.Fields = never,
 >(
   app: Hono<E>,
-  config: WebSetupConfig<E, DB, Auth, AppServices, RequestServices>
+  config: WebSetupConfig<
+    E, DB, Auth, AppServices, RequestServices, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields
+  >
 ): WebApplication<
   E,
-  WebRouteServices<[DB] extends [never] ? false : true, Auth, AppServices | RequestServices>
+  WebRouteServices<[DB] extends [never] ? false : true, Auth, AppServices | RequestServices>,
+  SetupTypes<E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields>
 > {
   assertSetupConfig(config)
   app.use('*', createSetupMiddleware(config))
@@ -267,8 +307,17 @@ function createSetupMiddleware<
   Auth,
   AppServices,
   RequestServices,
+  User,
+  PublicUser extends object,
+  Schema extends object,
+  RouteBindings extends RouteBindingsConfig,
+  Pages extends PageSchemas,
+  SharedFields extends S.Struct.Fields,
+  FlashFields extends S.Struct.Fields,
 >(
-  config: WebSetupConfig<E, DB, Auth, AppServices, RequestServices>
+  config: WebSetupConfig<
+    E, DB, Auth, AppServices, RequestServices, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields
+  >
 ): MiddlewareHandler<E> {
   const webConfig: WebConfig = {
     version: config.version,
@@ -288,14 +337,11 @@ function createSetupMiddleware<
     }
 
     try {
-      // Set up database first (auth may depend on it)
-      // SAFETY: DB/Auth generics are the app's declared client types; the
-      // WebDatabaseType/WebAuthType module augmentations make these
-      // the same types DatabaseService/AuthService hand back to handlers.
-      // A test request may bring its own database (testEnv's `database`).
+      // Set up database first (auth may depend on it). A test request may
+      // bring its own database (testEnv's `database`).
       const testDatabase = readTestDatabase(c.env)
       // SAFETY: testEnv types the database as DatabaseType, which the
-      // application's WebDatabaseType augmentation makes the factory's DB.
+      // application's registration makes this setup's DB.
       const db = testDatabase === undefined ? config.database?.(c) : testDatabase as DB
 
       if (db !== undefined) {
@@ -328,6 +374,8 @@ function createSetupMiddleware<
     schema: config.schema,
     bindings: config.bindings,
     pages: config.pages,
+    shared: config.shared,
+    flash: config.flash,
   }
 
   const middlewares: MiddlewareHandler<E>[] = [
@@ -349,10 +397,12 @@ function createSetupMiddleware<
     web(webConfig),
     loadUserMiddleware<E>({
       sessionCookie: config.auth?.sessionCookie,
-      session: config.auth?.session,
+      // SAFETY: the registered AuthUser is this setup's User, the type
+      // `auth.session` decodes; inside setupWeb the two are not yet related.
+      session: config.auth?.session as S.Codec<AuthUser, unknown, never, never> | undefined,
     }),
     shareAuthMiddleware<E>({
-      project: config.auth?.share,
+      schema: config.auth?.share,
     }),
     effectBridge<E, never>(effectConfig),
     ...(config.middleware ?? []),

@@ -1,8 +1,8 @@
 /**
  * The application's pages: each page component's props as an Effect Schema.
  *
- * Registered once in setupWeb's `pages` and mirrored by augmenting
- * `WebPagesType`, the registry types both sides of a page:
+ * Declared once in setupWeb's `pages`, and typed through the application's
+ * registration, the registry types both sides of a page:
  *
  * - `render('Projects/Show', props)` accepts only registered page names and
  *   checks `props` against the page's schema, then encodes them as JSON
@@ -16,16 +16,13 @@
  *   'Projects/Show': S.Struct({ project: Project, canEdit: S.Boolean }),
  * }
  *
- * declare module '@popcomputer/web/effect' {
- *   interface WebPagesType {
- *     type: typeof pages
- *   }
- * }
+ * export const web = setupWeb(new Hono<Env>(), { ..., pages })
  * ```
  */
 
 import { Effect, Predicate, Schema as S } from 'effect'
-import type { PageProps } from '../types.js'
+import type { PageProps, PagePropValue } from '../types.js'
+import type { Registered } from './register.js'
 
 /** A page's props schema: an Effect Schema of an object, needing no services. */
 export type PageSchema = S.Codec<object, unknown, never, never>
@@ -33,26 +30,12 @@ export type PageSchema = S.Codec<object, unknown, never, never>
 /** Page component names and their props schemas, as setupWeb's `pages`. */
 export type PageSchemas = Readonly<Record<string, PageSchema>>
 
-/**
- * Augmentable registry used by `render`, `jsonOrRender` and `WebPage`.
- *
- * Set `type` to the same object passed as setupWeb's `pages`.
- */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface WebPagesType {}
+type RegisteredPages = Registered<'pages', never>
 
-type ConfiguredPages = WebPagesType extends { type: infer Pages extends PageSchemas } ? Pages : never
+type ConfiguredPages = RegisteredPages extends PageSchemas ? RegisteredPages : never
 
 /** Whether the application registered its pages. */
 export type PagesConfigured = [ConfiguredPages] extends [never] ? false : true
-
-/**
- * setupWeb's `pages` option: required, and the registry `WebPagesType`
- * names, once the application augments it.
- */
-export type PagesOption = PagesConfigured extends true
-  ? { readonly pages: ConfiguredPages }
-  : { readonly pages?: PageSchemas }
 
 /** The page component names `render` accepts: every registered page, or any name. */
 export type PageName = PagesConfigured extends true ? keyof ConfiguredPages & string : string
@@ -118,6 +101,65 @@ export function encodePageProps(
         ? Effect.succeed(encoded as PageProps)
         : Effect.fail(new Error(`The schema for page '${component}' must describe an object of props.`))
     ),
+    Effect.orDie
+  )
+}
+
+/** Props shared with every page, as the application declares them in setupWeb's `shared`. */
+type RegisteredShared = Registered<'shared', never>
+
+/** The keys `share` accepts: the declared shared props, or any key before the application declares them. */
+export type SharedKey = [RegisteredShared] extends [never] ? string : keyof RegisteredShared & string
+
+/** The value `share(key, value)` takes for `key`. */
+export type SharedValue<Key extends string> = [RegisteredShared] extends [never]
+  ? PagePropValue
+  : Key extends keyof RegisteredShared ? RegisteredShared[Key] : never
+
+/** Flash data, as the application declares it in setupWeb's `flash`. */
+type RegisteredFlash = Registered<'flash', never>
+
+/** The keys `flash` accepts: the declared flash values, or any key before the application declares them. */
+export type FlashKey = [RegisteredFlash] extends [never] ? string : keyof RegisteredFlash & string
+
+/** The value `flash(key, value)` takes for `key`. */
+export type FlashValue<Key extends string> = [RegisteredFlash] extends [never]
+  ? PagePropValue
+  : Key extends keyof RegisteredFlash ? RegisteredFlash[Key] : never
+
+/** A struct of declared values, such as setupWeb's `shared` or `flash`. */
+export type DeclaredFields = S.Struct<S.Struct.Fields>
+
+/**
+ * Encode one value as JSON through its field of a declared struct. Without a
+ * struct the value passes through; a key the struct lacks, or a value its
+ * field rejects, is a programming error the types normally prevent.
+ */
+export function encodeDeclaredField(
+  declared: DeclaredFields | undefined,
+  option: 'shared' | 'flash',
+  key: string,
+  value: unknown
+): Effect.Effect<PagePropValue> {
+  if (declared === undefined) {
+    // SAFETY: without a declaration, share and flash accept only PagePropValue.
+    return Effect.succeed(value as PagePropValue)
+  }
+
+  const field = Object.hasOwn(declared.fields, key) ? declared.fields[key] : undefined
+
+  if (field === undefined) {
+    return Effect.die(new Error(`'${key}' is not in setupWeb's ${option}. Declare it there.`))
+  }
+
+  // SAFETY: shared props and flash values are plain data, whose JSON encoding
+  // needs no services.
+  const codec = S.toCodecJson(field) as unknown as S.Codec<unknown, unknown, never, never>
+
+  return S.encodeUnknownEffect(codec)(value).pipe(
+    Effect.mapError((issue) => new Error(`The value for ${option} '${key}' does not match its schema: ${issue.message}`)),
+    // SAFETY: a JSON codec's encoded value is JSON, which is a page prop value.
+    Effect.map((encoded) => encoded as PagePropValue),
     Effect.orDie
   )
 }

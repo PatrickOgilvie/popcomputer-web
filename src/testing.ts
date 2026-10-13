@@ -10,16 +10,19 @@
  * const res = await app.request('/projects', {}, testEnv(signedIn({ id: 'user-1' })))
  */
 import { DateTime, Effect, Layer, Redacted } from 'effect'
-import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser, type WebBindingsType } from './effect/services.js'
+import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser } from './effect/services.js'
+import type { Registered } from './effect/register.js'
 import { attachTestDatabase, attachTestLayer } from './effect/test-env.js'
 import type { PageName } from './effect/pages.js'
 import type { PagePropsFor } from './react.js'
 
+type RegisteredBindings = Registered<'bindings', never>
+
 /**
- * The bindings a test passes to `testEnv`: any of the application's bindings
- * (WebBindingsType), each with its declared type, once it declares them.
+ * The bindings a test passes to `testEnv`: any of the application's
+ * registered bindings, each with its declared type.
  */
-export type TestBindings = WebBindingsType extends { type: infer Bindings } ? Partial<Bindings> : object
+export type TestBindings = [RegisteredBindings] extends [never] ? object : Partial<RegisteredBindings>
 
 /**
  * Build a request env that adds `layer` to the request's Effect runtime.
@@ -104,7 +107,7 @@ type DefaultedField = {
 /**
  * A complete `AuthUser`, or the user fields to set on a default test user:
  * `id` and every field without a fitting default, such as the required fields
- * an application adds by augmenting WebAuthUserType. The default session
+ * an application adds in setupWeb's `auth.session`. The default session
  * follows Better Auth's; when the application's session does not fit it, pass
  * a complete `AuthUser`.
  */

@@ -23,14 +23,17 @@ import {
 } from '../../src/effect/error-observer.js'
 import { uuid } from '../../src/effect/schema.js'
 import { validateRequest } from '../../src/effect/validation.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
 interface TestDatabase {
   readonly name: string
 }
 
-declare module '../../src/effect/services.js' {
-  interface WebDatabaseType {
-    type: TestDatabase
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: TestDatabase
+    }>
   }
 }
 

@@ -33,6 +33,7 @@ import {
 import type { BetterAuthActionError, BetterAuthActionResult } from '../../src/effect/auth.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import type { AuthType } from '../../src/effect/services.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
 /**
  * A sign-in form action: validate the form, then call Better Auth with the
@@ -81,9 +82,11 @@ interface TestSignOutAuth {
   }
 }
 
-declare module '../../src/effect/services.js' {
-  interface WebAuthType {
-    type: TestCredentialsAuth | TestSignOutAuth
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      auth: TestCredentialsAuth | TestSignOutAuth
+    }>
   }
 }
 
@@ -123,16 +126,16 @@ const createMockUser = (overrides: Partial<AuthUser['user']> = {}): AuthUser => 
 
 // Mock PageRenderer
 const createMockPage = (): PageRenderer & {
-  shared: PageProps
+  sharedProps: PageProps
 } => {
-  const shared: PageProps = {}
+  const sharedProps: PageProps = {}
 
   return {
-    shared,
+    sharedProps,
     render: async (component, props) =>
       Response.json({ component, props }),
     share: (key, value) => {
-      shared[key] = value
+      sharedProps[key] = value
     },
     flash: () => {},
   }
@@ -231,7 +234,7 @@ describe('shareAuth', () => {
 
     await Effect.runPromise(Effect.provide(shareAuth(), layer))
 
-    expect(mockPage.shared.auth).toEqual({
+    expect(mockPage.sharedProps.auth).toEqual({
       user: {
         id: mockUser.user.id,
         name: mockUser.user.name,
@@ -240,7 +243,7 @@ describe('shareAuth', () => {
     })
   })
 
-  test('supports an explicit public user projection', async () => {
+  test('shares the user through the public user schema, and nothing it does not name', async () => {
     const mockUser = createMockUser({ name: 'John Doe' })
     const mockPage = createMockPage()
 
@@ -250,33 +253,10 @@ describe('shareAuth', () => {
     )
 
     await Effect.runPromise(
-      Effect.provide(
-        shareAuth({ project: (auth) => ({ displayName: auth.user.name }) }),
-        layer
-      )
+      Effect.provide(shareAuth({ schema: S.Struct({ id: S.String, name: S.NullOr(S.String) }) }), layer)
     )
 
-    expect(mockPage.shared.auth).toEqual({
-      user: { displayName: 'John Doe' },
-    })
-  })
-
-  test('projects only whitelisted fields when configured', async () => {
-    const mockUser = createMockUser({ name: 'John Doe' })
-    const mockPage = createMockPage()
-
-    const layer = Layer.mergeAll(
-      Layer.succeed(AuthUserService, mockUser),
-      Layer.succeed(PageService, mockPage)
-    )
-
-    await Effect.runPromise(
-      Effect.provide(shareAuth({ fields: ['id', 'name'] }), layer)
-    )
-
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    const shared = mockPage.shared.auth as { user: PageProps }
-    expect(Object.keys(shared.user).sort()).toEqual(['id', 'name'])
+    expect(mockPage.sharedProps.auth).toEqual({ user: { id: mockUser.user.id, name: 'John Doe' } })
   })
 
   test('shares null when not authenticated', async () => {
@@ -285,7 +265,7 @@ describe('shareAuth', () => {
 
     await Effect.runPromise(Effect.provide(shareAuth(), layer))
 
-    expect(mockPage.shared.auth).toEqual({
+    expect(mockPage.sharedProps.auth).toEqual({
       user: null,
     })
   })

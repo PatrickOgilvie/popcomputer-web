@@ -21,6 +21,7 @@ import {
   uniqueFieldErrors,
 } from '../../src/effect/database.js'
 import { DatabaseService } from '../../src/effect/services.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
 const workspaces = sqliteTable('workspaces', {
   id: integer('id').primaryKey(),
@@ -74,9 +75,11 @@ function openDatabase(): { db: TestDatabase; sqlite: Database; layer: Layer.Laye
   return { db, sqlite, layer: Layer.succeed(DatabaseService, db) }
 }
 
-declare module '../../src/effect/services.js' {
-  interface WebDatabaseType {
-    type: TestDatabase
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: TestDatabase
+    }>
   }
 }
 

@@ -20,6 +20,7 @@ import { bound } from '../src/effect/binding.js'
 import { dbMutation } from '../src/effect/database.js'
 import { nullableString, requiredString } from '../src/effect/schema.js'
 import { validateRequest } from '../src/effect/validation.js'
+import type { WebDeclaration } from '../src/effect/register.js'
 
 // The README Quick start's application types: a SQLite projects table and the
 // project route binding.
@@ -36,15 +37,12 @@ const UpdateProject = S.Struct({ name: requiredString, description: nullableStri
 
 type ProjectsEnv = { Bindings: { readonly DATABASE_PATH: string } }
 
-declare module '../src/effect/services.js' {
-  interface WebDatabaseType {
-    type: BunSQLiteDatabase<typeof projectsSchema>
-  }
-}
-
-declare module '../src/effect/binding.js' {
-  interface WebRouteBindingsType {
-    type: typeof routeBindings
+declare module '../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: BunSQLiteDatabase<typeof projectsSchema>
+      routeBindings: typeof routeBindings
+    }>
   }
 }
 

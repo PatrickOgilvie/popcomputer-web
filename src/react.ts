@@ -1,9 +1,9 @@
 /**
  * React types for @popcomputer/web applications.
  *
- * Once the application registers its pages (setupWeb's `pages`, mirrored by
- * augmenting `WebPagesType`), a page component names its page and receives
- * the JSON form of that page's props:
+ * Once the application declares its pages (setupWeb's `pages`) and registers
+ * its setup, a page component names its page and receives the JSON form of
+ * that page's props, with the shared props and field errors:
  *
  * @example
  * ```tsx
@@ -14,27 +14,34 @@
  * ```
  */
 
-import type { ClientPageProps, PageName } from './effect/pages.js'
+import type { ClientPageProps, Jsonify, PageName } from './effect/pages.js'
+import type { DefaultPublicUser } from './effect/auth.js'
+import type { Registered } from './effect/register.js'
 
 type ReactRenderable = string | number | boolean | null | undefined | object
 
 type ComponentType<P> = (props: P) => ReactRenderable
 
+type RegisteredPublicUser = Registered<'publicUser', DefaultPublicUser>
+type RegisteredShared = Registered<'shared', never>
+type RegisteredFlash = Registered<'flash', never>
+
 /**
- * Props the application shares with every page, such as the signed-in user.
- * Augment it to type them:
- *
- * @example
- * ```ts
- * declare module '@popcomputer/web/react' {
- *   interface SharedProps {
- *     auth: { user: { id: string; name: string | null } | null }
- *   }
- * }
- * ```
+ * Props every page receives from the application, derived from setupWeb:
+ * `auth.user`, the signed-in user encoded through `auth.share` (or `null`),
+ * and the `shared` props, each present when the request shared it.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface SharedProps {}
+export type SharedProps = {
+  readonly auth: { readonly user: Jsonify<RegisteredPublicUser> | null }
+} & ([RegisteredShared] extends [never] ? Record<never, never> : Partial<Jsonify<RegisteredShared>>)
+
+/**
+ * A page's Inertia `flash` data, derived from setupWeb's `flash`: each value
+ * is present when the previous request flashed it.
+ */
+export type FlashData = [RegisteredFlash] extends [never]
+  ? Readonly<Record<string, unknown>>
+  : Partial<Jsonify<RegisteredFlash>>
 
 /**
  * Field errors by field, or, for a form that names an error bag, by bag and

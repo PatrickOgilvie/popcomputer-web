@@ -20,6 +20,7 @@ import { web } from '../src/middleware.js'
 import { effectBridge } from '../src/effect/bridge.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import { DatabaseService } from '../src/effect/services.js'
+import type { WebDeclaration } from '../src/effect/register.js'
 
 interface TestDatabase {
   readonly name: string
@@ -39,13 +40,12 @@ interface SessionTestAuth {
   }
 }
 
-declare module '../src/effect/services.js' {
-  interface WebDatabaseType {
-    type: TestDatabase
-  }
-
-  interface WebAuthType {
-    type: NamedTestAuth | SessionTestAuth
+declare module '../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: TestDatabase
+      auth: NamedTestAuth | SessionTestAuth
+    }>
   }
 }
 

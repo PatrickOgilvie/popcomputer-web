@@ -26,6 +26,7 @@ import {
 import { RequireAuthLayer } from '../src/effect/auth.js'
 import { bound, routeBinding } from '../src/effect/binding.js'
 import { NotFoundError } from '../src/effect/errors.js'
+import type { WebDeclaration } from '../src/effect/register.js'
 
 // =============================================================================
 // Test Types
@@ -50,13 +51,13 @@ interface TestAuth {
   readonly secret: string
 }
 
-declare module '../src/effect/services.js' {
-  interface WebDatabaseType {
-    type: TestDatabase
-  }
-
-  interface WebAuthType {
-    type: TestAuth
+declare module '../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: TestDatabase
+      auth: TestAuth
+      routeBindings: DeclaredBindings
+    }>
   }
 }
 
@@ -78,12 +79,6 @@ type DeclaredBindings = typeof nestedBindings & {
   readonly article: S.Codec<unknown>
   readonly project: S.Codec<unknown>
   readonly task: S.Codec<unknown>
-}
-
-declare module '../src/effect/binding.js' {
-  interface WebRouteBindingsType {
-    type: DeclaredBindings
-  }
 }
 
 describe('setupWeb', () => {

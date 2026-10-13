@@ -20,7 +20,12 @@ export {
   type WebRouteServices,
   type ErrorHandlerConfig,
   type AuthBackgroundTasks,
+  type WebAuthOptions,
+  type SetupTypes,
 } from './setup.js'
+
+// Registration: setupWeb's result, registered once, types the application.
+export { type Register, type WebDeclaration, type WebTypes } from './effect/register.js'
 
 // Core middleware (for manual setup)
 export { web, HEADERS } from './middleware.js'

@@ -10,6 +10,7 @@
 import type { SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy'
 import { Effect } from 'effect'
 import { dbBatch, dbMutation, dbTransaction, type TransactionClient } from '../../src/effect/database.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
 /** The shape of Cloudflare's D1Database binding. */
 interface D1Client {
@@ -19,10 +20,11 @@ interface D1Client {
   withSession(constraint?: string): unknown
 }
 
-declare module '../../src/effect/services.js' {
-  interface WebDatabaseType {
-    // drizzle(env.DB) from drizzle-orm/d1: an async SQLite database with batch().
-    type: SqliteRemoteDatabase & { $client: D1Client }
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: SqliteRemoteDatabase & { $client: D1Client }
+    }>
   }
 }
 

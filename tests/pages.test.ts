@@ -14,6 +14,7 @@ import { action } from '../src/effect/action.js'
 import { jsonOrRender, render } from '../src/effect/responses.js'
 import type { PagePropsFor, WebPage } from '../src/react.js'
 import { readPage } from '../src/testing.js'
+import type { WebDeclaration } from '../src/effect/register.js'
 
 const Project = S.Struct({ id: S.String, name: S.String, createdAt: S.Date })
 
@@ -23,9 +24,11 @@ const pages = {
   Dashboard: S.Struct({}),
 }
 
-declare module '../src/effect/pages.js' {
-  interface WebPagesType {
-    type: typeof pages
+declare module '../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      pages: typeof pages
+    }>
   }
 }
 
@@ -123,7 +126,7 @@ describe('WebPage', () => {
 
     const Show: WebPage<'Projects/Show'> = ({ project, errors }) => `${project.name} ${Object.keys(errors).length}`
 
-    expect(Show({ project: { id: 'p1', name: 'Apollo', createdAt: '2026-01-02' }, canEdit: true, errors: {} })).toBe('Apollo 0')
+    expect(Show({ project: { id: 'p1', name: 'Apollo', createdAt: '2026-01-02' }, canEdit: true, auth: { user: null }, errors: {} })).toBe('Apollo 0')
   })
 })
 

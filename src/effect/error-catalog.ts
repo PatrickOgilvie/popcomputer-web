@@ -103,7 +103,7 @@ export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes]
  */
 const fixGenerators = {
   addDatabaseConfig: (): FixSuggestion => ({
-    description: 'Give setupWeb a database factory, and augment WebDatabaseType with its type.',
+    description: 'Give setupWeb a database factory (database: (c) => createDb(...)), and register setupWeb\'s result.',
     code: `setupWeb(app, {
   version,
   render,
@@ -112,7 +112,7 @@ const fixGenerators = {
   }),
 
   addAuthConfig: (): FixSuggestion => ({
-    description: 'Give setupWeb a Better Auth client factory, and augment WebAuthType with its type.',
+    description: 'Give setupWeb a Better Auth client factory (auth: { client }), and register setupWeb\'s result.',
     code: `setupWeb(app, {
   version,
   render,

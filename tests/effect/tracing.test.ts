@@ -26,6 +26,7 @@ import {
   cacheSet,
 } from '../../src/cache.js'
 import { signedIn } from '../../src/testing.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
 /** Run `effect` and return the names of the spans it created, in order. */
 async function spanNames<A, E>(effect: Effect.Effect<A, E>): Promise<string[]> {
@@ -49,9 +50,11 @@ interface TracingDatabase {
   batch(statements: readonly [unknown, ...unknown[]]): Promise<unknown[]>
 }
 
-declare module '../../src/effect/services.js' {
-  interface WebDatabaseType {
-    type: TracingDatabase
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: TracingDatabase
+    }>
   }
 }
 

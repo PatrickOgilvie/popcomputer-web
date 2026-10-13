@@ -33,17 +33,17 @@ import { Redirect } from '../../src/effect/errors.js'
 // Mock PageRenderer
 const createMockPage = (): PageRenderer & {
   renders: Array<{ component: string; props?: PageProps }>
-  shared: PageProps
-  flashed: Record<string, unknown>
+  sharedProps: PageProps
+  flashedValues: Record<string, unknown>
 } => {
   const renders: Array<{ component: string; props?: PageProps }> = []
-  const shared: PageProps = {}
-  const flashed: Record<string, unknown> = {}
+  const sharedProps: PageProps = {}
+  const flashedValues: Record<string, unknown> = {}
 
   return {
     renders,
-    shared,
-    flashed,
+    sharedProps,
+    flashedValues,
     render: async (component, props) => {
       renders.push({ component, props })
 
@@ -52,10 +52,10 @@ const createMockPage = (): PageRenderer & {
       })
     },
     share: (key, value) => {
-      shared[key] = value
+      sharedProps[key] = value
     },
     flash: (key, value) => {
-      flashed[key] = value
+      flashedValues[key] = value
     },
   }
 }
@@ -151,7 +151,7 @@ describe('flash', () => {
       )
     )
 
-    expect(mockPage.flashed).toEqual({ success: 'Project created.', count: 3 })
+    expect(mockPage.flashedValues).toEqual({ success: 'Project created.', count: 3 })
   })
 })
 
@@ -461,7 +461,7 @@ describe('share', () => {
     const effect = share('user', { id: 1, name: 'John' })
     Effect.runSync(Effect.provide(effect, layer))
 
-    expect(mockPage.shared.user).toEqual({ id: 1, name: 'John' })
+    expect(mockPage.sharedProps.user).toEqual({ id: 1, name: 'John' })
   })
 
   test('shares multiple values', () => {
@@ -475,7 +475,7 @@ describe('share', () => {
 
     Effect.runSync(Effect.provide(effect, layer))
 
-    expect(mockPage.shared.flash).toEqual({ message: 'Success!' })
-    expect(mockPage.shared.auth).toEqual({ user: null })
+    expect(mockPage.sharedProps.flash).toEqual({ message: 'Success!' })
+    expect(mockPage.sharedProps.auth).toEqual({ user: null })
   })
 })

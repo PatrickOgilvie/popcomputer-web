@@ -1,45 +1,66 @@
 /**
- * The published declarations, as an application that augments the package's
- * types sees them.
+ * The published declarations, as an application that registers its setup
+ * sees them.
  *
- * Bun tests and tests/typecheck-tests.ts compile against src, where an
- * augmentation reaches every type however its export is written. Declaration
- * emit can instead resolve an exported type before any application exists, as
- * it did when `bound` and `authorize` became inferred `Effect.fn` constants.
- * Only a program compiled against `dist` sees that.
+ * The application declares each type once, in setupWeb's configuration, and
+ * registers setupWeb's result; every API typed by the application's types
+ * must follow from that one registration. Bun tests and
+ * tests/typecheck-tests.ts compile against src, where any type resolves
+ * however its export is written. Declaration emit can instead resolve an
+ * exported type before any application exists, as it did when `bound` and
+ * `authorize` became inferred `Effect.fn` constants. Only a program compiled
+ * against `dist` sees that.
  *
  * Run: bun run build && tsc -p tests/consumer-types
  */
 import { Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '@popcomputer/web'
-import type { WebPage } from '@popcomputer/web/react'
+import type { FlashData, SharedProps, WebPage } from '@popcomputer/web/react'
 import {
   AuthUserService,
   authorize,
+  BindingsService,
   bound,
   currentUser,
   dbBatch,
   dbQuery,
   dbTransaction,
+  flash,
   render,
-  type DefaultAuthUser,
+  share,
 } from '@popcomputer/web/effect'
 import { signedIn, testEnv } from '@popcomputer/web/testing'
 
 const Project = S.Struct({ id: S.String, userId: S.String })
-const routeBindings = { project: Project }
+
 const pages = {
   'Projects/Show': S.Struct({ project: S.Struct({ id: S.String, createdAt: S.Date }) }),
 }
 
-interface Member {
-  readonly user: DefaultAuthUser['user'] & {
-    readonly role: 'owner' | 'member'
-    readonly teamId: string
-  }
-  readonly session: DefaultAuthUser['session']
-}
+const MemberSession = S.Struct({
+  user: S.Struct({
+    id: S.String,
+    email: S.String,
+    name: S.NullOr(S.String),
+    emailVerified: S.Boolean,
+    image: S.NullOr(S.String),
+    createdAt: S.Date,
+    updatedAt: S.Date,
+    role: S.Literals(['owner', 'member']),
+    teamId: S.String,
+  }),
+  session: S.Struct({
+    id: S.String,
+    userId: S.String,
+    expiresAt: S.Date,
+    token: S.RedactedFromValue(S.String),
+    createdAt: S.Date,
+    updatedAt: S.Date,
+  }),
+})
+
+const PublicMember = S.Struct({ id: S.String, name: S.NullOr(S.String), role: S.Literals(['owner', 'member']) })
 
 interface ProjectRow {
   readonly id: string
@@ -55,27 +76,30 @@ interface AppDatabase {
   ): Promise<{ -readonly [K in keyof Statements]: Awaited<Statements[K]> }>
 }
 
-declare module '@popcomputer/web/effect' {
-  interface WebDatabaseType {
-    type: AppDatabase
-  }
+declare function createDb(region: string): AppDatabase
 
-  interface WebRouteBindingsType {
-    type: typeof routeBindings
-  }
+type Env = { Bindings: { readonly REGION: string; readonly MAX_LINKS: string } }
 
-  interface WebAuthUserType {
-    type: Member
-  }
+// Every type the application uses is declared here, once.
+export const web = setupWeb(new Hono<Env>(), {
+  version: '1',
+  render: () => '',
+  database: (c) => createDb(c.env.REGION),
+  bindings: { project: Project },
+  pages,
+  auth: { session: MemberSession, share: PublicMember },
+  shared: S.Struct({ locale: S.String }),
+  flash: S.Struct({ success: S.String }),
+})
 
-  interface WebPagesType {
-    type: typeof pages
-  }
-
-  interface WebBindingsType {
-    type: { readonly REGION: string; readonly MAX_LINKS: string }
+// ...and registered, once.
+declare module '@popcomputer/web' {
+  interface Register {
+    web: typeof web
   }
 }
+
+type Member = typeof MemberSession.Type
 
 type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
   ? true
@@ -83,7 +107,7 @@ type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B 
 
 declare function expectType<T extends true>(): void
 
-export const augmentedTypes = Effect.gen(function* () {
+export const derivedTypes = Effect.gen(function* () {
   const auth = yield* authorize((member) => member.user.role === 'owner')
   expectType<Equals<typeof auth, Member>>()
 
@@ -99,6 +123,9 @@ export const augmentedTypes = Effect.gen(function* () {
   const member = yield* AuthUserService
   expectType<Equals<typeof member, Member>>()
 
+  const bindings = yield* BindingsService
+  expectType<Equals<typeof bindings, Env['Bindings']>>()
+
   const row = yield* dbQuery((db) => db.findProject('project-1'))
   expectType<Equals<typeof row, ProjectRow>>()
 
@@ -107,6 +134,14 @@ export const augmentedTypes = Effect.gen(function* () {
 
   const [first, second] = yield* dbBatch((db) => [db.findProject('a'), db.findProject('b')])
   expectType<Equals<[typeof first, typeof second], [ProjectRow, ProjectRow]>>()
+
+  yield* share('locale', 'en-GB')
+  // @ts-expect-error 'theme' is not a shared prop
+  yield* share('theme', 'dark')
+
+  yield* flash('success', 'Saved.')
+  // @ts-expect-error a flashed success message is a string
+  yield* flash('success', 1)
 })
 
 // Registered pages type render and the React component.
@@ -115,10 +150,10 @@ export const showProject = render('Projects/Show', { project: { id: 'p1', create
 render('Projects/Edit', {})
 expectType<Equals<Parameters<WebPage<'Projects/Show'>>[0]['project']['createdAt'], string>>()
 
-// Once the application registers its pages, setupWeb requires the registry.
-export const configured = setupWeb(new Hono(), { version: '1', render: () => '', pages, auth: { session: S.Any } })
-// @ts-expect-error pages is required
-setupWeb(new Hono(), { version: '1', render: () => '', auth: { session: S.Any } })
+// Shared props and flash data follow their schemas on the client.
+expectType<Equals<SharedProps['auth']['user'], { readonly id: string; readonly name: string | null; readonly role: 'owner' | 'member' } | null>>()
+expectType<Equals<SharedProps['locale'], string | undefined>>()
+expectType<Equals<FlashData['success'], string | undefined>>()
 
 // testEnv takes any of the application's bindings, with their declared types.
 testEnv(signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' }), { REGION: 'weur' })

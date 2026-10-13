@@ -118,54 +118,30 @@ objects and arrays. `declined` now decodes `0`, `"0"`, `"false"`, `"no"`, and
 
 ## Quick start
 
-### 1. Describe application-owned types
+Every type an application uses is declared once, as a value, and the rest of
+the application is typed by it: the database client, the Better Auth client,
+the signed-in user, route models, pages, shared props and flash data.
 
-Module augmentation connects the concrete clients and schemas created by your
-application to the package's Effect services. These interfaces contain types,
-not runtime configuration.
+### 1. Describe the Worker's bindings
 
 ```ts
-// src/web-types.ts
-// Import the module this file augments, so TypeScript resolves it.
-import type {} from '@popcomputer/web/effect'
-import type { createAuth } from './auth'
-import type { createDb } from './db'
-import type * as schema from './schema'
-
+// src/env.ts
 export type Bindings = {
   DATABASE_URL: string
   BETTER_AUTH_SECRET: string
   KV: KVNamespace
 }
 
-declare module '@popcomputer/web/effect' {
-  interface WebBindingsType {
-    type: Bindings
-  }
-
-  interface WebDatabaseType {
-    type: ReturnType<typeof createDb>
-    schema: typeof schema
-  }
-
-  interface WebAuthType {
-    type: ReturnType<typeof createAuth>
-  }
-}
+export type Env = { Bindings: Bindings }
 ```
-
-This gives `BindingsService`, `DatabaseService`, and `AuthService` their
-application-specific types without passing generic parameters through every
-action.
 
 ### 2. Describe the pages
 
-Each page component's props are an Effect Schema, registered once:
+Each page component's props are an Effect Schema:
 
 ```ts
 // src/pages.ts
 import { Schema as S } from 'effect'
-import type {} from '@popcomputer/web/effect'
 
 export const Project = S.Struct({
   id: S.String,
@@ -184,15 +160,9 @@ export const pages = {
   'Auth/Login': S.Struct({}),
   Dashboard: S.Struct({}),
 }
-
-declare module '@popcomputer/web/effect' {
-  interface WebPagesType {
-    type: typeof pages
-  }
-}
 ```
 
-`render('Projects/Show', props)` then accepts only a registered page and props
+`render('Projects/Show', props)` accepts only a registered page and props
 matching its schema, and encodes the props as JSON through it, so `createdAt`
 reaches the browser as an ISO string. The React component takes its props from
 the same schema:
@@ -201,10 +171,11 @@ the same schema:
 // src/pages/Projects/Show.tsx
 import type { WebPage } from '@popcomputer/web/react'
 
-const Show: WebPage<'Projects/Show'> = ({ project, errors }) => (
+const Show: WebPage<'Projects/Show'> = ({ project, auth, errors }) => (
   <main>
     <h1>{project.name}</h1>
     <p>Created {new Date(project.createdAt).toLocaleDateString()}</p>
+    {auth.user && <p>Signed in as {auth.user.name}</p>}
     {errors.name && <p role="alert">{errors.name}</p>}
   </main>
 )
@@ -213,10 +184,9 @@ export default Show
 ```
 
 A renamed prop, a missing page or a `Date` used as a `Date` in the browser is a
-type error on the side that drifted. Props shared with every page are typed by
-augmenting `SharedProps` from `@popcomputer/web/react`.
+type error on the side that drifted.
 
-### 3. Configure the application once
+### 3. Configure the application once, and register it
 
 ```ts
 // src/app.ts
@@ -230,19 +200,9 @@ import {
 import { createAuth } from './auth'
 import { createDb } from './db'
 import manifest from '../dist/manifest.json'
+import type { Env } from './env'
 import { pages, Project, Task } from './pages'
 import * as schema from './schema'
-import type { Bindings } from './web-types'
-
-type Env = { Bindings: Bindings }
-
-const routeBindings = { project: Project, task: Task }
-
-declare module '@popcomputer/web/effect' {
-  interface WebRouteBindingsType {
-    type: typeof routeBindings
-  }
-}
 
 const AuthSession = S.Struct({
   user: S.Struct({
@@ -264,7 +224,7 @@ const AuthSession = S.Struct({
   }),
 })
 
-export const { app, routes } = setupWeb(new Hono<Env>(), {
+export const web = setupWeb(new Hono<Env>(), {
   version: createVersion(manifest),
   render: createTemplate({
     title: 'Projects',
@@ -273,7 +233,7 @@ export const { app, routes } = setupWeb(new Hono<Env>(), {
   }),
   database: (c) => createDb(c.env.DATABASE_URL),
   schema,
-  bindings: routeBindings,
+  bindings: { project: Project, task: Task },
   pages,
   auth: {
     client: (c, { db, backgroundTasks }) => createAuth({
@@ -283,16 +243,50 @@ export const { app, routes } = setupWeb(new Hono<Env>(), {
       advanced: { backgroundTasks },
     }),
     session: AuthSession,
-    share: ({ user }) => ({
-      id: user.id,
-      name: user.name,
-      image: user.image,
-    }),
+    share: S.Struct({ id: S.String, name: S.NullOr(S.String), image: S.NullOr(S.String) }),
   },
+  flash: S.Struct({ success: S.String }),
   errors: { component: 'Error' },
 })
 
+declare module '@popcomputer/web' {
+  interface Register {
+    web: typeof web
+  }
+}
+
+export const { app, routes } = web
 export default app
+```
+
+Registering `setupWeb`'s result is the one declaration the rest of the
+application reads its types from:
+
+| Declared in `setupWeb` | Types |
+| --- | --- |
+| `new Hono<Env>()` | `BindingsService`, Effect `Config`, `testEnv`'s bindings |
+| `database` | `DatabaseService` and the `db` in `dbQuery`, `dbMutation`, `dbBatch` |
+| `schema`, `bindings` | `bound('project')` and its keys |
+| `auth.client` | `AuthService` and `betterAuthRedirect`'s `auth` |
+| `auth.session` | `authorize()`, `currentUser`, `AuthUserService`, `signedIn` |
+| `auth.share` | `auth.user` in `SharedProps` and `WebPage` (default: `id`, `name`, `image`) |
+| `pages` | `render`, `jsonOrRender`, `WebPage`, `readPage` |
+| `shared`, `flash` | `share(key, value)`, `flash(key, value)`, `SharedProps`, `FlashData` |
+
+Each value reaches the browser encoded through its schema, so a field the
+schema does not name, such as the user's email, never leaves the server.
+Inertia's own `usePage()` reads the same types from one more declaration:
+
+```ts
+// src/inertia.d.ts
+import type { FlashData, SharedProps } from '@popcomputer/web/react'
+
+declare module '@inertiajs/core' {
+  interface InertiaConfig {
+    sharedPageProps: SharedProps
+    flashDataType: FlashData
+  }
+}
 ```
 
 The configuration is deliberately flat. `setupWeb({ web: { ... } })` would
@@ -307,13 +301,12 @@ const version = createVersion(manifest)
 const template = createTemplate({ title: 'Projects' })
 
 // Public application
-setupWeb(app, { version, render: template, pages })
+setupWeb(app, { version, render: template })
 
 // Database without auth
 setupWeb(app, {
   version,
   render: template,
-  pages,
   database: (c) => createDb(c.env.DATABASE_URL),
 })
 
@@ -321,7 +314,6 @@ setupWeb(app, {
 setupWeb(app, {
   version,
   render: template,
-  pages,
   auth: {
     client: (c, { backgroundTasks }) => createStatelessAuth({
       secret: c.env.BETTER_AUTH_SECRET,
@@ -459,7 +451,6 @@ export const auditLogFor = (kv: KVNamespace) => Layer.succeed(AuditLog, AuditLog
 setupWeb(app, {
   version,
   render: template,
-  pages,
   services: {
     app: ClockLive,
     request: (c) => auditLogFor(c.env.KV),
@@ -661,13 +652,13 @@ const auth = yield* authorize(
 If there is no signed-in user, both forms fail with `UnauthorizedError`. If the
 predicate returns `false`, the second form fails with `ForbiddenError`.
 
-In the `setupWeb` auth configuration, use `auth.session` to parse the server
-session; do not trust a dependency response because it looks session-shaped.
-An application that augments `WebAuthUserType` must pass `auth.session`, since
-the default parser decodes only Better Auth's default user. The session token
-is `Redacted`, so serializing the auth user never exposes it; read it with
-`Redacted.value` where it is needed. Use `auth.share` to deliberately choose the
-fields serialized into page props.
+`auth.session` decodes Better Auth's session response into the signed-in
+user, so a dependency response is never trusted because it looks
+session-shaped; an application that adds user fields declares them in it, and
+`authorize()` and `currentUser` follow. The session token is `Redacted`, so
+serializing the auth user never exposes it; read it with `Redacted.value`
+where it is needed. `auth.share` names the fields pages receive as
+`auth.user`.
 
 ### Signing in and out
 
@@ -799,7 +790,6 @@ import { kvCache } from '@popcomputer/web/cache'
 setupWeb(app, {
   version,
   render: template,
-  pages,
   services: { request: (c) => kvCache(c.env.KV) },
 })
 ```
@@ -1047,7 +1037,7 @@ import {
 import { effectBridge } from '@popcomputer/web/effect'
 import manifest from '../dist/manifest.json'
 import { createDb } from './db'
-import type { Bindings } from './web-types'
+import type { Bindings } from './env'
 
 type Env = { Bindings: Bindings }
 
@@ -1135,11 +1125,7 @@ Public type and runtime names have direct replacements:
 
 | Former name | Current name |
 |---|---|
-| `HonertiaDatabaseType` | `WebDatabaseType` |
-| `HonertiaAuthType` | `WebAuthType` |
-| `HonertiaBindingsType` | `WebBindingsType` |
-| `HonertiaAuthUserType` | `WebAuthUserType` |
-| `HonertiaRouteBindingsType` | `WebRouteBindingsType` |
+| `HonertiaDatabaseType`, `HonertiaAuthType`, `HonertiaBindingsType`, `HonertiaAuthUserType`, `HonertiaRouteBindingsType` | One registration of `setupWeb`'s result: `interface Register { web: typeof web }` |
 | `HonertiaService` / `HonertiaRenderer` | `PageService` / `PageRenderer` |
 | `honertiaContext` / `honertiaServices` | `webContext` / `webServices` |
 | `honertia` middleware / `c.var.honertia` | `web` / `c.var.web` |

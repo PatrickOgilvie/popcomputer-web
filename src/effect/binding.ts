@@ -14,6 +14,7 @@ import {
 } from 'effect'
 import type { Table } from 'drizzle-orm'
 import { ConfigurationError, NotFoundError, RouteConfigurationError } from './errors.js'
+import type { Registered } from './register.js'
 
 /**
  * Drizzle column interface for type inference.
@@ -62,15 +63,6 @@ export type RouteBindingConfig =
 
 /** Binding parsers registered once at application composition. */
 export type RouteBindingsConfig = Readonly<Record<string, RouteBindingConfig>>
-
-/**
- * Augmentable route-binding parser map used by {@link bound}.
- *
- * Applications should set `type` to the same object passed as
- * `bindings` in setupWeb so decoded parser outputs flow into handler types.
- */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface WebRouteBindingsType {}
 
 /**
  * Add explicit metadata to a route-model parser.
@@ -175,14 +167,11 @@ export class BoundModels extends Context.Service<
  * Error type shown when trying to use bound() without parser types configured.
  */
 interface BoundModelNotConfigured<K extends string> {
-  readonly __error: `Cannot infer type for bound('${K}'). Route binding parser type not configured.`
-  readonly __hint: 'Augment WebRouteBindingsType with the object passed to setupWeb as bindings.'
+  readonly __error: `Cannot infer type for bound('${K}'). No route model bindings are registered.`
+  readonly __hint: 'Give setupWeb its bindings (bindings: { ... }) and register setupWeb\'s result.'
 }
 
-type ConfiguredRouteBindings = WebRouteBindingsType extends {
-  type: infer Bindings
-} ? Bindings
-  : never
+type ConfiguredRouteBindings = Registered<'routeBindings', never>
 
 type RouteBindingOutput<Config> =
   Config extends S.Codec<unknown, unknown, never, never>
@@ -220,7 +209,7 @@ export type BoundModel<K extends string> =
  * )
  */
 // The annotation keeps `BoundModel<K>` unresolved in the emitted declaration,
-// so it resolves against the application's WebRouteBindingsType.
+// so it resolves against the application's registered bindings.
 export const bound: <K extends BoundKey>(
   key: K
 ) => Effect.Effect<BoundModel<K>, BoundModelError, BoundModels> = Effect.fn('Web.bound')(function* <
@@ -230,7 +219,7 @@ export const bound: <K extends BoundKey>(
   const model = yield* models.get(key)
 
   // SAFETY: the route decodes each loaded row with the parser registered for
-  // this binding name, and WebRouteBindingsType is the type-level mirror of
+  // this binding name, and the registered `bindings` are the type-level mirror of
   // that same parser map.
   return model as BoundModel<K>
 })

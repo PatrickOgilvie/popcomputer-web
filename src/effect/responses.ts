@@ -12,7 +12,16 @@ import {
 } from './services.js'
 import { Redirect, NotFoundError, ForbiddenError, HttpError } from './errors.js'
 import type { PagePropValue } from '../types.js'
-import { encodePageProps, type PageName, type PagePropsArgument } from './pages.js'
+import {
+  encodeDeclaredField,
+  encodePageProps,
+  type FlashKey,
+  type FlashValue,
+  type PageName,
+  type PagePropsArgument,
+  type SharedKey,
+  type SharedValue,
+} from './pages.js'
 
 /**
  * Create a redirect response.
@@ -38,11 +47,16 @@ export function render<Component extends PageName>(
   component: Component,
   ...args: PagePropsArgument<Component>
 ): Effect.Effect<Response, never, PageService> {
+  return renderPage(component, args[0])
+}
+
+/** Render a page whose name and props `render`'s signature has checked. */
+function renderPage(component: string, props: object | undefined): Effect.Effect<Response, never, PageService> {
   return Effect.gen(function* () {
     const page = yield* PageService
-    const props = yield* encodePageProps(page.pages, component, args[0])
+    const encoded = yield* encodePageProps(page.pages, component, props)
 
-    return yield* Effect.promise(() => page.render(component, props))
+    return yield* Effect.promise(() => page.render(component, encoded))
   }).pipe(Effect.withSpan('Web.render', { attributes: { component } }))
 }
 
@@ -54,11 +68,12 @@ export function render<Component extends PageName>(
  * yield* flash('success', 'Project created.')
  * return yield* redirect(`/projects/${project.id}`)
  */
-export const flash = (key: string, value: PagePropValue): Effect.Effect<void, never, PageService> =>
-  Effect.gen(function* () {
+export function flash<Key extends FlashKey>(key: Key, value: FlashValue<Key>): Effect.Effect<void, never, PageService> {
+  return Effect.gen(function* () {
     const page = yield* PageService
-    page.flash(key, value)
+    page.flash(key, yield* encodeDeclaredField(page.flashed, 'flash', key, value))
   })
+}
 
 /** A response's status and headers: a status alone, or both. */
 export type ResponseOptions = number | { readonly status?: number; readonly headers?: HeadersInit }
@@ -227,7 +242,7 @@ export function jsonOrRender<Component extends PageName>(
     const wantsJson = yield* prefersJson
 
     if (!wantsJson) {
-      return varyOnAccept(yield* render(component, ...args))
+      return varyOnAccept(yield* renderPage(component, args[0]))
     }
 
     const page = yield* PageService
@@ -251,10 +266,15 @@ function varyOnAccept(response: Response): Response {
 }
 
 /**
- * Share data with all page responses.
+ * Share a value with every page this request renders, under a key setupWeb's
+ * `shared` declares; the value is encoded through its field.
+ *
+ * @example
+ * yield* share('unreadCount', unread)
  */
-export const share = (key: string, value: PagePropValue): Effect.Effect<void, never, PageService> =>
-  Effect.gen(function* () {
+export function share<Key extends SharedKey>(key: Key, value: SharedValue<Key>): Effect.Effect<void, never, PageService> {
+  return Effect.gen(function* () {
     const page = yield* PageService
-    page.share(key, value)
+    page.share(key, yield* encodeDeclaredField(page.shared, 'shared', key, value))
   })
+}

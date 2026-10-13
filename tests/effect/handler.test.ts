@@ -28,14 +28,17 @@ import {
   type EffectErrorEvent,
 } from '../../src/effect/error-observer.js'
 import { createErrorHandlers } from '../../src/setup.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
 type TestDatabase = {
   readonly name: string
 }
 
-declare module '../../src/effect/services.js' {
-  interface WebDatabaseType {
-    type: TestDatabase
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: TestDatabase
+    }>
   }
 }
 

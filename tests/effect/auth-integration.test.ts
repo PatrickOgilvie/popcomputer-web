@@ -20,6 +20,7 @@ import { render } from '../../src/effect/responses.js'
 import { requiredString } from '../../src/effect/schema.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { signedIn, testEnv } from '../../src/testing.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
 const SESSION = 'better-auth.session_token=session-1; Path=/; HttpOnly; SameSite=Lax'
 
@@ -47,9 +48,11 @@ const fakeAuth = {
   handler: async (request: Request) => Response.json({ forwarded: new URL(request.url).pathname }),
 }
 
-declare module '../../src/effect/services.js' {
-  interface WebAuthType {
-    type: typeof fakeAuth
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      auth: typeof fakeAuth
+    }>
   }
 }
 

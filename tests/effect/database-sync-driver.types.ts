@@ -10,10 +10,13 @@
 import type { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite'
 import { Effect } from 'effect'
 import { dbBatch, dbMutation, dbTransaction, type TransactionClient } from '../../src/effect/database.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 
-declare module '../../src/effect/services.js' {
-  interface WebDatabaseType {
-    type: BunSQLiteDatabase
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: BunSQLiteDatabase
+    }>
   }
 }
 

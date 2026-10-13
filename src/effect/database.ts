@@ -3,8 +3,9 @@
  *
  * Each operation reads the request's client from `DatabaseService`, so an
  * action that touches the database requires the service its route checks for.
- * Callbacks receive the application's own Drizzle client, typed by
- * `WebDatabaseType`, so columns, rows and `.returning()` keep Drizzle's types.
+ * Callbacks receive the application's own Drizzle client, as setupWeb's
+ * `database` declares it, so columns, rows and `.returning()` keep Drizzle's
+ * types.
  *
  * Failures are typed: a write that breaks a constraint fails with
  * `DatabaseConstraintViolation`, naming the constraint kind and, when the

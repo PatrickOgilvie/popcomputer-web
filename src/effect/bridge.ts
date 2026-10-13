@@ -36,7 +36,7 @@ import {
 } from './services.js'
 import { readTestLayer } from './test-env.js'
 import type { RouteBindingsConfig } from './binding.js'
-import type { PageSchemas } from './pages.js'
+import type { DeclaredFields, PageSchemas } from './pages.js'
 import { observeOrLog } from './error-observer.js'
 
 /**
@@ -84,6 +84,10 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
   bindings?: RouteBindingsConfig
   /** Each page component's props schema, which `render` checks and encodes props with. */
   pages?: PageSchemas
+  /** The props shared with every page, which `share` encodes values with. */
+  shared?: DeclaredFields
+  /** The flash values `flash` encodes. */
+  flash?: DeclaredFields
 }
 
 // Unconfigured services are simply not provided to the Effect layer. When a
@@ -447,7 +451,10 @@ export function getRequestExecutionContextClient<E extends Env>(
 /**
  * Create a PageRenderer from Hono context.
  */
-function createPageRenderer<E extends Env>(c: HonoContext<E>, pages: PageSchemas | undefined): PageRenderer {
+function createPageRenderer<E extends Env>(
+  c: HonoContext<E>,
+  declared: { readonly pages?: PageSchemas; readonly shared?: DeclaredFields; readonly flash?: DeclaredFields } = {}
+): PageRenderer {
   const requestContext = openWebContext(c)
   const page = requestContext.web
 
@@ -461,7 +468,9 @@ function createPageRenderer<E extends Env>(c: HonoContext<E>, pages: PageSchemas
   }
 
   return {
-    pages,
+    pages: declared.pages,
+    shared: declared.shared,
+    flashed: declared.flash,
     render: (component, props) => Promise.resolve(page.render(component, props)),
     share: (key, value) => page.share(key, value),
     flash: (key, value) => requestContext.flash?.set(key, value),
@@ -497,9 +506,9 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   )
 
   const responseLayer = Layer.succeed(ResponseFactoryService, createResponseFactory(c))
-  const pageLayer = Layer.succeed(PageService, createPageRenderer(c, config?.pages))
+  const pageLayer = Layer.succeed(PageService, createPageRenderer(c, config))
 
-  // Bindings layer - always available, typed via module augmentation
+  // Bindings layer - always available, typed by the registered application's environment
   // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   const bindingsLayer = Layer.succeed(
     BindingsService,
