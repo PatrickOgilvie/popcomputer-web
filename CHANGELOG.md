@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Each `testBrowser` sends its own client address (`CF-Connecting-IP`, `X-Forwarded-For`), so per-client rate limits count browsers apart.
 - `testBrowser(app, env).follow(res)` follows any redirect, keeping the cookies it set, including one a test requested with `app.request`. `followRedirect(app, res, env)` is removed: use `testBrowser(app, env).follow(res)`.
 
+- The README's "Reading the type errors" says where each of the framework's type errors appears, what it means and what to do. It covers the registration's `missingServices`, `unhandledErrors` and `missingRouteModels`, a stale `catchTag`, TS7022 at `setupWeb`, and the D1 errors.
 - The README's patterns show several forms on one page in full. A rename form on each row of the project list names its own Inertia error bag, so its errors don't appear in the create form beside it, which has a `name` field too.
 - The README's Quick start has a sixth step, "Wire the Worker". It shows the entry module that imports every module of registrations, since a module nothing imports leaves its routes answering 404. It also gives a table of the application's files and what each declares.
 - The README's patterns show cursor pagination in full: an action reading its query through `validateRequest`, a keyset query over a timestamp and an id, and the page's `next` cursor. It explains why a Postgres timestamp behind a cursor needs millisecond precision and a time zone. `Projects/Index` in the README's examples carries `next`.
