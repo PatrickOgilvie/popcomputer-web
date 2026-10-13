@@ -342,6 +342,78 @@ export async function followRedirect(
   return app.request(location, { ...init, headers }, env)
 }
 
+/**
+ * A browser for a test: it keeps the cookies responses set, drops the ones
+ * they clear, and sends each to the paths it covers, so a session, a cart
+ * cookie and flash carry across requests as they do for a visitor.
+ *
+ * @example
+ * const browser = testBrowser(app, testEnv(layer, testBindings))
+ * await browser.request('/r/acme/cart', { method: 'POST', body })
+ * const cart = await readPage(await browser.request('/r/acme/cart', { headers: { 'X-Inertia': 'true' } }), 'Cart/Show')
+ */
+export interface TestBrowser {
+  /** Request a path, sending the cookies the browser holds for it, and keep the ones the response sets. */
+  request(path: string, init?: RequestInit): Promise<Response>
+  /** Follow a redirect as an Inertia visit, as `followRedirect` does, with the browser's cookies. */
+  follow(response: Response, init?: RequestInit): Promise<Response>
+  /** The cookies the browser holds, by name. */
+  readonly cookies: ReadonlyMap<string, string>
+}
+
+export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
+  const jar = new Map<string, { readonly value: string; readonly path: string }>()
+
+  const keep = (response: Response): Response => {
+    for (const header of response.headers.getSetCookie()) {
+      const [pair = '', ...attributes] = header.split(';')
+      const separator = pair.indexOf('=')
+      const name = pair.slice(0, separator).trim()
+      const path = attributes.map((part) => part.trim()).find((part) => /^path=/i.test(part))?.slice(5) ?? '/'
+
+      if (separator < 0 || name === '') continue
+
+      if (attributes.some((part) => /^\s*max-age=0\s*$/i.test(part))) {
+        jar.delete(name)
+      } else {
+        jar.set(name, { value: pair.slice(separator + 1).trim(), path })
+      }
+    }
+
+    return response
+  }
+
+  const request = async (path: string, init: RequestInit = {}): Promise<Response> => {
+    const headers = new Headers(init.headers)
+    const pathname = new URL(path, 'http://localhost').pathname
+    const sent = [...jar].filter(([, cookie]) => pathname.startsWith(cookie.path)).map(([name, cookie]) => `${name}=${cookie.value}`)
+    const given = headers.get('Cookie')
+
+    if (sent.length > 0) headers.set('Cookie', [given, ...sent].filter(Boolean).join('; '))
+
+    return keep(await app.request(path, { ...init, headers }, env))
+  }
+
+  return {
+    request,
+    follow: (response, init = {}) => {
+      const location = response.headers.get('Location')
+
+      if (location === null || response.status < 300 || response.status >= 400) {
+        throw new Error(`Expected a redirect, but the response is ${response.status} without a Location.`)
+      }
+
+      const headers = new Headers(init.headers)
+      if (!headers.has('X-Inertia')) headers.set('X-Inertia', 'true')
+
+      return request(location, { ...init, headers })
+    },
+    get cookies() {
+      return new Map([...jar].map(([name, cookie]) => [name, cookie.value]))
+    },
+  }
+}
+
 /** The `name=value` pairs a response's cookies set, without the ones it clears. */
 function setCookies(response: Response): readonly string[] {
   return response.headers

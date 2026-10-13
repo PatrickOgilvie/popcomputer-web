@@ -1287,6 +1287,22 @@ describe('route model binding loads when the action asks', () => {
     expect(missing.status).toBe(404)
   })
 
+  test('a {param:column} naming no column of its table fails when the route is registered', () => {
+    const envelopes = sqliteTable('envelopes', { id: text('id').primaryKey(), certificateToken: text('certificate_token').notNull() })
+    const { routes } = setupWeb(new Hono(), {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      bindings: { certificate: envelopes },
+    })
+    const show = action(Effect.gen(function* () {
+      return yield* json(yield* bound('certificate'))
+    }))
+
+    expect(() => routes.get('/c/{certificate:certificate_token}', show))
+      .toThrow('Name one of its columns by its property key: "id", "certificateToken".')
+    expect(() => routes.get('/c/{certificate:certificateToken}', show)).not.toThrow()
+  })
+
   test('a binding naming a table the schema lacks fails when setupWeb is called', () => {
     const rules = sqliteTable('alert_rules', { id: text('id').primaryKey() })
 

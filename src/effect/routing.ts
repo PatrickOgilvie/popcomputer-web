@@ -65,6 +65,7 @@ import {
   decodeBindingParam,
   decodeBoundRow,
   inferParamsSchema,
+  assertBindingColumns,
   loadDrizzle,
   type BoundModelError,
   type CompiledRouteBinding,
@@ -195,6 +196,14 @@ function patternMatches(pattern: string, path: string): boolean {
   }
 
   return segments.length === target.length
+}
+
+/** The bindings and schema setupWeb declared for an app, which registration checks paths against. */
+const declaredBindings = new WeakMap<object, { readonly bindings?: RouteBindingsConfig; readonly schema?: object }>()
+
+/** Record setupWeb's bindings and schema, so routes registered on the app are checked against them. */
+export function declareAppBindings(app: object, declared: { readonly bindings?: RouteBindingsConfig; readonly schema?: object }): void {
+  declaredBindings.set(app, declared)
 }
 
 /** The path the route that `run` sends its Effects through answers on. */
@@ -1064,6 +1073,9 @@ export class EffectRouteBuilder<
     const fullPath = toHonoPath(routePath)
 
     const configured = this.bridgeConfig?.bindings
+
+    const declared = declaredBindings.get(this.app)
+    assertBindingColumns(bindings, configured ?? declared?.bindings, this.bridgeConfig?.schema ?? declared?.schema)
 
     if (
       options?.purges === true &&

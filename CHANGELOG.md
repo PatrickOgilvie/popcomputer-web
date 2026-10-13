@@ -9,12 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cookie(name, Schema, { signed: { secret } })` signs the value with the secret in that binding (HMAC-SHA256); a value without a valid signature reads as none.
+- `testBrowser(app, env)` from `@popcomputer/web/testing` keeps a visitor's cookies across requests, sending each to the paths it covers and dropping the ones a response clears, and follows redirects.
+- `betterAuthLogoutAction({ clear: [cookie] })` clears declared application cookies on sign-out; `cookieNames` is documented as replacing Better Auth's session cookie names.
+- A `{param:column}` naming no column of its binding's table fails when the route is registered, listing the table's column keys.
 - `ifChanged(etag, response)` answers `304 Not Modified` before running the response's Effect, for a body that costs a query to build.
 - `readCookie(response, cookie)` from `@popcomputer/web/testing` reads the value a response set for a declared cookie.
 - A cookie's `path` takes `{param}` placeholders, filled from the route that sets it.
 
 ### Fixed
 
+- A malformed body sent without a JSON or form media type says it could not be read as JSON, rather than asking for a matching Content-Type.
 - A cookie whose value's JSON form is a string is stored as it is, so a cookie an application wrote by hand reads the same after it adopts `cookie()`; one stored as a JSON string by 0.8.0-next.3 reads too. Setting a value the schema rejects is a defect naming the cookie.
 - `WWW-Authenticate: Bearer` accompanies a JSON 401 only when the request sent a bearer token.
 

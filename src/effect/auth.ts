@@ -4,6 +4,7 @@
  * Authentication and authorization via Effect Layers.
  */
 
+import { CookieService, type Cookie } from './cookies.js'
 import type { PathTarget } from '../paths.js'
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import type { MiddlewareHandler, Env } from 'hono'
@@ -526,7 +527,17 @@ export const betterAuthHandler: Effect.Effect<Response, HttpError, RequestServic
 export interface BetterAuthLogoutConfig<Path extends string = string> {
   /** Where to send the signed-out visitor: a declared path. Defaults to `/`. */
   redirectTo?: Path & PathTarget<Path>
+  /**
+   * The session cookies to expire when Better Auth's sign-out sets none, in
+   * place of Better Auth's default names: for an application that renamed
+   * them. Application cookies go in `clear`.
+   */
   cookieNames?: string[]
+  /**
+   * Application cookies to clear on every sign-out, such as an impersonation
+   * pointer: their `cookie(...)` declarations.
+   */
+  clear?: ReadonlyArray<Cookie<unknown>>
 }
 
 /**
@@ -538,6 +549,14 @@ export function betterAuthLogoutAction<const Path extends string = '/'>(
   return Effect.gen(function* () {
     const auth = yield* AuthService
     const request = yield* RequestService
+    // A route always has the cookie jar; a direct call without one clears none.
+    const jar = yield* Effect.serviceOption(CookieService)
+
+    if (Option.isSome(jar)) {
+      for (const declared of config.clear ?? []) {
+        yield* Effect.provideService(declared.clear, CookieService, jar.value)
+      }
+    }
 
     const result = yield* runBetterAuthApiCall(() =>
       callBetterAuthSignOut(auth, {

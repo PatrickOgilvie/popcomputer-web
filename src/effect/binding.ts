@@ -14,6 +14,7 @@ import {
 } from 'effect'
 import type { Table } from 'drizzle-orm'
 import { ConfigurationError, NotFoundError, RouteConfigurationError } from './errors.js'
+import { ErrorCodes } from './error-catalog.js'
 import type { Registered } from './register.js'
 import { tableOfSchema, tableSchema } from './table-schema.js'
 
@@ -518,6 +519,39 @@ async function primaryKeyOf(table: Table, lookupColumn: string): Promise<string>
   const primary = Object.entries(getTableColumns(table) ?? {}).filter(([, column]) => column.primary)
 
   return primary.length === 1 ? primary[0][0] : lookupColumn
+}
+
+/**
+ * Check, when a route is registered, that each `{param:column}` names a
+ * column of the table its binding loads from, by the column's property key,
+ * so a misspelling fails at startup instead of on every request. A binding
+ * whose table cannot be found yet, such as one named only by a schema the
+ * database factory supplies, is checked when it first loads.
+ */
+export function assertBindingColumns(
+  bindings: readonly ParsedBinding[],
+  configured: RouteBindingsConfig | undefined,
+  schema: object | undefined
+): void {
+  for (const binding of bindings) {
+    const config = configured?.[binding.param]
+
+    if (config === undefined || binding.column === 'id') continue
+
+    const table: unknown = bindingTableOf(config) ??
+      (schema === undefined ? undefined : Object.getOwnPropertyDescriptor(schema, bindingTableName(binding, configured, schema))?.value)
+
+    if (!(table instanceof Object) || isColumnProperty(table, binding.column)) continue
+
+    const columns = Object.keys(table).filter((key) => isColumnProperty(table, key))
+
+    throw new RouteConfigurationError({
+      message: `Column "${binding.column}" for route binding "${binding.param}" is not a column of its table.`,
+      hint: `Name one of its columns by its property key: ${columns.map((key) => `"${key}"`).join(', ')}.`,
+      binding: binding.param,
+      code: ErrorCodes.RTE_601_TABLE_NOT_FOUND,
+    }).atStartup()
+  }
 }
 
 /**

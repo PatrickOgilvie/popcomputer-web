@@ -10,9 +10,12 @@ import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { flash, json, redirect } from '../../src/effect/responses.js'
 import { cookie } from '../../src/effect/cookies.js'
-import { readCookie } from '../../src/testing.js'
+import { readCookie, testBrowser } from '../../src/testing.js'
 
 const cartCookie = cookie('cart', S.Struct({ id: S.String, items: S.Number }), { maxAge: '30 days', path: '/r' })
+// A pointer the server trusts only when the signature holds.
+const impersonationCookie = cookie('impersonation', S.Struct({ id: S.String }), { signed: { secret: 'COOKIE_SECRET' } })
+
 // A token stored as it is, scoped to one restaurant's guest pages.
 const guestCookie = cookie('guest', S.String, { path: '/r/{restaurant}/' })
 
@@ -39,6 +42,14 @@ function createApp() {
     })))
     .get('/r/{restaurant}/visit', action(Effect.gen(function* () {
       return yield* json({ guest: Option.getOrNull(yield* guestCookie.read) })
+    })))
+    .post('/admin/impersonate', action(Effect.gen(function* () {
+      yield* impersonationCookie.set({ id: 'imp-1' })
+
+      return yield* json({ started: true })
+    })))
+    .get('/admin/impersonating', action(Effect.gen(function* () {
+      return yield* json({ impersonation: Option.getOrNull(yield* impersonationCookie.read) })
     })))
     .delete('/r/cart', action(Effect.gen(function* () {
       yield* cartCookie.clear
@@ -107,5 +118,41 @@ describe('cookie values and paths', () => {
 
     expect(Option.getOrNull(readCookie(await app.request('/r/cart', { method: 'POST' }), cartCookie))).toEqual({ id: 'cart-1', items: 2 })
     expect(Option.isNone(readCookie(await app.request('/r/cart', { method: 'DELETE' }), cartCookie))).toBe(true)
+  })
+})
+
+describe('signed cookies', () => {
+  const env = { COOKIE_SECRET: 'test-secret' }
+
+  test('read back only with a valid signature', async () => {
+    const app = createApp()
+    const set = await app.request('/admin/impersonate', { method: 'POST' }, env)
+    const written = set.headers.getSetCookie().find((value) => value.startsWith('impersonation='))?.split(';')[0] ?? ''
+    const [, value = ''] = written.split('=')
+    const forged = `impersonation=${encodeURIComponent(JSON.stringify({ id: 'imp-2' }))}`
+    const tampered = `impersonation=${value.replace('imp-1', 'imp-2')}`
+
+    const read = async (cookieHeader: string) =>
+      (await (await app.request('/admin/impersonating', { headers: { Cookie: cookieHeader } }, env)).json()).impersonation
+
+    expect(await read(written)).toEqual({ id: 'imp-1' })
+    expect(await read(forged)).toBeNull()
+    expect(await read(tampered)).toBeNull()
+    expect(Option.getOrNull(readCookie(set, impersonationCookie))).toEqual({ id: 'imp-1' })
+  })
+})
+
+describe('testBrowser', () => {
+  test('keeps cookies across requests, sends them by path, and drops the cleared ones', async () => {
+    const browser = testBrowser(createApp())
+
+    await browser.request('/r/cart', { method: 'POST' })
+    expect(await (await browser.request('/r/cart')).json()).toEqual({ cart: { id: 'cart-1', items: 2 } })
+
+    // The cart cookie covers /r only.
+    expect(browser.cookies.has('cart')).toBe(true)
+    await browser.request('/r/cart', { method: 'DELETE' })
+    expect(browser.cookies.has('cart')).toBe(false)
+    expect(await (await browser.request('/r/cart')).json()).toEqual({ cart: null })
   })
 })

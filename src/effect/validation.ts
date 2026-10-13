@@ -485,12 +485,15 @@ export function createBodyParseValidationError(
   contentType: string
 ): ValidationError {
   const isJson = isJsonContentType(contentType)
+  const isForm = isFormContentType(contentType)
   const reason = cause instanceof Error ? cause.message : String(cause)
-  const base = isJson ? 'Invalid JSON body' : 'Could not parse request body'
+  const base = isJson ? 'Invalid JSON body' : isForm ? 'Could not parse the form body' : 'Could not read the body as JSON'
 
   const hint = isJson
     ? 'Ensure Content-Type is application/json and the body is valid JSON.'
-    : 'Ensure the body encoding matches Content-Type and can be parsed by the request parser.'
+    : isForm
+      ? 'Ensure the body encoding matches Content-Type and can be parsed by the request parser.'
+      : 'Send a JSON object, or a form with Content-Type application/x-www-form-urlencoded or multipart/form-data.'
 
   const message = `${base}. ${hint}`
 

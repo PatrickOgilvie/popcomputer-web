@@ -23,6 +23,7 @@ import type { DefaultPublicUser } from './effect/auth.js'
 import type { WebDeclaration, WebTypes } from './effect/register.js'
 import {
   EffectRouteBuilder,
+  declareAppBindings,
   type BaseServices,
   type CoreServices,
 } from './effect/routing.js'
@@ -329,6 +330,8 @@ export function setupWeb<
   if (config.bindings !== undefined) assertBindingsConfig(config.bindings, config.schema)
   app.use('*', createSetupMiddleware(config))
   registerErrorHandlers(app, config.errors)
+
+  declareAppBindings(app, { bindings: config.bindings, schema: config.schema })
 
   return { app, routes: new EffectRouteBuilder(app) }
 }

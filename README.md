@@ -787,7 +787,9 @@ signed-out visitor cannot tell an existing record from a missing one. A missing
 row fails `bound()` with `NotFoundError`, which renders a 404. The route's
 models load together, so a missing one is a 404 whichever the action asks
 for. `{post}` looks the record up by the table's `id` column, or, for a table
-without one, its primary key; `{post:slug}` names the column. A page that
+without one, its primary key; `{post:slug}` names the column by its property
+key in the table (`certificateToken`, not the SQL `certificate_token`), and a
+column the table lacks fails when the route is registered. A page that
 answers when a record is missing, such as an article that falls back to
 another locale, takes that parameter as a plain parameter, with no binding,
 and queries with it, scoped by its bound parent, and tags its cached response
@@ -1055,7 +1057,13 @@ page afresh for each request, and a cached page whose path a cookie covers is
 rendered afresh for every visitor carrying it, so scope a cookie to the paths
 that read it: `path: '/r/{restaurant}/'` takes its placeholder from the route
 that sets it, and covers `/r/acme/cart` but not the menu at `/r/acme`.
-Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS. A cookie set
+Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS. An unsigned
+cookie holds whatever a visitor sends, so it suits a preference or a pointer
+the server checks; one the server must trust is declared with
+`signed: { secret: 'COOKIE_SECRET' }`, naming the binding that holds the
+secret, and a value without a valid signature reads as none.
+`betterAuthLogoutAction({ clear: [impersonationCookie] })` clears such cookies
+on sign-out. A cookie set
 before the action fails is still sent with the failure's response. A test
 reads the value a response set with `readCookie(res, cartCookie)` from
 `@popcomputer/web/testing`.
@@ -1131,7 +1139,9 @@ internal failure with a generic one. Test the envelope a client receives with
 
 The error page is rendered by the boundary, after the action, so it receives
 `auth.user` and flash values but not the props `shareProps` computes; give
-its layout defaults for them.
+its layout defaults for them. A value a guard layer `share()`s before the
+action does reach it, so a banner every page must show, such as "viewing as
+Ada", is shared there.
 
 ## Caching and background work
 
@@ -1437,12 +1447,17 @@ Test routes through the application itself. `app.request` runs the real
 middleware, route and action; `testEnv(layer, bindings)` builds the request
 env. Services in the layer replace the ones the request would otherwise get, so
 `signedIn(user)` signs the request in without a session cookie (a user given
-only an `id` is named `Test User`, so pass the seeded row when a page shows
-the name) and
+only an `id` is named `Test User`, and a table with columns of its own makes
+the whole row required, so pass the seeded row; its session id is
+`test-session`, or pass `{ user, session }` for another) and
 `Layer.succeed(Service, fake)` swaps a service the application provides. A layer
 a route registers with `.provide()` still takes precedence for that route. The
 application's own `services` are still built, so the test bindings include the
-vars and secrets those layers read even when a fake replaces them.
+vars and secrets those layers read even when a fake replaces them. A test
+that makes several requests as one visitor, such as adding to a cart and then
+checking out, uses `testBrowser(app, env)`, which keeps the cookies responses
+set, sends them to the paths they cover, and follows redirects with
+`browser.follow(res)`.
 
 ```ts
 // src/routes.test.ts
@@ -1816,7 +1831,11 @@ inserted values break the check fails even when the row exists; insert a
 starting row with `onConflictDoNothing()` and update it after, in the same
 batch.
 
-On D1, write the same statements as one `dbBatch((db) => [...])`, or a list
+On D1, write the same statements as one `dbBatch((db) => [...])`. They run
+in order and the first that breaks a constraint undoes the batch, so it is
+the one whose violation the action sees: put the statement a retry depends
+on, such as an optimistic lock's unique sequence, first. A violation the
+action does not map answers 409. A batch can also be a list
 built at run time, such as one statement per line of a form,
 `dbBatch((db) => lines.map((line) => db.update(...)))`, whose results are a
 list; a helper that returns statements for a batch takes the `db` the batch

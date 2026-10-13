@@ -45,7 +45,9 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
    `file(...)`, `notFound(...)`, `forbidden(...)`, `invalid(...)` or
    `httpError(status, message, Schema, body)`. Declare an application cookie
    once, `cookie('cart', Schema, { path })`, and read, set and clear it
-   through the declaration. `yield* flash(key, value)` before a redirect hands a
+   through the declaration; sign one the server must trust
+   (`signed: { secret: 'COOKIE_SECRET' }`), since an unsigned one holds
+   whatever the visitor sends. `yield* flash(key, value)` before a redirect hands a
    message to the next page; a helper or guard layer that must send the
    visitor elsewhere fails with `redirectNow(path, params)`. Expected
    failures are typed Effect failures:
@@ -222,10 +224,11 @@ them with `Effect.catchTag`, or fail with `HttpError`), and
 `render(...)` means the page or its props differ from `src/pages.ts`.
 `Argument of type 'string' is not assignable to parameter of type 'readonly
 [never, ...never[]]'` at an `Effect.catchTag` means the Effect no longer fails
-with that tag: remove the handler. The same error at a `catchTag` written
-apart from an Effect, as a reusable helper, means TypeScript cannot see the
-errors it handles: write it inside `.pipe(...)`, or as a function of the
-Effect it handles. A registration or an
+with that tag: remove the handler. The same error, or `... | { readonly _tag:
+unknown }` is not assignable, at a `catchTag` written apart from an Effect,
+as a reusable helper, means TypeScript cannot see the errors it handles:
+write it inside `.pipe(...)`, or use `Effect.mapError` with an `instanceof`
+check. A registration, `routes.run` or an
 `action(...)` reporting an `Effect<..., unknown, unknown>`, or
 `missingServices: "unnamed service"`, means an earlier type error in the
 action made its types unknown: fix that one first.
