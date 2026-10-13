@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The README's setup no longer suggests calling Better Auth through `effectifyBetterAuth` from application code: actions use `betterAuthRedirect` and `betterAuthCall`, which keep Better Auth's rate limits, and read the user with `authorize()` or `currentUser`. `effectifyBetterAuth` is for code outside an action.
 - The README's Testing is split into subsections: a request through the application, reading a response (with every reader), one visitor across requests, fakes for other systems, time, and what test files share. The task index links to them.
 - The README's "Responses and failures" is split into subsections: flash and failed forms, cookies, files, headers and polling, JSON clients, JSON responses declared by a schema, failures a client reads, reporting failures, and the error page. The "Which API for which task" rows link to the subsection that answers them.
 

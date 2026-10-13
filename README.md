@@ -453,8 +453,14 @@ The `backgroundTasks` object has Better Auth's
 email callbacks, and plugin work part of the request lifecycle: Workers use
 `waitUntil`, while local and test runtimes finish the work before teardown.
 
-For application code that calls Better Auth from Effect, wrap the concrete
-instance once and keep plugin-added endpoint types:
+Actions call Better Auth with `betterAuthRedirect` and `betterAuthCall`, as
+[Signing in and out](#signing-in-and-out) shows: they name the endpoint and
+send the call through Better Auth's request handler, so its rate limits,
+origin checks and plugins' hooks apply. An action reads the signed-in user
+with `authorize()` or `currentUser`, never with a `getSession` call. Code
+outside an action that must ask Better Auth itself, such as a Durable Object
+reading the session from the headers a request handed it, wraps the concrete
+instance once and keeps plugin-added endpoint types:
 
 ```ts
 import { effectifyBetterAuth } from '@popcomputer/web/auth'
