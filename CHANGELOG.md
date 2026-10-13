@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The lint rule `no-auth-api-in-action` also reports Better Auth endpoints called through `effectifyBetterAuth(auth).api` in an action, which skip Better Auth's rate limits as `auth.api` does.
+
 ### Changed
 
 - The README's setup no longer suggests calling Better Auth through `effectifyBetterAuth` from application code: actions use `betterAuthRedirect` and `betterAuthCall`, which keep Better Auth's rate limits, and read the user with `authorize()` or `currentUser`. `effectifyBetterAuth` is for code outside an action.

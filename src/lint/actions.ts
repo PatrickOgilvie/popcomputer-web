@@ -351,6 +351,9 @@ export const noValidationInEndpoint: LintRule = {
   },
 }
 
+/** The framework's Better Auth integration, whose `effectifyBetterAuth` wraps `auth.api`. */
+const AUTH = new Set(['@popcomputer/web/auth'])
+
 export const noAuthApiInAction: LintRule = {
   meta: {
     type: 'problem',
@@ -369,7 +372,15 @@ export const noAuthApiInAction: LintRule = {
       VariableDeclarator(node: VariableDeclarator) {
         const init = node.init === null ? undefined : unwrap(node.init)
 
-        if (init?.type !== 'YieldExpression' || !isIdentifier(node.id)) return
+        if (init === undefined || !isIdentifier(node.id)) return
+
+        // const authEffect = effectifyBetterAuth(auth): its api runs the same endpoints.
+        if (isCall(init) && imports.calledName(init, AUTH) === 'effectifyBetterAuth') {
+          clients.add(node.id.name)
+          return
+        }
+
+        if (init.type !== 'YieldExpression') return
 
         const argument = 'argument' in init && init.argument !== null && typeof init.argument === 'object'
           // SAFETY: a yield's argument is a syntax tree node.
@@ -391,8 +402,9 @@ export const noAuthApiInAction: LintRule = {
         if (!isMember(api) || propertyName(api) !== 'api' || name === undefined) return
 
         const client = unwrap(api.object)
+        const effectified = isCall(client) && imports.calledName(client, AUTH) === 'effectifyBetterAuth'
 
-        if (isIdentifier(client) && (clients.has(client.name) || client.name === 'auth')) {
+        if (effectified || (isIdentifier(client) && (clients.has(client.name) || client.name === 'auth'))) {
           context.report({ node, messageId: 'api', data: { name } })
         }
       },
