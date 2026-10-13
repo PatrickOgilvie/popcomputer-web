@@ -922,10 +922,10 @@ and the lint rules name it where an action reaches for something else.
 | --- | --- | --- |
 | Run a request through the application | `app.request(path, init, testEnv(layer, bindings, { database }))` | [Testing](#testing) |
 | Sign a request in | `signedIn(user)` in `testEnv`'s layer | [Testing](#testing) |
-| Read a page, JSON, a failure or a cookie | `readPage`, `readJson`, `readError`, `readErrorPage`, `readCookie` | [Testing](#testing) |
-| Make several requests as one visitor, or follow a redirect | `testBrowser(app, env)` and its `follow(res)` | [Testing](#testing) |
-| Replace a service that reaches another system | `Layer.succeed(Service, fake)` in `testEnv`'s layer | [Testing](#testing) |
-| Move time | `testClock()` | [Testing](#testing) |
+| Read a page, JSON, a failure or a cookie | `readPage`, `readJson`, `readError`, `readErrorPage`, `readCookie` | [Reading a response](#reading-a-response) |
+| Make several requests as one visitor, or follow a redirect | `testBrowser(app, env)` and its `follow(res)` | [One visitor](#one-visitor-across-requests) |
+| Replace a service that reaches another system | `Layer.succeed(Service, fake)` in `testEnv`'s layer | [Fakes](#fakes-for-other-systems) |
+| Move time | `testClock()` | [Time](#time) |
 | Use the production database family | PGlite or Miniflare's D1, migrated with `applyMigrations` | [A database for tests](#a-database-for-tests) |
 | Run a Queue consumer | `testBatch(bodies)` | [Scheduled and queued work](#scheduled-and-queued-work) |
 
@@ -2285,22 +2285,18 @@ export const projectTasks = action(Effect.gen(function* () {
 
 ## Testing
 
+### A request through the application
+
 Test routes through the application itself. `app.request` runs the real
 middleware, route and action; `testEnv(layer, bindings)` builds the request
-env. Services in the layer replace the ones the request would otherwise get, so
-`signedIn(user)` signs the request in without a session cookie (a user given
-only an `id` is named `Test User`, and a table with columns of its own makes
-the whole row required, so pass the seeded row; its session id is
-`test-session`, or pass `{ user, session }` for another) and
-`Layer.succeed(Service, fake)` swaps a service the application provides. A layer
-a route registers with `.provide()` still takes precedence for that route. The
-application's own `services` are still built, so the test bindings include the
-vars and secrets those layers read even when a fake replaces them. A test
-that makes several requests as one visitor, such as adding to a cart and then
-checking out, uses `testBrowser(app, env)`, which keeps the cookies responses
-set, sends them to the paths they cover, names the page it last showed as the
-`Referer` of a form it posts, and follows redirects with `browser.follow(res)`;
-`browser.setCookie(name, value, path)` gives it a cookie.
+env. Services in the layer replace the ones the request would otherwise get,
+and a layer a route registers with `.provide()` still takes precedence for
+that route.
+
+`signedIn(user)` signs the request in without a session cookie. A user given
+only an `id` is named `Test User`; when the user table has columns of its
+own, the whole row is required, so pass the seeded row. Its session id is
+`test-session`; pass `{ user, session }` for another.
 
 ```ts
 // src/routes.test.ts
@@ -2345,6 +2341,8 @@ assert on the component and props rather than HTML.
 An action is an Effect, so a test can also run it directly and provide the
 services it reads, for example `Effect.provide(signedIn({ id: 'user-1' }))`.
 
+### Reading a response
+
 `readPage` reads a page response typed by the page registry, and rejects with
 what the response was instead when it is not that page:
 
@@ -2360,6 +2358,22 @@ const page = await readPage(res, 'Projects/Show')
 
 page.props.project.createdAt // a string: the JSON the browser receives
 ```
+
+The other readers work the same way, each typed and each saying what the
+response was when it is not what the test expected: `readJson(res, Schema)`
+for a JSON response, `readError(res)` for a failure's envelope (and
+`readError(res, Schema)` for a body declared by a schema), `readErrorPage(res)`
+for the error page a visit rendered, and `readCookie(res, cookie)` for the
+value a response set for a declared cookie.
+
+### One visitor across requests
+
+A test that makes several requests as one visitor, such as adding to a cart
+and then checking out, uses `testBrowser(app, env)`. It keeps the cookies
+responses set, sends them to the paths they cover, names the page it last
+showed as the `Referer` of a form it posts, and follows redirects with
+`browser.follow(res)`; `browser.setCookie(name, value, path)` gives it a
+cookie.
 
 A form's next page receives its `flash` values and field errors through a
 cookie the redirect sets. `testBrowser(app, env).follow(res)` requests the
@@ -2385,9 +2399,12 @@ const form = await readPage(await testBrowser(app, env).follow(failed), 'Project
 form.props.errors.name // 'This field is required'
 ```
 
+### Fakes for other systems
+
 Replace a service that reaches another system, such as a mailer or a payment
 provider, with a fake that records what it was asked to do, and give it to
-`testEnv` with the signed-in user:
+`testEnv` with the signed-in user. `Layer.succeed(Service, fake)` swaps any
+service the application provides:
 
 ```ts
 import { Context, Effect, Layer } from 'effect'
@@ -2422,10 +2439,14 @@ const RecordPurges = Layer.succeed(ResponseCacheService, {
 const env = testEnv(Layer.merge(signedIn({ id: 'user-1' }), RecordPurges), testBindings)
 ```
 
-Effect `Config` reads the request's bindings, so a test sets a var or secret
-in `testEnv`'s bindings. `services.app` is built once per test process, from
-the first request's bindings: a test that needs another value for an
-application service gives it a layer in `testEnv` instead.
+The application's own `services` are still built, so the test bindings
+include the vars and secrets those layers read even when a fake replaces
+them. Effect `Config` reads the request's bindings, so a test sets a var or
+secret in `testEnv`'s bindings. `services.app` is built once per test
+process, from the first request's bindings: a test that needs another value
+for an application service gives it a layer in `testEnv` instead.
+
+### Time
 
 Rules that depend on the time, such as an invitation that expires after seven
 days, read it from Effect's `Clock` (`DateTime.now`, `Clock.currentTimeMillis`)
@@ -2446,6 +2467,8 @@ const expired = await app.request('/invites/abc', {}, env)
 // Schedule.exponential: settle moves the clock until it answers.
 const delivered = await time.settle(app.request('/webhooks/deliver', { method: 'POST' }, env))
 ```
+
+### What test files share
 
 Bun runs every test file in one module registry, so a clock or a test
 database created at the top of a shared support module is shared by all the
