@@ -143,6 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The package ships `CHANGELOG.md`.
 - The README documents testing against the production database family (PGlite for Postgres, Miniflare's D1 for D1), `readPage`, uploads and request headers, predicate guards, `file`, where a failed form goes, what Workers Cache cannot see (cookies), what `purges: true` purges.
 - `bound(key)` accepts only the keys of the registered bindings, so a misspelled key is a type error at the call (`BoundKey`).
 - `dbTransaction` is a type error on Cloudflare D1 (a database whose driver client prepares and batches statements but has no `transaction`), naming `dbBatch`. It failed at runtime.

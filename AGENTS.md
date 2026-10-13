@@ -91,10 +91,11 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
    for anything that holds the request's bindings (D1, KV, Hyperdrive).
    Define them with `Context.Service` and `Layer`, and read vars and secrets
    with `config.string('NAME')` and `config.redacted('KEY')`, Effect `Config`
-   named by the Worker's bindings type, which reads the request's bindings. Give a layer whose service uses the
-   database its type (`export const ProjectsLive: Layer.Layer<Projects> =
-   ...`): `setupWeb`'s type includes its services and the database type comes
-   from `setupWeb`, so an inferred one refers to itself.
+   named by the Worker's bindings type, which reads the request's bindings.
+   Give every layer passed to `services` its type (`export const ProjectsLive:
+   Layer.Layer<Projects, ConfigError> = ...`): `setupWeb`'s type includes its
+   services, and the types `dbQuery`, `config` and `bound` read come from
+   `setupWeb`, so a layer whose type is inferred from them refers to itself.
 10. **Run work that outlives the response with `background('name', effect)`.**
     Run a Cron Trigger's or Queue consumer's work with the application's
     services through `routes.run(effect, env, ctx)` from the Worker's
@@ -197,8 +198,12 @@ setup does not provide (configure them in `setupWeb`, or `routes.provide(layer)`
 and `unhandledErrors` lists failures that are not the package's errors (handle
 them with `Effect.catchTag`, or fail with `HttpError`). A type error at
 `render(...)` means the page or its props differ from `src/pages.ts`.
-`'web' implicitly has type 'any'` (TS7022) means a layer in `services` uses the
-database without a type annotation: annotate the layer, as rule 9 shows.
+`Argument of type 'string' is not assignable to parameter of type 'readonly
+[never, ...never[]]'` at an `Effect.catchTag` means the Effect no longer fails
+with that tag: remove the handler.
+`'web' implicitly has type 'any'` (TS7022) means a layer in `services` has no
+type annotation and uses a type `setupWeb` declares (`dbQuery`, `config`,
+`bound`): annotate the layer, as rule 9 shows.
 Many errors naming `DatabaseNotConfigured`, or `(c) => never` at `database`,
 while `setupWeb` has a database factory, mean one value in its configuration
 has a type error, such as a page schema using a deleted import: TypeScript

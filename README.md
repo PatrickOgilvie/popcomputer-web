@@ -99,7 +99,8 @@ not supported yet: both change APIs this package uses.
 ### Upgrading from 0.7
 
 The next release declares everything once, in `setupWeb`; the
-[changelog](CHANGELOG.md) lists every change. In order:
+[changelog](CHANGELOG.md), shipped in the package as
+`node_modules/@popcomputer/web/CHANGELOG.md`, lists every change. In order:
 
 1. **Register the setup instead of augmenting.** Replace the
    `WebDatabaseType`, `WebAuthType`, `WebBindingsType`, `WebAuthUserType`,
@@ -129,8 +130,13 @@ The next release declares everything once, in `setupWeb`; the
    responses vary on `Cookie`, and responses without `Cache-Control` get
    `private, no-cache`.
 8. **Update tests** to `testEnv(layer, bindings, { database })`,
-   `signedIn(user)`, `readPage(res, 'Page')` and `testClock()` from
-   `@popcomputer/web/testing`.
+   `signedIn(user)`, `readPage(res, 'Page')`, `followRedirect` and
+   `testClock()` from `@popcomputer/web/testing`. A field error in
+   `readPage(...).props.errors` is a message or an error bag's messages, and
+   `signedIn`'s default user is named `Test User`.
+9. **Remove handlers for failures that are gone.** `cacheInvalidate` and
+   `cacheInvalidatePrefix` no longer fail (they report a store failure), so
+   an `Effect.catchTag('CacheError', ...)` on them is a type error.
 
 Run `tsc --noEmit` after each step: the type errors name what is left.
 
@@ -586,8 +592,8 @@ export class Clock extends Context.Service<Clock, {
 }>()('app/Clock') {}
 
 // config reads the Worker's bindings, named as src/env.ts declares them:
-// here the TIME_ZONE var.
-export const ClockLive = Layer.effect(Clock, Effect.gen(function* () {
+// here the TIME_ZONE var. A layer setupWeb takes states its type.
+export const ClockLive: Layer.Layer<Clock, Config.ConfigError> = Layer.effect(Clock, Effect.gen(function* () {
   const timeZone = yield* config.string('TIME_ZONE').pipe(Config.withDefault('UTC'))
 
   return Clock.of({
@@ -629,13 +635,13 @@ Hyperdrive binding, belongs in `services.request`: Workers forbid using it from
 another request. A request service replaces an application service with the
 same tag. For services only some routes need, use `routes.provide(layer)`.
 
-Give a layer its type when its service uses the database, as a domain service
-whose methods call `dbQuery` does. `setupWeb`'s type includes its services, and
-the database's type comes from `setupWeb`, so an inferred layer type refers to
-itself and TypeScript reports `'web' implicitly has type 'any' because it ...
-is referenced directly or indirectly in its own initializer` (TS7022). A layer
-passed to `routes.provide` is outside `setupWeb`'s type and needs no
-annotation.
+Give every layer passed to `services` its type. `setupWeb`'s type includes its
+services, and the types `dbQuery`, `config` and `bound` read come from
+`setupWeb`, so a layer whose inferred type depends on them refers to itself and
+TypeScript reports `'web' implicitly has type 'any' because it ... is
+referenced directly or indirectly in its own initializer` (TS7022), at `web`
+rather than at the layer. A layer passed to `routes.provide` is outside
+`setupWeb`'s type and needs no annotation.
 
 ```ts
 import { eq } from 'drizzle-orm'
@@ -1371,10 +1377,11 @@ and constraint errors behave the same:
   as the `DB` binding. `getKVNamespace` and `getR2Bucket` give the other
   bindings the same way; their types differ slightly from
   `@cloudflare/workers-types`', so provide a KV store to the data cache as
-  `kvCache(kv)` in the test layer rather than as a binding. Create Miniflare
-  once and dispose of it once, in a file `bunfig.toml`'s `preload` names:
-  Bun shares modules between test files, so an `afterAll` in a shared module
-  disposes of it while other files still use it.
+  `kvCache(kv)` in the test layer rather than as a binding. A Miniflare
+  created once at the top of a shared module is disposed of once, in a file
+  `bunfig.toml`'s `preload` names: Bun shares modules between test files, so
+  an `afterAll` in that module disposes of it while other files still use
+  it. A Miniflare each test file creates for itself can use `afterAll`.
 
 `bun:sqlite` is a synchronous driver: it can stand in for neither, since
 `dbTransaction` and `dbBatch` are type errors for it.
@@ -1536,15 +1543,43 @@ A handler whose branches end differently, as this one does, branches inside
 `Effect.gen`: TypeScript combines the branches of one generator, but not a
 plain function that returns a different Effect from each branch.
 
+`columns` names the columns as the database reports them: snake_case SQL
+names on D1 (`['idempotency_key']`), which `uniqueFieldErrors` matches against
+the schema's camelCase keys too.
+
 On D1, write the same statements as one `dbBatch((db) => [...])`. A batch
 cannot branch on an earlier statement's result, so a write that depends on
-one carries its condition: `db.insert(table).select(...)` with the condition
-in the select's `WHERE`, or `UPDATE ... WHERE EXISTS (...)`, and
-`.returning()` on the first statement tells the action whether it applied.
-When a limit cannot be a constraint, put it in the write's own `WHERE`
-clause, such as `UPDATE ... WHERE (SELECT count(*) ...) < 100`, and treat a
-statement that changed no row (`meta.changes === 0`) as the limit refusing
-it. A value the database computes, such as the next ticket number in an
+one carries its condition in its own `WHERE`: an insert selects its values
+from a query that returns no row when the condition fails, every column given
+as ``sql`${value}`.as('column')`` or read from the queried table, and an
+update adds `WHERE EXISTS (...)`. An inserting statement's `.returning()`, or
+an update's `meta.changes`, tells the action whether it applied:
+
+```ts
+import { and, eq, lt, sql } from 'drizzle-orm'
+import { tasks } from '../schema'
+
+// Adds the task only while its project holds fewer than 100; returns no row otherwise.
+const addTaskIfRoom = (projectId: string, title: string) =>
+  dbMutation((db) =>
+    db.insert(tasks).select(
+      db.select({
+        id: sql<string>`${crypto.randomUUID()}`.as('id'),
+        projectId: projects.id,
+        title: sql<string>`${title}`.as('title'),
+      })
+        .from(projects)
+        .where(and(
+          eq(projects.id, projectId),
+          lt(sql`(select count(*) from ${tasks} where ${tasks.projectId} = ${projects.id})`, 100)
+        ))
+    ).returning({ id: tasks.id })
+  )
+```
+
+When a limit cannot be a constraint, a guarded update such as
+`UPDATE ... WHERE (SELECT count(*) ...) < 100` that changed no row
+(`meta.changes === 0`) is the limit refusing it. A value the database computes, such as the next ticket number in an
 organization, belongs in the insert:
 ``sql`(SELECT coalesce(max(number), 0) + 1 FROM ...)` ``. Write every
 statement with the query builder: Drizzle's D1 batch fails at runtime on
@@ -1603,7 +1638,9 @@ A webhook's signature covers the exact bytes sent, so read the raw body with
 verify it with Web Crypto (`crypto.subtle.verify` compares in constant time), and only then decode
 it. Read the secret with `config.redacted`, which reads the Worker's binding
 and keeps it out of logs. Providers retry, so record each event id under a
-unique key and treat a duplicate as already handled:
+unique key and treat a duplicate as already handled. On D1, insert the event
+id in the same `dbBatch` as the writes it causes, so a replay's unique
+violation undoes the whole batch:
 
 ```ts
 import { eq } from 'drizzle-orm'
@@ -1832,8 +1869,8 @@ framework package in an application.
   in the Worker, ignores those cookies but caches only pages that read no
   data.
 - The service-layer cycle: `setupWeb`'s type includes its services and the
-  database type comes from `setupWeb`, so a layer in `services` whose service
-  uses the database needs an explicit type.
+  types `dbQuery` and `config` read come from `setupWeb`, so every layer in
+  `services` needs an explicit type.
 
 ## Developing this package
 

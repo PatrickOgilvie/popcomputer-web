@@ -288,11 +288,12 @@ export interface UntypedDatabaseResult {
  */
 export type DatabaseResult<A> = 0 extends 1 & A ? UntypedDatabaseResult : A
 
-/** Shown in place of `db.run(sql)` in a D1 batch, which Drizzle cannot run there. */
-export interface RawStatementInD1Batch {
-  readonly __error: 'Drizzle cannot run db.run(sql) in a Cloudflare D1 batch: it fails at runtime.'
-  readonly __hint: 'Write the statement with the query builder, such as db.insert(table).select(...), or run it alone with dbMutation.'
-}
+/**
+ * Shown in place of `db.run(sql)` in a D1 batch, which Drizzle cannot run
+ * there. A string, so the compiler's message includes it.
+ */
+export type RawStatementInD1Batch =
+  'Drizzle cannot run db.run(sql) in a Cloudflare D1 batch, where it fails at runtime: write the statement with the query builder, such as db.insert(table).select(...), or run it alone with dbMutation.'
 
 /** The statements, with each raw statement in a D1 batch replaced by an error type. */
 export type CheckedBatchItems<Items> = IsD1 extends true
