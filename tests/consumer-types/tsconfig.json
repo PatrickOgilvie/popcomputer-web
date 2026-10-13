@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "rootDir": "../..",
+    "paths": {
+      "@popcomputer/web": ["../../dist/index.d.ts"],
+      "@popcomputer/web/effect": ["../../dist/effect/index.d.ts"],
+      "@popcomputer/web/schema": ["../../dist/schema.d.ts"],
+      "@popcomputer/web/auth": ["../../dist/auth.d.ts"],
+      "@popcomputer/web/cache": ["../../dist/cache.d.ts"],
+      "@popcomputer/web/testing": ["../../dist/testing.d.ts"]
+    }
+  },
+  "include": ["*.ts"],
+  "exclude": []
+}

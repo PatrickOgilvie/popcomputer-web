@@ -2,8 +2,11 @@
  * Type-check every TypeScript code fence in README.md and AGENTS.md.
  *
  * Agents copy these examples verbatim, so each one must compile against the
- * current source. The fences of both documents are assembled into one small
- * application:
+ * package as an application installs it: the declarations in `dist`, which
+ * `bun run build` emits. Types that depend on an application's augmentations
+ * (WebRouteBindingsType, WebAuthUserType, ...) must survive declaration emit,
+ * and only a check against `dist` sees that. The fences of both documents are
+ * assembled into one small application:
  *
  * - A fence whose first line is `// src/<path>.ts` becomes that file, exactly
  *   as written. It must import everything it uses.
@@ -15,7 +18,7 @@
  *
  * Diagnostics are reported against document line numbers.
  *
- * Run: bun tests/docs/check-docs.ts
+ * Run: bun run build && bun tests/docs/check-docs.ts
  */
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -41,15 +44,16 @@ interface OutputLine {
 
 const FILE_HEADER = /^\/\/ (src\/[\w./-]+\.tsx?)$/
 
-/** Package entrypoints and the source module each one serves. */
+/** Package entrypoints and the built module each one serves, without extension. */
 const ENTRYPOINTS: Readonly<Record<string, string>> = {
-  '@popcomputer/web': 'index.ts',
-  '@popcomputer/web/effect': 'effect/index.ts',
-  '@popcomputer/web/schema': 'schema.ts',
-  '@popcomputer/web/auth': 'auth.ts',
-  '@popcomputer/web/cache': 'cache.ts',
-  '@popcomputer/web/testing': 'testing.ts',
+  '@popcomputer/web': 'index',
+  '@popcomputer/web/effect': 'effect/index',
+  '@popcomputer/web/schema': 'schema',
+  '@popcomputer/web/auth': 'auth',
+  '@popcomputer/web/cache': 'cache',
+  '@popcomputer/web/testing': 'testing',
 }
+const dist = (module: string, extension: '.js' | '.d.ts') => join(repoRoot, 'dist', `${module}${extension}`)
 const TS_LANGS = new Set(['ts', 'tsx', 'typescript'])
 
 function readFences(document: string, markdown: string): Fence[] {
@@ -187,8 +191,15 @@ async function main(): Promise<number> {
   )
   const entrypointValues = new Map<string, ReadonlyArray<string>>()
 
+  for (const [entrypoint, module] of Object.entries(ENTRYPOINTS)) {
+    if (!existsSync(dist(module, '.d.ts'))) {
+      console.error(`${entrypoint}: ${relative(repoRoot, dist(module, '.d.ts'))} is missing. Run \`bun run build\` first.`)
+      return 1
+    }
+  }
+
   for (const [entrypoint, source] of Object.entries(ENTRYPOINTS)) {
-    const module: Record<string, unknown> = await import(join(repoRoot, 'src', source))
+    const module: Record<string, unknown> = await import(dist(source, '.js'))
     entrypointValues.set(entrypoint, Object.keys(module).filter((name) => name !== 'default'))
   }
   const stubNames = exportedNames(readFileSync(join(stubAppDir, 'src', 'doc-stubs.ts'), 'utf8'))
@@ -221,7 +232,6 @@ async function main(): Promise<number> {
     sourceMaps.set(file, output)
   }
 
-  const src = (path: string) => join(repoRoot, 'src', path)
   writeFileSync(
     join(outDir, 'tsconfig.json'),
     JSON.stringify(
@@ -232,7 +242,7 @@ async function main(): Promise<number> {
           declaration: false,
           rootDir: repoRoot,
           paths: Object.fromEntries(
-            Object.entries(ENTRYPOINTS).map(([entrypoint, source]) => [entrypoint, [src(source)]])
+            Object.entries(ENTRYPOINTS).map(([entrypoint, module]) => [entrypoint, [dist(module, '.d.ts')]])
           ),
         },
         include: ['src/**/*'],

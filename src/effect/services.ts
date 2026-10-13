@@ -476,7 +476,11 @@ export class ExecutionContextService extends Context.Service<
  * // Require resource ownership
  * const auth = yield* authorize((a) => a.user.id === project.userId)
  */
-export const authorize = Effect.fn('Web.authorize')(function* (
+// The annotation keeps `AuthUser` unresolved in the emitted declaration, so it
+// resolves against the application's WebAuthUserType.
+export const authorize: (
+  check?: (user: AuthUser) => boolean
+) => Effect.Effect<AuthUser, UnauthorizedError | ForbiddenError> = Effect.fn('Web.authorize')(function* (
   check?: (user: AuthUser) => boolean
 ) {
   const maybeUser = yield* Effect.serviceOption(AuthUserService)

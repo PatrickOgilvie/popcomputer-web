@@ -18,7 +18,7 @@ import { attachTestLayer } from './effect/test-env.js'
  *
  * Services in `layer` replace the ones effectBridge provides for the request,
  * such as `AuthUserService` and `DatabaseService`, and supply services the
- * application provides through `setupWeb`'s `effect.services`. A layer that a
+ * application provides through `setupWeb`'s `services`. A layer that a
  * route registers with `.provide()` still takes precedence for that route.
  *
  * @param bindings - Bindings the request reads from `c.env`.
@@ -38,15 +38,36 @@ export function testEnv<ROut>(layer: Layer.Layer<ROut>, bindings: object = {}): 
 /** Whether the default test session fits the application's AuthUser session. */
 type DefaultSessionFits = DefaultAuthUser['session'] extends AuthUser['session'] ? true : false
 
+/** The values `signedIn` gives user fields that the input leaves out. */
+interface UserDefaults {
+  readonly email: string
+  readonly name: null
+  readonly emailVerified: false
+  readonly image: null
+  readonly createdAt: Date
+  readonly updatedAt: Date
+}
+
+type User = AuthUser['user']
+
+/** User fields whose default value fits the application's user type. */
+type DefaultedField = {
+  [K in keyof User]: K extends keyof UserDefaults
+    ? UserDefaults[K] extends User[K] ? K : never
+    : never
+}[keyof User]
+
 /**
- * A complete `AuthUser`, or the user fields to set on a default test user.
- * The default session follows Better Auth's; when the application augments
- * WebAuthUserType with a session it does not fit, pass a complete `AuthUser`.
+ * A complete `AuthUser`, or the user fields to set on a default test user:
+ * `id` and every field without a fitting default, such as the required fields
+ * an application adds by augmenting WebAuthUserType. The default session
+ * follows Better Auth's; when the application's session does not fit it, pass
+ * a complete `AuthUser`.
  */
 export type SignedInUser =
   | AuthUser
   | (DefaultSessionFits extends true
-      ? Partial<AuthUser['user']> & { readonly id: string }
+      ? Partial<Pick<User, DefaultedField>> & Omit<User, DefaultedField | 'id'> & { readonly id: string }
       : never)
 
 /**
@@ -72,9 +93,9 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
 
   // The user fields given; `never` when the application's session rules out
   // partial input (see SignedInUser).
-  const fields: Partial<AuthUser['user']> & { readonly id: string } = input
+  const fields: Partial<User> & { readonly id: string } = input
 
-  const user = {
+  const defaults: UserDefaults = {
     email: 'test@example.com',
     name: null,
     emailVerified: false,
@@ -83,8 +104,8 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
     createdAt: new Date(0),
     // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture for the Better Auth user contract; it does not read the clock.
     updatedAt: new Date(0),
-    ...fields,
   }
+  const user = { ...defaults, ...fields }
 
   const session = {
     id: 'test-session',
@@ -98,9 +119,9 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
   }
 
   return {
-    // SAFETY: an application that augments the user type with required fields
-    // passes them in `input`; the defaults cover the fields of the default user.
-    user: user as AuthUser['user'],
+    // SAFETY: SignedInUser requires every user field except those whose
+    // UserDefaults value fits the application's user type.
+    user: user as User,
     // SAFETY: SignedInUser admits partial input only when DefaultSessionFits,
     // i.e. when this Better Auth-shaped session is an AuthUser['session'].
     session: session as unknown as AuthUser['session'],

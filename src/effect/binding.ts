@@ -216,7 +216,13 @@ export type BoundModel<K extends string> =
  *   })
  * )
  */
-export const bound = Effect.fn('Web.bound')(function* <K extends string>(key: K) {
+// The annotation keeps `BoundModel<K>` unresolved in the emitted declaration,
+// so it resolves against the application's WebRouteBindingsType.
+export const bound: <K extends string>(
+  key: K
+) => Effect.Effect<BoundModel<K>, BoundModelError, BoundModels> = Effect.fn('Web.bound')(function* <
+  K extends string,
+>(key: K) {
   const models = yield* BoundModels
   const model = yield* models.get(key)
 

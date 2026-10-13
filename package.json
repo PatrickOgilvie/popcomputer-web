@@ -48,7 +48,7 @@
     "dev": "tsc --watch",
     "test": "bun run build && bun test && bun run test:types && bun run test:package",
     "test:package": "bun run build && node tests/package-imports.mjs",
-    "test:types": "bun tests/typecheck-tests.ts && bun tests/docs/check-docs.ts",
+    "test:types": "bun tests/typecheck-tests.ts && bun run build && bun tests/docs/check-docs.ts && tsc -p tests/consumer-types",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
     "prepublishOnly": "bun run test"

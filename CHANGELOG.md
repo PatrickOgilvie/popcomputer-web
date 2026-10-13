@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `signedIn({ id, ... })` requires the user fields it has no default for, such as the required fields an application adds by augmenting `WebAuthUserType`. They were optional, so a test could sign in a user whose `role` or `teamId` was `undefined`.
+- README and `AGENTS.md` examples type-check against the built declarations in `dist`, and a fixture application that augments the package's types checks what `bound`, `authorize`, `currentUser`, `AuthUserService` and `signedIn` expose. Declaration emit can resolve an exported type before any application's augmentation exists, which checks against `src` cannot see.
 - `ResponseCachePurgeError` is one of the package's errors (`WEB_SVC_703_CACHE_PURGE_FAILED`, 500), so an action that calls `ResponseCacheService.purge`, as the README shows, can be registered.
 - `WebPage` and `WithSharedProps` without props default to no page props instead of every prop being `never`, so shared props such as `errors` type-check.
 - Actions that call `background()` or `cache()` type-check when registered: the route service type omitted `ExecutionContextService` and `CacheService`, which every request provides.
