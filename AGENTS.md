@@ -41,9 +41,11 @@ To use this file, point the application's own `AGENTS.md` or `CLAUDE.md` at
     bindings))` from `@popcomputer/web/testing` runs the real route;
     `signedIn(user)` signs the request in. Assert on `X-Inertia` JSON responses.
 
-Imports: `@popcomputer/web` for `setupWeb` and template helpers,
-`@popcomputer/web/effect` for actions, `@popcomputer/web/schema` for
-validators, `@popcomputer/web/testing` in tests.
+Every name has one entrypoint: `@popcomputer/web` for `setupWeb`, template
+helpers and Hono middleware; `@popcomputer/web/effect` for actions, routes,
+responses, services and errors; `@popcomputer/web/schema` for validators;
+`@popcomputer/web/auth` for the Better Auth integration;
+`@popcomputer/web/cache` for the KV cache; `@popcomputer/web/testing` in tests.
 
 ## A complete action
 
@@ -103,15 +105,13 @@ another user, and a `422` for an empty name.
 
 ## Do not use
 
-- `Honertia*` and `honertia*` names, `setupHonertia`, `c.var.honertia`: old
-  aliases of the `Web*`/`web*` names.
-- `effectHandler`, `effect`, `handle`: use `action` with `effectRoutes`.
-- `requireAuth`, `isAuthenticated`: use `authorize` and `currentUser`.
-- `validatedBody`, `validatedQuery`, `asValidated`: use `validateRequest`.
-- `getGlobalRegistry`: `setupWeb(app, config)` returns the app's `routes`.
+- `validatedBody` and `validatedQuery`: they return whatever type the caller
+  names. Use `validateRequest`.
 - `c.req.json()`, `c.req.parseBody()` or `c.env` inside actions.
 - `db.insert`, `db.update` or `db.delete` outside `dbMutation`/`dbTransaction`.
-- `env.__testLayer`: use `testEnv`.
+- Names from the old `honertia` package (`setupHonertia`, `HonertiaService`,
+  `c.var.honertia`, ...): the README's migration table lists their
+  replacements.
 
 ## Before finishing
 

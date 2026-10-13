@@ -10,8 +10,6 @@ import { Effect } from 'effect'
 import {
   RouteRegistry,
   getAppRouteRegistry,
-  getGlobalRegistry,
-  resetGlobalRegistry,
   effectRoutes,
 } from '../../src/effect/index.js'
 import { web } from '../../src/middleware.js'
@@ -311,41 +309,7 @@ describe('RouteRegistry', () => {
   })
 })
 
-describe('Global Registry', () => {
-  beforeEach(() => {
-    resetGlobalRegistry()
-  })
-
-  test('getGlobalRegistry returns singleton', () => {
-    const registry1 = getGlobalRegistry()
-    const registry2 = getGlobalRegistry()
-    expect(registry1).toBe(registry2)
-  })
-
-  test('resetGlobalRegistry creates new instance', () => {
-    const registry1 = getGlobalRegistry()
-    registry1.register({
-      method: 'get',
-      path: '/test',
-      honoPath: '/test',
-      fullPath: '/test',
-      bindings: [],
-      prefix: '',
-    })
-    expect(registry1.count()).toBe(1)
-
-    resetGlobalRegistry()
-    const registry2 = getGlobalRegistry()
-    expect(registry2.count()).toBe(0)
-    expect(registry1).not.toBe(registry2)
-  })
-})
-
 describe('effectRoutes Integration', () => {
-  beforeEach(() => {
-    resetGlobalRegistry()
-  })
-
   test('routes are registered with the app-owned registry by default', () => {
     const app = createApp()
 
@@ -369,7 +333,6 @@ describe('effectRoutes Integration', () => {
 
     expect(customRegistry.count()).toBe(1)
     expect(getAppRouteRegistry(app).count()).toBe(0)
-    expect(getGlobalRegistry().count()).toBe(0)
   })
 
   test('getRegistry returns the registry', () => {

@@ -7,7 +7,8 @@ import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import type { Env } from 'hono'
 import { Effect, Layer, Schema as S } from 'effect'
-import { effectHandler, effect, handle, errorToResponse } from '../../src/effect/handler.js'
+import { errorToResponse } from '../../src/effect/handler.js'
+import { effectRoutes } from '../../src/effect/routing.js'
 import { effectBridge, type EffectBridgeConfig } from '../../src/effect/bridge.js'
 import { web } from '../../src/middleware.js'
 import { webServices } from '../../src/request-context.js'
@@ -67,13 +68,13 @@ const createObservedApp = (
   return app
 }
 
-describe('effectHandler', () => {
+describe('effect route handlers', () => {
   test('handles successful Effect returning Response', async () => {
     const app = createApp()
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(Effect.succeed(new Response('Hello World')))
+      Effect.succeed(new Response('Hello World'))
     )
 
     const res = await app.request('/')
@@ -84,11 +85,9 @@ describe('effectHandler', () => {
   test('handles Effect returning Redirect', async () => {
     const app = createApp()
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.succeed(new Redirect({ url: '/dashboard', status: 303 }))
-      )
+      Effect.succeed(new Redirect({ url: '/dashboard', status: 303 }))
     )
 
     const res = await app.request('/')
@@ -99,11 +98,9 @@ describe('effectHandler', () => {
   test('handles Redirect with 302 status', async () => {
     const app = createApp()
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.succeed(new Redirect({ url: '/login', status: 302 }))
-      )
+      Effect.succeed(new Redirect({ url: '/login', status: 302 }))
     )
 
     const res = await app.request('/')
@@ -113,15 +110,13 @@ describe('effectHandler', () => {
   test('can access services from the runtime', async () => {
     const app = createApp()
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.gen(function* () {
-          const db = yield* DatabaseService
+      Effect.gen(function* () {
+        const db = yield* DatabaseService
 
-          return Response.json(db)
-        })
-      )
+        return Response.json(db)
+      })
     )
 
     const res = await app.request('/')
@@ -129,13 +124,13 @@ describe('effectHandler', () => {
     expect(json).toEqual({ name: 'test-db' })
   })
 
-  test('works without effectBridge middleware', async () => {
+  test('works without the effectBridge middleware', async () => {
     const app = new Hono()
 
     // No effectBridge, but handler should create temp runtime
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(Effect.succeed(new Response('Works')))
+      Effect.succeed(new Response('Works'))
     )
 
     const res = await app.request('/')
@@ -144,61 +139,18 @@ describe('effectHandler', () => {
   })
 })
 
-describe('effect helper', () => {
-  test('creates handler from function returning Effect', async () => {
-    const app = createApp()
-
-    app.get(
-      '/',
-      effect(() => Effect.succeed(new Response('From function')))
-    )
-
-    const res = await app.request('/')
-    expect(await res.text()).toBe('From function')
-  })
-
-  test('defers Effect creation', async () => {
-    let callCount = 0
-
-    const app = createApp()
-
-    app.get(
-      '/',
-      effect(() => {
-        callCount++
-
-        return Effect.succeed(new Response(`Count: ${callCount}`))
-      })
-    )
-
-    await app.request('/')
-    expect(callCount).toBe(1)
-
-    await app.request('/')
-    expect(callCount).toBe(2)
-  })
-})
-
-describe('handle alias', () => {
-  test('is an alias for effectHandler', () => {
-    expect(handle).toBe(effectHandler)
-  })
-})
-
 describe('Error Handling', () => {
   describe('AuthRateLimitError', () => {
     test('returns 429 with standard retry guidance', async () => {
       const app = createApp()
 
-      app.post(
+      effectRoutes(app).post(
         '/',
-        effectHandler(
-          Effect.fail(
-            new AuthRateLimitError({
-              retryAfterSeconds: 37,
-              cause: new Error('provider rate limit'),
-            })
-          )
+        Effect.fail(
+          new AuthRateLimitError({
+            retryAfterSeconds: 37,
+            cause: new Error('provider rate limit'),
+          })
         )
       )
 
@@ -221,14 +173,12 @@ describe('Error Handling', () => {
     test('returns JSON 422 for JSON requests', async () => {
       const app = createApp()
 
-      app.post(
+      effectRoutes(app).post(
         '/',
-        effectHandler(
-          Effect.fail(
-            new ValidationError({
-              errors: { name: 'Required', email: 'Invalid' },
-            })
-          )
+        Effect.fail(
+          new ValidationError({
+            errors: { name: 'Required', email: 'Invalid' },
+          })
         )
       )
 
@@ -248,22 +198,20 @@ describe('Error Handling', () => {
     test('does not echo rejected input values in production JSON', async () => {
       const app = createApp()
 
-      app.post(
+      effectRoutes(app).post(
         '/',
-        effectHandler(
-          Effect.fail(
-            new ValidationError({
-              errors: { password: 'Password is too short' },
-              fieldDetails: {
-                password: {
-                  value: 'secret-password',
-                  expected: 'at least 12 characters',
-                  message: 'Password is too short',
-                  path: ['password'],
-                },
+        Effect.fail(
+          new ValidationError({
+            errors: { password: 'Password is too short' },
+            fieldDetails: {
+              password: {
+                value: 'secret-password',
+                expected: 'at least 12 characters',
+                message: 'Password is too short',
+                path: ['password'],
               },
-            })
-          )
+            },
+          })
         )
       )
 
@@ -283,15 +231,13 @@ describe('Error Handling', () => {
     test('renders component with errors for Inertia requests', async () => {
       const app = createApp()
 
-      app.post(
+      effectRoutes(app).post(
         '/',
-        effectHandler(
-          Effect.fail(
-            new ValidationError({
-              errors: { name: 'Required' },
-              component: 'Users/Create',
-            })
-          )
+        Effect.fail(
+          new ValidationError({
+            errors: { name: 'Required' },
+            component: 'Users/Create',
+          })
         )
       )
 
@@ -309,12 +255,10 @@ describe('Error Handling', () => {
     test('redirects back without component', async () => {
       const app = createApp()
 
-      app.post(
+      effectRoutes(app).post(
         '/form',
-        effectHandler(
-          Effect.fail(
-            new ValidationError({ errors: { field: 'Error' } })
-          )
+        Effect.fail(
+          new ValidationError({ errors: { field: 'Error' } })
         )
       )
 
@@ -332,12 +276,10 @@ describe('Error Handling', () => {
     test('redirects to login by default', async () => {
       const app = createApp()
 
-      app.get(
+      effectRoutes(app).get(
         '/',
-        effectHandler(
-          Effect.fail(
-            new UnauthorizedError({ message: 'Login required' })
-          )
+        Effect.fail(
+          new UnauthorizedError({ message: 'Login required' })
         )
       )
 
@@ -350,15 +292,13 @@ describe('Error Handling', () => {
     test('redirects to custom URL', async () => {
       const app = createApp()
 
-      app.get(
+      effectRoutes(app).get(
         '/',
-        effectHandler(
-          Effect.fail(
-            new UnauthorizedError({
-              message: 'Login required',
-              redirectTo: '/signin',
-            })
-          )
+        Effect.fail(
+          new UnauthorizedError({
+            message: 'Login required',
+            redirectTo: '/signin',
+          })
         )
       )
 
@@ -369,11 +309,9 @@ describe('Error Handling', () => {
     test('uses 303 for Inertia requests', async () => {
       const app = createApp()
 
-      app.get(
+      effectRoutes(app).get(
         '/',
-        effectHandler(
-          Effect.fail(new UnauthorizedError({ message: 'Unauthorized' }))
-        )
+        Effect.fail(new UnauthorizedError({ message: 'Unauthorized' }))
       )
 
       const res = await app.request('/', {
@@ -388,12 +326,10 @@ describe('Error Handling', () => {
     test('returns JSON 403', async () => {
       const app = createApp()
 
-      app.get(
+      effectRoutes(app).get(
         '/',
-        effectHandler(
-          Effect.fail(
-            new ForbiddenError({ message: 'Access denied' })
-          )
+        Effect.fail(
+          new ForbiddenError({ message: 'Access denied' })
         )
       )
 
@@ -409,12 +345,10 @@ describe('Error Handling', () => {
     test('returns 404 not found', async () => {
       const app = createApp()
 
-      app.get(
+      effectRoutes(app).get(
         '/',
-        effectHandler(
-          Effect.fail(
-            new NotFoundError({ resource: 'Project', id: '123' })
-          )
+        Effect.fail(
+          new NotFoundError({ resource: 'Project', id: '123' })
         )
       )
 
@@ -427,15 +361,13 @@ describe('Error Handling', () => {
     test('returns custom status and message', async () => {
       const app = createApp()
 
-      app.get(
+      effectRoutes(app).get(
         '/',
-        effectHandler(
-          Effect.fail(
-            new HttpError({
-              status: 429,
-              message: 'Rate limited',
-            })
-          )
+        Effect.fail(
+          new HttpError({
+            status: 429,
+            message: 'Rate limited',
+          })
         )
       )
 
@@ -449,16 +381,14 @@ describe('Error Handling', () => {
     test('includes body in response', async () => {
       const app = createApp()
 
-      app.get(
+      effectRoutes(app).get(
         '/',
-        effectHandler(
-          Effect.fail(
-            new HttpError({
-              status: 400,
-              message: 'Bad request',
-              body: { retryAfter: 60 },
-            })
-          )
+        Effect.fail(
+          new HttpError({
+            status: 400,
+            message: 'Bad request',
+            body: { retryAfter: 60 },
+          })
         )
       )
 
@@ -473,16 +403,14 @@ describe('Error Handling', () => {
     test('redacts message and body for 5xx JSON responses', async () => {
       const app = createApp()
 
-      app.get(
+      effectRoutes(app).get(
         '/',
-        effectHandler(
-          Effect.fail(
-            new HttpError({
-              status: 500,
-              message: 'db://user:secret@host',
-              body: { connection: 'db://user:secret@host' },
-            })
-          )
+        Effect.fail(
+          new HttpError({
+            status: 500,
+            message: 'db://user:secret@host',
+            body: { connection: 'db://user:secret@host' },
+          })
         )
       )
 
@@ -503,11 +431,9 @@ describe('Error Handling', () => {
       const app = createApp()
 
       // Use Effect.fail instead of throwing in sync, which is more idiomatic
-      app.get(
+      effectRoutes(app).get(
         '/',
-        effectHandler(
-          Effect.fail(new HttpError({ status: 500, message: 'Server error' }))
-        )
+        Effect.fail(new HttpError({ status: 500, message: 'Server error' }))
       )
 
       const res = await app.request('/')
@@ -517,11 +443,9 @@ describe('Error Handling', () => {
     test('handles generic errors', async () => {
       const app = createApp()
 
-      app.get(
+      effectRoutes(app).get(
         '/',
-        effectHandler(
-          Effect.fail(new ForbiddenError({ message: 'Not allowed' }))
-        )
+        Effect.fail(new ForbiddenError({ message: 'Not allowed' }))
       )
 
       const res = await app.request('/')
@@ -583,11 +507,9 @@ describe('EffectErrorObserverService', () => {
       })
     )
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.fail(new ForbiddenError({ message: 'Access denied' }))
-      )
+      Effect.fail(new ForbiddenError({ message: 'Access denied' }))
     )
 
     const res = await app.request('/', {
@@ -611,15 +533,13 @@ describe('EffectErrorObserverService', () => {
       })
     )
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.fail(
-          new HttpError({
-            status: 429,
-            message: 'Rate limited',
-          })
-        )
+      Effect.fail(
+        new HttpError({
+          status: 429,
+          message: 'Rate limited',
+        })
       )
     )
 
@@ -643,13 +563,11 @@ describe('EffectErrorObserverService', () => {
       { registerErrorHandlers: true }
     )
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.sync((): Response => {
-          throw new Error('boom')
-        })
-      )
+      Effect.sync((): Response => {
+        throw new Error('boom')
+      })
     )
 
     const res = await app.request('/', {
@@ -681,20 +599,18 @@ describe('reportEffectError', () => {
       })
     )
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.gen(function* () {
-          const fallback = yield* Effect.fail(new ReportedFailure({ message: 'handled failure' })).pipe(
-            Effect.tapError((error) =>
-              reportEffectError(error)
-            ),
-            Effect.orElseSucceed(() => 'fallback')
-          )
+      Effect.gen(function* () {
+        const fallback = yield* Effect.fail(new ReportedFailure({ message: 'handled failure' })).pipe(
+          Effect.tapError((error) =>
+            reportEffectError(error)
+          ),
+          Effect.orElseSucceed(() => 'fallback')
+        )
 
-          return new Response(fallback)
-        })
-      )
+        return new Response(fallback)
+      })
     )
 
     const res = await app.request('/')
@@ -718,25 +634,23 @@ describe('reportEffectError', () => {
       })
     )
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.gen(function* () {
-          const fallback = yield* Effect.fail(new ReportedFailure({ message: 'handled failure' })).pipe(
-            Effect.tapError((error) =>
-              reportEffectError(error, {
-                metadata: {
-                  area: 'test',
-                  fallback: 'used',
-                },
-              })
-            ),
-            Effect.orElseSucceed(() => 'fallback')
-          )
+      Effect.gen(function* () {
+        const fallback = yield* Effect.fail(new ReportedFailure({ message: 'handled failure' })).pipe(
+          Effect.tapError((error) =>
+            reportEffectError(error, {
+              metadata: {
+                area: 'test',
+                fallback: 'used',
+              },
+            })
+          ),
+          Effect.orElseSucceed(() => 'fallback')
+        )
 
-          return new Response(fallback)
-        })
-      )
+        return new Response(fallback)
+      })
     )
 
     const res = await app.request('/')
@@ -753,20 +667,18 @@ describe('reportEffectError', () => {
   test('is safe when no observer is installed', async () => {
     const app = createApp()
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.gen(function* () {
-          const fallback = yield* Effect.fail(new ReportedFailure({ message: 'handled without observer' })).pipe(
-            Effect.tapError((error) =>
-              reportEffectError(error)
-            ),
-            Effect.orElseSucceed(() => 'fallback')
-          )
+      Effect.gen(function* () {
+        const fallback = yield* Effect.fail(new ReportedFailure({ message: 'handled without observer' })).pipe(
+          Effect.tapError((error) =>
+            reportEffectError(error)
+          ),
+          Effect.orElseSucceed(() => 'fallback')
+        )
 
-          return new Response(fallback)
-        })
-      )
+        return new Response(fallback)
+      })
     )
 
     const res = await app.request('/')
@@ -780,18 +692,16 @@ describe('Integration Patterns', () => {
   test('full request flow with services', async () => {
     const app = createApp()
 
-    app.get(
+    effectRoutes(app).get(
       '/projects/:id',
-      effectHandler(
-        Effect.gen(function* () {
-          const db = yield* DatabaseService
-          const page = yield* PageService
+      Effect.gen(function* () {
+        const db = yield* DatabaseService
+        const page = yield* PageService
 
-          return yield* Effect.tryPromise(() =>
-            page.render('Projects/Show', { db, id: 'test' })
-          )
-        })
-      )
+        return yield* Effect.tryPromise(() =>
+          page.render('Projects/Show', { db, id: 'test' })
+        )
+      })
     )
 
     const res = await app.request('/projects/123')
@@ -801,13 +711,11 @@ describe('Integration Patterns', () => {
   test('error recovery pattern', async () => {
     const app = createApp()
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.fail(new NotFoundError({ resource: 'Item' })).pipe(
-          Effect.catchTag('NotFoundError', () =>
-            Effect.succeed(new Response('Fallback content'))
-          )
+      Effect.fail(new NotFoundError({ resource: 'Item' })).pipe(
+        Effect.catchTag('NotFoundError', () =>
+          Effect.succeed(new Response('Fallback content'))
         )
       )
     )
@@ -820,19 +728,17 @@ describe('Integration Patterns', () => {
   test('conditional redirect pattern', async () => {
     const app = createApp()
 
-    app.get(
+    effectRoutes(app).get(
       '/',
-      effectHandler(
-        Effect.sync(() => {
-          const shouldRedirect = true
+      Effect.sync(() => {
+        const shouldRedirect = true
 
-          if (shouldRedirect) {
-            return new Redirect({ url: '/other', status: 303 })
-          }
+        if (shouldRedirect) {
+          return new Redirect({ url: '/other', status: 303 })
+        }
 
-          return new Response('Stay here')
-        })
-      )
+        return new Response('Stay here')
+      })
     )
 
     const res = await app.request('/')

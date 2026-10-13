@@ -362,9 +362,9 @@ import {
   DatabaseService,
   dbMutation,
   redirect,
-  requiredString,
   validateRequest,
 } from '@popcomputer/web/effect'
+import { requiredString } from '@popcomputer/web/schema'
 import { projects } from '../schema'
 
 const CreateProject = S.Struct({

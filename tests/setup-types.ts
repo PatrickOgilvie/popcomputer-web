@@ -9,12 +9,12 @@
 import { Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono, type Context as HonoContext } from 'hono'
 import { setupWeb } from '@popcomputer/web'
+import { bound } from '@popcomputer/web/effect'
 import {
   betterAuthFormAction,
-  bound,
   effectifyBetterAuth,
   type BetterAuthBoundaryFailure,
-} from '@popcomputer/web/effect'
+} from '@popcomputer/web/auth'
 
 type TestDatabase = {
   readonly name: string

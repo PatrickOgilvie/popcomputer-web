@@ -8,7 +8,6 @@ import {
   // String types
   trimmed,
   nullableString,
-  optionalString,
   requiredString,
   required,
   alpha,
@@ -118,13 +117,6 @@ describe('String Types', () => {
     test('converts undefined/null to null', () => {
       expect(decode(nullableString, undefined)).toBeNull()
       expect(decode(nullableString, null)).toBeNull()
-    })
-  })
-
-  describe('optionalString', () => {
-    test('is an alias for nullableString', () => {
-      expect(decode(optionalString, '')).toBeNull()
-      expect(decode(optionalString, 'test')).toBe('test')
     })
   })
 

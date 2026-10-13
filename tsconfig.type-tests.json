@@ -5,11 +5,34 @@
     "declarationMap": false,
     "noEmit": true,
     "paths": {
-      "@popcomputer/web": ["./src/index.ts"],
-      "@popcomputer/web/effect": ["./src/effect/index.ts"]
+      "@popcomputer/web": [
+        "./src/index.ts"
+      ],
+      "@popcomputer/web/effect": [
+        "./src/effect/index.ts"
+      ],
+      "@popcomputer/web/schema": [
+        "./src/schema.ts"
+      ],
+      "@popcomputer/web/auth": [
+        "./src/auth.ts"
+      ],
+      "@popcomputer/web/cache": [
+        "./src/cache.ts"
+      ],
+      "@popcomputer/web/testing": [
+        "./src/testing.ts"
+      ]
     },
     "rootDir": "."
   },
-  "include": ["src/**/*", "tests/setup-types.ts", "tests/testing.test.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*",
+    "tests/setup-types.ts",
+    "tests/testing.test.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

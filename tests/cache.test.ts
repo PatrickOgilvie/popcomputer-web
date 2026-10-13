@@ -6,15 +6,14 @@ import { Clock, Deferred, Predicate, Effect, Layer, Option, Schema as S, Duratio
 import {
   CacheService,
   CacheClientError,
-  ExecutionContextService,
   cache,
   cacheGet,
   cacheSet,
   cacheInvalidate,
   cacheInvalidatePrefix,
   type CacheClient,
-  type ExecutionContextClient,
-} from '../src/effect/index'
+} from '../src/cache.js'
+import { ExecutionContextService, type ExecutionContextClient } from '../src/effect/index.js'
 
 // ============================================================================
 // Test ExecutionContext Layer

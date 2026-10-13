@@ -61,11 +61,6 @@ export const nullableString = S.Unknown.pipe(
 )
 
 /**
- * Alias for nullableString.
- */
-export const optionalString = nullableString
-
-/**
  * A required string that is trimmed. Empty strings fail validation.
  */
 export const requiredString = S.String.pipe(
@@ -1089,12 +1084,3 @@ export const filled = <InputSchema extends S.Constraint>(
     )
   )
 }
-
-// =============================================================================
-// Schema Helpers
-// =============================================================================
-
-/**
- * Re-export Schema namespace for convenience.
- */
-export { Schema as S } from 'effect'

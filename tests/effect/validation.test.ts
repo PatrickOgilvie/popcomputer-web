@@ -8,8 +8,6 @@ import { Option, Effect, Schema as S, Layer, Exit, Cause } from 'effect'
 import {
   getValidationData,
   formatSchemaErrors,
-  asValidated,
-  validate,
   validateUnknown,
   validateRequest,
 } from '../../src/effect/validation.js'
@@ -295,7 +293,7 @@ describe('formatSchemaErrors', () => {
   })
 })
 
-describe('validate', () => {
+describe('validateUnknown with typed input', () => {
   test('validates valid data', () => {
     const schema = S.Struct({
       name: S.String,
@@ -303,10 +301,10 @@ describe('validate', () => {
     })
 
     const result = Effect.runSync(
-      validate(schema, { name: 'John', age: 30 })
+      validateUnknown(schema, { name: 'John', age: 30 })
     )
 
-    expect(result).toEqual(asValidated({ name: 'John', age: 30 }))
+    expect(result).toEqual({ name: 'John', age: 30 })
   })
 
   test('fails with ValidationError on invalid data', () => {
@@ -314,7 +312,7 @@ describe('validate', () => {
       name: S.String.check(S.isMinLength(3)),
     })
 
-    const exit = Effect.runSyncExit(validate(schema, { name: 'Jo' }))
+    const exit = Effect.runSyncExit(validateUnknown(schema, { name: 'Jo' }))
 
     expect(Exit.isFailure(exit)).toBe(true)
 
@@ -335,7 +333,7 @@ describe('validate', () => {
     })
 
     const exit = Effect.runSyncExit(
-      validate(schema, { email: '' }, {
+      validateUnknown(schema, { email: '' }, {
         messages: { email: 'Please enter your email' },
       })
     )
@@ -356,7 +354,7 @@ describe('validate', () => {
     })
 
     const exit = Effect.runSyncExit(
-      validate(schema, { name: '' }, {
+      validateUnknown(schema, { name: '' }, {
         errorComponent: 'Users/Create',
       })
     )
@@ -401,7 +399,7 @@ describe('validateUnknown', () => {
     const raw = { id: 'x', count: '3' }
 
     const result = Effect.runSync(validateUnknown(schema, raw))
-    expect(result).toEqual(asValidated({ id: 'x', count: 3 }))
+    expect(result).toEqual({ id: 'x', count: 3 })
   })
 })
 
@@ -415,7 +413,7 @@ describe('parseOptions', () => {
       validateUnknown(schema, { name: 'Test', extra: 'field' })
     )
 
-    expect(result).toEqual(asValidated({ name: 'Test' }))
+    expect(result).toEqual({ name: 'Test' })
   })
 
   test('validateUnknown rejects excess properties with onExcessProperty error', () => {
@@ -474,7 +472,7 @@ describe('parseOptions', () => {
     const inputWithExtraField = { name: 'Test', extra: 'field' }
 
     const exit = Effect.runSyncExit(
-      validate(
+      validateUnknown(
         schema,
         inputWithExtraField,
         { parseOptions: { onExcessProperty: 'error' } }
@@ -503,7 +501,7 @@ describe('validateRequest', () => {
     expect(Exit.isSuccess(exit)).toBe(true)
 
     if (Exit.isSuccess(exit)) {
-      expect(exit.value).toEqual(asValidated({ id: '123', name: 'Test' }))
+      expect(exit.value).toEqual({ id: '123', name: 'Test' })
     }
   })
 

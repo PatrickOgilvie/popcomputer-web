@@ -1,12 +1,11 @@
-/** Authentication and authorization exports for @popcomputer/web. */
+/**
+ * `@popcomputer/web/auth`: the Better Auth integration.
+ *
+ * Generic guards (`authorize`, `currentUser`, `RequireAuthLayer`,
+ * `RequireGuestLayer`) and the auth services live in `@popcomputer/web/effect`.
+ */
 
 export {
-  RequireAuthLayer,
-  RequireGuestLayer,
-  isAuthenticated,
-  currentUser,
-  requireAuth,
-  requireGuest,
   shareAuth,
   shareAuthMiddleware,
   effectAuthRoutes,
@@ -24,18 +23,3 @@ export {
   type BetterAuthEffectApi,
   type BetterAuthEffectClient,
 } from './effect/auth.js'
-
-// Re-export auth-related services
-export {
-  AuthService,
-  AuthUserService,
-  type AuthUser,
-} from './effect/services.js'
-
-// Re-export auth-related errors
-export {
-  UnauthorizedError,
-  ForbiddenError,
-  AuthRateLimitError,
-  AuthRedirect,
-} from './effect/errors.js'

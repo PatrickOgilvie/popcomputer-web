@@ -1,13 +1,15 @@
-/** Common Effect Schema validators for web requests. */
+/**
+ * `@popcomputer/web/schema`: Effect Schema validators for request input.
+ *
+ * They accept form posts as well as JSON. Validate with `validateRequest` from
+ * `@popcomputer/web/effect`.
+ */
 
 // Schema Validators (Effect Schema based)
 export {
-  // Re-export Schema namespace
-  S,
   // String types
   trimmed,
   nullableString,
-  optionalString,
   requiredString,
   required,
   alpha,
@@ -75,22 +77,3 @@ export {
   filled,
   excludeIf,
 } from './effect/schema.js'
-
-// Validation Helpers
-export {
-  getValidationData,
-  formatSchemaErrors,
-  createBodyParseValidationError,
-  validate,
-  validateUnknown,
-  validateRequest,
-  asValidated,
-  asTrusted,
-  type Validated,
-  type Trusted,
-  type RequestValidationSource,
-  type RequestValidationProfile,
-  type RequestValidationConflict,
-  type RequestValidationOptions,
-  type RequestValidationConfig,
-} from './effect/validation.js'

@@ -396,32 +396,6 @@ function isRedirect<Value>(value: Value): value is Value & Redirect {
   return value instanceof Redirect
 }
 
-/**
- * Wrap an Effect into a Hono handler.
- */
-export function effectHandler<E extends Env, R, Err extends AppError>(
-  effect: Effect.Effect<Response | Redirect, Err, R>
-): MiddlewareHandler<E> {
-  // oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
-  return async (c) => {
-    const runtime = getEffectRuntime(c)
-
-    if (!runtime) {
-      // No runtime set up, create one for this request
-      const layer = buildContextLayer(c, getEffectBridgeConfig(c))
-      const tempRuntime = ManagedRuntime.make(layer)
-
-      try {
-        return await runEffectWithRuntime(effect, c, tempRuntime)
-      } finally {
-        await disposeRequestRuntime(c, tempRuntime)
-      }
-    }
-
-    return runEffectWithRuntime(effect, c, runtime)
-  }
-}
-
 /** Run one handler Effect with a caller-owned managed runtime. */
 // oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
 export async function runEffectWithRuntime<
@@ -567,20 +541,6 @@ async function handleExit<E extends Env>(
 
   return renderErrorResponse(fallbackError, c, boundaryConfig)
 }
-
-/**
- * Create a handler from a function that returns an Effect.
- */
-export function effect<E extends Env, R, Err extends AppError>(
-  fn: () => Effect.Effect<Response | Redirect, Err, R>
-): MiddlewareHandler<E> {
-  return effectHandler(Effect.suspend(fn))
-}
-
-/**
- * Create a handler from an Effect directly.
- */
-export const handle = effectHandler
 
 /**
  * Get structured error from a thrown error (if available).

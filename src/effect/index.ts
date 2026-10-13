@@ -1,7 +1,9 @@
 /**
- * Effect Module Barrel Export
+ * `@popcomputer/web/effect`: everything an action and its routes use.
  *
- * Re-exports all Effect-related functionality.
+ * Validators live in `@popcomputer/web/schema`, the Better Auth integration in
+ * `@popcomputer/web/auth`, the KV data cache in `@popcomputer/web/cache` and
+ * test seams in `@popcomputer/web/testing`.
  */
 
 // Services
@@ -12,18 +14,13 @@ export {
   PageService,
   RequestService,
   RequestStateService,
-  ResponseFactoryService,
   BindingsService,
-  CacheService,
-  CacheClientError,
   ExecutionContextService,
   authorize,
   type AuthUser,
   type PageRenderer,
   type RequestContext,
   type RequestStateClient,
-  type ResponseFactory,
-  type CacheClient,
   type ExecutionContextClient,
   type WebDatabaseType,
   type WebAuthType,
@@ -41,7 +38,6 @@ export {
   ResponseCacheService,
   ResponseCachePurgeError,
   PAGE_CACHE_TAG,
-  deriveCacheTags,
   type ResponseCacheClient,
   type ResponseCachePurgeInput,
   type RouteCacheOptions,
@@ -64,36 +60,11 @@ export {
   RouteConfigurationError,
   ConfigurationError,
   Redirect,
-  isStructuredError,
-  toStructuredError,
   type AppError,
-  type StructuredErrorCapable,
 } from './errors.js'
 
-// Error Types
-export type {
-  ErrorCategory,
-  ErrorContext,
-  SourceLocation,
-  CodeSnippet,
-  RouteContext,
-  HandlerContext,
-  RequestContext as ErrorRequestContext,
-  ServiceContext,
-  FixType,
-  FixPosition,
-  FixOperation,
-  PostAction,
-  FixSuggestion,
-  ErrorDocs,
-  StructuredError,
-  FieldError,
-  ValidationErrorData,
-  ConfigurationErrorData,
-  BindingErrorData,
-  ErrorDefinition,
-  FixGenerator,
-} from './error-types.js'
+export { ErrorCodes, type ErrorCode } from './error-catalog.js'
+export type { StructuredError, FieldError } from './error-types.js'
 
 // Error Observer
 export {
@@ -102,65 +73,14 @@ export {
   type EffectErrorEvent,
 } from './error-observer.js'
 
-// Error Catalog
+// Validation
 export {
-  ErrorCodes,
-  ErrorCatalog,
-  createStructuredError,
-  getConfigErrorCode,
-  getErrorDefinition,
-  getErrorsByCategory,
-  type ErrorCode,
-} from './error-catalog.js'
-
-// Error Formatters
-export {
-  JsonErrorFormatter,
-  TerminalErrorFormatter,
-  InertiaErrorFormatter,
-  detectOutputFormat,
-  createFormatter,
-  type ErrorFormatter,
-  type JsonFormatterOptions,
-  type TerminalFormatterOptions,
-  type InertiaFormatterOptions,
-  type OutputFormat,
-  type FormatDetectionContext,
-} from './error-formatter.js'
-
-// Error Context
-export {
-  captureErrorContext,
-  captureEnhancedContext,
-  parseStackTrace,
-  findUserFrame,
-  createSourceLocation,
-  createCodeSnippet,
-  withHandlerContext,
-  withServiceContext,
-  mergeContexts,
-  emptyContext,
-  type StackFrame,
-  type EnhancedErrorContext,
-} from './error-context.js'
-
-// Schema Validators
-export * from './schema.js'
-
-// Validation Helpers
-export {
-  getValidationData,
-  formatSchemaErrors,
-  formatSchemaErrorsWithDetails,
   createBodyParseValidationError,
-  validate,
   validateUnknown,
   validateRequest,
-  asValidated,
   asTrusted,
   type Validated,
   type Trusted,
-  type FormattedSchemaErrors,
   type RequestValidationSource,
   type RequestValidationProfile,
   type RequestValidationConflict,
@@ -177,30 +97,13 @@ export {
 } from './validated-services.js'
 
 // Bridge
-export {
-  effectBridge,
-  buildContextLayer,
-  getEffectRuntime,
-  getEffectSchema,
-  getEffectBindings,
-  type EffectBridgeConfig,
-} from './bridge.js'
-
-// Handler
-export {
-  effectHandler,
-  effect,
-  handle,
-  errorToResponse,
-  getStructuredFromThrown,
-} from './handler.js'
+export { effectBridge, type EffectBridgeConfig } from './bridge.js'
 
 // Action Composables
 export {
   action,
   dbMutation,
   dbTransaction,
-  classifyDatabaseFailure,
   mergeMutationInput,
   type SafeTx,
   type MutationInput,
@@ -238,9 +141,6 @@ export {
 export {
   RouteRegistry,
   getAppRouteRegistry,
-  findAppRouteRegistry,
-  getGlobalRegistry,
-  resetGlobalRegistry,
   type HttpMethod,
   type RouteMetadata,
   type RouteMetadataJson,
@@ -252,10 +152,6 @@ export {
   BoundModels,
   bound,
   routeBinding,
-  pluralize,
-  parseBindings,
-  toHonoPath,
-  type ParsedBinding,
   type BoundModel,
   type RouteBindingScope,
   type RouteBindingOptions,
@@ -265,41 +161,10 @@ export {
   type WebRouteBindingsType,
 } from './binding.js'
 
-// Cache
-export {
-  CacheError,
-  cache,
-  cacheGet,
-  cacheSet,
-  cacheInvalidate,
-  cacheInvalidatePrefix,
-  type CacheOptions,
-  type CacheGetOptions,
-  type CacheInvalidateOptions,
-} from '../cache.js'
-
-// Auth
+// Auth guards
 export {
   RequireAuthLayer,
   RequireGuestLayer,
   createGuestLayer,
-  isAuthenticated,
   currentUser,
-  requireAuth,
-  requireGuest,
-  shareAuth,
-  shareAuthMiddleware,
-  effectAuthRoutes,
-  betterAuthFormAction,
-  betterAuthLogoutAction,
-  effectifyBetterAuth,
-  loadUser,
-  type AuthRoutesConfig,
-  type BetterAuthFormActionConfig,
-  type BetterAuthLogoutConfig,
-  type BetterAuthActionResult,
-  type BetterAuthActionError,
-  type BetterAuthBoundaryFailure,
-  type BetterAuthEffectApi,
-  type BetterAuthEffectClient,
 } from './auth.js'

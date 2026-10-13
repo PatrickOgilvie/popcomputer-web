@@ -149,49 +149,11 @@ export function createGuestLayer(
 }
 
 /**
- * Check if user is authenticated without failing.
- */
-export const isAuthenticated: Effect.Effect<boolean, never, never> =
-  Effect.serviceOption(AuthUserService).pipe(Effect.map(Option.isSome))
-
-/**
  * Get the current user if authenticated.
  */
 export const currentUser: Effect.Effect<AuthUser | null, never, never> =
   Effect.serviceOption(AuthUserService).pipe(
     Effect.map((option) => (Option.isSome(option) ? option.value : null))
-  )
-
-/**
- * Require authentication or redirect.
- */
-export const requireAuth = (
-  redirectTo = '/login'
-): Effect.Effect<AuthUser, UnauthorizedError, never> =>
-  Effect.serviceOption(AuthUserService).pipe(
-    Effect.flatMap((option) => {
-      if (Option.isNone(option)) {
-        return Effect.fail(new UnauthorizedError({ message: 'Unauthenticated', redirectTo }))
-      }
-
-      return Effect.succeed(option.value)
-    })
-  )
-
-/**
- * Require guest status or redirect.
- */
-export const requireGuest = (
-  redirectTo = '/'
-): Effect.Effect<void, UnauthorizedError, never> =>
-  Effect.serviceOption(AuthUserService).pipe(
-    Effect.flatMap((option) => {
-      if (Option.isSome(option)) {
-        return Effect.fail(new UnauthorizedError({ message: 'Already authenticated', redirectTo }))
-      }
-
-      return Effect.void
-    })
   )
 
 /**

@@ -8,7 +8,7 @@ import {
   betterAuthFormAction,
   effectifyBetterAuth,
 } from '../../src/effect/auth.js'
-import { effectHandler } from '../../src/effect/handler.js'
+import { effectRoutes } from '../../src/effect/routing.js'
 import { ValidationError } from '../../src/effect/errors.js'
 import { AuthService, RequestService } from '../../src/effect/services.js'
 import { setupWeb } from '../../src/setup.js'
@@ -252,7 +252,7 @@ describe('betterAuthFormAction with Better Auth', () => {
         client: () => auth,
       },
     })
-    app.post('/login', effectHandler(action))
+    effectRoutes(app).post('/login', action)
 
     const response = await app.request('/login', {
       method: 'POST',
@@ -302,7 +302,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       render: (page) => JSON.stringify(page),
       auth: { client: () => auth },
     })
-    app.post('/login', effectHandler(action))
+    effectRoutes(app).post('/login', action)
 
     const response = await app.request('/login', {
       method: 'POST',
@@ -356,7 +356,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       render: (page) => JSON.stringify(page),
       auth: { client: () => auth },
     })
-    app.post('/login', effectHandler(action))
+    effectRoutes(app).post('/login', action)
 
     const response = await app.request('/login', {
       method: 'POST',
@@ -400,7 +400,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       render: (page) => JSON.stringify(page),
       auth: { client: () => auth },
     })
-    app.post('/login', effectHandler(action))
+    effectRoutes(app).post('/login', action)
 
     const response = await app.request('/login', {
       method: 'POST',
@@ -446,7 +446,7 @@ describe('betterAuthFormAction with Better Auth', () => {
       render: (page) => JSON.stringify(page),
       auth: { client: () => auth },
     })
-    app.post('/login', effectHandler(action))
+    effectRoutes(app).post('/login', action)
 
     const response = await app.request('/login', {
       method: 'POST',

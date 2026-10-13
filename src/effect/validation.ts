@@ -378,10 +378,8 @@ export const ValidatedBrand = Symbol('ValidatedBrand')
 
 export type Validated<A> = A & { readonly [ValidatedBrand]: true }
 
-/**
- * Mark data as validated (type-level only).
- */
-export const asValidated = <A>(input: A): Validated<A> => {
+/** Mark data as validated (type-level only), immediately after schema validation. */
+const asValidated = <A>(input: A): Validated<A> => {
   // SAFETY: Validated is a type-only brand applied immediately after schema validation.
   return input as Validated<A>
 }
@@ -526,18 +524,6 @@ function runValidation<A, I, Input>(
     }),
     Effect.map((value) => asValidated(value))
   )
-}
-
-/**
- * Validate data against a schema.
- * Returns validated data or fails with ValidationError.
- */
-export function validate<A, I>(
-  schema: S.Codec<A, I>,
-  data: I,
-  options: ValidateOptions = {}
-): Effect.Effect<Validated<A>, ValidationError, never> {
-  return runValidation(schema, data, options)
 }
 
 /**

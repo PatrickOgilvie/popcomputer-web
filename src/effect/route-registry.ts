@@ -368,7 +368,6 @@ export class RouteRegistry {
  * Global route registry instance.
  * Used when no custom registry is provided to effectRoutes().
  */
-let globalRegistry: RouteRegistry | null = null
 
 const appRegistries = new WeakMap<object, RouteRegistry>()
 
@@ -382,27 +381,4 @@ export function getAppRouteRegistry<App extends object>(app: App): RouteRegistry
   appRegistries.set(app, registry)
 
   return registry
-}
-
-/** Read an application's registry without creating one. */
-export function findAppRouteRegistry<App extends object>(app: App): RouteRegistry | undefined {
-  return appRegistries.get(app)
-}
-
-/**
- * Get the global route registry.
- * Creates one if it doesn't exist.
- */
-export function getGlobalRegistry(): RouteRegistry {
-  globalRegistry ??= new RouteRegistry()
-
-  return globalRegistry
-}
-
-/**
- * Reset the global registry.
- * Useful for testing.
- */
-export function resetGlobalRegistry(): void {
-  globalRegistry = null
 }

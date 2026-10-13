@@ -366,3 +366,5 @@ export const cacheInvalidatePrefix = (
       cursor = page.cursor
     }
   })
+
+export { CacheService, CacheClientError, type CacheClient } from './effect/services.js'

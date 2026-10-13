@@ -499,10 +499,8 @@ describe('cache route option', () => {
 
   test('the page tag is public API', async () => {
     const effect = await import('../../src/effect/index.js')
-    const root = await import('../../src/index.js')
 
     expect(effect.PAGE_CACHE_TAG).toBe('popweb:page')
-    expect(root.PAGE_CACHE_TAG).toBe('popweb:page')
   })
 
   test('routes without the cache option are untouched', async () => {

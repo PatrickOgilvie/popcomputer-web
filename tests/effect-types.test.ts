@@ -15,10 +15,7 @@ import {
   effectRoutes,
   RequireAuthLayer,
   bound,
-  pluralize,
-  asValidated,
   asTrusted,
-  validate,
   validateUnknown,
   dbMutation,
   dbTransaction,
@@ -33,6 +30,7 @@ import {
   type Trusted,
   type SafeTx,
 } from '../src/effect/index.js'
+import { pluralize } from '../src/effect/binding.js'
 
 // ============================================================================
 // Test Utilities
@@ -308,11 +306,6 @@ type SpreadResult = object extends Validated<UserInput> ? true : false
 
 const _spreadDropsBrand: SpreadResult = false
 
-// asValidated creates Validated type
-const validatedInput = asValidated({ name: 'test', email: 'test@test.com' })
-
-const _validatedType: Validated<{ name: string; email: string }> = validatedInput
-
 // asTrusted creates Trusted type
 const trustedInput = asTrusted({ name: 'test', email: 'test@test.com' })
 
@@ -399,17 +392,6 @@ const _testValidateTyping = Effect.gen(function* () {
     quantity: S.FiniteFromString,
   })
 
-  // Typed validate enforces schema-encoded input at compile time
-  yield* validate(transactionSchema, {
-    status: 'pending',
-    quantity: '2',
-  })
-
-  // @ts-expect-error typo in field name should fail compile-time
-  yield* validate(transactionSchema, {
-    sttaus: 'pending',
-    quantity: '2',
-  })
 
   const raw = {
     status: 'pending',
@@ -487,8 +469,7 @@ describe('Effect type tests', () => {
     // Spreading should drop the brand
     expect(_spreadDropsBrand).toBe(false)
 
-    // asValidated/asTrusted create properly branded values
-    expect(_validatedType).toBeDefined()
+    // asTrusted creates a properly branded value
     expect(_trustedType).toBeDefined()
   })
 

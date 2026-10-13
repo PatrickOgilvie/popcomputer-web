@@ -12,13 +12,11 @@ import {
   betterAuthLogoutAction,
   RequireAuthLayer,
   RequireGuestLayer,
-  isAuthenticated,
   currentUser,
-  requireAuth,
-  requireGuest,
   shareAuth,
 } from '../../src/effect/auth.js'
 import {
+  authorize,
   AuthService,
   RequestService,
   AuthUserService,
@@ -138,25 +136,6 @@ describe('RequireGuestLayer', () => {
   })
 })
 
-describe('isAuthenticated', () => {
-  test('returns true when user is present', async () => {
-    const mockUser = createMockUser()
-    const layer = Layer.succeed(AuthUserService, mockUser)
-
-    const result = await Effect.runPromise(
-      Effect.provide(isAuthenticated, layer)
-    )
-
-    expect(result).toBe(true)
-  })
-
-  test('returns false when no user', () => {
-    // Without AuthUserService, should return false
-    const result = Effect.runSync(isAuthenticated)
-    expect(result).toBe(false)
-  })
-})
-
 describe('currentUser', () => {
   test('returns user when authenticated', async () => {
     const mockUser = createMockUser({ name: 'Jane Doe' })
@@ -173,94 +152,6 @@ describe('currentUser', () => {
   test('returns null when not authenticated', () => {
     const result = Effect.runSync(currentUser)
     expect(result).toBeNull()
-  })
-})
-
-describe('requireAuth', () => {
-  test('returns user when authenticated', async () => {
-    const mockUser = createMockUser()
-    const layer = Layer.succeed(AuthUserService, mockUser)
-
-    const result = await Effect.runPromise(
-      Effect.provide(requireAuth(), layer)
-    )
-
-    expect(result.user.id).toBe('user-123')
-  })
-
-  test('fails with UnauthorizedError when not authenticated', () => {
-    const exit = Effect.runSyncExit(requireAuth())
-
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error._tag).toBe('UnauthorizedError')
-        expect(error.redirectTo).toBe('/login')
-      }
-    }
-  })
-
-  test('uses custom redirect URL', () => {
-    const exit = Effect.runSyncExit(requireAuth('/signin'))
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error.redirectTo).toBe('/signin')
-      }
-    }
-  })
-})
-
-describe('requireGuest', () => {
-  test('succeeds when not authenticated', () => {
-    const result = Effect.runSync(requireGuest())
-    expect(result).toBeUndefined()
-  })
-
-  test('fails with UnauthorizedError when authenticated', async () => {
-    const mockUser = createMockUser()
-    const layer = Layer.succeed(AuthUserService, mockUser)
-
-    const exit = await Effect.runPromiseExit(
-      Effect.provide(requireGuest(), layer)
-    )
-
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error._tag).toBe('UnauthorizedError')
-        expect(error.redirectTo).toBe('/')
-      }
-    }
-  })
-
-  test('uses custom redirect URL', async () => {
-    const mockUser = createMockUser()
-    const layer = Layer.succeed(AuthUserService, mockUser)
-
-    const exit = await Effect.runPromiseExit(
-      Effect.provide(requireGuest('/dashboard'), layer)
-    )
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error.redirectTo).toBe('/dashboard')
-      }
-    }
   })
 })
 
@@ -1228,7 +1119,7 @@ describe('Auth flow patterns', () => {
     const mockUser = createMockUser()
 
     const protectedHandler = Effect.gen(function* () {
-      const user = yield* requireAuth()
+      const user = yield* authorize()
 
       return `Welcome, ${user.user.name}!`
     })
@@ -1241,7 +1132,9 @@ describe('Auth flow patterns', () => {
 
   test('guest-only route pattern', () => {
     const guestHandler = Effect.gen(function* () {
-      yield* requireGuest()
+      if (yield* currentUser) {
+        return 'Already signed in'
+      }
 
       return 'Login page'
     })
@@ -1274,9 +1167,9 @@ describe('Auth flow patterns', () => {
 
   test('auth check without failing', async () => {
     const checkHandler = Effect.gen(function* () {
-      const authed = yield* isAuthenticated
+      const user = yield* currentUser
 
-      return authed ? 'Logged in' : 'Logged out'
+      return user ? 'Logged in' : 'Logged out'
     })
 
     const guestResult = Effect.runSync(checkHandler)

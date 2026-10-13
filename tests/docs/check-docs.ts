@@ -7,8 +7,8 @@
  *
  * - A fence whose first line is `// src/<path>.ts` becomes that file, exactly
  *   as written. It must import everything it uses.
- * - Any other fence is a fragment. It gets a one-line prelude importing the
- *   package's public values, common Effect modules, the README's `app` and the
+ * - Any other fence is a fragment. It gets a one-line prelude importing every
+ *   entrypoint's public values, common Effect modules, the README's `app` and the
  *   stubs in `app/src/doc-stubs.ts`, minus names the fragment declares or
  *   imports itself. A fragment that uses `yield*` outside a generator is
  *   wrapped in `Effect.gen`.
@@ -40,6 +40,16 @@ interface OutputLine {
 }
 
 const FILE_HEADER = /^\/\/ (src\/[\w./-]+\.tsx?)$/
+
+/** Package entrypoints and the source module each one serves. */
+const ENTRYPOINTS: Readonly<Record<string, string>> = {
+  '@popcomputer/web': 'index.ts',
+  '@popcomputer/web/effect': 'effect/index.ts',
+  '@popcomputer/web/schema': 'schema.ts',
+  '@popcomputer/web/auth': 'auth.ts',
+  '@popcomputer/web/cache': 'cache.ts',
+  '@popcomputer/web/testing': 'testing.ts',
+}
 const TS_LANGS = new Set(['ts', 'tsx', 'typescript'])
 
 function readFences(document: string, markdown: string): Fence[] {
@@ -117,7 +127,7 @@ function importLine(names: ReadonlyArray<string>, from: string): string {
 
 function buildFragment(
   fence: Fence,
-  packageValues: ReadonlyArray<string>,
+  entrypointValues: ReadonlyMap<string, ReadonlyArray<string>>,
   stubNames: ReadonlyArray<string>
 ): OutputLine[] {
   const source = fence.lines.join('\n')
@@ -127,7 +137,11 @@ function buildFragment(
   const effectNames = free(['Effect', 'Duration', 'Layer', 'Context'])
   const fromEffect = new Set([...effectNames, 'S'])
   const prelude =
-    importLine(free(packageValues).filter((name) => !fromEffect.has(name)), '@popcomputer/web') +
+    [...entrypointValues]
+      .map(([entrypoint, names]) =>
+        importLine(free(names).filter((name) => !fromEffect.has(name)), entrypoint)
+      )
+      .join('') +
     importLine(effectNames, 'effect') +
     (taken.has('S') ? '' : "import { Schema as S } from 'effect'; ") +
     (taken.has('app') ? '' : "import app from '../app'; ") +
@@ -170,8 +184,12 @@ async function main(): Promise<number> {
   const fences = documents.flatMap((document) =>
     readFences(document, readFileSync(join(repoRoot, document), 'utf8'))
   )
-  const packageModule: Record<string, unknown> = await import(join(repoRoot, 'src', 'index.ts'))
-  const packageValues = Object.keys(packageModule).filter((name) => name !== 'default')
+  const entrypointValues = new Map<string, ReadonlyArray<string>>()
+
+  for (const [entrypoint, source] of Object.entries(ENTRYPOINTS)) {
+    const module: Record<string, unknown> = await import(join(repoRoot, 'src', source))
+    entrypointValues.set(entrypoint, Object.keys(module).filter((name) => name !== 'default'))
+  }
   const stubNames = exportedNames(readFileSync(join(stubAppDir, 'src', 'doc-stubs.ts'), 'utf8'))
 
   rmSync(outDir, { recursive: true, force: true })
@@ -195,7 +213,7 @@ async function main(): Promise<number> {
           text,
           source: { document: fence.document, line: fence.startLine + index },
         }))
-      : buildFragment(fence, packageValues, stubNames)
+      : buildFragment(fence, entrypointValues, stubNames)
 
     mkdirSync(dirname(target), { recursive: true })
     writeFileSync(target, output.map((line) => line.text).join('\n') + '\n')
@@ -212,15 +230,9 @@ async function main(): Promise<number> {
           noEmit: true,
           declaration: false,
           rootDir: repoRoot,
-          paths: {
-            '@popcomputer/web': [src('index.ts')],
-            '@popcomputer/web/effect': [src('effect/index.ts')],
-            '@popcomputer/web/schema': [src('schema.ts')],
-            '@popcomputer/web/auth': [src('auth.ts')],
-            '@popcomputer/web/cache': [src('cache.ts')],
-            '@popcomputer/web/react': [src('react.ts')],
-            '@popcomputer/web/testing': [src('testing.ts')],
-          },
+          paths: Object.fromEntries(
+            Object.entries(ENTRYPOINTS).map(([entrypoint, source]) => [entrypoint, [src(source)]])
+          ),
         },
         include: ['src/**/*'],
         exclude: [],

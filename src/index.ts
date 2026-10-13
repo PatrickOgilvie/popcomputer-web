@@ -1,4 +1,11 @@
-/** Main entry point for @popcomputer/web. */
+/**
+ * `@popcomputer/web`: application composition and Hono-level APIs.
+ *
+ * Actions and routes import from `@popcomputer/web/effect`, validators from
+ * `@popcomputer/web/schema`, the Better Auth integration from
+ * `@popcomputer/web/auth`, the KV cache from `@popcomputer/web/cache` and test
+ * seams from `@popcomputer/web/testing`.
+ */
 
 // =============================================================================
 // Core (Setup, Middleware, Types, Helpers)
@@ -50,21 +57,7 @@ export type {
 export {
   createTemplate,
   createVersion,
-  serializePage,
   vite,
   type PageProps,
   type ViteDevServer,
 } from './helpers.js'
-
-// =============================================================================
-// Re-exports for convenience (deprecated - use subpath imports instead)
-// =============================================================================
-
-// Effect Integration - prefer: import { ... } from '@popcomputer/web/effect'
-export * from './effect/index.js'
-
-// Schema Validators - prefer: import { ... } from '@popcomputer/web/schema'
-// (already included via effect/index.js)
-
-// Auth - prefer: import { ... } from '@popcomputer/web/auth'
-// (already included via effect/index.js)
