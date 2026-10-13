@@ -216,12 +216,14 @@ A component a page renders takes its props from the same declaration:
 `project` prop as the browser receives it.
 
 A form's fields derive from the schema its action validates them with:
-`useForm<FormInput<typeof CreateLease>>({ ... })`, `FormInput` from
+`useForm<FormInput<typeof CreateProject>>({ ... })`, `FormInput` from
 `@popcomputer/web/react`, so a renamed field is a type error in the form as
-well as the action, and `const errors: FormErrors<typeof CreateLease> =
+well as the action, and `const errors: FormErrors<typeof CreateProject> =
 props.errors` types the errors the form reads by the same fields. Keep form
-schemas in a module both sides import, such as `src/forms.ts`, and import
-them in React with `import type`, so no server code reaches the browser.
+schemas in a module both sides import, `src/forms.ts`, and import them in
+React with `import type`, so no server code reaches the browser.
+[Write the client](#5-write-the-client) shows a form page, the error page and
+the client's page map.
 
 A renamed prop, a missing page or a `Date` used as a `Date` in the browser is a
 type error on the side that drifted.
@@ -559,6 +561,200 @@ const sharedRoutes = routes.provide(shareProps(Effect.gen(function* () {
 })))
 ```
 
+### 5. Write the client
+
+Each form's fields are a schema in a module the action and the page both
+import. The action validates with it; the page imports it with `import type`,
+so no server code reaches the bundle, and types its form with `FormInput`:
+
+```ts
+// src/forms.ts
+import { Schema as S } from 'effect'
+import { alphaDash, email, nullableString, requiredString } from '@popcomputer/web/schema'
+
+export const CreateProject = S.Struct({
+  name: requiredString,
+  slug: alphaDash,
+  description: nullableString,
+})
+
+export const SignIn = S.Struct({ email, password: requiredString })
+```
+
+A page reads its props, the shared props and `errors` from its declaration in
+`src/pages.ts`, and its flash values from `usePage()`. A failed post comes
+back to the page it was sent from, with the field errors in the form's
+`errors`:
+
+```tsx
+// src/pages/Projects/Index.tsx
+import { Link, useForm, usePage } from '@inertiajs/react'
+import type { FormEvent } from 'react'
+import { href } from '@popcomputer/web/paths'
+import type { FormInput, WebPage } from '@popcomputer/web/react'
+import type { CreateProject } from '../../forms'
+import { paths } from '../../paths'
+
+const Index: WebPage<'Projects/Index'> = ({ projects }) => {
+  const { flash } = usePage()
+  const form = useForm<FormInput<typeof CreateProject>>({ name: '', slug: '', description: null })
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    form.post(paths.projects, { onSuccess: () => form.reset() })
+  }
+
+  return (
+    <main>
+      {flash.success && <p role="status">{flash.success}</p>}
+
+      <ul>
+        {projects.map((project) => (
+          <li key={project.id}>
+            <Link href={href(paths.project, { project: project.id })}>{project.name}</Link>
+          </li>
+        ))}
+      </ul>
+
+      <form onSubmit={submit}>
+        <label>
+          Name
+          <input value={form.data.name} onChange={(event) => form.setData('name', event.target.value)} />
+        </label>
+        {form.errors.name && <p role="alert">{form.errors.name}</p>}
+
+        <label>
+          Slug
+          <input value={form.data.slug} onChange={(event) => form.setData('slug', event.target.value)} />
+        </label>
+        {form.errors.slug && <p role="alert">{form.errors.slug}</p>}
+
+        <label>
+          Description
+          <textarea
+            value={form.data.description ?? ''}
+            onChange={(event) => form.setData('description', event.target.value === '' ? null : event.target.value)}
+          />
+        </label>
+
+        <button type="submit" disabled={form.processing}>Create project</button>
+      </form>
+    </main>
+  )
+}
+
+export default Index
+```
+
+```tsx
+// src/pages/Auth/Login.tsx
+import { useForm } from '@inertiajs/react'
+import type { FormEvent } from 'react'
+import type { FormInput, WebPage } from '@popcomputer/web/react'
+import type { SignIn } from '../../forms'
+import { paths } from '../../paths'
+
+const Login: WebPage<'Auth/Login'> = () => {
+  const form = useForm<FormInput<typeof SignIn>>({ email: '', password: '' })
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    form.post(paths.login, { onFinish: () => form.reset('password') })
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <label>
+        Email
+        <input type="email" value={form.data.email} onChange={(event) => form.setData('email', event.target.value)} />
+      </label>
+      {form.errors.email && <p role="alert">{form.errors.email}</p>}
+
+      <label>
+        Password
+        <input type="password" value={form.data.password} onChange={(event) => form.setData('password', event.target.value)} />
+      </label>
+
+      <button type="submit" disabled={form.processing}>Sign in</button>
+    </form>
+  )
+}
+
+export default Login
+```
+
+Shared props, such as the unread count `shareProps` computes, arrive on every
+page beside its own props. A route that does not provide them leaves them
+out, so a page reads them as optional:
+
+```tsx
+// src/pages/Dashboard.tsx
+import type { WebPage } from '@popcomputer/web/react'
+
+const Dashboard: WebPage<'Dashboard'> = ({ auth, unreadCount }) => (
+  <main>
+    <h1>{auth.user ? `Welcome back, ${auth.user.name}` : 'Welcome'}</h1>
+    {unreadCount !== undefined && <p>{unreadCount} unread</p>}
+  </main>
+)
+
+export default Dashboard
+```
+
+The error page is setupWeb's `errors.component`. The boundary renders it for
+every failure a page visit ends with, a 404, a 403 or a 500, with the
+failure's status, title and message; in development it adds a hint:
+
+```tsx
+// src/pages/Error.tsx
+import type { WebErrorPage } from '@popcomputer/web/react'
+import { paths } from '../paths'
+
+const ErrorPage: WebErrorPage = ({ status, title, message, hint, auth }) => (
+  <main>
+    <h1>{status}: {title}</h1>
+    <p>{message}</p>
+    {hint && <pre>{hint}</pre>}
+    <a href={auth.user ? paths.dashboard : paths.login}>{auth.user ? 'Back to your dashboard' : 'Sign in'}</a>
+  </main>
+)
+
+export default ErrorPage
+```
+
+The client maps every registered page to its component. The map's type makes
+a page without a component a type error, and the error page, which is not a
+registered page, answers any other name:
+
+```tsx
+// src/main.tsx
+import { createInertiaApp } from '@inertiajs/react'
+import type { PageName } from '@popcomputer/web/effect'
+import type { WebPage } from '@popcomputer/web/react'
+import Login from './pages/Auth/Login'
+import Dashboard from './pages/Dashboard'
+import ErrorPage from './pages/Error'
+import ProjectsIndex from './pages/Projects/Index'
+import ProjectsShow from './pages/Projects/Show'
+
+const components: { readonly [Name in PageName]: WebPage<Name> } = {
+  'Projects/Index': ProjectsIndex,
+  'Projects/Show': ProjectsShow,
+  'Auth/Login': Login,
+  Dashboard,
+}
+
+const isPage = (name: string): name is PageName => name in components
+
+void createInertiaApp({
+  resolve: (name) => (isPage(name) ? components[name] : ErrorPage),
+})
+```
+
+`createTemplate`'s `scripts` loads this module, built by Vite or another
+bundler; `createVersion(manifest)` changes with every build, so a visitor on
+an old build reloads into the new one.
+
 ## Data flow
 
 ```mermaid
@@ -663,7 +859,7 @@ export const ProjectsLive: Layer.Layer<Projects> = Layer.succeed(Projects, Proje
 ## Validation and the database
 
 ```ts
-import { Effect, Schema as S } from 'effect'
+import { Effect } from 'effect'
 import {
   action,
   authorize,
@@ -671,15 +867,9 @@ import {
   redirect,
   validateRequest,
 } from '@popcomputer/web/effect'
-import { alphaDash, requiredString } from '@popcomputer/web/schema'
+import { CreateProject } from '../forms'
 import { paths } from '../paths'
 import { projects } from '../schema'
-
-const CreateProject = S.Struct({
-  name: requiredString,
-  slug: alphaDash,
-  description: S.optional(S.String),
-})
 
 export const createProject = action(
   Effect.gen(function* () {

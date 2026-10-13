@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `testBrowser(app, env).follow(res)` follows any redirect, keeping the cookies it set, including one a test requested with `app.request`. `followRedirect(app, res, env)` is removed: use `testBrowser(app, env).follow(res)`.
 
+- The README's Quick start has a fifth step, "Write the client". It covers a form page typed with `FormInput`, the sign-in page, a page reading shared props, the error page, and `main.tsx`, whose page map makes a page without a component a type error. Form schemas live in `src/forms.ts`, which actions and pages both import. The README's React examples type-check against `@inertiajs/react`.
 - The README's upgrade guide from 0.7 shows the 0.7 code each step replaces. It adds the steps it missed: imports from one entrypoint and the removed synonyms, the removed route validation options, and the CLI. It also lists the changes no type error points at, such as origin verification and upload families. The webhook pattern refuses through `httpError` and acknowledges with `noContent`.
 
 ## [0.8.0-next.5] - 2026-10-13
