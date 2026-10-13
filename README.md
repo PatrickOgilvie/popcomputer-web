@@ -809,7 +809,11 @@ A lookup column must name one record within the route's scope: a slug unique
 only within an organization belongs under it, as
 `/orgs/{organization:slug}/events/{event:slug}`. When the column matches more
 than one row, `bound()` fails (`WEB_RTE_605_BINDING_AMBIGUOUS`) instead of
-picking one.
+picking one. A tenant the route takes from the signed-in user rather than
+its path, such as a member's company, does not scope a lookup: put the tenant
+in the path (`/c/{company:slug}/shops/{shop:code}`), which also keeps links
+to another tenant's records from loading, or make the column unique across
+tenants.
 
 A placeholder without a parser in `bindings` is a plain parameter: the action
 reads it with `validateRequest`, as in `/teams/{team}/invites/{token}`, where
