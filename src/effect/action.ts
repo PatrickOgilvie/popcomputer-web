@@ -90,6 +90,17 @@ export function dbMutation<DB, I, T>(
     input: MutationInput<Scope, I>
   ) => Promise<T>
 ): Effect.Effect<T, DatabaseMutationFailed | DatabaseConstraintViolation> {
+  return runMutation(db, inputOrOperation, maybeOperation).pipe(Effect.withSpan('Web.dbMutation'))
+}
+
+function runMutation<DB, I, T>(
+  db: DB,
+  inputOrOperation: (Validated<I> | Trusted<I>) | ((db: SafeTx<DB>) => Promise<T>),
+  maybeOperation?: <Scope extends symbol>(
+    db: ScopedSafeTx<DB, Scope>,
+    input: MutationInput<Scope, I>
+  ) => Promise<T>
+): Effect.Effect<T, DatabaseMutationFailed | DatabaseConstraintViolation> {
   if (inputOrOperation instanceof Function) {
     const operation = inputOrOperation
 
@@ -358,6 +369,23 @@ export function dbTransaction<
 ): Effect.Effect<T, DatabaseTransactionFailed | DatabaseConstraintViolation>
 
 export function dbTransaction<
+  DB extends TransactionDatabase<unknown>,
+  I,
+  T
+>(
+  db: DB,
+  inputOrOperations:
+    | (Validated<I> | Trusted<I>)
+    | ((tx: SafeTx<TransactionClient<DB>>) => Promise<T>),
+  maybeOperations?: <Scope extends symbol>(
+    tx: ScopedSafeTx<TransactionClient<DB>, Scope>,
+    input: MutationInput<Scope, I>
+  ) => Promise<T>
+): Effect.Effect<T, DatabaseTransactionFailed | DatabaseConstraintViolation> {
+  return runTransaction(db, inputOrOperations, maybeOperations).pipe(Effect.withSpan('Web.dbTransaction'))
+}
+
+function runTransaction<
   DB extends TransactionDatabase<unknown>,
   I,
   T

@@ -63,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Public operations run in spans named after them: `Web.authorize`, `Web.validateUnknown`, `Web.validateRequest`, `Web.bound`, `Web.background`, `Web.dbMutation`, `Web.dbTransaction`, `Web.cache`, `Web.cacheGet`, `Web.cacheSet`, `Web.cacheInvalidate` and `Web.cacheInvalidatePrefix`. An application that installs an Effect tracer, such as an OpenTelemetry exporter, sees where request time goes.
 - The package's errors are `Schema.TaggedError` classes instead of `Data.TaggedError`, so their fields are checked when they are constructed. Construction, `_tag`, `Effect.catchTag` and the fields are unchanged; `FieldError.path` is `readonly string[]`.
 - The `hono` peer range is `^4.10.0` (was `>=4.0.0`) and the `drizzle-orm` peer range is `>=0.30.0 <1.0.0` (was `>=0.30.0`). Hono releases before 4.10 fail to type-check the package, and the open upper bounds admitted Hono 5 and Drizzle 1.0, which both break it: Hono 5 removes `c.req.routePath` and changes `app.onError`, and Drizzle 1.0 removes the relation helpers route model binding reads.
 - Tested against Effect 4.0.3, Hono 4.13.13, Better Auth 1.7.7 and Drizzle ORM 0.45.4. Better Auth 1.7 requires an `issuer` column on the `account` table; apps upgrading Better Auth should apply its 1.7 schema migration.

@@ -270,7 +270,7 @@ export const cache = <V, E, R>(
     yield* storeInCache(value)
 
     return value
-  })
+  }).pipe(Effect.withSpan('Web.cache'))
 
 /**
  * Get a value from cache without computing.
@@ -311,7 +311,7 @@ export const cacheGet = <V>(
     )
 
     return entry === undefined ? Option.none<V>() : Option.some(entry.v)
-  })
+  }).pipe(Effect.withSpan('Web.cacheGet'))
 
 /**
  * Set a value in cache.
@@ -350,7 +350,7 @@ export const cacheSet = <V>(
     )
 
     yield* cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
-  })
+  }).pipe(Effect.withSpan('Web.cacheSet'))
 
 export type CacheInvalidateOptions<V> = {
   /** Schema used when caching (required if version is set) */
@@ -383,7 +383,7 @@ export const cacheInvalidate = <V = unknown>(
       : key
 
     yield* cacheService.delete(effectiveKey)
-  })
+  }).pipe(Effect.withSpan('Web.cacheInvalidate'))
 
 /**
  * Invalidate all cache keys with a given prefix.
@@ -419,7 +419,7 @@ export const cacheInvalidatePrefix = (
 
       cursor = page.cursor
     }
-  })
+  }).pipe(Effect.withSpan('Web.cacheInvalidatePrefix'))
 
 export { CacheService, type CacheClient } from './effect/services.js'
 export { CacheError }

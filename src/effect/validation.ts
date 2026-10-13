@@ -509,28 +509,26 @@ function runValidation<A, I, Input>(
  * Validate unknown data against a schema.
  * Use this for raw payloads (e.g. parsed request body, external JSON).
  */
-export function validateUnknown<A, I, Input>(
+export const validateUnknown = Effect.fn('Web.validateUnknown')(function* <A, I, Input>(
   schema: S.Codec<A, I>,
   data: Input,
   options: ValidateOptions = {}
-): Effect.Effect<Validated<A>, ValidationError, never> {
-  return runValidation(schema, data, options)
-}
+) {
+  return yield* runValidation(schema, data, options)
+})
 
 /**
  * Validate request data against a schema.
  * Extracts data from request and validates in one step.
  */
-export function validateRequest<A, I>(
+export const validateRequest = Effect.fn('Web.validateRequest')(function* <A, I>(
   schema: S.Codec<A, I>,
   options: ValidateOptions = {}
-): Effect.Effect<Validated<A>, ValidationError, RequestService> {
-  return Effect.gen(function* () {
-    const data = yield* getValidationDataWithOptions(
-      options.request,
-      options.errorComponent
-    )
+) {
+  const data = yield* getValidationDataWithOptions(
+    options.request,
+    options.errorComponent
+  )
 
-    return yield* validateUnknown(schema, data, options)
-  })
-}
+  return yield* validateUnknown(schema, data, options)
+})

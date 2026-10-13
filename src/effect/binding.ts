@@ -216,15 +216,15 @@ export type BoundModel<K extends string> =
  *   })
  * )
  */
-export const bound = <K extends string>(
-  key: K
-): Effect.Effect<BoundModel<K>, BoundModelError, BoundModels> =>
-  Effect.flatMap(BoundModels, (models) => models.get(key)).pipe(
-    // SAFETY: the route decodes each loaded row with the parser registered
-    // for this binding name, and WebRouteBindingsType is the type-level mirror
-    // of that same parser map.
-    Effect.map((model) => model as BoundModel<K>)
-  )
+export const bound = Effect.fn('Web.bound')(function* <K extends string>(key: K) {
+  const models = yield* BoundModels
+  const model = yield* models.get(key)
+
+  // SAFETY: the route decodes each loaded row with the parser registered for
+  // this binding name, and WebRouteBindingsType is the type-level mirror of
+  // that same parser map.
+  return model as BoundModel<K>
+})
 
 function isBindingDefinition(
   config: RouteBindingConfig

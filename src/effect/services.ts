@@ -476,25 +476,23 @@ export class ExecutionContextService extends Context.Service<
  * // Require resource ownership
  * const auth = yield* authorize((a) => a.user.id === project.userId)
  */
-export function authorize(
+export const authorize = Effect.fn('Web.authorize')(function* (
   check?: (user: AuthUser) => boolean
-): Effect.Effect<AuthUser, UnauthorizedError | ForbiddenError, never> {
-  return Effect.gen(function* () {
-    const maybeUser = yield* Effect.serviceOption(AuthUserService)
+) {
+  const maybeUser = yield* Effect.serviceOption(AuthUserService)
 
-    if (Option.isNone(maybeUser)) {
-      return yield* new UnauthorizedError({
-        message: 'Authentication required',
-        redirectTo: '/login',
-      })
-    }
+  if (Option.isNone(maybeUser)) {
+    return yield* new UnauthorizedError({
+      message: 'Authentication required',
+      redirectTo: '/login',
+    })
+  }
 
-    const user = maybeUser.value
+  const user: AuthUser = maybeUser.value
 
-    if (check && !check(user)) {
-      return yield* new ForbiddenError({ message: 'Not authorized' })
-    }
+  if (check && !check(user)) {
+    return yield* new ForbiddenError({ message: 'Not authorized' })
+  }
 
-    return user
-  })
-}
+  return user
+})
