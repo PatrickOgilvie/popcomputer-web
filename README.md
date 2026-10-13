@@ -1977,6 +1977,8 @@ A line that breaks a rule on purpose says why, as
 
 ## Caching and background work
 
+### The data cache
+
 The data cache keeps computed values in a store, checked against an Effect
 Schema when read. Provide a store with `kvCache` in `services.request`; KV
 keeps an entry at least 60 seconds, its shortest expiry, and `cache` still
@@ -1995,23 +1997,34 @@ setupWeb(app, {
 Then wrap a computation in `cache`:
 
 ```ts
+import { eq } from 'drizzle-orm'
 import { Duration, Effect, Schema as S } from 'effect'
-import { action, authorize, render } from '@popcomputer/web/effect'
+import { action, authorize, dbQuery, render } from '@popcomputer/web/effect'
 import { cache } from '@popcomputer/web/cache'
+import { columnsOf } from '@popcomputer/web/schema'
+import { projects } from '../schema'
 
 export const listProjects = action(Effect.gen(function* () {
   const auth = yield* authorize()
 
-  const projects = yield* cache(
+  const summaries = yield* cache(
     `users:${auth.user.id}:projects`,
-    Effect.promise(() => loadProjects(auth.user.id)),
+    dbQuery((db) =>
+      db.select(columnsOf(projects, ProjectSummary)).from(projects).where(eq(projects.userId, auth.user.id))
+    ),
     S.Array(ProjectSummary),
     { ttl: Duration.minutes(5), swr: Duration.minutes(1), version: true }
   )
 
-  return yield* render('Projects/Index', { projects, next: null })
+  return yield* render('Projects/Index', { projects: summaries, next: null })
 }))
 ```
+
+The computation is any Effect, here a `dbQuery`; it runs only when the entry
+is missing or stale, and its result is stored through the schema's JSON form, so a `Date` comes back as
+a `Date`.
+
+### Tagging cached data
 
 A value that depends on records takes their cache tags, the names a route's
 `purges` and `purgeCache` use (see [Time-based caching with Workers
@@ -2035,6 +2048,8 @@ a tag no entry uses costs a read and no write. KV accepts one write a second
 to a key and takes up to a minute to show a write everywhere, so tag data by
 the records it reads rather than by a table written many times a second.
 
+### When the store fails
+
 `cache` never fails because of the store: an unreachable store or an entry that
 no longer matches the schema computes the value instead, and the failure goes
 to `EffectErrorObserverService`. `cacheGet` and `cacheSet` fail with
@@ -2044,6 +2059,8 @@ report a store failure instead of failing the request; the entry stays until
 it expires.
 Stale-while-revalidate refreshes in the background when the request has an
 execution context and inline otherwise.
+
+### Work after the response
 
 For runtime-owned work that must outlive a response, name the work and pass
 the Effect. The name identifies the work in error reports:
