@@ -223,7 +223,7 @@ export class ResponseFactoryService extends Context.Service<
 /**
  * Cache Service - KV-backed caching for expensive operations
  *
- * Provide it with `kvCache(kv)` from `@popcomputer/web/cache` in setupWeb's `services`.
+ * Provide it with `kvCache(kv)` from `@popcomputer/web/cache` in `web.services({ request })`.
  * Falls back to a no-op implementation if KV is not configured.
  *
  * @example

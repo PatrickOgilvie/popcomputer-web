@@ -277,7 +277,7 @@ export const noProvisionInAction: LintRule = {
     docs: { description: 'Services are provided by the setup or the routes, not inside actions.' },
     messages: {
       provide:
-        "Provide services in setupWeb's services, or for a group of routes with routes.provide(layer), so the action's type lists what it needs and a test replaces it with testEnv(layer).",
+        "Provide services with web.services({ app, request }), or for a group of routes with routes.provide(layer), so the action's type lists what it needs and a test replaces it with testEnv(layer).",
     },
   },
   create(context) {
