@@ -13,6 +13,7 @@
  */
 
 import { Cause, Effect, Exit, Result, Schema as S } from 'effect'
+import type { SQLiteRaw } from 'drizzle-orm/sqlite-core/query-builders/raw'
 import { DatabaseService, type DatabaseType } from './services.js'
 import { DatabaseConstraintViolation, DatabaseError, ValidationError } from './errors.js'
 
@@ -67,8 +68,13 @@ export function dbQuery<A, T>(
  */
 export function dbMutation<A>(
   write: (db: DatabaseType) => A
-): Effect.Effect<Awaited<A>, DatabaseWriteError, DatabaseService> {
-  return run('mutation', write, (cause) => classifyFailure(cause, 'mutation'))
+): Effect.Effect<DatabaseResult<Awaited<A>>, DatabaseWriteError, DatabaseService> {
+  // SAFETY: DatabaseResult only renames a result typed `any`; the value is the write's.
+  return run('mutation', write, (cause) => classifyFailure(cause, 'mutation')) as Effect.Effect<
+    DatabaseResult<Awaited<A>>,
+    DatabaseWriteError,
+    DatabaseService
+  >
 }
 
 /**
@@ -140,7 +146,7 @@ class RolledBack {
  * ])
  */
 export function dbBatch<const Items extends BatchArgument>(
-  statements: (db: DatabaseType) => Items
+  statements: (db: DatabaseType) => Items & CheckedBatchItems<Items>
 ): Effect.Effect<BatchResults<Items>, DatabaseWriteError, DatabaseService> {
   return run(
     'batch',
@@ -267,7 +273,31 @@ export type BatchArgument = [BatchMethod] extends [never]
     : readonly [BatchNotSupported]
 
 /** Each batched statement's result, in order. */
-export type BatchResults<Items> = { -readonly [K in keyof Items]: Awaited<Items[K]> }
+export type BatchResults<Items> = { -readonly [K in keyof Items]: DatabaseResult<Awaited<Items[K]>> }
+
+/** Shown in place of a database result whose type is `any`. */
+export interface UntypedDatabaseResult {
+  readonly __error: "This result's type is any: the driver's types name a global type the program cannot find."
+  readonly __hint: "For Cloudflare D1, add '@cloudflare/workers-types', or the file `wrangler types` writes, to tsconfig's compilerOptions.types."
+}
+
+/**
+ * A database operation's result, or UntypedDatabaseResult when its type is
+ * `any`, so code that reads it, such as `result.meta.changes`, is a type
+ * error instead of unchecked.
+ */
+export type DatabaseResult<A> = 0 extends 1 & A ? UntypedDatabaseResult : A
+
+/** Shown in place of `db.run(sql)` in a D1 batch, which Drizzle cannot run there. */
+export interface RawStatementInD1Batch {
+  readonly __error: 'Drizzle cannot run db.run(sql) in a Cloudflare D1 batch: it fails at runtime.'
+  readonly __hint: 'Write the statement with the query builder, such as db.insert(table).select(...), or run it alone with dbMutation.'
+}
+
+/** The statements, with each raw statement in a D1 batch replaced by an error type. */
+export type CheckedBatchItems<Items> = IsD1 extends true
+  ? { readonly [K in keyof Items]: Items[K] extends SQLiteRaw<unknown> ? RawStatementInD1Batch : Items[K] }
+  : unknown
 
 interface Batches<Items> {
   batch(statements: Items): Promise<BatchResults<Items>>

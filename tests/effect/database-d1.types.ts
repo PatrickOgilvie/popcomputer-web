@@ -8,9 +8,19 @@
  * Checked by tests/typecheck-tests.ts.
  */
 import type { SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy'
+import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { Effect } from 'effect'
-import { dbBatch, dbMutation, dbTransaction, type TransactionClient } from '../../src/effect/database.js'
+import {
+  dbBatch,
+  dbMutation,
+  dbTransaction,
+  type DatabaseResult,
+  type TransactionClient,
+  type UntypedDatabaseResult,
+} from '../../src/effect/database.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
+
+const pages = sqliteTable('pages', { id: text('id').primaryKey() })
 
 /** The shape of Cloudflare's D1Database binding. */
 interface D1Client {
@@ -38,5 +48,12 @@ export const writes = Effect.gen(function* () {
   yield* dbTransaction(dbMutation((db) => db.run('DELETE FROM pages')))
 
   // Batches are D1's atomic writes.
+  yield* dbBatch((db) => [db.delete(pages), db.insert(pages).values({ id: 'p1' })])
+
+  // @ts-expect-error Drizzle cannot run db.run(sql) in a D1 batch
   yield* dbBatch((db) => [db.run('DELETE FROM pages')])
 })
+
+// A result typed `any`, as D1's are without Cloudflare's types, is an error type.
+expectType<Equals<DatabaseResult<any>, UntypedDatabaseResult>>()
+expectType<Equals<DatabaseResult<{ changes: number }>, { changes: number }>>()

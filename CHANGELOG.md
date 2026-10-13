@@ -102,6 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A database result typed `any` is an error type naming the fix (`UntypedDatabaseResult`), so `result.meta.changes` no longer type-checks unchecked. Drizzle's D1 result types name Cloudflare's global types, which are `any` without `@cloudflare/workers-types` in tsconfig's `types`.
+- `db.run(sql)` in a Cloudflare D1 `dbBatch` is a type error naming the query builder; Drizzle's D1 batch fails at runtime on it.
 - A `DatabaseError`'s message on development pages and in logs names the driver's reason, along its cause chain (Drizzle's failed query, then the driver's error), so a failed batch no longer reads only "Database batch failed and was rolled back." Production still replaces database messages with a generic one.
 - `upload({ types })` compares a file's media type without its parameters and in any case, so `text/plain;charset=utf-8`, which Bun and browsers send for text files, is a `text/plain` file.
 - A request `testEnv(signedIn(user))` signs in gets the signed-in cache policy (`no-store`, `X-Popweb-Cache: BYPASS`) where no Cache API exists, as in tests, as a session cookie does; it got `private, no-cache`.
