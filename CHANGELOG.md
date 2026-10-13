@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The README gives Better Auth's tables for Postgres and Cloudflare D1, including `rateLimit` for the setup's database-stored limits. Both were checked by signing up, signing in and being rate limited against them. Installation names the development tools and their versions (drizzle-kit, `@cloudflare/workers-types`, PGlite, Miniflare) and the module type `oxlint.config.ts` needs. The webhook example rejects a signature that is not 64 hex digits before verifying it.
 - Every response gets, unless it sets its own, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` and refused framing (`X-Frame-Options: DENY`, `frame-ancestors 'none'` added to its `Content-Security-Policy`), so another site cannot frame a page to trick a visitor into clicking. `security.headers` takes `{ frames: 'same-origin' }`, or `false` for none; `securityHeaders` from `@popcomputer/web` adds them to a lower-level composition.
 - `readMigrations(folder)` from `@popcomputer/web/testing` returns drizzle-kit's migrations as statements, for a database that runs many at once: a fresh D1 database migrates in one `batch`.
 - `setupWeb`'s `auth.homePath` names where a signed-in visitor goes from a page for guests; `RequireGuestLayer`, and `createGuestLayer` without its own destination, send them there instead of always to `/`.

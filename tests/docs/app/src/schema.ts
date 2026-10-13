@@ -1,7 +1,8 @@
 // Drizzle tables the README examples refer to as `./schema`. The examples'
 // database is Postgres, as `src/db.ts` in the README creates it.
 import { sql } from 'drizzle-orm'
-import { boolean, check, integer, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
+import { check, integer, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
+import { user } from './auth-schema'
 
 export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
@@ -44,16 +45,8 @@ export const webhookEvents = pgTable('webhook_events', {
   orderId: text('order_id').notNull(),
 })
 
-// Better Auth's user table, as `npx @better-auth/cli generate` writes it.
-export const user = pgTable('user', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  email: text('email').notNull().unique(),
-  emailVerified: boolean('email_verified').notNull(),
-  image: text('image'),
-  createdAt: timestamp('created_at').notNull(),
-  updatedAt: timestamp('updated_at').notNull(),
-})
+// Better Auth's tables, as the README's src/auth-schema.ts declares them.
+export * from './auth-schema'
 
 // The README's memberships pattern: a role per user and organization.
 export const organizations = pgTable('organizations', {
