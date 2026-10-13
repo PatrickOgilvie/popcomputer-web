@@ -21,6 +21,7 @@ import {
 import {
   type AppError,
   ConfigurationError,
+  NotFoundError,
   Redirect,
   RouteConfigurationError,
   ValidationError,
@@ -60,8 +61,10 @@ import {
   decodeBoundRow,
   inferParamsSchema,
   loadDrizzle,
+  type BoundModelError,
   type CompiledRouteBinding,
   type ParsedBinding,
+  type RouteBindingsConfig,
 } from './binding.js'
 import type { RouteRegistry } from './route-registry.js'
 import {
@@ -182,6 +185,12 @@ export interface EffectRouteOptions {
 }
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
+
+/** The result of loading a route's models. */
+type BindingLoadOutcome =
+  | { readonly models: ReadonlyMap<string, unknown> }
+  | { readonly missing: string }
+  | { readonly failure: RouteConfigurationError }
 
 /**
  * Whether the app is running in development. Used to gate developer warnings.
@@ -416,17 +425,17 @@ export class EffectRouteBuilder<
   }
 
   /**
-   * Resolve route model bindings from the database.
-   * Returns a Map of binding names to resolved models, or a 404 Response if any binding fails.
+   * Load the route's models from the database, parents first so each child
+   * is scoped to its parent. Reports the first binding without a row.
    */
   // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Drizzle adapter awaits native query builders sequentially to enforce parent binding scope before returning HTTP results.
   private async resolveBindings<Database>(
     c: HonoContext<E>,
     plan: readonly CompiledRouteBinding[],
     db: Database,
-  ): Promise<Map<string, S.Schema.Type<typeof S.Unknown>> | Response> {
+  ): Promise<BindingLoadOutcome> {
     if (plan.length === 0) {
-      return new Map()
+      return { models: new Map() }
     }
 
     const { eq, and } = await loadDrizzle()
@@ -438,13 +447,13 @@ export class EffectRouteBuilder<
       const rawParam = c.req.param(binding.param)
 
       if (!rawParam) {
-        return c.notFound()
+        return { missing: binding.param }
       }
 
       const paramValue = await decodeBindingParam(binding, rawParam)
 
       if (paramValue === undefined) {
-        return c.notFound()
+        return { missing: binding.param }
       }
 
       // QueryBuilder type compatible with all Drizzle databases (PostgreSQL, MySQL, SQLite)
@@ -517,7 +526,7 @@ export class EffectRouteBuilder<
       const result = results[0]
 
       if (!result) {
-        return c.notFound()
+        return { missing: binding.param }
       }
 
       // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
@@ -525,7 +534,7 @@ export class EffectRouteBuilder<
       models.set(binding.param, await decodeBoundRow(binding, result))
     }
 
-    return models
+    return { models }
   }
 
   private createHandler<R extends BaseServices | ProvidedServices | CustomServices>(
@@ -620,44 +629,96 @@ export class EffectRouteBuilder<
       }
 
       // Resolve route model bindings if we have any and schema is configured
-      let boundModelsLayer: Layer.Layer<BoundModels, never, never>
-      let boundModels: ReadonlyMap<string, unknown> = new Map()
+      // Route models load on the action's first bound() call, after guards.
 
-      if (bindings.length > 0 && schema && configuredBindings) {
-        const db = openWebContext(c).db
+      // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Drizzle adapter awaits native query builders sequentially to enforce parent binding scope before returning a typed outcome.
+      const loadModels = async (
+        bindingSchema: object,
+        parsers: RouteBindingsConfig,
+        db: object
+      ): Promise<BindingLoadOutcome> => {
+        try {
+          bindingPlanPromise ??= compileBindingPlan(bindings, bindingSchema, parsers)
 
-        if (!db) {
-          // A binding cannot be resolved without a database; this is
-          // misconfiguration, not a missing row. Thrown to Hono's onError,
-          // which renders the structured configuration error.
-          throw ConfigurationError.databaseNotConfigured()
+          return await this.resolveBindings(c, await bindingPlanPromise, db)
+        } catch (cause) {
+          // Misconfigured bindings are typed failures; anything else, such as
+          // a failed query, is a defect for the error boundary.
+          if (cause instanceof RouteConfigurationError) return { failure: cause }
+
+          throw cause
         }
-
-        bindingPlanPromise ??= compileBindingPlan(bindings, schema, configuredBindings)
-        const plan = await bindingPlanPromise
-        const result = await this.resolveBindings(c, plan, db)
-
-        if (result instanceof Response) {
-          return result
-        }
-
-        boundModels = result
-        boundModelsLayer = Layer.succeed(BoundModels, boundModels)
-      } else if (bindings.length > 0 && !schema) {
-        // Bindings exist but no schema - provide a map that signals this for better errors
-        const unconfiguredMap = new Map<string, unknown>()
-        unconfiguredMap.set('__schema_not_configured__', true)
-        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-        boundModelsLayer = Layer.succeed(BoundModels, unconfiguredMap as ReadonlyMap<string, unknown>)
-      } else if (bindings.length > 0) {
-        throw RouteConfigurationError.bindingParserNotConfigured(bindings[0].param)
-      } else {
-        // No bindings - empty bound models
-        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-        boundModelsLayer = Layer.succeed(BoundModels, new Map() as ReadonlyMap<string, unknown>)
       }
 
-      // Combine with provided layers
+      // Cache tags name a binding by its decoded route parameter, which equals
+      // the bound row's lookup column, so tagging and purging need no query.
+      // oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits the compiled binding plan and native decoders before running the request Effect.
+      const deriveBindingTags = async (): Promise<readonly string[]> => {
+        const values = new Map<string, unknown>()
+
+        if (schema && configuredBindings) {
+          try {
+            bindingPlanPromise ??= compileBindingPlan(bindings, schema, configuredBindings)
+
+            for (const binding of await bindingPlanPromise) {
+              const raw = c.req.param(binding.param)
+              const value = raw === undefined ? undefined : await decodeBindingParam(binding, raw)
+
+              if (value !== undefined) values.set(binding.param, value)
+            }
+          } catch (cause) {
+            // bound() reports misconfigured bindings; tags fall back to collections.
+            if (!(cause instanceof RouteConfigurationError)) throw cause
+          }
+        }
+
+        return deriveCacheTags(bindings, values)
+      }
+
+      const loadAllModels: Effect.Effect<ReadonlyMap<string, unknown>, BoundModelError> =
+        Effect.gen(function* () {
+          if (!configuredBindings) {
+            return yield* RouteConfigurationError.bindingParserNotConfigured(bindings[0].param)
+          }
+
+          const db = openWebContext(c).db
+
+          if (!db) {
+            return yield* ConfigurationError.databaseNotConfigured()
+          }
+
+          const outcome = yield* Effect.promise(() =>
+            loadModels(schema ?? {}, configuredBindings, db)
+          )
+
+          if ('failure' in outcome) return yield* outcome.failure
+
+          if ('missing' in outcome) {
+            return yield* new NotFoundError({ resource: outcome.missing })
+          }
+
+          return outcome.models
+        })
+
+      const boundModelsLayer = Layer.effect(
+        BoundModels,
+        Effect.map(Effect.cached(loadAllModels), (load) =>
+          BoundModels.of({
+            get: (key) => {
+              if (!bindings.some((binding) => binding.param === key)) {
+                return Effect.fail(RouteConfigurationError.bindingNotInRoute(key))
+              }
+
+              if (!schema) {
+                return Effect.fail(RouteConfigurationError.schemaNotConfigured(key))
+              }
+
+              return Effect.map(load, (models) => models.get(key))
+            },
+          })
+        )
+      )
+
       let fullLayer: Layer.Layer<never, AppError, never> = Layer.merge(contextLayer, boundModelsLayer)
 
       if (hasValidatedBody) {
@@ -683,6 +744,11 @@ export class EffectRouteBuilder<
       // channel instead of leaving stale entries silently.
       const purges = options?.purges
 
+      const bindingTags =
+        bindings.length > 0 && (purges === true || (options?.cache !== undefined && options.cache !== false))
+          ? await deriveBindingTags()
+          : deriveCacheTags(bindings, new Map())
+
       let handlerEffect: Effect.Effect<Response | Redirect, AppError | ResponseCachePurgeError, R | ResponseCacheService> =
         effect
 
@@ -696,7 +762,7 @@ export class EffectRouteBuilder<
             if (!succeeded) return Effect.void
 
             const tags =
-              purges === true ? deriveCacheTags(bindings, boundModels) : purges
+              purges === true ? bindingTags : purges
 
             if (tags.length === 0) return Effect.void
 
@@ -749,7 +815,7 @@ export class EffectRouteBuilder<
         hasPrivateRequestState: hasPrivateRequestState(c),
         existingCacheControl: response.headers.get('Cache-Control'),
         isPage: isPageResponse(response.headers),
-        derivedTags: deriveCacheTags(bindings, boundModels),
+        derivedTags: bindingTags,
         options: options.cache,
       })
 

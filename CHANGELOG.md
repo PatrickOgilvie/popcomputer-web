@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- Route models load when the action first calls `bound()`, instead of before the action runs. A `{param}` the action never reads with `bound()` no longer answers 404 for a missing row, and `bound()` fails with `NotFoundError` (404) when the row is missing. `BoundModels` is a loader service with a `get(key)` method rather than a map; provide fixed models to an action run outside a route with `BoundModels.fromModels({ project })`. Binding-derived Cache-Tags and `purges: true` use the decoded route parameter, which equals the row's lookup column, so they need no query.
 - `validateRequest` fails with a `ValidationError` when route params, query and body provide the same key with different values (`WEB_VAL_006_SOURCE_CONFLICT`, naming the field and both sources). It merged them with the later source winning, so a body field such as `{ "id": "..." }` silently replaced the route's `{id}` parameter. Pass `request: { onConflict: 'last-wins' }` to restore the merge, or `request: { order: ['body'] }` to read only the body.
 - The `request.profile` option of `validateRequest` (`'legacy'` or `'laravel'`) and the `RequestValidationProfile` and `RequestValidationConfig` types are removed. `request.order` selects the sources: `['query', 'body']` is the former `'laravel'` profile.
 - The default auth user's `session.token` is `Redacted<string>`, decoded with `Schema.RedactedFromValue(Schema.String)`, so returning or rendering the auth user cannot expose the session secret. Read it with `Redacted.value`. Applications with their own `auth.session` parser and `WebAuthUserType` are unaffected.
@@ -41,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A signed-out request could tell whether a route's record existed: route model bindings were queried before the action and its guards ran, so `/projects/{project}` answered 404 for a missing project and redirected to sign-in for an existing one, even behind `RequireAuthLayer`. Bindings now load when the action calls `bound()`, after the guards.
 - An error's own hint, such as which `{placeholder}` a route is missing or how to install `drizzle-orm`, is now its first fix suggestion; hints were dropped before reaching the output. Configuration fixes show code for the current API (`setupWeb(app, { database: (c) => createDb(c.env.DATABASE_URL) })`, an ESM schema import) instead of `require("./db/schema")` and `drizzle(c.env.DB)`.
 - Error context reads the matched route pattern with `routePath(c)` from `hono/route` instead of `c.req.routePath`, which Hono 5 removes.
 - A JSON request body that is not an object (`null`, an array, a string or a number) fails validation with `422` instead of crashing the request with `500`.

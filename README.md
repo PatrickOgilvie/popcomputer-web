@@ -423,6 +423,10 @@ const task = yield* bound('task')
 ```
 
 The package parses route parameters and database rows before exposing them.
+A route loads its models the first time the action calls `bound()`, so a guard
+or `authorize()` that runs first decides before any database lookup, and a
+signed-out visitor cannot tell an existing record from a missing one. A missing
+row fails `bound()` with `NotFoundError`, which renders a 404.
 Nested bindings must have a relationship discoverable from Drizzle metadata or
 an explicit scope:
 

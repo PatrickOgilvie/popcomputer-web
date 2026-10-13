@@ -8,11 +8,12 @@
 import {
   Context,
   Effect,
+  Layer,
   Schema as S,
   SchemaTransformation,
 } from 'effect'
 import type { Table } from 'drizzle-orm'
-import { RouteConfigurationError } from './errors.js'
+import { ConfigurationError, NotFoundError, RouteConfigurationError } from './errors.js'
 
 /**
  * Drizzle column interface for type inference.
@@ -134,14 +135,41 @@ export function toHonoPath(path: string): string {
   return path.replace(/\{(\w+)(?::\w+)?\}/g, ':$1')
 }
 
+/** Why a route model could not be loaded. */
+export type BoundModelError = NotFoundError | RouteConfigurationError | ConfigurationError
+
 /**
- * Service tag for bound models.
- * Provides access to resolved route models in handlers.
+ * Loads a route's models. A route loads all of its `{param}` models the first
+ * time an action asks for one, after any guard that ran before it, and keeps
+ * them for the rest of the request.
  */
+export interface BoundModelsClient {
+  readonly get: (key: string) => Effect.Effect<unknown, BoundModelError>
+}
+
+/** Service tag for the route's model loader, read through {@link bound}. */
 export class BoundModels extends Context.Service<
   BoundModels,
-  ReadonlyMap<string, unknown>
->()('@popcomputer/web/BoundModels') {}
+  BoundModelsClient
+>()('@popcomputer/web/BoundModels') {
+  /**
+   * Provide fixed models, to run an action outside a route.
+   *
+   * @example
+   * yield* showProject.pipe(Effect.provide(BoundModels.fromModels({ project })))
+   */
+  static fromModels(models: Readonly<Record<string, unknown>>): Layer.Layer<BoundModels> {
+    return Layer.succeed(
+      BoundModels,
+      BoundModels.of({
+        get: (key) =>
+          Object.hasOwn(models, key)
+            ? Effect.succeed(models[key])
+            : Effect.fail(RouteConfigurationError.bindingNotInRoute(key)),
+      })
+    )
+  }
+}
 
 /**
  * Error type shown when trying to use bound() without parser types configured.
@@ -174,8 +202,11 @@ export type BoundModel<K extends string> =
 /**
  * Type-safe accessor for bound models.
  *
- * Fails with `RouteConfigurationError` when the route path has no `{key}`
- * placeholder or the app registered no binding schema.
+ * The route loads its models on the first call, so guards and `authorize()`
+ * that run earlier decide before any database lookup. Fails with
+ * `NotFoundError` when the row does not exist, and `RouteConfigurationError`
+ * when the route path has no `{key}` placeholder or the app registered no
+ * binding schema.
  *
  * @example
  * const showProject = action(
@@ -187,26 +218,13 @@ export type BoundModel<K extends string> =
  */
 export const bound = <K extends string>(
   key: K
-): Effect.Effect<BoundModel<K>, RouteConfigurationError, BoundModels> =>
-  Effect.gen(function* () {
-    const models = yield* BoundModels
-
-    // Check if schema was not configured (sentinel value set by routing.ts)
-    if (models.has('__schema_not_configured__')) {
-      return yield* RouteConfigurationError.schemaNotConfigured(key)
-    }
-
-    const model = models.get(key)
-
-    if (!model) {
-      return yield* RouteConfigurationError.bindingNotInRoute(key)
-    }
-
-    // SAFETY: route execution stores the decoded output of the parser keyed by
-    // this binding name. WebRouteBindingsType is the public type-level
-    // mirror of that same parser map.
-    return model as BoundModel<K>
-  })
+): Effect.Effect<BoundModel<K>, BoundModelError, BoundModels> =>
+  Effect.flatMap(BoundModels, (models) => models.get(key)).pipe(
+    // SAFETY: the route decodes each loaded row with the parser registered
+    // for this binding name, and WebRouteBindingsType is the type-level mirror
+    // of that same parser map.
+    Effect.map((model) => model as BoundModel<K>)
+  )
 
 function isBindingDefinition(
   config: RouteBindingConfig

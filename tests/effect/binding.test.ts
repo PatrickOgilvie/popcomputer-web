@@ -24,7 +24,15 @@ import {
 } from '../../src/effect/binding.js'
 import { RouteConfigurationError } from '../../src/effect/errors.js'
 import { ErrorCodes } from '../../src/effect/error-catalog.js'
-import { registerErrorHandlers } from '../../src/setup.js'
+import { registerErrorHandlers, setupWeb } from '../../src/setup.js'
+import { Database } from 'bun:sqlite'
+import { drizzle } from 'drizzle-orm/bun-sqlite'
+import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { action } from '../../src/effect/action.js'
+import { authorize } from '../../src/effect/services.js'
+import { json } from '../../src/effect/responses.js'
+import { RequireAuthLayer } from '../../src/effect/auth.js'
+import { signedIn, testEnv } from '../../src/testing.js'
 
 describe('parseBindings', () => {
   describe('basic Laravel-style bindings', () => {
@@ -403,9 +411,6 @@ describe('pluralize', () => {
 
 describe('bound() accessor', () => {
   test('retrieves bound model from context', async () => {
-    const models = new Map<string, unknown>()
-    models.set('project', { id: '123', name: 'Test Project' })
-
     const effect = Effect.gen(function* () {
       const project = yield* bound('project')
 
@@ -413,15 +418,13 @@ describe('bound() accessor', () => {
     })
 
     const result = await Effect.runPromise(
-      effect.pipe(Effect.provideService(BoundModels, models))
+      effect.pipe(Effect.provide(BoundModels.fromModels({ project: { id: '123', name: 'Test Project' } })))
     )
 
     expect(result).toEqual({ id: '123', name: 'Test Project' })
   })
 
   test('fails with a route configuration error when the route does not bind the key', async () => {
-    const models = new Map<string, unknown>()
-
     const effect = Effect.gen(function* () {
       const project = yield* bound('project')
 
@@ -429,7 +432,7 @@ describe('bound() accessor', () => {
     })
 
     const error = await Effect.runPromise(
-      effect.pipe(Effect.provideService(BoundModels, models), Effect.flip)
+      effect.pipe(Effect.provide(BoundModels.fromModels({})), Effect.flip)
     )
 
     assert.ok(error instanceof RouteConfigurationError)
@@ -1033,5 +1036,75 @@ describe('inferParamsSchema', () => {
     const schema = inferParamsSchema(bindings, mockSchema)
 
     expect(schema).toBeNull()
+  })
+})
+
+describe('route model binding loads when the action asks', () => {
+  const createApp = (options: { readonly guard?: boolean } = {}) => {
+    const projects = sqliteTable('projects', {
+      id: text('id').primaryKey(),
+      userId: text('user_id').notNull(),
+    })
+    const sqlite = new Database(':memory:')
+    sqlite.run('CREATE TABLE projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL)')
+    const db = drizzle(sqlite, { schema: { projects } })
+    db.insert(projects).values({ id: 'secret-project', userId: 'user-1' }).run()
+
+    const queries: string[] = []
+    const app = new Hono()
+
+    setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      database: () => {
+        queries.push('database')
+
+        return db
+      },
+      schema: { projects },
+      bindings: { project: S.Struct({ id: S.String, userId: S.String }) },
+    })
+
+    const routes = options.guard ? effectRoutes(app).provide(RequireAuthLayer) : effectRoutes(app)
+
+    routes
+      .get('/projects/{project}', action(Effect.gen(function* () {
+        yield* authorize()
+
+        return yield* json(yield* bound('project'))
+      })))
+      .get('/projects/{project}/ping', action(json({ pong: true })))
+
+    return { app, queries }
+  }
+
+  test('signed-out requests cannot tell whether a project exists', async () => {
+    for (const guard of [false, true]) {
+      const { app } = createApp({ guard })
+      const existing = await app.request('/projects/secret-project')
+      const missing = await app.request('/projects/no-such-project')
+
+      expect([existing.status, missing.status]).toEqual([302, 302])
+    }
+  })
+
+  test('signed-in requests load the model and 404 when it is missing', async () => {
+    const { app } = createApp()
+    const env = testEnv(signedIn({ id: 'user-1' }))
+
+    const existing = await app.request('/projects/secret-project', {}, env)
+    const missing = await app.request('/projects/no-such-project', {}, env)
+
+    expect(existing.status).toBe(200)
+    expect(await existing.json()).toEqual({ id: 'secret-project', userId: 'user-1' })
+    expect(missing.status).toBe(404)
+  })
+
+  test('an action that never calls bound() does not load the model', async () => {
+    const { app } = createApp()
+    const res = await app.request('/projects/no-such-project/ping')
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ pong: true })
   })
 })

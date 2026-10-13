@@ -28,7 +28,9 @@ To use this file, point the application's own `AGENTS.md` or `CLAUDE.md` at
 5. **Load route models with `{param}` placeholders and `bound('param')`.**
    Register each model's Effect Schema in `setupWeb`'s `bindings` and augment
    `WebRouteBindingsType` with the same object. Never query by a route
-   parameter yourself.
+   parameter yourself. Call `authorize()` before `bound()` when the route
+   needs a signed-in user: models load on the first `bound()` call, and a
+   missing row is a 404.
 6. **Authorize with `authorize()` or `authorize((auth) => rule)`.** Use
    `currentUser` when signing in is optional.
 7. **Write only inside `dbMutation(db, asTrusted({ ... }), (tx, values) => ...)`**

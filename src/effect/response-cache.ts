@@ -179,24 +179,21 @@ export function prepareCachePurgeTags(
 }
 
 /**
- * Derive Cache-Tag values from a route's resolved bindings: one
- * `{param}:{value}` tag per bound model (value = the binding's lookup
- * column) and one `{pluralized-param}` collection tag per binding. The same
- * derivation feeds tagging on reads and purging on mutations, so the two
- * can never drift.
+ * Derive Cache-Tag values from a route's bindings: one `{param}:{value}` tag
+ * per binding (value = the route parameter decoded by the binding's lookup
+ * column, which is the bound row's value for that column) and one
+ * `{pluralized-param}` collection tag per binding. The same derivation feeds
+ * tagging on reads and purging on mutations, so the two can never drift, and
+ * it needs no database read: a DELETE still purges its row's tag.
  */
 export function deriveCacheTags(
   bindings: readonly ParsedBinding[],
-  models: ReadonlyMap<string, unknown>
+  values: ReadonlyMap<string, unknown>
 ): readonly string[] {
   const tags: string[] = []
 
   for (const binding of bindings) {
-    const model = models.get(binding.param)
-
-    const value = model instanceof Object
-      ? Object.getOwnPropertyDescriptor(model, binding.column)?.value
-      : undefined
+    const value = values.get(binding.param)
 
     if (value !== undefined && value !== null) {
       tags.push(`${binding.param}:${String(value)}`)
