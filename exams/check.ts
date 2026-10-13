@@ -7,7 +7,7 @@
  */
 import { appendFileSync } from 'node:fs'
 
-const steps: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+const steps: Array<[string, string[]]> = [
   ['types', ['bunx', 'tsc', '--noEmit']],
   ['lint', ['bunx', 'oxlint']],
   ['test', ['bun', 'test']],

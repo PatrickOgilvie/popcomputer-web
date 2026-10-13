@@ -69,7 +69,8 @@ TypeScript example here and in the README type-checks against the package.
 5. **Read request input only through `validateRequest(Schema)`,** or, in an
    endpoint's action, through its contract (rule 13). Build schemas
    from `@popcomputer/web/schema` validators (`requiredString`,
-   `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, ...), which
+   `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, `isoDate`
+   and `isoDateTime` for a day or a moment with its zone, ...), which
    accept form posts as well as JSON (an API rejects undeclared query
    parameters with `request: { order: ['query'] }, parseOptions: {
    onExcessProperty: 'error' }`), `nullable(...)` for a filter a GET form
@@ -94,7 +95,7 @@ TypeScript example here and in the README type-checks against the package.
    `authorize((auth) => rule)` (a 403) for a record the user can see but not
    change. `bound('project')` type-checks only on a route whose path or
    prefix has `{project}`, in an action or in a layer guarding it.
-7. **Authorize with `authorize()` or `authorize((auth) => rule)`.** Use
+7. **Authorize with `authorize()` or `authorize((auth) => rule, message)`.** Use
    `currentUser` when signing in is optional. Guard a group of routes with
    `routes.provide(RequireAuthLayer)` or `routes.provide(RequireGuestLayer)`.
    Sign users in and up with an action that validates its form and returns
@@ -168,6 +169,8 @@ TypeScript example here and in the README type-checks against the package.
     { 409: SlugTaken } })` from `@popcomputer/web/endpoint`, with `query`,
     `body` and `headers` schemas for its input, `success` for its body and
     each failure a client tells apart as an `S.TaggedError` under its status.
+    Declare a JSON number with Effect's schemas (`S.Int.check(S.isGreaterThan(0))`),
+    not the form validators, which accept `"12"` for a form's sake.
     Implement it with `action(endpoints.createProject, ({ params, body }) =>
     Effect.gen(...))`, which receives the input decoded and returns the
     success value, and register it with `routes.endpoint(createProject)`,

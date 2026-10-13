@@ -3,7 +3,8 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Effect, Schema as S } from 'effect'
+import { Effect, Option, Schema as S } from 'effect'
+import { validateUnknown } from '../../src/effect/validation.js'
 import {
   // String types
   trimmed,
@@ -38,6 +39,8 @@ import {
   declined,
   // Date types
   coercedDate,
+  isoDate,
+  isoDateTime,
   nullableDate,
   after,
   afterOrEqual,
@@ -941,5 +944,36 @@ describe('Uploads', () => {
     const exit = decode({ cover: png, attachment: new File([], '') })
 
     expect(exit._tag === 'Success' && exit.value.attachment).toBeNull()
+  })
+})
+
+describe('isoDate and isoDateTime', () => {
+  const accepts = (schema: S.Codec<unknown, string, never, never>, value: string) => Option.isSome(S.decodeUnknownOption(schema)(value))
+
+  test('isoDate accepts a calendar day as its string, and no other', () => {
+    expect(S.decodeUnknownSync(isoDate)('2028-02-29')).toBe('2028-02-29')
+    expect(['2030-02-31', '2030-02-29', '2030-5-1', '1', '2030-05-01T00:00Z'].filter((value) => accepts(isoDate, value))).toEqual([])
+  })
+
+  test('isoDateTime accepts a moment with its zone, as a Date', () => {
+    expect(S.decodeUnknownSync(isoDateTime)('2030-05-01T10:00+01:00')).toEqual(new Date(Date.UTC(2030, 4, 1, 9)))
+    expect(S.encodeSync(isoDateTime)(new Date(Date.UTC(2030, 4, 1, 9)))).toBe('2030-05-01T09:00:00.000Z')
+    expect(['2030-05-01T09:00', '2030-02-31T09:00Z', '2030-05-01T24:00Z', '1', '2030-05-01'].filter((value) => accepts(isoDateTime, value))).toEqual([])
+  })
+
+  test('a blank field is required, and a wrong one says what to write', async () => {
+    const Slot = S.Struct({ day: isoDate, startsAt: isoDateTime })
+    const failure = await Effect.runPromise(Effect.flip(validateUnknown(Slot, { day: '', startsAt: '2030-05-01T09:00' })))
+
+    expect(failure.errors).toEqual({
+      day: 'This field is required',
+      startsAt: 'Enter a date and time with its time zone, such as 2030-05-01T09:00:00Z',
+    })
+  })
+
+  test('JSON Schema names their formats', () => {
+    expect(S.toJsonSchemaDocument(S.Struct({ day: isoDate, at: isoDateTime })).schema).toMatchObject({
+      properties: { day: { type: 'string', format: 'date' }, at: { type: 'string', format: 'date-time' } },
+    })
   })
 })

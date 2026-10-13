@@ -37,13 +37,29 @@ export type TestBindings = [RegisteredBindings] extends [never] ? object : Parti
  *
  * @param bindings - Bindings the request reads from `c.env` and Effect `Config`.
  */
-export function testEnv<ROut>(
-  layer: Layer.Layer<ROut>,
-  bindings: TestBindings = {},
-  options: TestEnvOptions = {}
+export function testEnv<ROut>(layer: Layer.Layer<ROut>, bindings?: TestBindings, options?: TestEnvOptions): TestBindings
+/**
+ * Build a request env from bindings alone, and a database, for a test whose
+ * requests sign in through the application, as a `testBrowser` does.
+ *
+ * @example
+ * const env = testEnv(testBindings, { database: await freshDatabase() })
+ */
+export function testEnv(bindings: TestBindings, options?: TestEnvOptions): TestBindings
+export function testEnv(
+  first: Layer.Layer<never> | TestBindings,
+  second?: TestBindings | TestEnvOptions,
+  third: TestEnvOptions = {}
 ): TestBindings {
+  const isLayer = (value: Layer.Layer<never> | TestBindings): value is Layer.Layer<never> => Layer.isLayer(value)
+  const layered = isLayer(first)
+  // SAFETY: the overloads put the bindings second after a layer, first without one.
+  const bindings = (layered ? second ?? {} : first) as TestBindings
+  // SAFETY: as above, the options follow the bindings.
+  const options = (layered ? third : second ?? {}) as TestEnvOptions
   const env = { ...bindings }
-  attachTestLayer(env, layer)
+
+  attachTestLayer(env, isLayer(first) ? first : Layer.empty)
 
   if (options.database !== undefined) attachTestDatabase(env, options.database)
 

@@ -258,6 +258,15 @@ describe('authorize', () => {
     expect(result.user.email).toBe('test@example.com')
   })
 
+  test('fails with the message it is given when the check fails', async () => {
+    const effect = authorize((a) => a.user.email === 'admin@example.com', 'Only admins can do this.')
+    const layer = Layer.succeed(AuthUserService, createMockUser({ email: 'user@example.com' }))
+
+    const failure = await Effect.runPromise(Effect.flip(Effect.provide(effect, layer)))
+
+    expect(failure).toMatchObject({ _tag: 'ForbiddenError', message: 'Only admins can do this.' })
+  })
+
   test('fails with ForbiddenError when check fails', async () => {
     const effect = authorize((a) => a.user.email === 'admin@example.com')
 

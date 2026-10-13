@@ -334,26 +334,22 @@ export class ExecutionContextService extends Context.Service<
  * Authorization helper - opt-in to auth check.
  *
  * Returns the authenticated user if authorized.
- * Fails with UnauthorizedError if no user is present.
- * Fails with ForbiddenError if the check returns false.
- * The check function is optional - if not provided, just requires authentication.
+ * Fails with UnauthorizedError if no user is present, and, given a check,
+ * with ForbiddenError, carrying `message`, if the check returns false.
  *
  * @example
- * // Just require authentication
+ * // Just require authentication: fails only with UnauthorizedError
  * const auth = yield* authorize()
  *
  * // Require specific role (if your user type has a role field)
- * const auth = yield* authorize((a) => a.user.role === 'admin')
+ * const auth = yield* authorize((a) => a.user.role === 'admin', 'Only admins can do this.')
  *
  * // Require resource ownership
  * const auth = yield* authorize((a) => a.user.id === project.userId)
  */
-// The annotation keeps `AuthUser` unresolved in the emitted declaration, so it
-// resolves against the application's registered user.
-export const authorize: (
-  check?: (user: AuthUser) => boolean
-) => Effect.Effect<AuthUser, UnauthorizedError | ForbiddenError> = Effect.fn('Web.authorize')(function* (
-  check?: (user: AuthUser) => boolean
+const authorizeUser = Effect.fn('Web.authorize')(function* (
+  check?: (user: AuthUser) => boolean,
+  message = 'Not authorized'
 ) {
   const maybeUser = yield* Effect.serviceOption(AuthUserService)
 
@@ -364,8 +360,19 @@ export const authorize: (
   const user: AuthUser = maybeUser.value
 
   if (check && !check(user)) {
-    return yield* new ForbiddenError({ message: 'Not authorized' })
+    return yield* new ForbiddenError({ message })
   }
 
   return user
 })
+
+// The annotation keeps `AuthUser` unresolved in the emitted declaration, so it
+// resolves against the application's registered user.
+export const authorize: {
+  (): Effect.Effect<AuthUser, UnauthorizedError>
+  (check: (user: AuthUser) => boolean, message?: string): Effect.Effect<AuthUser, UnauthorizedError | ForbiddenError>
+} = authorizeUser as {
+  // SAFETY: without a check, authorizeUser never reaches its ForbiddenError.
+  (): Effect.Effect<AuthUser, UnauthorizedError>
+  (check: (user: AuthUser) => boolean, message?: string): Effect.Effect<AuthUser, UnauthorizedError | ForbiddenError>
+}

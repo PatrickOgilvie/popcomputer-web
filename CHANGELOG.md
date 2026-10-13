@@ -9,10 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `authorize()` without a check is typed as failing only with `UnauthorizedError`; a check adds `ForbiddenError`, whose message `authorize(check, message)` sets.
+
 - A failed form's field errors, and flash values, pass through a request that only redirects, such as a home page sending visitors to their dashboard, to the next page that renders. They were cleared by the redirect, so a form posted without a `Referer`, which goes back to `/`, showed no errors.
 
 ### Added
 
+- `isoDate` and `isoDateTime` from `@popcomputer/web/schema` accept a calendar day written `YYYY-MM-DD`, kept as that string, and a moment with its time zone, as a `Date`, refusing days the calendar lacks and times without a zone. JSON Schema describes them as `format: date` and `format: date-time`.
+- `testEnv(bindings, { database })` takes bindings without a layer, for a test whose visitors sign in through the application.
 - `routes.scheduled((event) => effect)` and `routes.queue(Schema, (body, message) => effect)` return the Worker's `scheduled` and `queue` handlers, running each job with the application's services and type-checking it as a registration does. The queue handler decodes each message's body with the schema, acknowledges a message whose work succeeds, and logs and retries one whose body does not decode or whose work fails. `testBatch(bodies)` from `@popcomputer/web/testing` makes a batch that records each message's outcome.
 
 - The lint rule `no-auth-api-in-action` reports a Better Auth endpoint called through `auth.api` in an action, and `no-catch-all-in-action` reports broad recovery piped point-free, as `authorize().pipe(Effect.orDie)`.

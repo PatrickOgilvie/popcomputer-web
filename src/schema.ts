@@ -40,6 +40,8 @@ export {
   // Date types
   coercedDate,
   nullableDate,
+  isoDate,
+  isoDateTime,
   after,
   afterOrEqual,
   before,

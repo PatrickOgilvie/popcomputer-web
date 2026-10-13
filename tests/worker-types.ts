@@ -6,6 +6,8 @@
 import { Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
+import { authorize, type AuthUser } from '../src/effect/services.js'
+import type { ForbiddenError, UnauthorizedError } from '../src/effect/errors.js'
 
 class Mailer extends Context.Service<Mailer, { readonly send: (to: string) => Effect.Effect<void> }>()('Mailer') {}
 
@@ -31,3 +33,9 @@ export const worker = {
 
 // The handlers take the platform's arguments, with bindings that may be partial in a test.
 export const ran = worker.scheduled({ cron: '0 3 * * *', scheduledTime: 0 }, {})
+
+// authorize() without a check fails only with UnauthorizedError; a check adds ForbiddenError.
+export const signedInOnly: Effect.Effect<AuthUser, UnauthorizedError> = authorize()
+// @ts-expect-error A check can forbid.
+export const checkedOnly: Effect.Effect<AuthUser, UnauthorizedError> = authorize(() => true)
+export const checked: Effect.Effect<AuthUser, UnauthorizedError | ForbiddenError> = authorize(() => true, 'Only staff can do this.')

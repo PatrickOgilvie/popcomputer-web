@@ -254,6 +254,65 @@ export const coercedDate = S.Unknown.pipe(
   )
 )
 
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+/** Whether the year, month and day name a day the calendar has: no 31 February. */
+function isCalendarDay(year: number, month: number, day: number): boolean {
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const days = month === 2 && leap ? 29 : DAYS_IN_MONTH[month - 1]
+
+  return days !== undefined && day >= 1 && day <= days
+}
+
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
+const ISO_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.\d{1,9})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/
+
+const calendarDayIn = (pattern: RegExp) => (value: string): boolean => {
+  const match = pattern.exec(value)
+
+  return match !== null && isCalendarDay(Number(match[1]), Number(match[2]), Number(match[3]))
+}
+
+const notBlank = (value: string): boolean => value.trim() !== ''
+
+/**
+ * A calendar day written `YYYY-MM-DD`, such as `2030-05-01`, kept as that
+ * string: a day has no time zone, so it does not become a `Date` that would
+ * fall on another day elsewhere. A day the calendar lacks, such as
+ * `2030-02-31`, fails. JSON Schema describes it as `format: date`.
+ */
+export const isoDate = S.String.check(
+  S.makeFilter(notBlank, { message: 'This field is required' }),
+  S.makeFilter(calendarDayIn(ISO_DATE), {
+    message: 'Enter a date as YYYY-MM-DD, such as 2030-05-01',
+    toJsonSchema: () => ({ format: 'date' }),
+  })
+)
+
+/**
+ * A moment written in ISO 8601 with its time zone, such as
+ * `2030-05-01T09:00:00Z` or `2030-05-01T10:00+01:00`, as a `Date`. A time
+ * without a zone fails rather than being read in the server's zone, as does
+ * a day the calendar lacks; it encodes back as an ISO string. JSON Schema
+ * describes it as `format: date-time`.
+ */
+export const isoDateTime = S.String.check(
+  S.makeFilter(notBlank, { message: 'This field is required' }),
+  S.makeFilter(calendarDayIn(ISO_DATE_TIME), {
+    message: 'Enter a date and time with its time zone, such as 2030-05-01T09:00:00Z',
+    toJsonSchema: () => ({ format: 'date-time' }),
+  })
+).pipe(
+  S.decodeTo(
+    S.Date,
+    SchemaTransformation.transform({
+      // oxlint-disable-next-line effecttsgo/global-date -- This codec parses the supplied value; it does not read the clock.
+      decode: (value: string) => new Date(value),
+      encode: (date: Date) => date.toISOString(),
+    })
+  )
+)
+
 /**
  * A nullable date that accepts empty strings as null.
  */

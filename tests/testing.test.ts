@@ -113,6 +113,12 @@ describe('testEnv', () => {
     expect(await res.json()).toEqual({ region: 'eu' })
   })
 
+  test('takes bindings alone, without a layer', async () => {
+    const res = await createApp().request('/region', {}, testEnv({ REGION: 'eu' }))
+
+    expect(await res.json()).toEqual(await (await createApp().request('/region', {}, testEnv(Layer.empty, { REGION: 'eu' }))).json())
+  })
+
   test('ignores a layer under a string key, which deploy configuration could set', async () => {
     const env = { REGION: 'eu', __testLayer: signedIn({ id: 'user-1' }) }
     const res = await createApp().request('/me', {}, env)
