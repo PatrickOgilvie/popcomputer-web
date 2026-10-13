@@ -13,6 +13,7 @@ import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
 import { json } from '../src/effect/responses.js'
+import { config } from '../src/effect/config.js'
 import { testEnv } from '../src/testing.js'
 
 class Settings extends Context.Service<Settings, { readonly baseUrl: string }>()('test/Settings') {}
@@ -105,5 +106,23 @@ describe('Config from bindings', () => {
     expect(await development.json()).toMatchObject({ code: 'WEB_CFG_305_INVALID_CONFIG', message: expect.stringContaining('REGION') })
     expect(await test.json()).toMatchObject({ message: expect.stringContaining('REGION') })
     expect(await production.json()).toMatchObject({ code: 'WEB_CFG_305_INVALID_CONFIG', message: expect.not.stringContaining('REGION') })
+  })
+})
+
+describe('config', () => {
+  test('reads the vars and secrets the request\'s bindings hold', async () => {
+    const app = new Hono<Env>()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    routes.get('/settings', action(Effect.gen(function* () {
+      const region = yield* config.string('REGION')
+      const key = yield* config.redacted('API_KEY')
+
+      return yield* json({ region, keyLength: Redacted.value(key).length })
+    })))
+
+    const res = await app.request('/settings', {}, testEnv(Layer.empty, { REGION: 'weur', API_KEY: 'secret' }))
+
+    expect(await res.json()).toEqual({ region: 'weur', keyLength: 6 })
   })
 })

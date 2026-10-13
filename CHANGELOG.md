@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `config` from `@popcomputer/web/effect` is Effect `Config` for the Worker's vars and secrets, each name checked against the bindings the Hono app's type declares: `config.string('REGION')`, `config.redacted('API_KEY')`, `config.duration('HOLD_TTL')`. A misspelled name is a type error instead of a default silently taken.
 - A JSON client's 422 carries `errors`, each invalid field's message by name, as a form's page receives them, beside `validation`.
 - `redirectNow(path, params)` redirects from anywhere in an action, such as a helper or a guard layer, by failing with the redirect, which the boundary answers; values flashed before it reach the next page. `Redirect` is one of the package's errors.
 - `routes.run(effect, env, ctx)` runs an Effect with the application's services outside a request, from a Worker's `scheduled` or `queue` handler: the database, `services`, `Config` from the bindings, `background()` and the builder's provided layers work as in an action. It resolves with the Effect's value and rejects with its failure; an Effect needing a service the setup does not provide is a type error naming it.

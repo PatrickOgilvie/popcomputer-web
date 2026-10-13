@@ -24,6 +24,7 @@ import {
   action,
   AuthUserService,
   authorize,
+  config,
   BindingsService,
   bound,
   currentUser,
@@ -205,6 +206,11 @@ web.routes
       })
     )
   )
+
+// Config names are the bindings the Hono app declares.
+export const region = config.string('REGION')
+// @ts-expect-error REGOIN is not a binding
+config.string('REGOIN')
 
 // Scheduled work runs with the setup's services, and only those.
 export const scheduled = (env: Env['Bindings']) => web.routes.run(dbQuery((db) => db.findProject('p1')), env)

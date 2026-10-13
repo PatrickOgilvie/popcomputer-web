@@ -185,3 +185,6 @@ export {
   currentUser,
   intendedUrl,
 } from './auth.js'
+
+// Config for the Worker's vars and secrets, named as the bindings declare them
+export { config, type BindingConfig, type BindingName } from './config.js'

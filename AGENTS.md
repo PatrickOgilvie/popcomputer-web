@@ -90,8 +90,8 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
    services built once and shared (configuration, in-memory caches), `request`
    for anything that holds the request's bindings (D1, KV, Hyperdrive).
    Define them with `Context.Service` and `Layer`, and read vars and secrets
-   with Effect `Config` (`Config.String('NAME')`, `Config.Redacted('KEY')`),
-   which reads the Worker's bindings. Give a layer whose service uses the
+   with `config.string('NAME')` and `config.redacted('KEY')`, Effect `Config`
+   named by the Worker's bindings type, which reads the request's bindings. Give a layer whose service uses the
    database its type (`export const ProjectsLive: Layer.Layer<Projects> =
    ...`): `setupWeb`'s type includes its services and the database type comes
    from `setupWeb`, so an inferred one refers to itself.

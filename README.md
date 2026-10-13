@@ -178,6 +178,8 @@ the signed-in user, route models, pages, shared props and flash data.
 export type Bindings = {
   DATABASE_URL: string
   BETTER_AUTH_SECRET: string
+  PAYMENT_WEBHOOK_SECRET: string
+  TIME_ZONE?: string
   KV: KVNamespace
 }
 
@@ -558,15 +560,17 @@ Services an action needs beyond the framework's go in `setupWeb`'s
 ```ts
 // src/services.ts
 import { Config, Context, Effect, Layer } from 'effect'
+import { config } from '@popcomputer/web/effect'
 
 export class Clock extends Context.Service<Clock, {
   readonly today: Effect.Effect<string>
   readonly timeZone: string
 }>()('app/Clock') {}
 
-// Config reads the Worker's bindings: here the TIME_ZONE var.
+// config reads the Worker's bindings, named as src/env.ts declares them:
+// here the TIME_ZONE var.
 export const ClockLive = Layer.effect(Clock, Effect.gen(function* () {
-  const timeZone = yield* Config.String('TIME_ZONE').pipe(Config.withDefault('UTC'))
+  const timeZone = yield* config.string('TIME_ZONE').pipe(Config.withDefault('UTC'))
 
   return Clock.of({
     today: Effect.sync(() => new Date().toLocaleDateString('en-CA', { timeZone })),
@@ -596,9 +600,11 @@ setupWeb(app, {
 
 `services.app` is built once, on the first request an isolate serves, and
 shared by every later request: configuration, clients that open no connection
-until used, in-memory caches. Effect `Config` reads the Worker's bindings in
-both kinds of service and in actions, so `Config.Redacted('API_KEY')` reads a
-secret; a missing binding fails the request with a configuration error that
+until used, in-memory caches. `config` from `@popcomputer/web/effect` is
+Effect `Config` named by the bindings `src/env.ts` declares, so a misspelled
+name is a type error: it reads the Worker's bindings in both kinds of service
+and in actions, and `config.redacted('PAYMENT_WEBHOOK_SECRET')` reads a
+secret. A missing binding fails the request with a configuration error that
 names it in development. `services.request` is built for each request from
 its context and bindings. Anything holding a request's I/O, such as a D1, KV or
 Hyperdrive binding, belongs in `services.request`: Workers forbid using it from
@@ -1577,13 +1583,13 @@ A webhook's signature covers the exact bytes sent, so read the raw body with
 `RequestService`'s `raw()` rather than `validateRequest` (read
 `raw().clone().text()` when `validateRequest` reads the body afterwards),
 verify it with Web Crypto (`crypto.subtle.verify` compares in constant time), and only then decode
-it. Read the secret with `Config.Redacted`, which reads the Worker's binding
+it. Read the secret with `config.redacted`, which reads the Worker's binding
 and keeps it out of logs. Providers retry, so record each event id under a
 unique key and treat a duplicate as already handled:
 
 ```ts
 import { eq } from 'drizzle-orm'
-import { Config, DateTime, Redacted } from 'effect'
+import { DateTime, Redacted } from 'effect'
 import { orders, webhookEvents } from '../schema'
 
 const PaymentEvent = S.Struct({ id: S.String, orderId: S.String })
@@ -1600,7 +1606,7 @@ async function verifySignature(secret: string, body: string, signature: string) 
 
 export const paymentWebhook = action(Effect.gen(function* () {
   const request = yield* RequestService
-  const secret = yield* Config.Redacted('PAYMENT_WEBHOOK_SECRET')
+  const secret = yield* config.redacted('PAYMENT_WEBHOOK_SECRET')
   const body = yield* Effect.promise(() => request.raw().text())
   const signature = request.header('X-Signature') ?? ''
 
