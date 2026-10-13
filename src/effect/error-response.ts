@@ -49,7 +49,7 @@ export const ErrorResponse = S.Struct({
   ]),
   title: S.String,
   message: S.String,
-  httpStatus: S.Number,
+  httpStatus: S.Int,
   timestamp: S.String,
   requestId: S.optionalKey(S.String),
   context: S.optionalKey(ErrorContext),

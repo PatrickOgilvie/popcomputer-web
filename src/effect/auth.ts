@@ -5,6 +5,8 @@
  */
 
 import { CookieService, type Cookie } from './cookies.js'
+import { ResponseHeaders } from './response-headers.js'
+import type { Jsonify } from './pages.js'
 import type { PathTarget } from '../paths.js'
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import type { MiddlewareHandler, Env } from 'hono'
@@ -426,11 +428,15 @@ export type BetterAuthEndpointInput<Name extends string> = [AuthApi] extends [ne
   ? { readonly body?: unknown; readonly query?: Readonly<Record<string, unknown>> }
   : Pick<EndpointArgument<Name>, Extract<keyof EndpointArgument<Name>, 'body' | 'query'>>
 
-/** What an endpoint answers on success, as `auth.api` returns it, such as sign-up's `{ token, user }`. */
+/**
+ * What an endpoint answers on success, such as sign-up's `{ token, user }`,
+ * as the JSON Better Auth's handler sends: dates are ISO strings, so decode
+ * one with `S.Date` (or `S.toCodecJson(Schema)`) before using it as a `Date`.
+ */
 export type BetterAuthEndpointResult<Name extends string> = [AuthApi] extends [never]
   ? unknown
   : EndpointOf<AuthApi, Name> extends (...args: never) => infer Result
-    ? Awaited<Result>
+    ? Jsonify<Awaited<Result>>
     : unknown
 
 /** Options for {@link betterAuthRedirect}. */
@@ -565,6 +571,15 @@ function callEndpoint(
 
     if (Option.isSome(jar)) {
       for (const cookie of response.headers.getSetCookie()) jar.value.append(cookie)
+    }
+
+    // A session token Better Auth's bearer plugin hands a client that sends no cookies.
+    const token = response.headers.get('set-auth-token')
+    const headers = yield* Effect.serviceOption(ResponseHeaders)
+
+    if (token !== null && Option.isSome(headers)) {
+      headers.value.append('set-auth-token', token)
+      headers.value.append('Access-Control-Expose-Headers', 'set-auth-token')
     }
 
     return { result: yield* readEndpointResult(response), response }

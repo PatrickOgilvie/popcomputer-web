@@ -1470,7 +1470,8 @@ false` in `betterAuthFields`, so a sign-up cannot send them: set them in that
 Effect, or keep them in the application's own table, such as a membership,
 which a guard layer reads. `redirectTo` given a function receives the
 endpoint's result, sign-up's `{ token, user }`, so it reads the new user's id
-as `result.user.id`.
+as `result.user.id`. A result is the JSON Better Auth's handler answered, and
+typed so: its dates are ISO strings.
 
 A Better Auth call whose result the action uses, such as enabling two-factor
 (which returns the secret) or checking a password, goes through

@@ -147,7 +147,8 @@ export function privateByDefault<E extends Env>(): MiddlewareHandler<E> {
     }
 
     const result = new Response(c.res.body, c.res)
-    result.headers.set('Cache-Control', DEFAULT_CACHE_CONTROL)
+    // A response that sets a cookie, such as a new session, is kept by no cache at all.
+    result.headers.set('Cache-Control', result.headers.has('Set-Cookie') ? 'no-store' : DEFAULT_CACHE_CONTROL)
     // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
     c.res = result
   })

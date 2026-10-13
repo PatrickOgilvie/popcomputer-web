@@ -185,6 +185,8 @@ describe('auth flow on routes', () => {
     expect(res.status).toBe(303)
     expect(res.headers.get('Location')).toBe('/dashboard')
     expect(hasSession(res)).toBe(true)
+    // A response carrying a session is kept by no cache.
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
   })
 
   test('a rejected sign-in goes back to the form with the error on its field', async () => {
@@ -259,6 +261,11 @@ export const typedCalls = Effect.gen(function* () {
 
   const signedUp = yield* betterAuthCall('signUpEmail', { body: { name: 'Ada', email: 'ada@example.com', password: 'correct horse' } })
   const id: string = signedUp.user.id
+  // The result is the JSON Better Auth answered: its dates are strings.
+  const createdAt: string = signedUp.user.createdAt
+  // @ts-expect-error A date in the result is its ISO string, not a Date.
+  const asDate: Date = signedUp.user.createdAt
+  void [createdAt, asDate]
 
   return id
 })
