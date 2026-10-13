@@ -40,7 +40,8 @@ TypeScript example here and in the README type-checks against the package.
    pass the object as `setupWeb`'s `pages`. Type each React page as
    `WebPage<'Projects/Show'>` from `@popcomputer/web/react`; its props, the
    shared `auth.user` and `errors` follow. Declare props shared with every
-   page in `shared`, and flash values in `flash`.
+   page in `shared`, computed when a page renders by
+   `routes.provide(shareProps(effect))`, and flash values in `flash`.
 4. **End every branch with a response helper:** `return yield* render(...)`,
    `redirect(...)`, `json(...)`, `jsonOrRender(...)`, `file(...)`,
    `notFound(...)`, `forbidden(...)` or `httpError(...)`. `yield* flash(key, value)` before a

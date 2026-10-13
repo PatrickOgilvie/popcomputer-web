@@ -12,7 +12,8 @@ import { Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
-import { flash, render, share } from '../src/effect/responses.js'
+import { flash, json, redirect, render, share, shareProps } from '../src/effect/responses.js'
+import { currentUser } from '../src/effect/auth.js'
 import { signedIn, testEnv } from '../src/testing.js'
 
 function createApp() {
@@ -76,5 +77,62 @@ describe('declared values', () => {
 
     expect(res.status).toBe(500)
     expect((await res.json()).message).toContain("'theme' is not in setupWeb's shared")
+  })
+})
+
+describe('shareProps', () => {
+  function sharingApp() {
+    const app = new Hono()
+    let computed = 0
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      shared: S.Struct({ unread: S.Number, since: S.Date }),
+    })
+
+    const unread = Effect.gen(function* () {
+      computed += 1
+      const viewer = yield* currentUser
+
+      return viewer ? { unread: 3 } : {}
+    })
+    const since = Effect.succeed({ since: new Date(Date.UTC(2026, 9, 13)) })
+
+    routes
+      .provide(shareProps(unread))
+      .provide(shareProps(since))
+      .get('/inbox', action(render('Inbox')))
+      .post('/inbox', action(redirect('/inbox')))
+      .get('/api/inbox', action(json({ ok: true })))
+
+    return { app, computed: () => computed }
+  }
+
+  test('pages receive the props it computes, encoded through setupWeb\'s shared', async () => {
+    const { app } = sharingApp()
+    const res = await app.request('/inbox', { headers: page }, testEnv(signedIn({ id: 'user-1' })))
+
+    expect((await res.json()).props).toMatchObject({ unread: 3, since: '2026-10-13T00:00:00.000Z' })
+  })
+
+  test('each computation decides its own props', async () => {
+    const { app } = sharingApp()
+    const res = await app.request('/inbox', { headers: page })
+    const props = (await res.json()).props
+
+    expect(props.unread).toBeUndefined()
+    expect(props.since).toBe('2026-10-13T00:00:00.000Z')
+  })
+
+  test('redirects and JSON responses never compute them', async () => {
+    const { app, computed } = sharingApp()
+    const env = testEnv(signedIn({ id: 'user-1' }))
+
+    await app.request('/inbox', { method: 'POST', headers: page }, env)
+    await app.request('/api/inbox', { headers: { Accept: 'application/json' } }, env)
+    expect(computed()).toBe(0)
+
+    await app.request('/inbox', { headers: page }, env)
+    expect(computed()).toBe(1)
   })
 })

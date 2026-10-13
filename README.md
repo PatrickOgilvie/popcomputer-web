@@ -245,6 +245,7 @@ export const web = setupWeb(new Hono<Env>(), {
     session: AuthSession,
     share: S.Struct({ id: S.String, name: S.NullOr(S.String), image: S.NullOr(S.String) }),
   },
+  shared: S.Struct({ unreadCount: S.Number }),
   flash: S.Struct({ success: S.String }),
   errors: { component: 'Error' },
 })
@@ -271,7 +272,7 @@ application reads its types from:
 | `auth.session` | `authorize()`, `currentUser`, `AuthUserService`, `signedIn` |
 | `auth.share` | `auth.user` in `SharedProps` and `WebPage` (default: `id`, `name`, `image`) |
 | `pages` | `render`, `jsonOrRender`, `WebPage`, `readPage` |
-| `shared`, `flash` | `share(key, value)`, `flash(key, value)`, `SharedProps`, `FlashData` |
+| `shared`, `flash` | `shareProps(effect)`, `share(key, value)`, `flash(key, value)`, `SharedProps`, `FlashData` |
 
 Each value reaches the browser encoded through its schema, so a field the
 schema does not name, such as the user's email, never leaves the server.
@@ -476,6 +477,20 @@ registered through it.
 `action` does not hide another execution model. It preserves the Effect's
 success, error, and requirement channels, while documenting that the program is
 an HTTP action.
+
+Props every page shows, such as a header's unread count, are declared in
+`setupWeb`'s `shared` and computed by `shareProps`, provided on the routes
+whose pages show them. It runs when a page renders, never for a redirect or a
+JSON response, and returns any of the declared props; an action can also set
+one with `share(key, value)`.
+
+```ts
+const sharedRoutes = routes.provide(shareProps(Effect.gen(function* () {
+  const viewer = yield* currentUser
+
+  return viewer ? { unreadCount: yield* Effect.succeed(3) } : {}
+})))
+```
 
 ## Data flow
 

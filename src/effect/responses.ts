@@ -4,7 +4,7 @@
  * Utility functions for creating responses within Effect computations.
  */
 
-import { Effect, Stream } from 'effect'
+import { Context, Effect, Layer, Option, Stream } from 'effect'
 import { href, type PathArguments } from '../paths.js'
 import {
   PageService,
@@ -61,6 +61,11 @@ function renderPage(component: string, props: object | undefined): Effect.Effect
   return Effect.gen(function* () {
     const page = yield* PageService
     const encoded = yield* encodePageProps(page.pages, component, props)
+    const sharing = yield* Effect.serviceOption(PageSharing)
+
+    if (Option.isSome(sharing)) {
+      yield* sharing.value.share
+    }
 
     return yield* Effect.promise(() => page.render(component, encoded))
   }).pipe(Effect.withSpan('Web.render', { attributes: { component } }))
@@ -283,4 +288,60 @@ export function share<Key extends SharedKey>(key: Key, value: SharedValue<Key>):
     const page = yield* PageService
     page.share(key, yield* encodeDeclaredField(page.shared, 'shared', key, value))
   })
+}
+
+/** Shared props as `shareProps` computes them: any of setupWeb's `shared`. */
+export type SharedPropsInput = { readonly [Key in SharedKey]?: SharedValue<Key> }
+
+/** The shared props a request's pages compute when they render. Provided by `shareProps`. */
+export class PageSharing extends Context.Service<
+  PageSharing,
+  { readonly share: Effect.Effect<void> }
+>()('@popcomputer/web/PageSharing') {}
+
+/**
+ * Compute props every page shares, such as a header's unread count, when a
+ * page renders: redirects and JSON responses never run it. Provide it on the
+ * routes whose pages show them; each `shareProps` a route is given runs, in
+ * order. A failure fails the page as a defect.
+ *
+ * @example
+ * export const routes = web.routes.provide(shareProps(Effect.gen(function* () {
+ *   const viewer = yield* currentUser
+ *
+ *   return viewer ? { unreadOffers: yield* countUnreadOffers(viewer.user.id) } : {}
+ * })))
+ */
+export function shareProps<E, R>(
+  compute: Effect.Effect<SharedPropsInput, E, R>
+): Layer.Layer<PageSharing, never, R | PageService> {
+  return Layer.effect(
+    PageSharing,
+    Effect.gen(function* () {
+      const context = yield* Effect.context<R | PageService>()
+      const earlier = yield* Effect.serviceOption(PageSharing)
+      const own = compute.pipe(
+        Effect.flatMap((values) =>
+          Effect.gen(function* () {
+            const page = yield* PageService
+
+            for (const [key, value] of Object.entries(values)) {
+              if (value !== undefined) {
+                page.share(key, yield* encodeDeclaredField(page.shared, 'shared', key, value))
+              }
+            }
+          })
+        ),
+        Effect.orDie,
+        Effect.provideContext(context)
+      )
+
+      return PageSharing.of({
+        share: Option.match(earlier, {
+          onNone: () => own,
+          onSome: (previous) => Effect.andThen(previous.share, own),
+        }),
+      })
+    })
+  )
 }

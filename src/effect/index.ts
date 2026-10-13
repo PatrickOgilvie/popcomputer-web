@@ -119,6 +119,9 @@ export {
   prefersJson,
   jsonOrRender,
   share,
+  shareProps,
+  PageSharing,
+  type SharedPropsInput,
 } from './responses.js'
 
 // Pages

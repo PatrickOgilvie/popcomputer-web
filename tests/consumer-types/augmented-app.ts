@@ -33,6 +33,7 @@ import {
   type DatabaseService,
   render,
   share,
+  shareProps,
 } from '@popcomputer/web/effect'
 import { readPage, signedIn, testEnv } from '@popcomputer/web/testing'
 
@@ -170,6 +171,11 @@ export const derivedTypes = Effect.gen(function* () {
   // @ts-expect-error a flashed success message is a string
   yield* flash('success', 1)
 })
+
+// Shared props computed for every page are typed by setupWeb's shared.
+web.routes.provide(shareProps(Effect.map(dbQuery((db) => db.findProject('p1')), (project) => ({ locale: project.id }))))
+// @ts-expect-error 'theme' is not a shared prop
+web.routes.provide(shareProps(Effect.succeed({ theme: 'dark' })))
 
 // Actions use services from setupWeb and from routes.provide alike.
 web.routes
