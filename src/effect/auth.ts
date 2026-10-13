@@ -401,9 +401,14 @@ export {
 } from './better-auth-boundary.js'
 
 /** Options for {@link betterAuthRedirect}. */
-export interface BetterAuthRedirectOptions {
-  /** Where to send the user once Better Auth accepts the call. */
-  readonly redirectTo: string
+export interface BetterAuthRedirectOptions<Result, E = never, R = never> {
+  /**
+   * Where to send the user once Better Auth accepts the call: a path, or a
+   * function of Better Auth's result returning a path or an Effect that
+   * computes one, such as a lookup of the new user's first team. Call Better
+   * Auth with `returnHeaders: true` to receive its result with the cookies.
+   */
+  readonly redirectTo: string | ((result: Result) => string | Effect.Effect<string, E, R>)
   /** Field errors for a rejected call, such as wrong credentials, keyed by the form's fields. */
   readonly errors?: (error: BetterAuthActionError) => Record<string, string>
 }
@@ -428,13 +433,13 @@ export interface BetterAuthRedirectOptions {
  *   )
  * }))
  */
-export function betterAuthRedirect(
-  call: (auth: AuthType, request: Request) => Promise<BetterAuthActionResult>,
-  options: BetterAuthRedirectOptions
+export function betterAuthRedirect<Result extends BetterAuthActionResult, E = never, R = never>(
+  call: (auth: AuthType, request: Request) => Promise<Result>,
+  options: BetterAuthRedirectOptions<Result, E, R>
 ): Effect.Effect<
   Response,
-  AuthRedirect | ValidationError | AuthRateLimitError | HttpError,
-  RequestService | AuthService
+  AuthRedirect | ValidationError | AuthRateLimitError | HttpError | E,
+  RequestService | AuthService | R
 > {
   return Effect.gen(function* () {
     const auth = yield* AuthService
@@ -444,7 +449,9 @@ export function betterAuthRedirect(
       Effect.mapError((failure) => toAuthActionError(failure, options.errors))
     )
 
-    const responseHeaders = new Headers({ Location: options.redirectTo })
+    const destination = typeof options.redirectTo === 'string' ? options.redirectTo : options.redirectTo(result)
+    const location = Effect.isEffect(destination) ? yield* destination : destination
+    const responseHeaders = new Headers({ Location: location })
     const resultHeaders = getHeaders(result)
 
     if (resultHeaders) {

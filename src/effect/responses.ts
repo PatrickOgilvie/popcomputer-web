@@ -4,7 +4,7 @@
  * Utility functions for creating responses within Effect computations.
  */
 
-import { Effect } from 'effect'
+import { Effect, Stream } from 'effect'
 import {
   PageService,
   ResponseFactoryService,
@@ -60,29 +60,109 @@ export const flash = (key: string, value: PagePropValue): Effect.Effect<void, ne
     page.flash(key, value)
   })
 
+/** A response's status and headers: a status alone, or both. */
+export type ResponseOptions = number | { readonly status?: number; readonly headers?: HeadersInit }
+
 /**
  * Return a JSON response.
  *
  * @example
  * return yield* json({ success: true })
  * return yield* json({ error: 'Not found' }, 404)
+ * return yield* json(page, { headers: { 'Cache-Control': 'private, max-age=60' } })
  */
-export const json = <T>(data: T, status = 200): Effect.Effect<Response, never, ResponseFactoryService> =>
+export const json = <T>(data: T, init: ResponseOptions = 200): Effect.Effect<Response, never, ResponseFactoryService> =>
   Effect.gen(function* () {
     const factory = yield* ResponseFactoryService
 
-    return factory.json(data, status)
+    return withHeaders(factory.json(data, statusOf(init)), init)
   })
 
 /**
  * Return a text response.
+ *
+ * @example
+ * return yield* text(feed, { headers: { 'Content-Type': 'application/rss+xml; charset=utf-8' } })
  */
-export const text = (data: string, status = 200): Effect.Effect<Response, never, ResponseFactoryService> =>
+export const text = (data: string, init: ResponseOptions = 200): Effect.Effect<Response, never, ResponseFactoryService> =>
   Effect.gen(function* () {
     const factory = yield* ResponseFactoryService
 
-    return factory.text(data, status)
+    return withHeaders(factory.text(data, statusOf(init)), init)
   })
+
+/** How `file` answers: the body's media type, and a download name. */
+export interface FileOptions {
+  /** The body's media type, such as `text/csv; charset=utf-8`. */
+  readonly contentType: string
+  /** Offer the body as a download with this file name. Without it, browsers show the body inline. */
+  readonly filename?: string
+  readonly status?: number
+  readonly headers?: HeadersInit
+}
+
+/** A file body: text, bytes, a web stream, or an Effect Stream of text or bytes. */
+export type FileBody<E, R> =
+  | string
+  | Uint8Array<ArrayBuffer>
+  | ReadableStream<Uint8Array>
+  | Stream.Stream<string | Uint8Array<ArrayBuffer>, E, R>
+
+/**
+ * Return a file: an export, a feed or stored media. A Stream body is sent as
+ * it is produced; a failure after the response has started ends the body.
+ *
+ * @example
+ * return yield* file(Stream.fromIterable(rows).pipe(Stream.map(toCsvLine)), {
+ *   contentType: 'text/csv; charset=utf-8',
+ *   filename: 'claims.csv',
+ * })
+ */
+export function file<E = never, R = never>(
+  body: FileBody<E, R>,
+  options: FileOptions
+): Effect.Effect<Response, never, R> {
+  return Effect.gen(function* () {
+    const headers = new Headers(options.headers)
+    headers.set('Content-Type', options.contentType)
+
+    if (options.filename !== undefined) {
+      headers.set('Content-Disposition', contentDisposition(options.filename))
+    }
+
+    const content = Stream.isStream(body)
+      ? yield* Stream.toReadableStreamEffect(body.pipe(Stream.map(toBytes)))
+      : body
+
+    return new Response(content, { status: options.status ?? 200, headers })
+  })
+}
+
+const encoder = new TextEncoder()
+
+function toBytes(chunk: string | Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
+  return typeof chunk === 'string' ? encoder.encode(chunk) : chunk
+}
+
+/** An attachment header naming the file, safe for any characters in the name. */
+function contentDisposition(filename: string): string {
+  const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, '_')
+
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+}
+
+function statusOf(init: ResponseOptions): number {
+  return typeof init === 'number' ? init : init.status ?? 200
+}
+
+function withHeaders(response: Response, init: ResponseOptions): Response {
+  if (typeof init === 'number' || init.headers === undefined) return response
+
+  const headers = new Headers(response.headers)
+  new Headers(init.headers).forEach((value, name) => headers.set(name, value))
+
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
 
 /**
  * Fail with a not found error.

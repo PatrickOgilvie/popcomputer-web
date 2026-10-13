@@ -8,6 +8,8 @@ import {
   // String types
   trimmed,
   nullableString,
+  upload,
+  nullableUpload,
   requiredString,
   required,
   alpha,
@@ -900,5 +902,31 @@ describe('Absent form fields', () => {
 
   test('optional validators still decode values inside arrays', () => {
     expect(S.decodeUnknownSync(S.Array(nullableString))(['a', ' ', null])).toEqual(['a', null, null])
+  })
+})
+
+describe('Uploads', () => {
+  const Form = S.Struct({ cover: upload({ types: ['image/*'], maxBytes: 1024 }), attachment: nullableUpload() })
+  const decode = (input: object) => S.decodeUnknownExit(Form)(input)
+  const png = new File([new Uint8Array(100)], 'cover.png', { type: 'image/png' })
+
+  test('accepts a file of an accepted type and size', () => {
+    const exit = decode({ cover: png })
+
+    expect(exit._tag === 'Success' && exit.value).toEqual({ cover: png, attachment: null })
+  })
+
+  test.each([
+    ['an empty file input', new File([], '', { type: 'application/octet-stream' }), 'Choose a file'],
+    ['another type', new File(['x'], 'notes.txt', { type: 'text/plain' }), 'The file must be image/*'],
+    ['a larger file', new File([new Uint8Array(2048)], 'big.png', { type: 'image/png' }), 'The file must be at most 1 KB'],
+  ])('rejects %s', (_name, cover, message) => {
+    expect(String(S.decodeUnknownExit(Form)({ cover }))).toContain(message)
+  })
+
+  test('reads an empty optional file input as no file', () => {
+    const exit = decode({ cover: png, attachment: new File([], '') })
+
+    expect(exit._tag === 'Success' && exit.value.attachment).toBeNull()
   })
 })

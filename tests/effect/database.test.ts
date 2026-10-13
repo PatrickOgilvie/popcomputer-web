@@ -97,6 +97,27 @@ describe('dbQuery', () => {
     expect(names).toEqual(['Acme'])
   })
 
+  test('decodes the result with a schema', async () => {
+    const { layer, db } = openDatabase()
+    await db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Intro' })
+    const Page = Schema.Struct({ slug: Schema.Literals(['intro', 'guide']), title: Schema.String })
+
+    const decoded = await Effect.runPromise(
+      dbQuery((db) => db.select({ slug: pages.slug, title: pages.title }).from(pages), Schema.Array(Page)).pipe(
+        Effect.provide(layer)
+      )
+    )
+    const rejected = await Effect.runPromiseExit(
+      dbQuery((db) => db.select({ slug: pages.slug }).from(pages), Schema.Array(Schema.Struct({ slug: Schema.Literal('guide') }))).pipe(
+        Effect.provide(layer)
+      )
+    )
+
+    const slugs: ReadonlyArray<'intro' | 'guide'> = decoded.map((page) => page.slug)
+    expect(slugs).toEqual(['intro'])
+    expect(failureOf(rejected)).toMatchObject({ value: { _tag: 'DatabaseError', operation: 'query' } })
+  })
+
   test('fails with DatabaseError when the query fails', async () => {
     const { layer, sqlite } = openDatabase()
     sqlite.run('DROP TABLE pages')

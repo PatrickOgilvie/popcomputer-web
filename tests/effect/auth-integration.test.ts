@@ -37,6 +37,10 @@ const fakeAuth = {
 
       return { headers: new Headers({ 'set-cookie': SESSION }) }
     },
+    signUpEmail: async (input: { readonly body: { readonly email: string; readonly password: string }; readonly returnHeaders: true }) => ({
+      headers: new Headers({ 'set-cookie': SESSION }),
+      response: { user: { id: 'user-2', email: input.body.email } },
+    }),
     signOut: async () => ({ headers: new Headers({ 'set-cookie': 'better-auth.session_token=; Max-Age=0; Path=/' }) }),
     getSession: async () => null,
   },
@@ -60,6 +64,16 @@ const signIn = action(Effect.gen(function* () {
   )
 }))
 
+// Sign-up lands on the new member's first team, which the redirect computes.
+const signUp = action(Effect.gen(function* () {
+  const input = yield* validateRequest(SignIn)
+
+  return yield* betterAuthRedirect(
+    (auth) => auth.api.signUpEmail({ body: input, returnHeaders: true }),
+    { redirectTo: (result) => Effect.succeed(`/teams/first-of-${result.response.user.id}`) }
+  )
+}))
+
 function createApp() {
   const app = new Hono()
   const { routes } = setupWeb(app, {
@@ -72,6 +86,7 @@ function createApp() {
     .provide(RequireGuestLayer)
     .get('/sign-in', action(render('Auth/SignIn')))
     .post('/sign-in', signIn)
+    .post('/sign-up', signUp)
 
   routes
     .provide(RequireAuthLayer)
@@ -119,6 +134,17 @@ describe('auth flow on routes', () => {
     expect(rejected.status).toBe(303)
     expect(rejected.headers.get('Location')).toBe('/sign-in')
     expect((await form.json()).props.errors).toEqual({ email: 'Invalid email or password' })
+  })
+
+  test('signing up can redirect by Better Auth\'s result', async () => {
+    const res = await createApp().request('/sign-up', {
+      method: 'POST',
+      headers: { ...page, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'grace@example.com', password: 'correct horse' }),
+    })
+
+    expect(res.headers.get('Location')).toBe('/teams/first-of-user-2')
+    expect(res.headers.getSetCookie()).toContain(SESSION)
   })
 
   test('a signed-in member visiting a guest page goes home', async () => {

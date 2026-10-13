@@ -4,13 +4,14 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Option, Effect, Layer, Exit, Cause } from 'effect'
+import { Option, Effect, Layer, Exit, Cause, Stream } from 'effect'
 import type { PageProps } from '../../src/types.js'
 import {
   redirect,
   render,
   flash,
   json,
+  file,
   text,
   notFound,
   forbidden,
@@ -154,7 +155,38 @@ describe('flash', () => {
   })
 })
 
+describe('file', () => {
+  test('streams an Effect Stream as a download', async () => {
+    const rows = Stream.fromIterable([{ id: 'c1', amount: 120 }, { id: 'c2', amount: 80 }])
+    const csv = Stream.concat(Stream.make('id,amount\n'), rows.pipe(Stream.map((row) => `${row.id},${row.amount}\n`)))
+
+    const response = await Effect.runPromise(file(csv, { contentType: 'text/csv; charset=utf-8', filename: 'claims Q3.csv' }))
+
+    expect(response.headers.get('Content-Type')).toBe('text/csv; charset=utf-8')
+    expect(response.headers.get('Content-Disposition')).toBe(`attachment; filename="claims Q3.csv"; filename*=UTF-8''claims%20Q3.csv`)
+    expect(await response.text()).toBe('id,amount\nc1,120\nc2,80\n')
+  })
+
+  test('shows a body inline without a file name', async () => {
+    const response = await Effect.runPromise(file('<rss/>', { contentType: 'application/rss+xml' }))
+
+    expect(response.headers.get('Content-Disposition')).toBeNull()
+    expect(await response.text()).toBe('<rss/>')
+  })
+})
+
 describe('json', () => {
+  test('sets the headers it is given', async () => {
+    const layer = Layer.succeed(ResponseFactoryService, createMockResponseFactory())
+
+    const response = await Effect.runPromise(
+      Effect.provide(json({ ok: true }, { status: 201, headers: { 'Cache-Control': 'no-store' } }), layer)
+    )
+
+    expect(response.status).toBe(201)
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
+  })
+
   test('creates JSON response with default 200 status', async () => {
     const layer = Layer.succeed(ResponseFactoryService, createMockResponseFactory())
 

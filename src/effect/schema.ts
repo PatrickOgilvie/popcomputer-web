@@ -1061,6 +1061,67 @@ export const nullable = <InputSchema extends S.Constraint>(schema: InputSchema) 
   ).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(null)))
 }
 
+/** What an uploaded file may be. */
+export interface UploadOptions {
+  /** Accepted media types, such as `'image/png'`, or a family such as `'image/*'`. */
+  readonly types?: ReadonlyArray<string>
+  /** The largest accepted size, in bytes. */
+  readonly maxBytes?: number
+}
+
+/** A file input left empty, which browsers send as a nameless empty file. */
+const isEmptyFileInput = (value: unknown): boolean =>
+  value instanceof File && value.size === 0 && !value.name
+
+const acceptsType = (types: ReadonlyArray<string>, type: string): boolean =>
+  types.some((accepted) =>
+    accepted.endsWith('/*') ? type.startsWith(accepted.slice(0, -1)) : type === accepted
+  )
+
+const formatBytes = (bytes: number): string =>
+  bytes >= 1024 * 1024 ? `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`
+  : bytes >= 1024 ? `${Math.round((bytes / 1024) * 10) / 10} KB`
+  : `${bytes} bytes`
+
+/**
+ * A file uploaded through a multipart form, checked for type and size.
+ * `validateRequest` reads multipart bodies; a file input left empty is no file.
+ *
+ * @example
+ * const PostForm = S.Struct({ title: requiredString, cover: upload({ types: ['image/*'], maxBytes: 5_000_000 }) })
+ */
+export const upload = (options: UploadOptions = {}) =>
+  S.File.check(
+    S.makeFilter((file: File) => !isEmptyFileInput(file), { message: 'Choose a file' }),
+    S.makeFilter(
+      (file: File) => options.types === undefined || acceptsType(options.types, file.type),
+      { message: `The file must be ${(options.types ?? []).join(', ')}` }
+    ),
+    S.makeFilter(
+      (file: File) => options.maxBytes === undefined || file.size <= options.maxBytes,
+      { message: `The file must be at most ${formatBytes(options.maxBytes ?? 0)}` }
+    )
+  )
+
+/** An optional upload: an absent field or a file input left empty decodes to `null`. */
+export const nullableUpload = (options: UploadOptions = {}) => {
+  const file = upload(options)
+  const decodeFile = SchemaParser.decodeUnknownEffect(file)
+
+  return S.Unknown.pipe(
+    S.decodeTo(
+      S.NullOr(S.File),
+      SchemaTransformation.transformEffect({
+        decode: (value, parseOptions) =>
+          value === undefined || value === null || value === '' || isEmptyFileInput(value)
+            ? Effect.succeed(null)
+            : decodeFile(value, parseOptions),
+        encode: (value) => Effect.succeed(value),
+      })
+    )
+  ).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(null)))
+}
+
 /**
  * Creates a schema that fills in a default value when empty/null/undefined.
  */

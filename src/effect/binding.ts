@@ -191,6 +191,9 @@ type RouteBindingOutput<Config> =
       ? A
       : unknown
 
+/** The keys `bound` accepts: the registered bindings, or any key before the application registers them. */
+export type BoundKey = [ConfiguredRouteBindings] extends [never] ? string : keyof ConfiguredRouteBindings & string
+
 /** Decoded output type registered for one route-model binding key. */
 export type BoundModel<K extends string> =
   [ConfiguredRouteBindings] extends [never]
@@ -218,7 +221,7 @@ export type BoundModel<K extends string> =
  */
 // The annotation keeps `BoundModel<K>` unresolved in the emitted declaration,
 // so it resolves against the application's WebRouteBindingsType.
-export const bound: <K extends string>(
+export const bound: <K extends BoundKey>(
   key: K
 ) => Effect.Effect<BoundModel<K>, BoundModelError, BoundModels> = Effect.fn('Web.bound')(function* <
   K extends string,

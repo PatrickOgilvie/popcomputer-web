@@ -72,6 +72,10 @@ export {
   max,
   // Password
   password,
+  // Files
+  upload,
+  nullableUpload,
+  type UploadOptions,
   // Utility
   nullable,
   filled,

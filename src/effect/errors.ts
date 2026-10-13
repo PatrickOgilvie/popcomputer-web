@@ -71,16 +71,22 @@ function structured(
 /**
  * Validation Error - Field-level validation failures.
  *
- * A form submission that fails with it goes back to the form, whose page
- * receives `errors`; a JSON client gets a 422.
+ * A form submission that fails with it goes back to the form, or to
+ * `redirectTo` when set, and that page receives `errors`; a JSON client gets
+ * a 422.
  *
  * @example
  * ```ts
  * yield* new ValidationError({ errors: { email: 'Invalid email format' } })
+ *
+ * // Send a wizard's last step back to the step whose fields are wrong.
+ * yield* new ValidationError({ errors: { 'items.0.amount': 'Too large' }, redirectTo: '/claims/1/items' })
  * ```
  */
 export class ValidationError extends Schema.TaggedError<ValidationError>()('ValidationError', {
   errors: Schema.Record(Schema.String, Schema.String),
+  /** The page the errors belong on, when it is not the page the form came from. */
+  redirectTo: Schema.optional(Schema.String),
   fieldDetails: Schema.optional(Schema.Record(Schema.String, FieldErrorSchema)),
   code: OptionalErrorCode,
   /** Verified response headers accumulated by an external provider. */

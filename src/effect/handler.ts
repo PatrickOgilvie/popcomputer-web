@@ -202,7 +202,7 @@ export async function renderErrorResponse<E extends Env>(
     if (!['GET', 'HEAD'].includes(c.req.method.toUpperCase())) {
       openWebContext(c).flash?.setErrors(error.errors, c.req.header('X-Inertia-Error-Bag') || undefined)
 
-      return finalize(c.redirect(previousUrl(c), 303))
+      return finalize(c.redirect(error.redirectTo ?? previousUrl(c), 303))
     }
   }
 

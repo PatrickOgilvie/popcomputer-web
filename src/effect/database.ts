@@ -11,7 +11,7 @@
  * driver reports them, its columns; anything else fails with `DatabaseError`.
  */
 
-import { Cause, Effect, Exit, Result } from 'effect'
+import { Cause, Effect, Exit, Result, Schema as S } from 'effect'
 import { DatabaseService, type DatabaseType } from './services.js'
 import { DatabaseConstraintViolation, DatabaseError, ValidationError } from './errors.js'
 
@@ -22,17 +22,37 @@ type Constraint = DatabaseConstraintViolation['constraint']
 export type DatabaseWriteError = DatabaseError | DatabaseConstraintViolation
 
 /**
- * Read with the request's database.
+ * Read with the request's database. Pass a schema to decode the result into
+ * the application's types, such as a status column into its literal union; a
+ * result the schema rejects fails with DatabaseError.
  *
  * @example
  * const recent = yield* dbQuery((db) =>
  *   db.select().from(projects).where(eq(projects.userId, auth.user.id)).limit(10)
  * )
+ *
+ * const claims = yield* dbQuery((db) => db.select().from(claimsTable), S.Array(Claim))
  */
 export function dbQuery<A>(
   query: (db: DatabaseType) => A
-): Effect.Effect<Awaited<A>, DatabaseError, DatabaseService> {
-  return run('query', query, (cause) => Effect.fail(new DatabaseError({ operation: 'query', cause })))
+): Effect.Effect<Awaited<A>, DatabaseError, DatabaseService>
+export function dbQuery<A, T>(
+  query: (db: DatabaseType) => A,
+  schema: S.Codec<T, unknown, never, never>
+): Effect.Effect<T, DatabaseError, DatabaseService>
+export function dbQuery<A, T>(
+  query: (db: DatabaseType) => A,
+  schema?: S.Codec<T, unknown, never, never>
+): Effect.Effect<Awaited<A> | T, DatabaseError, DatabaseService> {
+  const rows = run('query', query, (cause) => Effect.fail(new DatabaseError({ operation: 'query', cause })))
+
+  return schema === undefined
+    ? rows
+    : Effect.flatMap(rows, (result) =>
+        S.decodeUnknownEffect(schema)(result).pipe(
+          Effect.mapError((cause) => new DatabaseError({ operation: 'query', cause }))
+        )
+      )
 }
 
 /**

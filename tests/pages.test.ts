@@ -13,6 +13,7 @@ import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
 import { jsonOrRender, render } from '../src/effect/responses.js'
 import type { PagePropsFor, WebPage } from '../src/react.js'
+import { readPage } from '../src/testing.js'
 
 const Project = S.Struct({ id: S.String, name: S.String, createdAt: S.Date })
 
@@ -123,5 +124,27 @@ describe('WebPage', () => {
     const Show: WebPage<'Projects/Show'> = ({ project, errors }) => `${project.name} ${Object.keys(errors).length}`
 
     expect(Show({ project: { id: 'p1', name: 'Apollo', createdAt: '2026-01-02' }, canEdit: true, errors: {} })).toBe('Apollo 0')
+  })
+})
+
+describe('readPage', () => {
+  test('reads a rendered page typed by the registry', async () => {
+    const show = await readPage(await createApp().request('/projects/p1', { headers: page }), 'Projects/Show')
+    const createdAt: string = show.props.project.createdAt
+
+    expect(createdAt).toBe('2026-01-02T00:00:00.000Z')
+    expect(show.props.canEdit).toBe(true)
+  })
+
+  test('rejects a response that rendered another page', async () => {
+    const res = await createApp().request('/dashboard', { headers: page })
+
+    await expect(readPage(res, 'Projects/Show')).rejects.toThrow("rendered 'Dashboard'")
+  })
+
+  test('rejects a response that is not a page', async () => {
+    const res = await createApp().request('/projects/p1')
+
+    await expect(readPage(res, 'Projects/Show')).rejects.toThrow('X-Inertia: true')
   })
 })

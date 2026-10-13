@@ -15,6 +15,7 @@ import { action } from '../src/effect/action.js'
 import { flash, redirect, render } from '../src/effect/responses.js'
 import { positiveInt, requiredString } from '../src/effect/schema.js'
 import { validateRequest } from '../src/effect/validation.js'
+import { ValidationError } from '../src/effect/errors.js'
 
 const CreateProject = S.Struct({ name: requiredString })
 
@@ -40,6 +41,11 @@ function createApp() {
 
       return yield* render('Notes/Show')
     })))
+    .post('/claims/1/submit', action(Effect.fail(new ValidationError({
+      errors: { 'items.0.amount': 'The items add up to more than the claim.' },
+      redirectTo: '/claims/1/items',
+    }))))
+    .get('/claims/1/items', action(render('Claims/Items')))
     .post('/sessions', action(Effect.gen(function* () {
       yield* flash('success', 'Signed in.')
 
@@ -88,6 +94,18 @@ describe('a failed form submission', () => {
 
     const again = await app.request('/projects/new', { headers: page })
     expect((await again.json()).props.errors).toEqual({})
+  })
+
+  test('goes to the page the errors belong on when the failure names one', async () => {
+    const app = createApp()
+    const failed = await app.request('/claims/1/submit', {
+      method: 'POST',
+      headers: { ...page, Referer: 'http://localhost/claims/1/review' },
+    })
+    const items = await app.request('/claims/1/items', { headers: { ...page, Cookie: flashCookie(failed) } })
+
+    expect(failed.headers.get('Location')).toBe('/claims/1/items')
+    expect((await items.json()).props.errors).toEqual({ 'items.0.amount': 'The items add up to more than the claim.' })
   })
 
   test('nests the errors under the error bag the form names', async () => {

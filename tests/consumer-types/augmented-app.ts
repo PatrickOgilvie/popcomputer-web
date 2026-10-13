@@ -90,6 +90,9 @@ export const augmentedTypes = Effect.gen(function* () {
   const project = yield* bound('project')
   expectType<Equals<typeof project, typeof Project.Type>>()
 
+  // @ts-expect-error 'projcet' is not a registered binding
+  yield* bound('projcet')
+
   const viewer = yield* currentUser
   expectType<Equals<typeof viewer, Member | null>>()
 

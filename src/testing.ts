@@ -12,6 +12,8 @@
 import { DateTime, Effect, Layer, Redacted } from 'effect'
 import { AuthUserService, type AuthUser, type DefaultAuthUser, type WebBindingsType } from './effect/services.js'
 import { attachTestLayer } from './effect/test-env.js'
+import type { PageName } from './effect/pages.js'
+import type { PagePropsFor } from './react.js'
 
 /**
  * The bindings a test passes to `testEnv`: any of the application's bindings
@@ -127,4 +129,48 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
     // i.e. when this Better Auth-shaped session is an AuthUser['session'].
     session: session as unknown as AuthUser['session'],
   }
+}
+
+/** A page an Inertia request rendered, as a test reads it. */
+export interface TestPage<Component extends string> {
+  readonly component: Component
+  /** The page's props as the browser receives them, with shared props and `errors`. */
+  readonly props: PagePropsFor<Component>
+  readonly url: string
+  readonly flash: Readonly<Record<string, unknown>>
+}
+
+/**
+ * Read the page an Inertia request rendered, typed by the page registry.
+ * Rejects, failing the test, when the response is not that page.
+ *
+ * @example
+ * const res = await app.request('/projects/p1', { headers: { 'X-Inertia': 'true' } }, testEnv(signedIn({ id: 'user-1' })))
+ * const page = await readPage(res, 'Projects/Show')
+ * expect(page.props.project.name).toBe('Apollo')
+ */
+export async function readPage<Component extends PageName>(
+  response: Response,
+  component: Component
+): Promise<TestPage<Component>> {
+  if (response.headers.get('X-Inertia') !== 'true') {
+    const location = response.headers.get('Location')
+
+    throw new Error(
+      `Expected the '${component}' page, but the response is ${response.status}` +
+        (location ? ` to ${location}` : ` ${response.headers.get('Content-Type') ?? ''}`) +
+        '. Request pages with the X-Inertia: true header.'
+    )
+  }
+
+  const page: unknown = await response.json()
+  const rendered = page instanceof Object ? Object.getOwnPropertyDescriptor(page, 'component')?.value : undefined
+
+  if (rendered !== component) {
+    throw new Error(`Expected the '${component}' page, but the response rendered '${String(rendered)}' (${response.status}).`)
+  }
+
+  // SAFETY: the page is the registered component, whose props render encoded
+  // through its schema, which PagePropsFor mirrors.
+  return page as TestPage<Component>
 }

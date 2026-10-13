@@ -173,6 +173,8 @@ export const Project = S.Struct({
 
 export const ProjectSummary = S.Struct({ id: S.String, name: S.String })
 
+export const Task = S.Struct({ id: S.String, projectId: S.String, title: S.String })
+
 export const pages = {
   'Projects/Index': S.Struct({ projects: S.Array(ProjectSummary) }),
   'Projects/Show': S.Struct({ project: Project }),
@@ -225,13 +227,13 @@ import {
 import { createAuth } from './auth'
 import { createDb } from './db'
 import manifest from '../dist/manifest.json'
-import { pages, Project } from './pages'
+import { pages, Project, Task } from './pages'
 import * as schema from './schema'
 import type { Bindings } from './web-types'
 
 type Env = { Bindings: Bindings }
 
-const routeBindings = { project: Project }
+const routeBindings = { project: Project, task: Task }
 
 declare module '@popcomputer/web/effect' {
   interface WebRouteBindingsType {

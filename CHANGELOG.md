@@ -57,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ValidationError` has an optional `redirectTo`: a failed form submission goes to that page with its field errors instead of back, such as a wizard's last step sending errors to an earlier one.
+- `file(body, { contentType, filename })` answers with a file: text, bytes, a web stream or an Effect `Stream`, inline or as a download. `json` and `text` take `{ status, headers }` as well as a status.
+- `betterAuthRedirect`'s `redirectTo` can be a function of Better Auth's result returning a path or an Effect, so a sign-up can land on, or first create, the new user's own page.
+- `dbQuery(query, schema)` decodes the result with an Effect Schema; a result the schema rejects fails with `DatabaseError`.
+- `readPage(response, 'Projects/Show')` from `@popcomputer/web/testing` reads an Inertia page response typed by the page registry, and rejects with a message naming what the response was when it is not that page.
+- `upload({ types, maxBytes })` and `nullableUpload(...)` from `@popcomputer/web/schema` validate multipart file fields; a file input left empty is no file.
 - Effect `Config` reads the Worker's bindings in `services.app`, `services.request` and actions: `Config.String('BASE_URL')` reads a var and `Config.Redacted('API_KEY')` a secret. `services.app` is built with the first request's bindings. Service layers may fail with `ConfigError`, and a missing binding fails the request with `WEB_CFG_305_INVALID_CONFIG`, naming the binding in development.
 - A page registry: each page component's props as an Effect Schema, passed as setupWeb's `pages` and mirrored by augmenting `WebPagesType`. `render` and `jsonOrRender` then accept only registered pages and check props against the schema, and encode them as JSON through it, so a `Date` reaches the client as an ISO string. `WebPage<'Projects/Show'>` types the React component with the JSON form of the same props (`Jsonify`). setupWeb requires `pages` once `WebPagesType` is augmented.
 - `render` and `jsonOrRender` run in a `Web.render` span naming the component.
@@ -99,6 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `bound(key)` accepts only the keys of the registered bindings once the application augments `WebRouteBindingsType`, so a misspelled key is a type error at the call (`BoundKey`).
 - `dbTransaction` is a type error on Cloudflare D1 (a database whose driver client prepares and batches statements but has no `transaction`), naming `dbBatch`. It failed at runtime.
 - A request built with `testEnv` that declares no `ENVIRONMENT` or `NODE_ENV` binding renders errors with development details, so a failing test shows why. Pass `ENVIRONMENT: 'production'` to test production error pages.
 - `AGENTS.md` and the README describe the page registry, flash and failed-form redirects, the database operations, Effect `Config` and the auth routes. The canonical action calls `authorize()` before `bound()` and answers another member's record with 404, so its existence stays private. React page examples are type-checked with the package's React types.

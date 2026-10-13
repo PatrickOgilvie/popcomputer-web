@@ -69,9 +69,20 @@ const nestedBindings = {
   ),
 }
 
+/**
+ * The bindings the tests' routes name. The configuration-error tests bind
+ * `article`, `project` and `task` without registering parsers for them, to
+ * check the errors a misconfigured app gets at runtime.
+ */
+type DeclaredBindings = typeof nestedBindings & {
+  readonly article: S.Codec<unknown>
+  readonly project: S.Codec<unknown>
+  readonly task: S.Codec<unknown>
+}
+
 declare module '../src/effect/binding.js' {
   interface WebRouteBindingsType {
-    type: typeof nestedBindings
+    type: DeclaredBindings
   }
 }
 
