@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rowOf(table, values)` from `@popcomputer/web/drizzle` builds an insert-select's fields from the table: every column in its order, the values given bound as their columns encode them, and the rest their defaults, so a conditional insert on D1 (`db.insert(t).select(db.select(rowOf(t, values)).from(...).where(condition))`) names no column by hand.
 - `validateRequest(Schema, { redirectTo })` sends a failed form to the page given, such as a wizard's step, with its errors.
 - `httpError(status, message, Schema, body, { headers })` carries headers, such as `Retry-After`, beside a typed body.
 

@@ -31,6 +31,10 @@
       "types": "./dist/paths.d.ts",
       "import": "./dist/paths.js"
     },
+    "./drizzle": {
+      "types": "./dist/drizzle.d.ts",
+      "import": "./dist/drizzle.js"
+    },
     "./cache": {
       "types": "./dist/cache.d.ts",
       "import": "./dist/cache.js"

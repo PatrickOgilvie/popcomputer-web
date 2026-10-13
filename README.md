@@ -1753,25 +1753,25 @@ built at run time, such as one statement per line of a form,
 list; a helper that returns statements for a batch types them
 `BatchStatement`. A batch
 cannot branch on an earlier statement's result, so a write that depends on
-one carries its condition in its own `WHERE`: an insert selects its values
-from a query that returns no row when the condition fails, every column given
-as ``sql`${value}`.as('column')`` or read from the queried table, and an
-update adds `WHERE EXISTS (...)`. An inserting statement's `.returning()`, or
-an update's `meta.changes`, tells the action whether it applied:
+one carries its condition in its own `WHERE`: an insert selects its row,
+`rowOf(table, values)` from `@popcomputer/web/drizzle`, from a query that
+returns no row when the condition fails, and an update adds
+`WHERE EXISTS (...)`. `rowOf` gives every column of the table in its order,
+the values given bound as their columns encode them, and the columns left out
+their defaults, so a misnamed column is a type error. An inserting
+statement's `.returning()`, or an update's `meta.changes`, tells the action
+whether it applied:
 
 ```ts
 import { and, eq, lt, sql } from 'drizzle-orm'
+import { rowOf } from '@popcomputer/web/drizzle'
 import { tasks } from '../schema'
 
 // Adds the task only while its project holds fewer than 100; returns no row otherwise.
 const addTaskIfRoom = (projectId: string, title: string) =>
   dbMutation((db) =>
     db.insert(tasks).select(
-      db.select({
-        id: sql<string>`${crypto.randomUUID()}`.as('id'),
-        projectId: projects.id,
-        title: sql<string>`${title}`.as('title'),
-      })
+      db.select(rowOf(tasks, { id: crypto.randomUUID(), projectId, title }))
         .from(projects)
         .where(and(
           eq(projects.id, projectId),
@@ -1797,8 +1797,7 @@ subquery names the subquery's own table and silently computes the wrong
 value. Name it in full, ``${organizations}.${sql.identifier('id')}``, when it
 must be a column; in a `WHERE` Drizzle qualifies columns itself. Write every
 statement with the query builder: Drizzle's D1 batch fails at runtime on
-`db.run(sql)` with parameters, which is a type error there. An insert's select lists every
-column the insert writes in the table's order, defaulted ones included. D1
+`db.run(sql)` with parameters, which is a type error there. D1
 binds at most 100 parameters to a statement, so an `IN (...)` over many ids,
 or an insert of many rows, goes in chunks.
 

@@ -96,7 +96,8 @@ TypeScript example here and in the README type-checks against the package.
    succeed together, with any Effect logic between them, go in
    `dbTransaction(Effect.gen(...))` (Postgres, MySQL, libsql); on Cloudflare
    D1, put the writes in one `dbBatch` and enforce limits inside the write
-   statement. Write only validated input and values the server derives, and
+   statement, inserting a row only while a condition holds with
+   `db.insert(table).select(db.select(rowOf(table, values)).from(...).where(condition))`. Write only validated input and values the server derives, and
    scope `where` clauses with bound models. State an invariant concurrent
    requests could break as a database constraint (`CHECK (stock >= 0)`, a
    unique idempotency key or webhook event id, or a trigger raising a named
@@ -144,6 +145,7 @@ helpers and Hono middleware; `@popcomputer/web/effect` for actions, routes,
 responses, pages, the database, services and errors;
 `@popcomputer/web/schema` for validators; `@popcomputer/web/auth` for the
 Better Auth integration; `@popcomputer/web/cache` for the KV cache;
+`@popcomputer/web/drizzle` for `rowOf`;
 `@popcomputer/web/react` for page component types; `@popcomputer/web/paths`
 for `href`, in React and actions alike; `@popcomputer/web/testing` in tests.
 

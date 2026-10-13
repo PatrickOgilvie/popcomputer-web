@@ -10,6 +10,8 @@
 import type { SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy'
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { Effect } from 'effect'
+import { and, eq } from 'drizzle-orm'
+import { rowOf } from '../../src/drizzle.js'
 import {
   dbBatch,
   dbMutation,
@@ -60,6 +62,11 @@ export const writes = Effect.gen(function* () {
 
   // @ts-expect-error nor in a list
   yield* dbBatch((db) => ids.map(() => db.run('DELETE FROM pages')))
+
+  // A conditional insert writes its row from the table's own columns.
+  yield* dbBatch((db) => [
+    db.insert(pages).select(db.select(rowOf(pages, { id: 'p3' })).from(pages).where(and(eq(pages.id, 'p1')))),
+  ])
 
   // @ts-expect-error nor beside query-builder statements
   yield* dbBatch((db) => [db.delete(pages), db.run('DELETE FROM pages')])
