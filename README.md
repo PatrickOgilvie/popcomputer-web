@@ -25,17 +25,28 @@ export const showProject = action(
 
 ## Why this shape
 
-- `setupWeb` is the single application composition boundary. It owns rendering,
-  persistence, auth, schemas, middleware, and the shared error policy.
-- Actions are ordinary Effect values. They declare only the services and
-  failures they use, so small actions stay small and complex workflows compose.
-- External data is parsed at the edge. Sessions, request input, route parameters,
-  database rows, and cached values can all be checked with Effect Schema before
-  application code relies on them.
-- Route metadata belongs to a configured Hono app rather than global process
-  state. `setupWeb(app, config)` returns it as `routes`, a `RouteRegistry`.
-- The package keeps the standard Inertia wire protocol. Existing Inertia clients
-  continue to use `X-Inertia`, partial reloads, asset versions, and redirects.
+- **Declare once; the rest derives.** `setupWeb` takes each of the
+  application's declarations as a value: the database factory, the Drizzle
+  schema and the tables route models load from, the signed-in user's schema,
+  pages, route paths, shared props and flash. Registering its result once
+  types everything else: `bound('project')` is the table's row, `render`
+  checks a page's props, `redirect` and `href` fill a path's placeholders, and
+  a React page's props follow its schema. A renamed column, prop or
+  placeholder is a type error wherever it is used.
+- **Actions are ordinary Effect values.** They declare only the services and
+  failures they use, so small actions stay small and complex workflows
+  compose. `routes` accepts an action only when the setup provides its
+  services and handles its failures; otherwise the registration is a type
+  error naming the missing service or the unhandled error.
+- **External data is parsed at the edge.** Sessions, request input, route
+  parameters, database rows, cached values and webhook bodies are checked with
+  Effect Schema before application code relies on them, and what reaches the
+  browser is encoded through the page's schema.
+- **Correct by default where it is easy to get wrong:** cached pages vary on
+  cookies and are purged by the records they show, failed forms go back to the
+  form with their errors, and a record a visitor may not see is a 404.
+- **The standard Inertia protocol.** Existing Inertia clients keep using
+  `X-Inertia`, partial reloads, asset versions, error bags and redirects.
 
 ## Installation
 
