@@ -4,6 +4,7 @@
  * Authentication and authorization via Effect Layers.
  */
 
+import type { PathTarget } from '../paths.js'
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import type { MiddlewareHandler, Env } from 'hono'
 import { AuthUserService, AuthService, PageService, RequestService, type AuthType, type AuthUser } from './services.js'
@@ -139,10 +140,12 @@ export function createGuestLayer(
  * signed-in user elsewhere.
  *
  * @example
- * const redirectTo = yield* intendedUrl('/dashboard')
+ * const redirectTo = yield* intendedUrl(paths.dashboard)
  * return yield* betterAuthRedirect((auth, request) => auth.api.signInEmail({ ... }), { redirectTo })
  */
-export const intendedUrl = (fallback: string): Effect.Effect<string, never, RequestService> =>
+export const intendedUrl = <const Path extends string>(
+  fallback: Path & PathTarget<Path>
+): Effect.Effect<string, never, RequestService> =>
   Effect.gen(function* () {
     const request = yield* RequestService
     const requestUrl = new URL(request.url)

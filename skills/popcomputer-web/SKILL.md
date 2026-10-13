@@ -32,8 +32,8 @@ TypeScript example here and in the README type-checks against the package.
    register it on the `routes` that `setupWeb` returns:
    `routes.get/post/put/patch/delete(paths.project, action, { name })`.
    Declare every path once in `src/paths.ts` (`project: '/projects/{project}'`),
-   pass it as `setupWeb`'s `paths`, so `routes` accepts only declared paths,
-   and build every URL from it: `redirect(paths.project, { project: id })`
+   pass it as `setupWeb`'s `paths`, so `routes`, `redirect`, `back` and
+   `href` accept only declared paths, and build every URL from it: `redirect(paths.project, { project: id })`
    in actions, `href(paths.project, { project: id })` from
    `@popcomputer/web/paths` in React. Registrations chain. `routes` accepts only
    actions whose services the setup provides.

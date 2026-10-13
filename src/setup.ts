@@ -196,6 +196,7 @@ export interface SetupTypes<
   Pages,
   SharedFields extends S.Struct.Fields,
   FlashFields extends S.Struct.Fields,
+  Paths = never,
 > extends WebTypes {
   readonly bindings: E extends { Bindings: infer Bindings } ? Bindings : never
   readonly database: DB
@@ -207,6 +208,7 @@ export interface SetupTypes<
   readonly pages: Pages
   readonly shared: [SharedFields] extends [never] ? never : S.Struct.Type<SharedFields>
   readonly flash: [FlashFields] extends [never] ? never : S.Struct.Type<FlashFields>
+  readonly paths: Paths
 }
 
 /** What the auth client factory receives: the database when one is configured. */
@@ -310,7 +312,7 @@ export function setupWeb<
 ): WebApplication<
   E,
   WebRouteServices<[DB] extends [never] ? false : true, Auth, AppServices | RequestServices>,
-  SetupTypes<E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields>,
+  SetupTypes<E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields, Paths>,
   RoutePath<Paths>
 > {
   assertSetupConfig(config)

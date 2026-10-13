@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Once setupWeb declares `paths`, a path literal given to `redirect`, `redirectNow`, `back`, `href` or `intendedUrl` must be a declared path or an absolute URL, so a misspelled path is a type error naming the fix; a URL computed at runtime is a string and passes. `back(fallback, params)` fills its fallback's placeholders.
 - `json(Schema, value)` answers with a value checked against a schema and encoded through its JSON form, as page props are, and `readJson(response, Schema)` from `@popcomputer/web/testing` decodes it in a test, so a JSON API's response shape is declared once. `readError` explains a response that is not JSON.
 - `betterAuthFields(schema.user, { role: { input: false } })` from `@popcomputer/web/auth` is Better Auth's `user.additionalFields` for the named columns of the user table: each field's type, enum values and whether sign-up requires it follow the column, so a user's fields are declared once, in the table.
 - `columnsOf(table, schema)` from `@popcomputer/web/schema` is the table's columns a schema's fields name, for a query's `select`, so a page schema decides what its query reads: `db.select({ ...columnsOf(projects, ProjectCard), openTasks: count(tasks.id) })`.

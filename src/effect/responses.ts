@@ -6,7 +6,7 @@
 
 import { Cause, Context, Effect, Layer, Option, Schema as S, Stream } from 'effect'
 import { observeOrLog } from './error-observer.js'
-import { href, type PathArguments } from '../paths.js'
+import { href, type PathArguments, type PathTarget } from '../paths.js'
 import {
   PageService,
   ResponseFactoryService,
@@ -35,10 +35,19 @@ import {
  * return yield* redirect(paths.projects, {}, { page: 2 })
  */
 export function redirect<const Path extends string>(
-  path: Path,
+  path: Path & PathTarget<Path>,
   ...args: PathArguments<Path>
 ): Effect.Effect<Redirect, never, never> {
-  return Effect.succeed(new Redirect({ url: href(path, ...args), status: 303 }))
+  return Effect.succeed(new Redirect({ url: fillPath(path, args), status: 303 }))
+}
+
+/**
+ * The URL to a path its caller's signature already checked: `href` with the
+ * path and arguments widened, so it does not check them again.
+ */
+function fillPath(path: string, args: readonly unknown[]): string {
+  // SAFETY: the caller's PathTarget and PathArguments checked these values.
+  return href(path, ...(args as PathArguments<string>))
 }
 
 /**
@@ -240,10 +249,10 @@ export const notFound = (resource: string, id?: string | number): Effect.Effect<
  * })
  */
 export function redirectNow<const Path extends string>(
-  path: Path,
+  path: Path & PathTarget<Path>,
   ...args: PathArguments<Path>
 ): Effect.Effect<never, Redirect, never> {
-  return Effect.fail(new Redirect({ url: href(path, ...args), status: 303 }))
+  return Effect.fail(new Redirect({ url: fillPath(path, args), status: 303 }))
 }
 
 /**
@@ -268,12 +277,17 @@ export const invalid = (errors: Readonly<Record<string, string>>): Effect.Effect
  *   Effect.andThen(flash('error', error.message), back(paths.search))
  * )
  */
-export const back = (fallback = '/'): Effect.Effect<Redirect, never, RequestService> =>
-  Effect.gen(function* () {
+export function back<const Path extends string = '/'>(
+  fallback?: Path & PathTarget<Path>,
+  ...args: PathArguments<Path>
+): Effect.Effect<Redirect, never, RequestService> {
+  return Effect.gen(function* () {
     const request = yield* RequestService
+    const previous = sameOriginReferer(request.header('Referer'), request.url)
 
-    return new Redirect({ url: sameOriginReferer(request.header('Referer'), request.url) ?? fallback, status: 303 })
+    return new Redirect({ url: previous ?? fillPath(fallback ?? '/', args), status: 303 })
   })
+}
 
 /**
  * Fail with a forbidden error.

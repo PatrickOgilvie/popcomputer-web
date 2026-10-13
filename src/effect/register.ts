@@ -43,6 +43,8 @@ export interface WebTypes {
   readonly shared?: unknown
   /** The values `flash` hands to the next page (`flash`). */
   readonly flash?: unknown
+  /** The route paths (`paths`). */
+  readonly paths?: unknown
 }
 
 /**

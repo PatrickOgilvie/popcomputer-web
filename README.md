@@ -418,7 +418,10 @@ and returns `{ app, routes }`. For manual Hono composition, see
 Each route's path is declared once, and every URL to it is built from that
 declaration: the route registration, a server redirect and a client link. The
 module holds only data, so server and React code both import it, and
-`setupWeb`'s `paths` takes it, so `routes` registers only on declared paths.
+`setupWeb`'s `paths` takes it, so `routes` registers only on declared paths,
+and a path literal given to `redirect`, `back`, `href` or `intendedUrl` must
+be one of them or an absolute URL: a misspelled path is a type error. A URL
+computed at runtime, such as one `href` built, is a string and passes.
 
 ```ts
 // src/paths.ts

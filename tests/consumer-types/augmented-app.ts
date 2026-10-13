@@ -33,6 +33,8 @@ import {
   dbTransaction,
   flash,
   json,
+  back,
+  redirect,
   type DatabaseError,
   type DatabaseService,
   render,
@@ -40,6 +42,7 @@ import {
   shareProps,
 } from '@popcomputer/web/effect'
 import { readPage, signedIn, testEnv } from '@popcomputer/web/testing'
+import { href } from '@popcomputer/web/paths'
 
 const Project = S.Struct({ id: S.String, userId: S.String })
 
@@ -224,6 +227,17 @@ export const scheduled = (env: Env['Bindings']) => web.routes.run(dbQuery((db) =
 class Unprovided extends Context.Service<Unprovided, { readonly value: number }>()('app/Unprovided') {}
 // @ts-expect-error Unprovided is not a service the setup provides
 web.routes.run(Effect.gen(function* () { return (yield* Unprovided).value }), { REGION: 'weur', MAX_LINKS: '5' })
+
+// Redirects and links name declared paths; a computed URL is a string.
+export const toProject = redirect(paths.project, { project: 'p1' })
+export const goingBack = back(paths.project, { project: 'p1' })
+export const link: string = href(paths.member, { member: 'm1' })
+export const computed = (url: string) => redirect(url)
+export const external = redirect('https://example.com/callback')
+// @ts-expect-error '/projets/{project}' is not a declared path
+redirect('/projets/{project}', { project: 'p1' })
+// @ts-expect-error '/membres' is not a declared path
+href('/membres')
 
 // Routes register only on declared paths.
 // @ts-expect-error '/projets/{project}' is not a declared path
