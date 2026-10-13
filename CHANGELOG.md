@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The release these pre-releases lead to is 1.0.0, not 0.8.0. The pre-releases are renumbered `1.0.0-next.N`, keeping their numbers: a build packed as `0.8.0-next.N` is `1.0.0-next.N`, and an application on one reads the sections newer than `1.0.0-next.N`.
 - A route's `cache: false` is `cache: 'private'`, which says what the response gets: each request renders the page, and only the visitor's browser keeps it (`private, no-cache`), beside `cache: 'no-store'`, which no cache keeps.
 - `routes.prefix(prefix)` takes the declared paths under the prefix, whole, in an application that declares its paths: `routes.prefix('/orgs/{org}').get(paths.orgSettings, ...)` registers `/orgs/{org}/settings`, and a path that is not declared, or not under the prefix, is a type error. A prefixed route's page was declared twice before: relative under the prefix, and whole in `src/paths.ts` for `href` and `redirect`. Without declared paths, a path relative to the prefix still works. An endpoint registers under a prefix its path starts with.
 - `betterAuthRedirect(endpoint, input, options)` and `betterAuthCall(endpoint, input, options)` name a Better Auth endpoint on `auth.api`, as `betterAuthRedirect('signInEmail', { body: input }, { redirectTo, errors })`, and send the call through Better Auth's request handler, so its rate limits, origin checks and plugins' hooks apply: a server call through `auth.api`, which the callback form made, skips them, leaving sign-in forms open to password guessing. Better Auth's types check the endpoint's name and body, and type its result for `redirectTo` (sign-up's `{ token, user }`); the call no longer passes `headers`, `asResponse` or `returnHeaders`. The README's auth setup turns on Better Auth's rate limits, which it enables only when `NODE_ENV` is `production`, with database storage shared across Worker isolates and Cloudflare's client address header. `errors` may leave fields `undefined`.
@@ -48,9 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README's Quick start has a fifth step, "Write the client". It covers a form page typed with `FormInput`, the sign-in page, a page reading shared props, the error page, and `main.tsx`, whose page map makes a page without a component a type error. Form schemas live in `src/forms.ts`, which actions and pages both import. The README's React examples type-check against `@inertiajs/react`.
 - The README's upgrade guide from 0.7 shows the 0.7 code each step replaces. It adds the steps it missed: imports from one entrypoint and the removed synonyms, the removed route validation options, and the CLI. It also lists the changes no type error points at, such as origin verification and upload families. The webhook pattern refuses through `httpError` and acknowledges with `noContent`.
 
-## [0.8.0-next.5] - 2026-10-13
+## [1.0.0-next.5] - 2026-10-13
 
-Changes since 0.8.0-next.4.
+Changes since 1.0.0-next.4.
 
 ### Added
 
@@ -72,9 +73,9 @@ Changes since 0.8.0-next.4.
 - `betterAuthRedirect` keeps Better Auth's session cookie when `redirectTo` fails after Better Auth signed the visitor in, such as a sign-up whose follow-up refuses; the visitor was left signed out of the account just created.
 - The development error page of a violation of a named constraint shows the `constraintFieldErrors` entry that would map it.
 
-## [0.8.0-next.4] - 2026-10-13
+## [1.0.0-next.4] - 2026-10-13
 
-Changes since 0.8.0-next.3.
+Changes since 1.0.0-next.3.
 
 ### Added
 
@@ -93,12 +94,12 @@ Changes since 0.8.0-next.3.
 - An upload's size limit reads in decimal units: `maxBytes: 10_000_000` is `10 MB`, not `9.5 MB`.
 - `createGuestLayer`'s `redirectTo` takes a declared path, as other redirect targets do; the removed `createErrorHandlers` no longer appears in the published types.
 - A malformed body sent without a JSON or form media type says it could not be read as JSON, rather than asking for a matching Content-Type.
-- A cookie whose value's JSON form is a string is stored as it is, so a cookie an application wrote by hand reads the same after it adopts `cookie()`; one stored as a JSON string by 0.8.0-next.3 reads too. Setting a value the schema rejects is a defect naming the cookie.
+- A cookie whose value's JSON form is a string is stored as it is, so a cookie an application wrote by hand reads the same after it adopts `cookie()`; one stored as a JSON string by 1.0.0-next.3 reads too. Setting a value the schema rejects is a defect naming the cookie.
 - `WWW-Authenticate: Bearer` accompanies a JSON 401 only when the request sent a bearer token.
 
-## [0.8.0-next.3] - 2026-10-13
+## [1.0.0-next.3] - 2026-10-13
 
-Changes since 0.8.0-next.2.
+Changes since 1.0.0-next.2.
 
 ### Added
 
@@ -121,9 +122,9 @@ Changes since 0.8.0-next.2.
 - A JSON 401 for a request with a bearer token, or on a `jsonApi()` route, carries `WWW-Authenticate: Bearer`.
 - `invalidateCacheTags` takes `CacheTag`s, as the other tag APIs do.
 
-## [0.8.0-next.2] - 2026-10-13
+## [1.0.0-next.2] - 2026-10-13
 
-Changes since 0.8.0-next.1.
+Changes since 1.0.0-next.1.
 
 ### Breaking
 
@@ -146,7 +147,7 @@ Changes since 0.8.0-next.1.
 - `nullable(Group)` reads a form group whose every field is blank as `null`.
 - A value outside a set of options reads `Choose one of: approver, finance` rather than Effect's `Expected "approver" | "finance"`, and one matching no kind of a union of objects says so rather than printing the schema.
 
-## [0.8.0-next.1] - 2026-10-13
+## [1.0.0-next.1] - 2026-10-13
 
 Changes since the previous pre-release. Every pre-release now has its own
 version, so an upgrade names what changed since the one installed.
@@ -157,9 +158,9 @@ version, so an upgrade names what changed since the one installed.
 - Origin verification answers through the error boundary, so a refused visit gets the error page and a JSON client the envelope, and lets a request with an `Authorization` header through, since a browser never adds one cross-site by itself. A route registered twice says so.
 - `BatchStatement` names a statement `dbBatch` takes, for a helper that returns statements; a raw `db.run(sql)` beside query-builder statements in a D1 batch is a type error too.
 
-## [0.8.0-next.0] - 2026-10-13
+## [1.0.0-next.0] - 2026-10-13
 
-Changes since 0.7.0. Pre-release builds before 0.8.0-next.1 all carried this
+Changes since 0.7.0. Pre-release builds before 1.0.0-next.1 all carried this
 version.
 
 ### Breaking
@@ -335,7 +336,7 @@ version.
 
 ### Changed
 
-- The package version is `0.8.0-next.0` while these changes are unreleased.
+- The package version is `1.0.0-next.0` while these changes are unreleased.
 - A `shareProps` computation that fails is reported to `EffectErrorObserverService`, and the page renders without its props, instead of failing every page as a defect.
 - A misspelled `config` name's type error lists the binding names it accepts.
 - The package ships `CHANGELOG.md`.

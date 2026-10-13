@@ -3259,12 +3259,13 @@ when the client does; export it so tests send the same `X-Inertia-Version`.
 
 ### Upgrading from 0.7
 
-These steps take an application on the 0.7.0 release to the 0.8.0
-pre-releases. Each shows the 0.7 code it replaces; skip a step whose 0.7 code
-the application never had. The [changelog](CHANGELOG.md), shipped in the
-package as `node_modules/@popcomputer/web/CHANGELOG.md`, lists every change,
-with a section per pre-release, so an application already on a pre-release
-reads only the sections newer than its installed version.
+These steps take an application on the 0.7.0 release to 1.0.0. Each shows
+the 0.7 code it replaces; skip a step whose 0.7 code the application never
+had. The [changelog](CHANGELOG.md), shipped in the package as
+`node_modules/@popcomputer/web/CHANGELOG.md`, lists every change, with a
+section per pre-release, so an application already on a `1.0.0-next`
+pre-release reads only the sections newer than its installed version. A
+build packed as `0.8.0-next.N` is `1.0.0-next.N`.
 
 Run `tsc --noEmit` after each step: the type errors name what is left. The
 changes no type error points at are listed after the steps.
