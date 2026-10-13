@@ -110,6 +110,7 @@ const createMockRequest = (options: {
   param: (name: string) => options.params?.[name],
   params: () => options.params ?? {},
   query: () => options.query ?? {},
+  queries: () => ({}),
   json: async <T>() => (options.body ?? {}) as T,
   raw: () => new Request('http://localhost/'),
   parseBody: async () => options.body ?? {},

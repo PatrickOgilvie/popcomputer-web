@@ -4,9 +4,10 @@
  * Utilities for validating request data using Effect Schema.
  */
 
+import { nestFields } from './form-fields.js'
 import { Effect, Predicate, Schema as S, SchemaIssue } from 'effect'
 import type { ParseOptions } from 'effect/SchemaAST'
-import { RequestService } from './services.js'
+import { RequestService, type RequestContext } from './services.js'
 import { ValidationError } from './errors.js'
 import type { FieldError } from './error-types.js'
 import { ErrorCodes, type ErrorCode } from './error-catalog.js'
@@ -179,6 +180,27 @@ function mergeRequestSources(
   return Effect.succeed(merged)
 }
 
+/**
+ * A form body's fields, nested: a field sent more than once under a `[]`
+ * name is a list, and under any other name keeps the last value sent.
+ */
+function formFields(body: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  return nestFields(Object.fromEntries(Object.entries(body).map(([key, value]) => [
+    key,
+    Array.isArray(value) && !key.endsWith('[]') ? value[value.length - 1] : value,
+  ])))
+}
+
+/** The query string's parameters, nested, with every value of a `[]` name. */
+function queryFields(request: RequestContext): Record<string, unknown> {
+  const all = request.queries()
+
+  return nestFields(Object.fromEntries(Object.entries(request.query()).map(([key, value]) => [
+    key,
+    key.endsWith('[]') ? all[key] ?? [value] : value,
+  ])))
+}
+
 function getValidationDataWithOptions(
   config?: RequestValidationOptions
 ): Effect.Effect<RequestData, ValidationError, RequestService> {
@@ -187,7 +209,7 @@ function getValidationDataWithOptions(
     const { order, onConflict } = normalizeRequestValidationOptions(config)
 
     const routeParams = order.includes('params') ? request.params() : {}
-    const queryParams = order.includes('query') ? request.query() : {}
+    const queryParams = order.includes('query') ? queryFields(request) : {}
 
     let body: RequestData = {}
 
@@ -198,8 +220,8 @@ function getValidationDataWithOptions(
       const contentType = request.header('Content-Type') ?? ''
       const isJson = isJsonContentType(contentType)
 
-      const parsed = yield* Effect.tryPromise(() =>
-        isJson ? request.json() : request.parseBody()
+      const parsed = yield* Effect.tryPromise(async () =>
+        isJson ? request.json() : formFields(await request.parseBody())
       ).pipe(
         Effect.mapError((error) =>
           createBodyParseValidationError(error, contentType)

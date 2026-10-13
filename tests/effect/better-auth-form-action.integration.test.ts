@@ -90,6 +90,7 @@ function createAuthRequest(
     param: () => undefined,
     params: () => ({}),
     query: () => ({}),
+    queries: () => ({}),
     // SAFETY: The production RequestContext contract exposes JSON through an
     // unconstrained generic. This fixture owns the exact body supplied to the
     // action and mirrors that established boundary contract.

@@ -159,11 +159,14 @@ export interface RequestContext<Bindings extends object = object> {
   param(name: string): string | undefined
   params(): Record<string, string>
   query(): Record<string, string>
+  /** Every value of each query parameter, as `status[]=open&status[]=closed` sends them. */
+  queries(): Record<string, string[]>
   /** The parsed JSON body. Decode it with a schema, as `validateRequest` does. */
   json(): Promise<unknown>
   /** The request itself, for adapters that forward it, such as `betterAuthHandler`. */
   raw(): Request
-  parseBody(): Promise<Record<string, string | File>>
+  /** A form body's fields; a field sent more than once has each of its values. */
+  parseBody(): Promise<Record<string, string | File | (string | File)[]>>
   header(name: string): string | undefined
 }
 

@@ -1841,7 +1841,11 @@ export const paymentWebhook = action(Effect.gen(function* () {
   the validators also serves as a page's props schema, so a filter form's
   query and the page that shows it share one.
 - **Lists in forms**: decode a list with `S.Array(Item)`; a failing item's
-  errors are keyed by its path, as `items.2.amount`. Read them in React from
+  errors are keyed by its path, as `items.2.amount`. A JSON body, a form post
+  and a multipart post (which Inertia sends for a form with a file) all
+  decode the same: form fields named `items[2][amount]` or `items.2.amount`
+  nest into the list, and every value of a `tags[]` field, in a form or a
+  query string, is a list. Read them in React from
   the page's `errors` prop, ``errors[`items.${index}.amount`]``, which takes any
   path; Inertia's `useForm().errors` is keyed by the form's top-level fields
   only, so reading a nested path from it needs a cast. A step of a wizard that
