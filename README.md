@@ -2119,11 +2119,12 @@ so server-only changes still appear.
   served a guest's cached page; send the session cookie a browser would.
 
 The framework can't see data a page gets another way, such as an external
-`fetch()` or the current time. Give those routes `cache: false`, or call
-`markPageDynamic(c)` from Hono middleware. `cache: 'no-store'` also tells
-browsers and every cache not to keep the response, for one only its link
-should show, such as a signed preview. `pageCache: false` in `setupWeb`
-turns page caching off.
+`fetch()` or the current time. Give those routes `cache: 'private'`: each
+request renders the page, and only the visitor's browser keeps it, checking
+back each time (`Cache-Control: private, no-cache`). Give a page only its link
+should show, such as a signed preview, `cache: 'no-store'`, which keeps it
+out of every cache, the browser's included. `pageCache: false` in `setupWeb`
+turns page caching off for the whole application.
 
 ### Time-based caching with Workers Cache
 
@@ -3576,9 +3577,9 @@ Static pages are now cached at Cloudflare's edge by default; see
 - Bind version metadata in `wrangler.jsonc`
   (`"version_metadata": { "binding": "CF_VERSION_METADATA" }`) so each deploy
   starts from an empty cache.
-- Give `cache: false` to routes whose pages change without reading a binding or
-  request header, such as pages built from an external `fetch()` or the
-  current time.
+- Give `cache: 'private'` to routes whose pages change without reading a
+  binding or request header, such as pages built from an external `fetch()`
+  or the current time.
 - Middleware that sets `Cache-Control` on every response, such as a blanket
   `no-store`, now stops pages from being cached. Set it only when the response
   has no `Cache-Control` yet.

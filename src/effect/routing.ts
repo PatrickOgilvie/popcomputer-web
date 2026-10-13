@@ -311,10 +311,12 @@ export interface EffectRouteOptions {
    * Leave unset for the default page cache: a page that reads no bindings,
    * headers or request state is cached at the edge until the next deploy.
    *
-   * `false` always renders this route fresh, for pages whose output changes
-   * without the framework seeing it (external fetches, the current time).
-   * `'no-store'` also tells browsers and every cache not to keep the
-   * response, for one only its link should show, such as a signed preview.
+   * `'private'` renders this route for every request, for pages whose
+   * output changes without the framework seeing it (external fetches, the
+   * current time): only the visitor's browser keeps the page, and checks
+   * back each time (`Cache-Control: private, no-cache`). `'no-store'` keeps
+   * it out of every cache, the browser's included, for a page only its link
+   * should show, such as a signed preview.
    *
    * An object caches this route's responses for a fixed time via Cloudflare
    * Workers Cache instead, data reads included. Applied to successful
@@ -323,7 +325,7 @@ export interface EffectRouteOptions {
    * only visitors without cookies share them. Requires
    * `"cache": { "enabled": true }` in wrangler config.
    */
-  cache?: RouteCacheOptions | false | 'no-store'
+  cache?: RouteCacheOptions | 'private' | 'no-store'
   /**
    * After this route's effect succeeds (any Redirect, or a Response below
    * 400), purge these Workers Cache tags. `true` purges the record of each
@@ -428,7 +430,7 @@ export class EffectRouteBuilder<
 
     const base = new EffectRouteBuilder<E, Services, Path, Needs>(this.app, [], '', this.bridgeConfig, this.registry, [])
 
-    this.app.get(RUN_PATH, base.createHandler(runner, [], { cache: false }))
+    this.app.get(RUN_PATH, base.createHandler(runner, [], { cache: 'private' }))
   }
 
   /**

@@ -139,11 +139,14 @@ TypeScript example here and in the README type-checks against the package.
    services, and the types `dbQuery`, `config` and `bound` read come from
    `setupWeb`, so a layer whose type is inferred from them refers to itself.
 10. **Run work that outlives the response with `background('name', effect)`.**
-    Run a Cron Trigger's or Queue consumer's work with the application's
-    services through `routes.run(effect, env, ctx)` from the Worker's
-    `scheduled` or `queue` handler, never through a hidden route.
-11. **Give `cache: false` to routes whose page reads something the framework
-    cannot see,** such as an external `fetch()` or the current time. Pages that
+    Give the Worker's `scheduled` and `queue` handlers as
+    `routes.scheduled((event) => effect)` and
+    `routes.queue(MessageSchema, (message) => effect)`, which run the work with
+    the application's services, never through a hidden route; test them with
+    `testBatch` and `testEnv`.
+11. **Give `cache: 'private'` to routes whose page reads something the framework
+    cannot see,** such as an external `fetch()` or the current time, and
+    `cache: 'no-store'` to one no cache may keep, such as a signed preview. Pages that
     read bindings, headers or bound models are already rendered per request.
     A route that changes records cached pages show purges them with
     `purges: true`, and an action adds other records it changed with

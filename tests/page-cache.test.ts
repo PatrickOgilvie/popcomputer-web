@@ -143,7 +143,7 @@ const createApp = (options: AppOptions = {}) => {
       return yield* render('State', { theme: state.get<string>('theme') ?? 'light' })
     })
   )
-  routes.get('/fresh', Effect.andThen(count('fresh'), render('Fresh')), { cache: false })
+  routes.get('/fresh', Effect.andThen(count('fresh'), render('Fresh')), { cache: 'private' })
   routes.get('/projects/{project}', Effect.andThen(count('bound'), render('Projects/Show')))
   routes.get(
     '/welcome',
@@ -256,11 +256,14 @@ describe('default page cache', () => {
     expect(cache.entries.size).toBe(0)
   })
 
-  test('routes with cache: false or a route model binding are never stored', async () => {
+  test("routes with cache: 'private' or a route model binding are never stored", async () => {
     const { app } = createApp()
     const env = production()
 
-    expect((await get(app, '/fresh', {}, env)).status).toBeNull()
+    const fresh = await get(app, '/fresh', {}, env)
+
+    expect(fresh.status).toBeNull()
+    expect(fresh.res.headers.get('Cache-Control')).toBe('private, no-cache')
     expect((await get(app, '/projects/42', {}, env)).status).toBeNull()
     expect(cache.entries.size).toBe(0)
   })
