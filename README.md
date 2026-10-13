@@ -173,8 +173,11 @@ export const ProjectCard = tableSchema(schema.projects).mapFields((fields) => ({
   openTasks: S.Number,
 }))
 
+// The row a list page ends with, from which the next page continues.
+export const ProjectCursor = S.Struct({ beforeAt: S.Date, beforeId: S.String })
+
 export const pages = {
-  'Projects/Index': S.Struct({ projects: S.Array(ProjectSummary) }),
+  'Projects/Index': S.Struct({ projects: S.Array(ProjectSummary), next: S.NullOr(ProjectCursor) }),
   'Projects/Show': S.Struct({ project: Project }),
   'Auth/Login': S.Struct({}),
   Dashboard: S.Struct({}),
@@ -570,12 +573,19 @@ so no server code reaches the bundle, and types its form with `FormInput`:
 ```ts
 // src/forms.ts
 import { Schema as S } from 'effect'
-import { alphaDash, email, nullableString, requiredString } from '@popcomputer/web/schema'
+import { alphaDash, coercedDate, email, nullable, nullableString, requiredString } from '@popcomputer/web/schema'
 
 export const CreateProject = S.Struct({
   name: requiredString,
   slug: alphaDash,
   description: nullableString,
+})
+
+// The query the project list reads: a search, and where the page starts.
+export const ProjectFilters = S.Struct({
+  q: nullableString,
+  beforeAt: nullable(coercedDate),
+  beforeId: nullableString,
 })
 
 export const SignIn = S.Struct({ email, password: requiredString })
@@ -595,7 +605,7 @@ import type { FormInput, WebPage } from '@popcomputer/web/react'
 import type { CreateProject } from '../../forms'
 import { paths } from '../../paths'
 
-const Index: WebPage<'Projects/Index'> = ({ projects }) => {
+const Index: WebPage<'Projects/Index'> = ({ projects, next }) => {
   const { flash } = usePage()
   const form = useForm<FormInput<typeof CreateProject>>({ name: '', slug: '', description: null })
 
@@ -615,6 +625,7 @@ const Index: WebPage<'Projects/Index'> = ({ projects }) => {
           </li>
         ))}
       </ul>
+      {next && <Link href={href(paths.projects, {}, next)}>Older projects</Link>}
 
       <form onSubmit={submit}>
         <label>
@@ -1769,7 +1780,7 @@ export const listProjects = action(Effect.gen(function* () {
     { ttl: Duration.minutes(5), swr: Duration.minutes(1), version: true }
   )
 
-  return yield* render('Projects/Index', { projects })
+  return yield* render('Projects/Index', { projects, next: null })
 }))
 ```
 
@@ -2667,6 +2678,75 @@ A body field named like one of the route's placeholders, such as `claim` on
 validation, whether or not the schema reads it; leave such fields out of the
 form.
 
+### Lists page through with a cursor
+
+A list that grows pages through it by the last row shown, not by an offset: a
+row added or removed between two requests shifts every offset, and the
+database counts and skips every row before one. Order by a column that orders
+the rows and a unique one that breaks ties, read one row more than the page
+holds to learn whether another page follows, and render the cursor of the
+last row shown as the page's `next`. The query decodes through
+`validateRequest`, so a malformed cursor is a 422 rather than a database
+error, and an empty search box is `null`:
+
+```ts
+// src/actions/projects/list.ts
+import { and, desc, eq, ilike, lt, or } from 'drizzle-orm'
+import { Effect } from 'effect'
+import { action, authorize, dbQuery, render, validateRequest } from '@popcomputer/web/effect'
+import { ProjectFilters } from '../../forms'
+import { projects } from '../../schema'
+
+const PAGE_SIZE = 25
+
+export const listProjects = action(Effect.gen(function* () {
+  const auth = yield* authorize()
+  const filters = yield* validateRequest(ProjectFilters)
+  const after = filters.beforeAt !== null && filters.beforeId !== null
+    ? { at: filters.beforeAt, id: filters.beforeId }
+    : null
+
+  const rows = yield* dbQuery((db) =>
+    db.select({ id: projects.id, name: projects.name, createdAt: projects.createdAt })
+      .from(projects)
+      .where(and(
+        eq(projects.userId, auth.user.id),
+        filters.q === null ? undefined : ilike(projects.name, `%${filters.q}%`),
+        after === null ? undefined : or(
+          lt(projects.createdAt, after.at),
+          and(eq(projects.createdAt, after.at), lt(projects.id, after.id))
+        )
+      ))
+      .orderBy(desc(projects.createdAt), desc(projects.id))
+      .limit(PAGE_SIZE + 1)
+  )
+
+  const shown = rows.slice(0, PAGE_SIZE)
+  const last = shown.at(-1)
+
+  return yield* render('Projects/Index', {
+    projects: shown,
+    next: rows.length > PAGE_SIZE && last !== undefined ? { beforeAt: last.createdAt, beforeId: last.id } : null,
+  })
+}))
+```
+
+The page links to the next one with `href(paths.projects, {}, next)`, as
+[Write the client](#5-write-the-client) shows; a search carries on through the
+pages when the link adds it, `{ ...next, q }`. The page's schema drops
+`createdAt` from each row it shows, since `ProjectSummary` does not name it.
+An index on the order's columns, `(user_id, created_at, id)`, lets each page
+start where the last one ended.
+
+On Postgres, declare a cursor's timestamp as
+`timestamp('created_at', { precision: 3, withTimezone: true })`. The cursor
+travels as a JavaScript `Date`, which holds milliseconds, while a plain
+`timestamp` holds microseconds, so a row created within the same millisecond
+as the last one shown, but before it, falls between the pages and is never
+listed. A `timestamp` without a time zone also reads in the process's zone:
+Workers run in UTC, but a test on a machine in another zone shifts every
+cursor by its offset.
+
 ### Other patterns
 
 - **Several forms on one page**, such as approve and reject on each row of an
@@ -2711,10 +2791,6 @@ form.
   `S.optionalKey(Group)`, not a decoding default: in effect 4.0.3 a struct
   with a decoding default reports its first missing field and drops its
   siblings' errors.
-- **Cursor pagination**: decode the cursor and filters from the query with
-  `validateRequest` (`nullable(coercedNumber)`, `nullableString`), so a
-  malformed cursor is a 422 rather than a database error and an empty filter
-  is `null`, and render the next cursor as a prop.
 - **Counts in the header**, such as unread messages: declare them in
   `shared` and compute them with `shareProps`, which runs only when a page
   renders.
