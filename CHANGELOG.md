@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `routes.scheduled((event) => effect)` and `routes.queue(Schema, (body, message) => effect)` return the Worker's `scheduled` and `queue` handlers, running each job with the application's services and type-checking it as a registration does. The queue handler decodes each message's body with the schema, acknowledges a message whose work succeeds, and logs and retries one whose body does not decode or whose work fails. `testBatch(bodies)` from `@popcomputer/web/testing` makes a batch that records each message's outcome.
 
+- The lint rule `no-auth-api-in-action` reports a Better Auth endpoint called through `auth.api` in an action, and `no-catch-all-in-action` reports broad recovery piped point-free, as `authorize().pipe(Effect.orDie)`.
+
 ### Changed
 
+- `betterAuthRedirect(endpoint, input, options)` and `betterAuthCall(endpoint, input, options)` name a Better Auth endpoint on `auth.api`, as `betterAuthRedirect('signInEmail', { body: input }, { redirectTo, errors })`, and send the call through Better Auth's request handler, so its rate limits, origin checks and plugins' hooks apply: a server call through `auth.api`, which the callback form made, skips them, leaving sign-in forms open to password guessing. Better Auth's types check the endpoint's name and body, and type its result for `redirectTo` (sign-up's `{ token, user }`); the call no longer passes `headers`, `asResponse` or `returnHeaders`. The README's auth setup turns on Better Auth's rate limits, which it enables only when `NODE_ENV` is `production`, with database storage shared across Worker isolates and Cloudflare's client address header. `errors` may leave fields `undefined`.
+- Each `testBrowser` sends its own client address (`CF-Connecting-IP`, `X-Forwarded-For`), so per-client rate limits count browsers apart.
 - `testBrowser(app, env).follow(res)` follows any redirect, keeping the cookies it set, including one a test requested with `app.request`. `followRedirect(app, res, env)` is removed: use `testBrowser(app, env).follow(res)`.
 
 - The README's Quick start has a sixth step, "Wire the Worker". It shows the entry module that imports every module of registrations, since a module nothing imports leaves its routes answering 404. It also gives a table of the application's files and what each declares.
