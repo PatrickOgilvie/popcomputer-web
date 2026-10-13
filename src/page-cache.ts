@@ -174,6 +174,13 @@ export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareH
     if (!store || isDevelopment(c) || c.req.method !== 'GET') {
       await next()
 
+      // A request signed in without a session cookie, as testEnv's signedIn
+      // signs it in, gets the signed-in policy a session cookie gets.
+      if (openWebContext(c).authUser !== undefined) {
+        markPrivate(c)
+        markResponse(c, 'BYPASS')
+      }
+
       return
     }
 

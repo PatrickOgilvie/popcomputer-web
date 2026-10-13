@@ -384,6 +384,21 @@ describe('testEnv with the page cache', () => {
   })
 })
 
+describe('a test sign-in', () => {
+  test('gets the signed-in policy where no Cache API exists, as a session cookie does', async () => {
+    Reflect.deleteProperty(globalThis, 'caches')
+    const { app } = createApp()
+
+    const member = await get(app, '/', inertia(), testEnv(signedIn({ id: 'user-1' }), production()))
+    const session = await get(app, '/', { headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1.0.0', Cookie: 'better-auth.session_token=abc' } }, production())
+
+    expect(member.status).toBe('BYPASS')
+    expect(member.res.headers.get('Cache-Control')).toBe('no-store')
+    expect(session.status).toBe(member.status)
+    expect(session.res.headers.get('Cache-Control')).toBe(member.res.headers.get('Cache-Control'))
+  })
+})
+
 describe('responses without a cache policy', () => {
   test('are private and revalidated, so Workers Cache never shares them', async () => {
     const { app } = createApp({ pageCache: false })

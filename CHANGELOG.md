@@ -96,6 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A request `testEnv(signedIn(user))` signs in gets the signed-in cache policy (`no-store`, `X-Popweb-Cache: BYPASS`) where no Cache API exists, as in tests, as a session cookie does; it got `private, no-cache`.
+- `readPage(...).props.errors` reads a field's message as `string | Readonly<Record<string, string>>` (`TestFieldErrors`), so `expect(page.props.errors.name).toBe('...')` type-checks; Inertia's intersection type made it `string & Record<string, string>`.
 - A page rendered for a user signed in without a session cookie, as `testEnv(signedIn(...))` signs a test request in, gets the signed-in cache policy (`BYPASS`, `no-store`), so tests can check it.
 - Failed background work and cache store failures are logged through Effect's logger when no `EffectErrorObserverService` is installed, as errors and warnings respectively. They were silent.
 - `cache()` serves values that hold dates: a value is stored through its schema's JSON codec (`Schema.toCodecJson`), so it decodes back to itself. A `Date` came back as a string the schema rejected, so the value was computed on every call and the decode failure went only to the error observer. `cache`, `cacheGet` and `cacheSet` accept a schema of any encoded form (`CacheSchema<V>`).

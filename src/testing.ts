@@ -176,11 +176,18 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
   }
 }
 
+/**
+ * A page's field errors as a test reads them: a field's message, or an error
+ * bag's messages by field, so `expect(page.props.errors.name).toBe('...')`
+ * type-checks.
+ */
+export type TestFieldErrors = Readonly<Record<string, string | Readonly<Record<string, string>>>>
+
 /** A page an Inertia request rendered, as a test reads it. */
 export interface TestPage<Component extends string> {
   readonly component: Component
   /** The page's props as the browser receives them, with shared props and `errors`. */
-  readonly props: PagePropsFor<Component>
+  readonly props: Omit<PagePropsFor<Component>, 'errors'> & { readonly errors: TestFieldErrors }
   readonly url: string
   /** The values flashed to this page, as setupWeb's `flash` declares them. */
   readonly flash: FlashData

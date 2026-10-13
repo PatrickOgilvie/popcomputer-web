@@ -234,6 +234,10 @@ testEnv(signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' }), { REGIO: 'w
 export const flashed = async (response: Response) => {
   const page = await readPage(response, 'Projects/Show')
   expectType<Equals<typeof page.flash.success, string | undefined>>()
+  // A field error compares with a message.
+  const message: string | Readonly<Record<string, string>> | undefined = page.props.errors.name
+  expectType<Equals<typeof page.props.project.createdAt, string>>()
+  return message
 }
 
 // Fields an application adds have no test default, so signedIn requires them.
