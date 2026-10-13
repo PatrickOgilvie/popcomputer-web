@@ -1466,7 +1466,10 @@ came from: the path of its same-origin `Referer`, or `/` without one. A `Validat
 with `redirectTo` goes to that page instead, such as a wizard's earlier step. That page renders with all of its own props and the field errors as
 `errors`; a form that names an Inertia error bag gets them under its name.
 Errors and flash values travel in a short-lived `HttpOnly` cookie that the
-next visit reads and clears. The cookie is readable, not encrypted: never
+next page to render reads and clears; a request that only redirects, such as
+a home page sending visitors to their dashboard, passes them on, so a failed
+form whose `Referer` was missing still shows its errors where it lands. The
+cookie is readable, not encrypted: never
 flash a secret, such as a new API key shown once; render the page with it
 from the action instead. A JSON client gets a 422 instead, and invalid
 query parameters on a page visit render the error page with 422, with the

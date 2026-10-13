@@ -4,9 +4,9 @@
  * A form that fails validation redirects back, and its field errors reach the
  * page the redirect renders; an action's `flash(key, value)` reaches that
  * page's Inertia `flash` field. Both travel in a short-lived cookie that the
- * next request reads and clears, so they show once, without server-side
- * sessions. Data set during a request that renders a page goes into that
- * page directly.
+ * next page to render reads and clears, so they show once, without
+ * server-side sessions; a request that only redirects passes them on. Data
+ * set during a request that renders a page goes into that page directly.
  */
 
 import type { Context } from 'hono'
@@ -97,13 +97,22 @@ export function openFlash(c: Context): FlashStore {
     },
 
     commit(response) {
-      const outgoing = Object.keys(pending.errors).length > 0 || Object.keys(pending.flash).length > 0
+      // A request that only redirects, such as a guard sending the visitor
+      // on, renders no page: what it received goes on with the redirect, so
+      // a failed form's errors reach the page it lands on.
+      const redirects = response.status >= 300 && response.status < 400
+      const carried = redirects && !delivered && !prefetch ? Option.getOrElse(incoming, empty) : empty()
+      const next: MutableFlash = {
+        errors: { ...carried.errors, ...pending.errors },
+        flash: { ...carried.flash, ...pending.flash },
+      }
+      const outgoing = Object.keys(next.errors).length > 0 || Object.keys(next.flash).length > 0
       const clears = raw !== undefined && !prefetch
 
       if (!outgoing && !clears) return response
 
       const cookie = outgoing
-        ? serialize(name, toBase64Url(JSON.stringify(withinBudget(pending))), {
+        ? serialize(name, toBase64Url(JSON.stringify(withinBudget(next))), {
             path: '/',
             httpOnly: true,
             secure,

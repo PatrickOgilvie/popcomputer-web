@@ -47,6 +47,8 @@ function createApp() {
       redirectTo: '/claims/1/items',
     }))))
     .get('/claims/1/items', action(render('Claims/Items')))
+    // Home sends visitors on, as a site whose home is a dashboard does.
+    .get('/', action(redirect('/projects')))
     .post('/sessions', action(Effect.gen(function* () {
       yield* flash('success', 'Signed in.')
 
@@ -271,6 +273,43 @@ describe('domain failures on a form', () => {
     const res = await offer(offersApp(), -1, { Origin: 'http://localhost', Referer: 'https://elsewhere.example/listings/1' })
 
     expect(res.headers.get('Location')).toBe('/listings')
+  })
+})
+
+describe('flash through redirects', () => {
+  test("a failed form's errors pass through a redirect that renders no page", async () => {
+    const app = createApp()
+    const browser = testBrowser(app)
+    // Without a Referer, the form goes back to `/`, which redirects again.
+    const failed = await browser.request('/projects', {
+      method: 'POST',
+      headers: { ...page, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '' }),
+    })
+    const home = await browser.follow(failed)
+
+    expect(home.status).toBe(303)
+
+    const projects = await readPage(await browser.follow(home), 'Projects/Index')
+
+    expect(projects.props.errors.name).toBe('This field is required')
+    expect(browser.cookies.has('popweb-flash')).toBe(false)
+  })
+
+  test('flash values pass through a redirect, and show once', async () => {
+    const app = createApp()
+    const browser = testBrowser(app)
+    browser.setCookie('popweb-flash', '')
+    const created = await browser.request('/projects', {
+      method: 'POST',
+      headers: { ...page, 'Content-Type': 'application/json', Referer: 'http://localhost/' },
+      body: JSON.stringify({ name: 'Apollo' }),
+    })
+    const index = await readPage(await browser.follow(created), 'Projects/Index')
+    const again = await readPage(await browser.request('/projects', { headers: page }), 'Projects/Index')
+
+    expect(index.flash).toEqual({ success: 'Created Apollo.' })
+    expect(again.flash).toEqual({})
   })
 })
 
