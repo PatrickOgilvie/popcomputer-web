@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-next.2] - 2026-10-13
+
+Changes since 0.8.0-next.1.
+
 ### Breaking
 
 - Route `cache.tags`, `purges`, `purgeCache` and the data cache's `tags` take the schema's tables, by their key in the schema, and record tags (`CacheTag`), once the application registers its schema: a tag naming a table by its SQL name, which nothing ever purged, is a type error. `recordCacheTag` returns a record tag of that table.
