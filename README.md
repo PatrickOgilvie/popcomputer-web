@@ -1016,7 +1016,7 @@ redirect renders, or the page the same request renders.
 
 A form submission that fails validation, whether in `validateRequest` or as a
 `ValidationError` the action fails with, redirects back (303) to the page it
-came from: its same-origin `Referer`, or `/` without one. A `ValidationError`
+came from: the path of its same-origin `Referer`, or `/` without one. A `ValidationError`
 with `redirectTo` goes to that page instead, such as a wizard's earlier step. That page renders with all of its own props and the field errors as
 `errors`; a form that names an Inertia error bag gets them under its name.
 Errors and flash values travel in a short-lived `HttpOnly` cookie that the
@@ -1027,10 +1027,40 @@ query parameters on a page visit render the error page with 422, with the
 invalid fields as `errors`; `readErrorPage(res)` from `@popcomputer/web/testing`
 reads it in a test.
 
+An application cookie, such as a guest's cart, is declared once with the
+schema of its value, and actions read, set and clear it through the
+declaration; the response carries what they set, beside flash, so a set
+cookie survives the redirect after a form:
+
+```ts
+import { Option } from 'effect'
+import { cookie } from '@popcomputer/web/effect'
+
+export const cartCookie = cookie('cart', S.Struct({ id: S.String }), { maxAge: '30 days', path: '/r' })
+
+export const addToCart = action(Effect.gen(function* () {
+  const cart = Option.getOrElse(yield* cartCookie.read, () => ({ id: crypto.randomUUID() }))
+
+  yield* cartCookie.set(cart)
+
+  return yield* redirect(paths.dashboard)
+}))
+```
+
+A value the browser sends that the schema rejects reads as none. Reading a
+cookie renders the page afresh for each request, and a cached page whose path
+a cookie covers is rendered afresh for every visitor carrying it, so scope a
+cookie to the paths that read it (`path: '/r'` covers `/r/cart`, not the
+menu at `/menu`). Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` over
+HTTPS.
+
 `file(body, { contentType, filename })` answers with a file, such as an export
 or a feed: text, bytes, or an Effect `Stream` sent as it is produced. A
 `filename` offers it as a download. `json` and `text` take
-`{ status, headers }` as well as a status.
+`{ status, headers }` as well as a status, and an `etag` naming the version of
+what they hold, such as a counter the writes bump: a client polling with
+`If-None-Match` gets `304 Not Modified` with no body until it changes,
+``json(KitchenOrders, orders, { etag: `orders-${version}` })``.
 
 Typed failures, defects, Hono exceptions, and not-found responses share the
 configured error boundary. Use `EffectErrorObserverService` as the integration
@@ -1398,7 +1428,9 @@ export const projectTasks = action(Effect.gen(function* () {
 Test routes through the application itself. `app.request` runs the real
 middleware, route and action; `testEnv(layer, bindings)` builds the request
 env. Services in the layer replace the ones the request would otherwise get, so
-`signedIn(user)` signs the request in without a session cookie and
+`signedIn(user)` signs the request in without a session cookie (a user given
+only an `id` is named `Test User`, so pass the seeded row when a page shows
+the name) and
 `Layer.succeed(Service, fake)` swaps a service the application provides. A layer
 a route registers with `.provide()` still takes precedence for that route. The
 application's own `services` are still built, so the test bindings include the
@@ -1779,7 +1811,8 @@ batch.
 On D1, write the same statements as one `dbBatch((db) => [...])`, or a list
 built at run time, such as one statement per line of a form,
 `dbBatch((db) => lines.map((line) => db.update(...)))`, whose results are a
-list; a helper that returns statements for a batch types them
+list; a helper that returns statements for a batch takes the `db` the batch
+passes it, typed `DatabaseType` from `@popcomputer/web/effect`, and types them
 `BatchStatement`. A batch
 cannot branch on an earlier statement's result, so a write that depends on
 one carries its condition in its own `WHERE`: an insert selects its row,
@@ -1787,7 +1820,8 @@ one carries its condition in its own `WHERE`: an insert selects its row,
 returns no row when the condition fails, and an update adds
 `WHERE EXISTS (...)`. `rowOf` gives every column of the table in its order,
 the values given bound as their columns encode them, and the columns left out
-their defaults, so a misnamed column is a type error. An inserting
+their defaults, so a misnamed column is a type error; a value may be SQL or
+a column of the table the insert selects from. An inserting
 statement's `.returning()`, or an update's `meta.changes`, tells the action
 whether it applied:
 

@@ -4,7 +4,10 @@
  * Middleware that connects Hono's request handling to Effect's runtime.
  */
 
-import { Cause, Config, ConfigProvider, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import { Cause, Config, ConfigProvider, Duration, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import { getCookie } from 'hono/cookie'
+import { serialize } from 'hono/utils/cookie'
+import { CookieService, type CookieJar } from './cookies.js'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { WebRequestContext } from '../request-context.js'
@@ -139,6 +142,38 @@ function createRequestContext<E extends Env>(
  * Create a RequestStateClient backed by Hono context variables.
  * Values are shared with Hono middleware through c.set / c.var.
  */
+/**
+ * The request's cookies for `cookie(...)` declarations: reading one makes the
+ * page dynamic, since cookies are not part of the page cache's key, and a set
+ * cookie waits in the request context until web() writes it on the response.
+ */
+function createCookieJar<E extends Env>(c: HonoContext<E>): CookieJar {
+  const secure = new URL(c.req.url).protocol === 'https:'
+
+  return {
+    get: (name) => {
+      markPageDynamic(c)
+
+      return getCookie(c, name)
+    },
+    set: ({ name, value, options }) => {
+      const context = openWebContext(c)
+      const maxAge = options.maxAge === undefined ? undefined : Math.floor(Duration.toSeconds(Duration.fromInputUnsafe(options.maxAge)))
+
+      context.responseCookies = [
+        ...(context.responseCookies ?? []),
+        serialize(name, value, {
+          path: options.path ?? '/',
+          httpOnly: options.httpOnly ?? true,
+          secure,
+          sameSite: options.sameSite ?? 'Lax',
+          ...(maxAge === undefined ? {} : { maxAge }),
+        }),
+      ]
+    },
+  }
+}
+
 function createRequestStateClient<E extends Env>(c: HonoContext<E>): RequestStateClient {
   // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   return {
@@ -489,6 +524,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   | RequestService
   | RequestStateService
   | ResponseFactoryService
+  | CookieService
   | PageService
   | DatabaseService
   | AuthService
@@ -507,6 +543,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   )
 
   const responseLayer = Layer.succeed(ResponseFactoryService, createResponseFactory(c))
+  const cookieLayer = Layer.succeed(CookieService, createCookieJar(c))
   const pageLayer = Layer.succeed(PageService, createPageRenderer(c, config))
 
   // Bindings layer - always available, typed by the registered application's environment
@@ -549,6 +586,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     requestLayer,
     requestStateLayer,
     responseLayer,
+    cookieLayer,
     pageLayer,
     bindingsLayer,
     executionContextLayer,
@@ -581,6 +619,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     | RequestService
     | RequestStateService
     | ResponseFactoryService
+    | CookieService
     | PageService
     | BindingsService
     | ExecutionContextService

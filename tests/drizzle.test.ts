@@ -73,6 +73,16 @@ describe('rowOf', () => {
     expect(db.select({ rating: candidates.rating }).from(candidates).all()).toEqual([{ rating: 6 }])
   })
 
+  test('takes a column of the table the insert selects from', () => {
+    const db = openDatabase()
+
+    db.insert(candidates).select(
+      db.select(rowOf(candidates, { id: 'c1', jobId: jobs.id, email: 'a@example.com' })).from(jobs).where(eq(jobs.id, 'open-job'))
+    ).run()
+
+    expect(db.select({ jobId: candidates.jobId }).from(candidates).all()).toEqual([{ jobId: 'open-job' }])
+  })
+
   test('names only the table\'s columns', () => {
     // @ts-expect-error jobID is not a column of candidates
     rowOf(candidates, { id: 'c1', jobID: 'open-job', email: 'a@example.com' })

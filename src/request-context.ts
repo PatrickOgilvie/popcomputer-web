@@ -62,6 +62,8 @@ export interface WebRequestContext<E extends Env = Env> {
   pageCache?: PageCacheState
   /** routes.jsonApi() — every request to the route is a JSON client. */
   jsonApi?: boolean
+  /** Application cookies an action set, which web() writes on the response. */
+  responseCookies?: string[]
 }
 
 

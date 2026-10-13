@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cookie(name, Schema, options)` declares an application cookie once: actions read it (`Option`), set it and clear it through the declaration, and the response carries what they set, beside flash, through a redirect.
+- `json` and `text` take an `etag`: the response carries it, and a request whose `If-None-Match` names it gets `304 Not Modified` with no body.
+- `rowOf` takes a column of the table the insert selects from as a value.
 - `tagCache(...tags)` tags a cached response with records the action read beyond its route's bindings, such as the translation a fallback page shows, so purging them refreshes it.
 - The route option `cache: 'no-store'` keeps a response out of every cache, browsers included, for a page only its link should show.
 - `readError(res).errors` is always present, empty when no field failed (`TestErrorResponse`).

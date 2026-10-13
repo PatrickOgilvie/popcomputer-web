@@ -224,7 +224,7 @@ export function web(config: WebConfig): MiddlewareHandler {
       }
     }
 
-    const committed = c.res ? flash.commit(c.res) : undefined
+    const committed = c.res ? withResponseCookies(flash.commit(c.res), openWebContext(c).responseCookies) : undefined
 
     if (committed !== undefined && committed !== c.res) {
       // Assigning c.res copies the previous response's Set-Cookie headers over
@@ -242,3 +242,14 @@ export function web(config: WebConfig): MiddlewareHandler {
 }
 
 export { HEADERS }
+
+/** The response with the application cookies an action set. */
+function withResponseCookies(response: Response, cookies: readonly string[] | undefined): Response {
+  if (cookies === undefined || cookies.length === 0) return response
+
+  const headers = new Headers(response.headers)
+
+  for (const cookie of cookies) headers.append('Set-Cookie', cookie)
+
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}

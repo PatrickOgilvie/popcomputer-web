@@ -3,10 +3,13 @@
  * application's tables. Only an application that uses Drizzle imports it.
  */
 
-import { getTableColumns, is, sql, SQL, type Column, type Table } from 'drizzle-orm'
+import { Column, getTableColumns, is, sql, SQL, type Table } from 'drizzle-orm'
 
-/** The values `rowOf` writes: the table's insert values, each of which may be SQL the database computes. */
-export type RowValues<T extends Table> = { readonly [Key in keyof T['$inferInsert']]: T['$inferInsert'][Key] | SQL }
+/**
+ * The values `rowOf` writes: the table's insert values, each of which may be
+ * SQL the database computes or a column of the table the insert selects from.
+ */
+export type RowValues<T extends Table> = { readonly [Key in keyof T['$inferInsert']]: T['$inferInsert'][Key] | SQL | Column }
 
 /** The select fields `rowOf` builds: one aliased value per column of the table. */
 export type RowFields<T extends Table> = {
@@ -41,7 +44,7 @@ export function rowOf<T extends Table>(table: T, values: RowValues<T>): RowField
   for (const [key, column] of Object.entries(columns)) {
     const value = Object.hasOwn(given, key) ? given[key] : defaultOf(column)
 
-    fields[key] = (is(value, SQL) ? sql`${value}` : sql`${sql.param(value ?? null, column)}`).as(column.name)
+    fields[key] = (is(value, SQL) || is(value, Column) ? sql`${value}` : sql`${sql.param(value ?? null, column)}`).as(column.name)
   }
 
   // SAFETY: each field is the table's own column under its key, aliased to

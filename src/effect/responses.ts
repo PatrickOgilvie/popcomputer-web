@@ -100,7 +100,17 @@ export function flash<Key extends FlashKey>(key: Key, value: FlashValue<Key>): E
 }
 
 /** A response's status and headers: a status alone, or both. */
-export type ResponseOptions = number | { readonly status?: number; readonly headers?: HeadersInit }
+export type ResponseOptions = number | {
+  readonly status?: number
+  readonly headers?: HeadersInit
+  /**
+   * The version of what the response holds, such as a counter its writes
+   * bump: the response carries it as its `ETag`, and a request whose
+   * `If-None-Match` names it is answered `304 Not Modified` with no body, so a
+   * client polling for changes downloads only new ones.
+   */
+  readonly etag?: string
+}
 
 /**
  * Return a JSON response. Given a schema first, the value is checked against
@@ -138,7 +148,7 @@ export function json(
         )
       : first
 
-    return withHeaders(factory.json(data, statusOf(init)), init)
+    return yield* conditional(withHeaders(factory.json(data, statusOf(init)), init), init)
   })
 }
 
@@ -152,7 +162,7 @@ export const text = (data: string, init: ResponseOptions = 200): Effect.Effect<R
   Effect.gen(function* () {
     const factory = yield* ResponseFactoryService
 
-    return withHeaders(factory.text(data, statusOf(init)), init)
+    return yield* conditional(withHeaders(factory.text(data, statusOf(init)), init), init)
   })
 
 /** How `file` answers: the body's media type, and a download name. */
@@ -223,6 +233,34 @@ function contentDisposition(filename: string): string {
 
 function statusOf(init: ResponseOptions): number {
   return typeof init === 'number' ? init : init.status ?? 200
+}
+
+/**
+ * The response with its `ETag`, or `304 Not Modified` when the request's
+ * `If-None-Match` names it.
+ */
+function conditional(response: Response, init: ResponseOptions): Effect.Effect<Response> {
+  if (typeof init === 'number' || init.etag === undefined || response.status !== 200) return Effect.succeed(response)
+
+  const etag = /^(?:W\/)?"[^"]*"$/.test(init.etag) ? init.etag : `"${init.etag}"`
+  const headers = new Headers(response.headers)
+  headers.set('ETag', etag)
+
+  return Effect.map(Effect.serviceOption(RequestService), (request) => {
+    const sent = Option.match(request, { onNone: () => undefined, onSome: (client) => client.header('If-None-Match') })
+    const matches = sent !== undefined && sent.split(',').some((tag) => {
+      const candidate = tag.trim()
+
+      return candidate === '*' || candidate.replace(/^W\//, '') === etag.replace(/^W\//, '')
+    })
+
+    if (!matches) return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+
+    headers.delete('Content-Type')
+    headers.delete('Content-Length')
+
+    return new Response(null, { status: 304, headers })
+  })
 }
 
 function withHeaders(response: Response, init: ResponseOptions): Response {

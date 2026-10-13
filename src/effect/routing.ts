@@ -27,6 +27,7 @@ import {
 } from './errors.js'
 import { openWebContext } from '../request-context.js'
 import { invalidateCacheTags } from '../cache.js'
+import type { CookieService } from './cookies.js'
 import { allowDefaultPageCache } from '../page-cache.js'
 import {
   applyCachePolicy,
@@ -104,6 +105,7 @@ export type CoreServices =
   | ExecutionContextService
   | PendingPurges
   | PendingCacheTags
+  | CookieService
 
 /**
  * Every service the framework can provide to a route: the core services plus
