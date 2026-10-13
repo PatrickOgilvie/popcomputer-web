@@ -342,7 +342,7 @@ describe('Error Handling', () => {
         )
       )
 
-      const res = await app.request('/')
+      const res = await app.request('/', { headers: { Accept: 'application/json' } })
 
       expect(res.status).toBe(403)
       const json = await res.json()
@@ -380,7 +380,7 @@ describe('Error Handling', () => {
         )
       )
 
-      const res = await app.request('/')
+      const res = await app.request('/', { headers: { Accept: 'application/json' } })
 
       expect(res.status).toBe(429)
       const json = await res.json()

@@ -16,7 +16,6 @@ import {
 import {
   ValidationError,
   UnauthorizedError,
-  ForbiddenError,
   HttpError,
   AuthRateLimitError,
   AuthRedirect,
@@ -222,12 +221,9 @@ export async function renderErrorResponse<E extends Env>(
 
   const status = structured.httpStatus
 
-  if (
-    format === 'json' ||
-    error instanceof ForbiddenError ||
-    error instanceof HttpError ||
-    error instanceof AuthRateLimitError
-  ) {
+  // An HttpError with a body owns its response format; every other failure
+  // renders the error page for page and HTML requests.
+  if (format === 'json' || (error instanceof HttpError && error.body !== undefined)) {
     // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
     return finalize(c.json(formatter.json.format(structured), status as ContentfulStatusCode))
   }

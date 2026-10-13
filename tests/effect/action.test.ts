@@ -418,6 +418,55 @@ describe('database failure classification', () => {
       }
     }
   })
+
+  test.each([
+    ['unique', `INSERT INTO pages (id, workspace_id, slug, title) VALUES (2, 1, 'intro', 'Again')`],
+    ['unique', `INSERT INTO pages (id, workspace_id, slug, title) VALUES (1, 1, 'other', 'Same id')`],
+    ['foreign-key', `INSERT INTO pages (id, workspace_id, slug, title) VALUES (3, 99, 'orphan', 'Orphan')`],
+    ['not-null', `INSERT INTO pages (id, workspace_id, slug, title) VALUES (4, 1, 'untitled', NULL)`],
+    ['check', `INSERT INTO pages (id, workspace_id, slug, title) VALUES (5, 1, 'blank', '')`],
+  ] as const)('classifies a SQLite %s violation', async (constraint, statement) => {
+    const { Database } = await import('bun:sqlite')
+    const { drizzle } = await import('drizzle-orm/bun-sqlite')
+    const { sql } = await import('drizzle-orm')
+    const sqlite = new Database(':memory:')
+    sqlite.run('PRAGMA foreign_keys = ON')
+    sqlite.run('CREATE TABLE workspaces (id INTEGER PRIMARY KEY)')
+    sqlite.run(`CREATE TABLE pages (
+      id INTEGER PRIMARY KEY,
+      workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+      slug TEXT NOT NULL,
+      title TEXT NOT NULL CHECK (length(title) > 0),
+      UNIQUE (workspace_id, slug)
+    )`)
+    sqlite.run('INSERT INTO workspaces (id) VALUES (1)')
+    sqlite.run(`INSERT INTO pages (id, workspace_id, slug, title) VALUES (1, 1, 'intro', 'Intro')`)
+    const db = drizzle(sqlite)
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation(db, async (tx) => tx.run(sql.raw(statement)))
+    )
+    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : null
+
+    expect(Predicate.isTagged(failure, 'Some') && failure.value).toMatchObject({
+      _tag: 'DatabaseConstraintViolation',
+      constraint,
+    })
+  })
+
+  test('classifies a SQLite constraint message without an extended code', async () => {
+    const exit = await Effect.runPromiseExit(
+      dbMutation({}, async () => {
+        throw new Error('D1_ERROR: UNIQUE constraint failed: pages.workspace_id, pages.slug: SQLITE_CONSTRAINT')
+      })
+    )
+    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : null
+
+    expect(Predicate.isTagged(failure, 'Some') && failure.value).toMatchObject({
+      _tag: 'DatabaseConstraintViolation',
+      constraint: 'unique',
+    })
+  })
 })
 
 describe('Composable Action Patterns', () => {

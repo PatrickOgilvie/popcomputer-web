@@ -431,16 +431,29 @@ function runTransaction<
 
 type DatabaseOperation = 'mutation' | 'transaction'
 
-function readDatabaseCode(cause: unknown): string | number | undefined {
-  if (!(cause instanceof Object)) return undefined
+/**
+ * The failure and the errors it wraps, outermost first. Drizzle wraps driver
+ * errors (`Failed to run the query ...`) and keeps the driver's in `cause`.
+ */
+function causeChain(cause: unknown): ReadonlyArray<object> {
+  const chain: object[] = []
 
-  if ('code' in cause) {
-    const code = cause.code
+  for (let current = cause; current instanceof Object && chain.length < 5; ) {
+    chain.push(current)
+    current = 'cause' in current ? current.cause : undefined
+  }
+
+  return chain
+}
+
+function readDatabaseCode(error: object): string | number | undefined {
+  if ('code' in error) {
+    const code = error.code
 
     if (S.is(S.String)(code) || S.is(S.Finite)(code)) return code
   }
 
-  if ('errno' in cause && S.is(S.Finite)(cause.errno)) return cause.errno
+  if ('errno' in error && S.is(S.Finite)(error.errno)) return error.errno
 
   return undefined
 }
@@ -469,9 +482,42 @@ function classifyConstraint(code: string | number | undefined):
 
   if (normalized === '23514') return 'check'
 
-  if (normalized.startsWith('SQLITE_CONSTRAINT')) return 'unknown'
+  return SQLITE_CONSTRAINTS.get(normalized)
+}
 
-  return undefined
+/** SQLite's extended constraint result codes, as bun:sqlite and libsql report them. */
+const SQLITE_CONSTRAINTS = new Map<string, DatabaseConstraintViolation['constraint']>([
+  ['SQLITE_CONSTRAINT_UNIQUE', 'unique'],
+  ['SQLITE_CONSTRAINT_PRIMARYKEY', 'unique'],
+  ['SQLITE_CONSTRAINT_FOREIGNKEY', 'foreign-key'],
+  ['SQLITE_CONSTRAINT_NOTNULL', 'not-null'],
+  ['SQLITE_CONSTRAINT_CHECK', 'check'],
+  ['SQLITE_CONSTRAINT', 'unknown'],
+])
+
+/**
+ * SQLite's constraint messages, for drivers such as D1 that report the
+ * generic SQLITE_CONSTRAINT code or none.
+ */
+const SQLITE_CONSTRAINT_MESSAGES: ReadonlyArray<readonly [RegExp, DatabaseConstraintViolation['constraint']]> = [
+  [/\bUNIQUE constraint failed\b/, 'unique'],
+  [/\bFOREIGN KEY constraint failed\b/, 'foreign-key'],
+  [/\bNOT NULL constraint failed\b/, 'not-null'],
+  [/\bCHECK constraint failed\b/, 'check'],
+]
+
+function classifySqliteMessage(error: object): DatabaseConstraintViolation['constraint'] | undefined {
+  if (!(error instanceof Error)) return undefined
+
+  return SQLITE_CONSTRAINT_MESSAGES.find(([pattern]) => pattern.test(error.message))?.[1]
+}
+
+function classifyFailure(error: object): DatabaseConstraintViolation['constraint'] | undefined {
+  const byCode = classifyConstraint(readDatabaseCode(error))
+
+  return byCode === undefined || byCode === 'unknown'
+    ? classifySqliteMessage(error) ?? byCode
+    : byCode
 }
 
 /** Classify an exception-style database dependency failure into a typed value. */
@@ -487,7 +533,9 @@ export function classifyDatabaseFailure(
   cause: unknown,
   operation: DatabaseOperation
 ): DatabaseMutationFailed | DatabaseTransactionFailed | DatabaseConstraintViolation {
-  const constraint = classifyConstraint(readDatabaseCode(cause))
+  const classified = causeChain(cause).map(classifyFailure)
+  const constraint = classified.find((kind) => kind !== undefined && kind !== 'unknown')
+    ?? classified.find((kind) => kind !== undefined)
 
   if (constraint) {
     return new DatabaseConstraintViolation({ operation, constraint, cause })

@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ForbiddenError`, `AuthRateLimitError` and `HttpError` render the application's error page for page and HTML requests, with their status, as `NotFoundError` does. They answered every client with JSON, which an Inertia client shows as an invalid-response modal. An `HttpError` with a `body` still answers with JSON.
+- An `HttpError` with a 4xx status the catalog does not list (403, 409, 418, ...) has the code `WEB_HTTP_4XX_CLIENT_ERROR` and the title "Request Failed" instead of `WEB_HTTP_500_INTERNAL_ERROR` and "Internal Server Error".
+- A request that `testEnv(signedIn(user))` signs in shares that user as the `auth.user` page prop, and the page cache does not store its response, as for a session cookie. Pages saw `auth.user: null`.
+- Database constraint violations are classified through Drizzle, which wraps every driver error in a `DrizzleError` and keeps the driver's in `cause`; they were reported as `DatabaseMutationFailed`. SQLite violations (bun:sqlite, libsql, D1) are classified as `unique`, `foreign-key`, `not-null` or `check` instead of `unknown`, from the extended result code or SQLite's message.
 - `signedIn({ id, ... })` requires the user fields it has no default for, such as the required fields an application adds by augmenting `WebAuthUserType`. They were optional, so a test could sign in a user whose `role` or `teamId` was `undefined`.
 - README and `AGENTS.md` examples type-check against the built declarations in `dist`, and a fixture application that augments the package's types checks what `bound`, `authorize`, `currentUser`, `AuthUserService` and `signedIn` expose. Declaration emit can resolve an exported type before any application's augmentation exists, which checks against `src` cannot see.
 - `ResponseCachePurgeError` is one of the package's errors (`WEB_SVC_703_CACHE_PURGE_FAILED`, 500), so an action that calls `ResponseCacheService.purge`, as the README shows, can be registered.
@@ -65,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `validateRequest` and `validateUnknown` report every invalid field (`errors: 'all'`) instead of the first, so a form shows all of its errors at once. Pass `parseOptions: { errors: 'first' }` for the previous behavior.
 - Public operations run in spans named after them: `Web.authorize`, `Web.validateUnknown`, `Web.validateRequest`, `Web.bound`, `Web.background`, `Web.dbMutation`, `Web.dbTransaction`, `Web.cache`, `Web.cacheGet`, `Web.cacheSet`, `Web.cacheInvalidate` and `Web.cacheInvalidatePrefix`. An application that installs an Effect tracer, such as an OpenTelemetry exporter, sees where request time goes.
 - The package's errors are `Schema.TaggedError` classes instead of `Data.TaggedError`, so their fields are checked when they are constructed. Construction, `_tag`, `Effect.catchTag` and the fields are unchanged; `FieldError.path` is `readonly string[]`.
 - The `hono` peer range is `^4.10.0` (was `>=4.0.0`) and the `drizzle-orm` peer range is `>=0.30.0 <1.0.0` (was `>=0.30.0`). Hono releases before 4.10 fail to type-check the package, and the open upper bounds admitted Hono 5 and Drizzle 1.0, which both break it: Hono 5 removes `c.req.routePath` and changes `app.onError`, and Drizzle 1.0 removes the relation helpers route model binding reads.

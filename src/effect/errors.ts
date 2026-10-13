@@ -341,7 +341,8 @@ export class HttpError extends Schema.TaggedError<HttpError>()('HttpError', {
       case 429: return ErrorCodes.HTTP_429_RATE_LIMITED
       case 502: return ErrorCodes.HTTP_502_BAD_GATEWAY
       case 503: return ErrorCodes.HTTP_503_SERVICE_UNAVAILABLE
-      default: return ErrorCodes.HTTP_500_INTERNAL_ERROR
+      default:
+        return this.status < 500 ? ErrorCodes.HTTP_4XX_CLIENT_ERROR : ErrorCodes.HTTP_500_INTERNAL_ERROR
     }
   }
 

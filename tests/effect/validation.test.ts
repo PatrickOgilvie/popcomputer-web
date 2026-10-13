@@ -332,6 +332,19 @@ describe('validateUnknown with typed input', () => {
     }
   })
 
+  test('reports every invalid field', () => {
+    const schema = S.Struct({
+      title: S.String.check(S.isMinLength(1)),
+      slug: S.String.check(S.isPattern(/^[a-z-]+$/)),
+      body: S.String.check(S.isMinLength(1)),
+    })
+
+    const exit = Effect.runSyncExit(validateUnknown(schema, { title: '', slug: 'bad slug!', body: '' }))
+    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()
+
+    expect(Option.isSome(failure) && Object.keys(failure.value.errors).sort()).toEqual(['body', 'slug', 'title'])
+  })
+
   test('uses custom error messages', () => {
     const schema = S.Struct({
       email: S.String.check(S.isMinLength(1)),

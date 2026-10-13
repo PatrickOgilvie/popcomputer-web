@@ -6,7 +6,7 @@ import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
 import { authorize, AuthUserService } from '../src/effect/services.js'
-import { json } from '../src/effect/responses.js'
+import { json, render } from '../src/effect/responses.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import { signedIn, testEnv } from '../src/testing.js'
 
@@ -27,6 +27,7 @@ const createApp = () => {
 
       return yield* json({ id: auth.user.id, email: auth.user.email })
     })))
+    .get('/dashboard', action(render('Dashboard')))
     .get('/greeting', action(Effect.gen(function* () {
       const greeter = yield* Greeter
 
@@ -51,6 +52,15 @@ describe('testEnv', () => {
 
     expect(res.status).toBe(302)
     expect(res.headers.get('location')).toBe('/login')
+  })
+
+  test('pages share the signed-in user', async () => {
+    const page = { headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } }
+    const signedInRes = await createApp().request('/dashboard', page, testEnv(signedIn({ id: 'user-1' })))
+    const signedOutRes = await createApp().request('/dashboard', page)
+
+    expect(await signedInRes.json()).toMatchObject({ props: { auth: { user: { id: 'user-1' } } } })
+    expect(await signedOutRes.json()).toMatchObject({ props: { auth: { user: null } } })
   })
 
   test('supplies application services', async () => {

@@ -421,7 +421,8 @@ export interface ValidateOptions {
   request?: RequestValidationOptions
 
   /**
-   * Effect Schema ParseOptions passed to the decode call.
+   * Effect Schema ParseOptions passed to the decode call. Validation reports
+   * every invalid field (`errors: 'all'`) unless this says otherwise.
    * Use `{ onExcessProperty: 'error' }` to reject request payloads that
    * carry fields the schema does not declare (mass-assignment hardening).
    *
@@ -485,7 +486,8 @@ function runValidation<A, I, Input>(
   data: Input,
   options: ValidateOptions
 ): Effect.Effect<Validated<A>, ValidationError, never> {
-  return S.decodeUnknownEffect(schema, options.parseOptions)(data).pipe(
+  // Report every invalid field, so a form shows all of its errors at once.
+  return S.decodeUnknownEffect(schema, { errors: 'all', ...options.parseOptions })(data).pipe(
     Effect.mapError((error) => {
       const { errors, details } = formatSchemaErrorsWithDetails(
         error,

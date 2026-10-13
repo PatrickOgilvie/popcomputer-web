@@ -68,6 +68,7 @@ export const ErrorCodes = {
   // HTTP Errors (HTTP)
   HTTP_400_BAD_REQUEST: 'WEB_HTTP_400_BAD_REQUEST',
   HTTP_429_RATE_LIMITED: 'WEB_HTTP_429_RATE_LIMITED',
+  HTTP_4XX_CLIENT_ERROR: 'WEB_HTTP_4XX_CLIENT_ERROR',
   HTTP_500_INTERNAL_ERROR: 'WEB_HTTP_500_INTERNAL_ERROR',
   HTTP_502_BAD_GATEWAY: 'WEB_HTTP_502_BAD_GATEWAY',
   HTTP_503_SERVICE_UNAVAILABLE: 'WEB_HTTP_503_SERVICE_UNAVAILABLE',
@@ -303,6 +304,16 @@ export const ErrorCatalog = {
     title: 'Rate Limited',
     messageTemplate: 'Too many requests. Please try again in {retryAfter} seconds.',
     httpStatus: 429,
+    defaultFixes: [],
+  },
+
+  [ErrorCodes.HTTP_4XX_CLIENT_ERROR]: {
+    code: ErrorCodes.HTTP_4XX_CLIENT_ERROR,
+    tag: 'HttpError',
+    category: 'http',
+    title: 'Request Failed',
+    messageTemplate: '{reason}',
+    httpStatus: 400,
     defaultFixes: [],
   },
 

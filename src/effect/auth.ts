@@ -253,10 +253,12 @@ export function shareAuthMiddleware<E extends Env>(
     const requestContext = openWebContext(c)
     const page = requestContext.web
 
+    // Read the user when the page renders: a user that testEnv signs in is
+    // known only once effectBridge has built the request runtime.
     if (page) {
-      page.share('auth', {
+      page.share('auth', () => ({
         user: projectSharedUser(requestContext.authUser, config),
-      })
+      }))
     }
 
     await next()

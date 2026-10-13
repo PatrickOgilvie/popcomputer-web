@@ -4,7 +4,7 @@
  * Middleware that connects Hono's request handling to Effect's runtime.
  */
 
-import { Cause, Effect, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { WebRequestContext } from '../request-context.js'
@@ -634,6 +634,16 @@ export function effectBridge<E extends Env, CustomServices = never>(
     // Store runtime and binding schema on the request context
     const requestCtx = openWebContext(c)
     requestCtx.runtime = runtime
+
+    // A user that testEnv signs in replaces the session for shared props and
+    // page caching, as it does for actions.
+    if (testLayer !== undefined) {
+      const testUser = await runtime.runPromiseExit(Effect.serviceOption(AuthUserService))
+
+      if (Exit.isSuccess(testUser) && Option.isSome(testUser.value)) {
+        requestCtx.authUser = testUser.value.value
+      }
+    }
 
     if (config?.schema) {
       requestCtx.schema = config.schema
