@@ -14,7 +14,7 @@ import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser
 import type { Registered } from './effect/register.js'
 import { attachTestDatabase, attachTestLayer } from './effect/test-env.js'
 import type { PageName } from './effect/pages.js'
-import type { PagePropsFor } from './react.js'
+import type { FlashData, PagePropsFor } from './react.js'
 
 type RegisteredBindings = Registered<'bindings', never>
 
@@ -181,7 +181,8 @@ export interface TestPage<Component extends string> {
   /** The page's props as the browser receives them, with shared props and `errors`. */
   readonly props: PagePropsFor<Component>
   readonly url: string
-  readonly flash: Readonly<Record<string, unknown>>
+  /** The values flashed to this page, as setupWeb's `flash` declares them. */
+  readonly flash: FlashData
 }
 
 /**

@@ -358,6 +358,9 @@ module holds only data, so server and React code both import it.
 ```ts
 // src/paths.ts
 export const paths = {
+  login: '/login',
+  logout: '/logout',
+  dashboard: '/dashboard',
   projects: '/projects',
   project: '/projects/{project}',
   task: '/projects/{project}/tasks/{task}',
@@ -523,6 +526,7 @@ import {
   validateRequest,
 } from '@popcomputer/web/effect'
 import { alphaDash, requiredString } from '@popcomputer/web/schema'
+import { paths } from '../paths'
 import { projects } from '../schema'
 
 const CreateProject = S.Struct({
@@ -542,7 +546,7 @@ export const createProject = action(
         .returning()
     )
 
-    return yield* redirect(`/projects/${project.id}`)
+    return yield* redirect(paths.project, { project: project.id })
   })
 )
 ```
@@ -589,6 +593,7 @@ import {
   notFound,
   redirect,
 } from '@popcomputer/web/effect'
+import { paths } from '../../paths'
 import { projects, tasks } from '../../schema'
 
 export const destroyProject = action(
@@ -604,7 +609,7 @@ export const destroyProject = action(
     }))
     yield* flash('success', 'Project deleted.')
 
-    return yield* redirect('/projects')
+    return yield* redirect(paths.projects)
   })
 )
 ```
@@ -723,13 +728,14 @@ import { Effect, Schema as S } from 'effect'
 import { action, intendedUrl, validateRequest } from '@popcomputer/web/effect'
 import { betterAuthRedirect } from '@popcomputer/web/auth'
 import { email, requiredString } from '@popcomputer/web/schema'
+import { paths } from '../paths'
 
 const SignIn = S.Struct({ email, password: requiredString })
 
 export const signIn = action(
   Effect.gen(function* () {
     const input = yield* validateRequest(SignIn)
-    const redirectTo = yield* intendedUrl('/projects')
+    const redirectTo = yield* intendedUrl(paths.projects)
 
     return yield* betterAuthRedirect(
       (auth, request) =>
@@ -747,15 +753,16 @@ import { betterAuthLogoutAction } from '@popcomputer/web/auth'
 import { routes } from './app'
 import { signIn } from './actions/auth'
 import { showDashboard } from './actions/dashboard'
+import { paths } from './paths'
 
 routes
   .provide(RequireGuestLayer)
-  .get('/login', action(render('Auth/Login')))
-  .post('/login', signIn)
+  .get(paths.login, action(render('Auth/Login')))
+  .post(paths.login, signIn)
 
-routes.provide(RequireAuthLayer).get('/dashboard', showDashboard)
+routes.provide(RequireAuthLayer).get(paths.dashboard, showDashboard)
 
-routes.post('/logout', betterAuthLogoutAction({ redirectTo: '/login' }))
+routes.post(paths.logout, betterAuthLogoutAction({ redirectTo: paths.login }))
 ```
 
 A signed-out visit to a guarded page goes to the sign-in path with the page as
@@ -797,7 +804,7 @@ endings, not statements to run in sequence:
 | Intent | Action ending |
 |---|---|
 | Render a page | `return yield* render('Dashboard', { stats })` |
-| Redirect | `return yield* redirect('/login')` |
+| Redirect | `return yield* redirect(paths.project, { project: project.id })` |
 | Return JSON | `return yield* json({ projects })` |
 | Return JSON when requested, otherwise render a page | `return yield* jsonOrRender('Projects/Index', { projects })` |
 | Fail with `NotFoundError` | `return yield* notFound('Project', projectId)` |

@@ -30,7 +30,7 @@ import {
  *
  * @example
  * return yield* redirect(paths.project, { project: project.id })
- * return yield* redirect('/projects', {}, { page: 2 })
+ * return yield* redirect(paths.projects, {}, { page: 2 })
  */
 export function redirect<const Path extends string>(
   path: Path,
@@ -72,7 +72,7 @@ function renderPage(component: string, props: object | undefined): Effect.Effect
  *
  * @example
  * yield* flash('success', 'Project created.')
- * return yield* redirect(`/projects/${project.id}`)
+ * return yield* redirect(paths.project, { project: project.id })
  */
 export function flash<Key extends FlashKey>(key: Key, value: FlashValue<Key>): Effect.Effect<void, never, PageService> {
   return Effect.gen(function* () {

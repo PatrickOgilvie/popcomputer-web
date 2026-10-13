@@ -34,7 +34,7 @@ import {
   render,
   share,
 } from '@popcomputer/web/effect'
-import { signedIn, testEnv } from '@popcomputer/web/testing'
+import { readPage, signedIn, testEnv } from '@popcomputer/web/testing'
 
 const Project = S.Struct({ id: S.String, userId: S.String })
 
@@ -203,6 +203,12 @@ expectType<Equals<FlashData['success'], string | undefined>>()
 testEnv(signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' }), { REGION: 'weur' })
 // @ts-expect-error REGIO is not a binding
 testEnv(signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' }), { REGIO: 'weur' })
+
+// A test reads flashed values with their declared types.
+export const flashed = async (response: Response) => {
+  const page = await readPage(response, 'Projects/Show')
+  expectType<Equals<typeof page.flash.success, string | undefined>>()
+}
 
 // Fields an application adds have no test default, so signedIn requires them.
 signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' })

@@ -97,13 +97,6 @@ export const RequireGuestLayer = Layer.effectDiscard(
  *   .provide(AllowAnonymousGuestLayer)
  *   .get('/login', showLogin)
  *
- * @example
- * // Use with effectAuthRoutes for anonymous user upgrade flow
- * effectAuthRoutes(app, {
- *   guestLayer: createGuestLayer((authUser) => authUser.user.isAnonymous),
- *   loginComponent: 'Auth/Login',
- *   registerComponent: 'Auth/Register',
- * })
  *
  * @example
  * // Custom redirect for blocked users

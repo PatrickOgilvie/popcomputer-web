@@ -24,7 +24,7 @@ import type { Redirect } from './errors.js'
  *       db.insert(projects).values({ ...input, userId: auth.user.id }).returning()
  *     )
  *
- *     return yield* redirect(`/projects/${project.id}`)
+ *     return yield* redirect(paths.project, { project: project.id })
  *   })
  * )
  */
