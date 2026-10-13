@@ -290,7 +290,14 @@ export async function readPage<Component extends PageName>(
   const rendered = page instanceof Object ? Object.getOwnPropertyDescriptor(page, 'component')?.value : undefined
 
   if (rendered !== component) {
-    throw new Error(`Expected the '${component}' page, but the response rendered '${String(rendered)}' (${response.status}).`)
+    // The error page's props say why, such as a binding a service could not read.
+    const props: unknown = page instanceof Object ? Reflect.get(page, 'props') : undefined
+    const message: unknown = props instanceof Object ? Reflect.get(props, 'message') : undefined
+
+    throw new Error(
+      `Expected the '${component}' page, but the response rendered '${String(rendered)}' (${response.status})` +
+        (typeof message === 'string' ? `: ${message}` : '.')
+    )
   }
 
   // SAFETY: the page is the registered component, whose props render encoded

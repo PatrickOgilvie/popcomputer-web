@@ -179,6 +179,10 @@ const Show: WebPage<'Projects/Show'> = ({ project, auth, errors }) => (
 export default Show
 ```
 
+A component a page renders takes its props from the same declaration:
+`PagePropsFor<'Projects/Show'>['project']` from `@popcomputer/web/react` is the
+`project` prop as the browser receives it.
+
 A renamed prop, a missing page or a `Date` used as a `Date` in the browser is a
 type error on the side that drifted.
 
@@ -884,6 +888,16 @@ registered email, goes back to the form with the field errors `errors` returns; 
 failures stay separate typed errors. Sign-up works the same way with
 `auth.api.signUpEmail`, after whatever else the action does with the input.
 
+Better Auth writes the new user itself, so records the application creates
+for a new user, such as a provider's profile, are a second write: create them
+in `redirectTo`'s Effect, which runs after the user exists, and make them
+idempotent (`onConflictDoNothing`), or create them on first use, so a failure
+between the two writes leaves nothing the next request cannot repair.
+
+A signed-out visitor to a guarded page is redirected with 302 on a page load
+and 303 on an Inertia visit, as Inertia requires; a test asserts the
+`Location`, `/login?redirect=...`, rather than the status.
+
 `betterAuthHandler` forwards a request to Better Auth's own API, for browser
 code that calls it directly (Better Auth's client SDK, OAuth callbacks):
 `routes.all(paths.authApi, betterAuthHandler)`, with `authApi: '/api/auth/*'`
@@ -1164,8 +1178,9 @@ routes
 
 `purges: true` names only the route's own records. When an action changes
 another record, such as the listing an accepted offer sold, it adds that
-record's tag with `purgeCache`, purged with the route's after the action
-succeeds and not at all when it fails:
+record's tag with `purgeCache`. The route purges it after the action
+succeeds, together with its own `purges` if it has any, and not at all when
+the action fails:
 
 ```ts
 yield* purgeCache(recordCacheTag('projects', 'project-1'), 'projects')
@@ -1288,6 +1303,23 @@ const FakeMailer = Layer.succeed(Mailer, Mailer.of({
 }))
 
 const env = testEnv(Layer.merge(signedIn({ id: 'user-1' }), FakeMailer), testBindings)
+```
+
+A test checks what a write purges by replacing `ResponseCacheService` with a
+recorder:
+
+```ts
+import { Effect, Layer } from 'effect'
+import { ResponseCacheService, type ResponseCachePurgeInput } from '@popcomputer/web/effect'
+import { signedIn, testEnv } from '@popcomputer/web/testing'
+
+const purged: ResponseCachePurgeInput[] = []
+const RecordPurges = Layer.succeed(ResponseCacheService, {
+  isAvailable: true,
+  purge: (input) => Effect.sync(() => { purged.push(input) }),
+})
+
+const env = testEnv(Layer.merge(signedIn({ id: 'user-1' }), RecordPurges), testBindings)
 ```
 
 Effect `Config` reads the request's bindings, so a test sets a var or secret

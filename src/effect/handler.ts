@@ -205,6 +205,9 @@ export async function renderErrorResponse<E extends Env>(
 
       return finalize(c.redirect(error.redirectTo ?? previousUrl(c), 303))
     }
+
+    // The error page this visit renders shows which parameters were invalid.
+    openWebContext(c).web?.setErrors(error.errors)
   }
 
   if (error instanceof UnauthorizedError) {

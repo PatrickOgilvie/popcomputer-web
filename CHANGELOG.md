@@ -108,6 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A page visit with invalid query parameters renders the error page with the field errors as `errors`, as a form's page receives them; they were only in its message.
+- `readPage` names the error page's message when the response rendered it instead of the expected page, such as a binding a service could not read.
 - A route binding whose lookup column matches more than one row, such as a slug unique only within its organization, fails with `RouteConfigurationError` (`WEB_RTE_605_BINDING_AMBIGUOUS`) naming the fix, instead of loading whichever row came first.
 - A database result typed `any` is an error type naming the fix (`UntypedDatabaseResult`), so `result.meta.changes` no longer type-checks unchecked. Drizzle's D1 result types name Cloudflare's global types, which are `any` without `@cloudflare/workers-types` in tsconfig's `types`.
 - `db.run(sql)` in a Cloudflare D1 `dbBatch` is a type error naming the query builder; Drizzle's D1 batch fails at runtime on it.

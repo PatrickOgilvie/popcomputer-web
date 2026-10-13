@@ -8,7 +8,8 @@ import { action } from '../src/effect/action.js'
 import { authorize, AuthUserService, DatabaseService } from '../src/effect/services.js'
 import { flash, json, notFound, redirect, render } from '../src/effect/responses.js'
 import { effectRoutes } from '../src/effect/routing.js'
-import { applyMigrations, signedIn, testClock, testEnv } from '../src/testing.js'
+import { applyMigrations, readPage, signedIn, testClock, testEnv } from '../src/testing.js'
+import { HttpError } from '../src/effect/errors.js'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -348,5 +349,24 @@ describe('testClock', () => {
     const res = await app.request('/me', {}, testEnv(Layer.merge(signedIn({ id: 'user-1' }), time.layer)))
 
     expect(await res.json()).toEqual({ id: 'user-1', at: Date.UTC(2026, 0, 1) })
+  })
+})
+
+describe('readPage', () => {
+  test('says why the response rendered the error page instead', async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      errors: { component: 'Error' },
+    })
+
+    routes.get('/projects/1', action(Effect.fail(new HttpError({ status: 409, message: 'The project is archived.' }))))
+
+    const res = await app.request('/projects/1', { headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } }, testEnv(Layer.empty))
+
+    await expect(readPage(res, 'Projects/Show')).rejects.toThrow(
+      "Expected the 'Projects/Show' page, but the response rendered 'Error' (409): The project is archived."
+    )
   })
 })

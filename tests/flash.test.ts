@@ -188,7 +188,10 @@ describe('invalid query parameters on a page visit', () => {
     const res = await createApp().request('/search?page=first', { headers: page })
 
     expect(res.status).toBe(422)
-    expect(await res.json()).toMatchObject({ component: 'Error', props: { status: 422 } })
+    expect(await res.json()).toMatchObject({
+      component: 'Error',
+      props: { status: 422, errors: { page: expect.any(String) } },
+    })
   })
 })
 
