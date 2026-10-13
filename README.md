@@ -62,6 +62,24 @@ bun add drizzle-orm                         # Drizzle route model binding
 bun add @inertiajs/react react react-dom    # React client
 ```
 
+The application's `tsconfig.json` needs the DOM library and JSX for its React
+pages, and Cloudflare's types for its bindings (`bun init` writes neither):
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
+    "types": ["bun", "@cloudflare/workers-types"],
+    "strict": true,
+    "skipLibCheck": true
+  }
+}
+```
+
 Coding agents should read `node_modules/@popcomputer/web/AGENTS.md`, a short
 rulebook naming the one API to use for each task. Reference it from the
 application's own `AGENTS.md` or `CLAUDE.md`. The same rules ship as a Claude
@@ -1731,7 +1749,9 @@ Three different versions may appear around an application:
 | cache `version` | Namespace for one cached value shape | The cached schema or interpretation changes | Reads and writes use a fresh cache key |
 
 `createVersion(manifest)` derives the Inertia asset version from manifest asset
-paths. It is unrelated to the npm package version.
+paths. It is unrelated to the npm package version. An application without a
+client build yet, or a test, passes a constant (`version: '1'`) and changes it
+when the client does; export it so tests send the same `X-Inertia-Version`.
 
 ## Migrating from `honertia`
 
