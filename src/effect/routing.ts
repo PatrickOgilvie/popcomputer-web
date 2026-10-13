@@ -251,7 +251,9 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
  */
 export class EffectRouteBuilder<
   E extends Env,
-  Services = BaseServices
+  Services = BaseServices,
+  /** The paths routes may be registered on: setupWeb's `paths`, or any path. */
+  Path extends string = string
 > {
   constructor(
     private readonly app: Hono<E>,
@@ -275,9 +277,9 @@ export class EffectRouteBuilder<
     LayerReq extends Services
   >(
     layer: Layer.Layer<S, LayerErr, LayerReq>
-  ): EffectRouteBuilder<E, Services | S> {
+  ): EffectRouteBuilder<E, Services | S, Path> {
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-    return new EffectRouteBuilder(
+    return new EffectRouteBuilder<E, Services | S, Path>(
       this.app,
       [
         ...this.layers,
@@ -308,8 +310,8 @@ export class EffectRouteBuilder<
    */
   middleware(
     ...handlers: MiddlewareHandler<E>[]
-  ): EffectRouteBuilder<E, Services> {
-    return new EffectRouteBuilder(
+  ): EffectRouteBuilder<E, Services, Path> {
+    return new EffectRouteBuilder<E, Services, Path>(
       this.app,
       this.layers,
       this.pathPrefix,
@@ -340,7 +342,7 @@ export class EffectRouteBuilder<
    */
   prefixMiddleware(
     ...handlers: MiddlewareHandler<E>[]
-  ): EffectRouteBuilder<E, Services> {
+  ): EffectRouteBuilder<E, Services, Path> {
     if (this.pathPrefix) {
       // Two patterns: '/api/*' does not match '/api' itself in Hono
       this.app.use(this.pathPrefix, ...handlers)
@@ -353,12 +355,13 @@ export class EffectRouteBuilder<
   }
 
   /**
-   * Set path prefix for all routes in this builder.
+   * Set path prefix for all routes in this builder. Routes registered under a
+   * prefix take paths relative to it, so declared paths no longer apply.
    */
-  prefix(path: string): EffectRouteBuilder<E, Services> {
+  prefix(path: string): EffectRouteBuilder<E, Services, string> {
     const normalizedPath = path.replace(/\/$/, '')
 
-    return new EffectRouteBuilder(
+    return new EffectRouteBuilder<E, Services, string>(
       this.app,
       this.layers,
       this.pathPrefix + normalizedPath,
@@ -372,7 +375,7 @@ export class EffectRouteBuilder<
    * Register routes that share this builder's prefix, layers and middleware.
    * Returns the builder so registrations can continue after the group.
    */
-  group(callback: (route: EffectRouteBuilder<E, Services>) => void): this {
+  group(callback: (route: EffectRouteBuilder<E, Services, Path>) => void): this {
     callback(this)
 
     return this
@@ -866,7 +869,7 @@ export class EffectRouteBuilder<
 
   /** Register a GET route. Supports Laravel-style route model binding: /projects/{project} */
   get<R, Err>(
-    path: string,
+    path: Path,
     effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
@@ -877,7 +880,7 @@ export class EffectRouteBuilder<
 
   /** Register a POST route. Supports Laravel-style route model binding: /projects/{project} */
   post<R, Err>(
-    path: string,
+    path: Path,
     effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
@@ -888,7 +891,7 @@ export class EffectRouteBuilder<
 
   /** Register a PUT route. Supports Laravel-style route model binding: /projects/{project} */
   put<R, Err>(
-    path: string,
+    path: Path,
     effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
@@ -899,7 +902,7 @@ export class EffectRouteBuilder<
 
   /** Register a PATCH route. Supports Laravel-style route model binding: /projects/{project} */
   patch<R, Err>(
-    path: string,
+    path: Path,
     effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
@@ -910,7 +913,7 @@ export class EffectRouteBuilder<
 
   /** Register a DELETE route. Supports Laravel-style route model binding: /projects/{project} */
   delete<R, Err>(
-    path: string,
+    path: Path,
     effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
@@ -921,7 +924,7 @@ export class EffectRouteBuilder<
 
   /** Register a route for all HTTP methods. Supports Laravel-style route model binding: /projects/{project} */
   all<R, Err>(
-    path: string,
+    path: Path,
     effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {

@@ -46,6 +46,11 @@ const members = pgTable('members', {
   role: text('role', { enum: ['owner', 'member'] }).notNull(),
 })
 
+const paths = {
+  project: '/projects/{project}',
+  member: '/members/{member}',
+} as const
+
 const pages = {
   'Projects/Show': S.Struct({ project: S.Struct({ id: S.String, createdAt: S.Date }) }),
 }
@@ -121,6 +126,7 @@ export const web = setupWeb(new Hono<Env>(), {
   database: (c) => createDb(c.env.REGION),
   bindings: { project: Project, member: members },
   pages,
+  paths,
   auth: { session: MemberSession, share: PublicMember },
   shared: S.Struct({ locale: S.String }),
   flash: S.Struct({ success: S.String }),
@@ -191,7 +197,7 @@ web.routes.provide(shareProps(Effect.succeed({ theme: 'dark' })))
 web.routes
   .provide(AuditLive)
   .get(
-    '/projects/{project}',
+    paths.project,
     action(
       Effect.gen(function* () {
         const projects = yield* Projects
@@ -203,6 +209,10 @@ web.routes
       })
     )
   )
+
+// Routes register only on declared paths.
+// @ts-expect-error '/projets/{project}' is not a declared path
+web.routes.get('/projets/{project}', action(json({})))
 
 // Registered pages type render and the React component.
 export const showProject = render('Projects/Show', { project: { id: 'p1', createdAt: new Date() } })

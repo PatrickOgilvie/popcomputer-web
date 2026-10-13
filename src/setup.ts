@@ -145,6 +145,7 @@ export interface WebSetupConfig<
   Pages extends PageSchemas = never,
   SharedFields extends S.Struct.Fields = never,
   FlashFields extends S.Struct.Fields = never,
+  Paths extends RoutePaths = RoutePaths,
 > extends WebSetupOptions<E, AppServices, RequestServices> {
   /**
    * Database factory function. Creates the database client for each request.
@@ -165,6 +166,12 @@ export interface WebSetupConfig<
   readonly bindings?: RouteBindings
   /** Each page component's props schema, which `render` checks and encodes props with. */
   readonly pages?: Pages
+  /**
+   * Every route's path, as `src/paths.ts` declares them. Routes registered on
+   * `routes` must use one of them, so a path that is not declared is a type
+   * error at its registration.
+   */
+  readonly paths?: Paths
   /**
    * Props shared with every page, besides `auth`, as an Effect Schema struct:
    * `share(key, value)` takes its fields, and `WebPage` types them.
@@ -231,15 +238,25 @@ export type WebRouteServices<HasDatabase extends boolean, Auth, CustomServices> 
  * }
  * ```
  */
-export interface WebApplication<E extends Env, Services = BaseServices, Types extends WebTypes = WebTypes>
-  extends WebDeclaration<Types> {
+/** Route paths by name, as `src/paths.ts` declares them. */
+export type RoutePaths = Readonly<Record<string, string>>
+
+/** The paths `routes` registers on: the declared ones, or any path when none are. */
+export type RoutePath<Paths extends RoutePaths> = [Paths] extends [never] ? string : Paths[keyof Paths]
+
+export interface WebApplication<
+  E extends Env,
+  Services = BaseServices,
+  Types extends WebTypes = WebTypes,
+  Path extends string = string,
+> extends WebDeclaration<Types> {
   readonly app: Hono<E>
   /**
    * Registers the application's routes. An action registered here may use
    * exactly the services this setup provides; anything else is a type error
    * naming the missing service. `routes.toJson()` lists every route.
    */
-  readonly routes: EffectRouteBuilder<E, Services>
+  readonly routes: EffectRouteBuilder<E, Services, Path>
 }
 
 /**
@@ -284,15 +301,17 @@ export function setupWeb<
   const Pages extends PageSchemas = never,
   SharedFields extends S.Struct.Fields = never,
   FlashFields extends S.Struct.Fields = never,
+  const Paths extends RoutePaths = never,
 >(
   app: Hono<E>,
   config: WebSetupConfig<
-    E, DB, Auth, AppServices, RequestServices, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields
+    E, DB, Auth, AppServices, RequestServices, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields, Paths
   >
 ): WebApplication<
   E,
   WebRouteServices<[DB] extends [never] ? false : true, Auth, AppServices | RequestServices>,
-  SetupTypes<E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields>
+  SetupTypes<E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields>,
+  RoutePath<Paths>
 > {
   assertSetupConfig(config)
   app.use('*', createSetupMiddleware(config))

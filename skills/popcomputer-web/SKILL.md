@@ -31,7 +31,8 @@ TypeScript example here and in the README type-checks against the package.
 2. **Every handler is an action.** Wrap an `Effect.gen` in `action(...)` and
    register it on the `routes` that `setupWeb` returns:
    `routes.get/post/put/patch/delete(paths.project, action, { name })`.
-   Declare every path once in `src/paths.ts` (`project: '/projects/{project}'`)
+   Declare every path once in `src/paths.ts` (`project: '/projects/{project}'`),
+   pass it as `setupWeb`'s `paths`, so `routes` accepts only declared paths,
    and build every URL from it: `redirect(paths.project, { project: id })`
    in actions, `href(paths.project, { project: id })` from
    `@popcomputer/web/paths` in React. Registrations chain. `routes` accepts only

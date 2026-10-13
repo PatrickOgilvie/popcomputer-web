@@ -202,6 +202,7 @@ import { createDb } from './db'
 import manifest from '../dist/manifest.json'
 import type { Env } from './env'
 import { pages } from './pages'
+import { paths } from './paths'
 import * as schema from './schema'
 
 const AuthSession = S.Struct({
@@ -235,6 +236,7 @@ export const web = setupWeb(new Hono<Env>(), {
   schema,
   bindings: { project: schema.projects, task: schema.tasks },
   pages,
+  paths,
   auth: {
     client: (c, { db, backgroundTasks }) => createAuth({
       db,
@@ -272,6 +274,7 @@ application reads its types from:
 | `auth.session` | `authorize()`, `currentUser`, `AuthUserService`, `signedIn` |
 | `auth.share` | `auth.user` in `SharedProps` and `WebPage` (default: `id`, `name`, `image`) |
 | `pages` | `render`, `jsonOrRender`, `WebPage`, `readPage` |
+| `paths` | the paths `routes.get(...)` and the other registrations accept |
 | `shared`, `flash` | `shareProps(effect)`, `share(key, value)`, `flash(key, value)`, `SharedProps`, `FlashData` |
 
 Each value reaches the browser encoded through its schema, so a field the
@@ -414,16 +417,22 @@ and returns `{ app, routes }`. For manual Hono composition, see
 
 Each route's path is declared once, and every URL to it is built from that
 declaration: the route registration, a server redirect and a client link. The
-module holds only data, so server and React code both import it.
+module holds only data, so server and React code both import it, and
+`setupWeb`'s `paths` takes it, so `routes` registers only on declared paths.
 
 ```ts
 // src/paths.ts
 export const paths = {
   login: '/login',
   logout: '/logout',
+  authApi: '/api/auth/*',
   dashboard: '/dashboard',
+  billing: '/billing',
+  pricing: '/pricing',
+  explore: '/explore',
   projects: '/projects',
   project: '/projects/{project}',
+  projectBySlug: '/p/{project:slug}',
   task: '/projects/{project}/tasks/{task}',
 } as const
 ```
@@ -716,9 +725,9 @@ Laravel-style route placeholders:
 
 ```ts
 routes
-  .get('/projects/{project}', showProject)
-  .get('/projects/{project:slug}', showProjectBySlug)
-  .get('/projects/{project}/tasks/{task}', showTask)
+  .get(paths.project, showProject)
+  .get(paths.projectBySlug, showProjectBySlug)
+  .get(paths.task, showTask)
 ```
 
 Inside `showTask`, both models from the nested route are available by name:
@@ -858,7 +867,8 @@ failures stay separate typed errors. Sign-up works the same way with
 
 `betterAuthHandler` forwards a request to Better Auth's own API, for browser
 code that calls it directly (Better Auth's client SDK, OAuth callbacks):
-`routes.all('/api/auth/*', betterAuthHandler)`. Register it only if the
+`routes.all(paths.authApi, betterAuthHandler)`, with `authApi: '/api/auth/*'`
+among the paths. Register it only if the
 application needs it: it exposes every endpoint Better Auth and its plugins
 define, so user fields declared with `input: true` become settable by anyone
 who signs up.
@@ -872,7 +882,7 @@ import { authorize } from '@popcomputer/web/effect'
 
 const RequireVerified = Layer.effectDiscard(authorize(({ user }) => user.emailVerified))
 
-routes.provide(RequireVerified).get('/billing', showDashboard)
+routes.provide(RequireVerified).get(paths.billing, showDashboard)
 ```
 
 An application that authenticates some other way, such as API keys, provides
@@ -1017,7 +1027,7 @@ config). The option emits Workers Cache headers and tags. It does not publicly
 cache authenticated, cookie-setting, partial, failed, or mutating responses.
 
 ```ts
-routes.get('/pricing', showPricing, {
+routes.get(paths.pricing, showPricing, {
   name: 'pricing.show',
   cache: { maxAge: 300, staleWhileRevalidate: 3600 },
 })
@@ -1057,9 +1067,9 @@ slug, and the table's tag purges an index that declares it:
 
 ```ts
 routes
-  .get('/explore', showPricing, { cache: { maxAge: 300, tags: ['projects'] } })
-  .get('/p/{project:slug}', showProjectBySlug, { cache: { maxAge: 300 } })
-  .put('/projects/{project}', updateProject, { purges: true })
+  .get(paths.explore, showPricing, { cache: { maxAge: 300, tags: ['projects'] } })
+  .get(paths.projectBySlug, showProjectBySlug, { cache: { maxAge: 300 } })
+  .put(paths.project, updateProject, { purges: true })
 ```
 
 When a record changes outside its routes, such as in a queue consumer, purge
