@@ -4,25 +4,21 @@
  * Utilities for validating request data using Effect Schema.
  */
 
-import { Effect, Schema as S, SchemaIssue } from 'effect'
+import { Effect, Predicate, Schema as S, SchemaIssue } from 'effect'
 import type { ParseOptions } from 'effect/SchemaAST'
 import { RequestService } from './services.js'
 import { ValidationError } from './errors.js'
 import type { FieldError } from './error-types.js'
 import { ErrorCodes, type ErrorCode } from './error-catalog.js'
-import type { PagePropValue } from '../types.js'
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
-
-const RequestValidationProfileSchema = S.Literals(['legacy', 'laravel'])
 
 const formatSchemaIssue = SchemaIssue.makeFormatterStandardSchemaV1()
 
 type FormattedSchemaIssue = ReturnType<typeof formatSchemaIssue>['issues'][number]
 
-export type RequestDataValue = PagePropValue | File
-
-export type RequestData = Record<string, RequestDataValue>
+/** Request input before schema decoding: keys from params, query and body. */
+export type RequestData = Record<string, unknown>
 
 /**
  * Request data source for validateRequest input extraction.
@@ -30,45 +26,30 @@ export type RequestData = Record<string, RequestDataValue>
 export type RequestValidationSource = 'params' | 'query' | 'body'
 
 /**
- * Built-in request extraction profiles.
- */
-export type RequestValidationProfile = 'legacy' | 'laravel'
-
-/**
  * Conflict handling when multiple request sources provide the same key.
  */
 export type RequestValidationConflict = 'last-wins' | 'first-wins' | 'error'
 
 /**
- * Advanced request extraction options for validateRequest.
+ * Which request sources validateRequest reads, and how it treats a key that
+ * more than one source provides.
  */
 export interface RequestValidationOptions {
   /**
-   * Built-in extraction behavior profile.
-   * - legacy: params -> query -> body
-   * - laravel: query -> body
-   */
-  profile?: RequestValidationProfile
-
-  /**
-   * Merge order for request sources.
-   * Later sources override earlier ones when `onConflict` is `last-wins`.
+   * Sources to read, in merge order. Defaults to route params, then query,
+   * then body. Pass `['body']` to read only the body.
    */
   order?: ReadonlyArray<RequestValidationSource>
 
   /**
-   * How to resolve duplicate keys across sources.
+   * How to resolve a key that more than one source provides with different
+   * values. Defaults to `'error'`, a ValidationError naming the field and both
+   * sources, so a body field cannot silently replace a route parameter.
+   * `'last-wins'` keeps the value from the later source in `order`, and
+   * `'first-wins'` the earlier.
    */
   onConflict?: RequestValidationConflict
 }
-
-/**
- * Request extraction config accepted by validateRequest.
- * Pass a profile string for quick setup or an object for full control.
- */
-export type RequestValidationConfig =
-  | RequestValidationProfile
-  | RequestValidationOptions
 
 interface ResolvedRequestValidationOptions {
   order: ReadonlyArray<RequestValidationSource>
@@ -83,25 +64,14 @@ interface SourceConflict {
   incomingValue: unknown
 }
 
-function getProfileOrder(profile: RequestValidationProfile): ReadonlyArray<RequestValidationSource> {
-  return profile === 'laravel'
-    ? ['query', 'body']
-    : ['params', 'query', 'body']
-}
+const DEFAULT_ORDER: ReadonlyArray<RequestValidationSource> = ['params', 'query', 'body']
 
 function normalizeRequestValidationOptions(
-  config?: RequestValidationConfig
+  config: RequestValidationOptions = {}
 ): ResolvedRequestValidationOptions {
-  const objectConfig =
-    S.is(RequestValidationProfileSchema)(config)
-      ? { profile: config }
-      : (config ?? {})
-
-  const profile = objectConfig.profile ?? 'legacy'
-  const profileOrder = getProfileOrder(profile)
   const seen = new Set<RequestValidationSource>()
 
-  const order = (objectConfig.order ?? profileOrder).filter((source) => {
+  const order = (config.order ?? DEFAULT_ORDER).filter((source) => {
     if (seen.has(source)) return false
     seen.add(source)
 
@@ -110,7 +80,7 @@ function normalizeRequestValidationOptions(
 
   return {
     order,
-    onConflict: objectConfig.onConflict ?? 'last-wins',
+    onConflict: config.onConflict ?? 'error',
   }
 }
 
@@ -205,7 +175,7 @@ function mergeRequestSources(
 }
 
 function getValidationDataWithOptions(
-  config?: RequestValidationConfig,
+  config?: RequestValidationOptions,
   errorComponent?: string
 ): Effect.Effect<RequestData, ValidationError, RequestService> {
   return Effect.gen(function* () {
@@ -224,13 +194,22 @@ function getValidationDataWithOptions(
       const contentType = request.header('Content-Type') ?? ''
       const isJson = isJsonContentType(contentType)
 
-      body = yield* Effect.tryPromise(() =>
-        isJson ? request.json<RequestData>() : request.parseBody()
+      const parsed = yield* Effect.tryPromise(() =>
+        isJson ? request.json<unknown>() : request.parseBody()
       ).pipe(
         Effect.mapError((error) =>
           createBodyParseValidationError(error, contentType)
         )
       )
+
+      if (!Predicate.isObject(parsed)) {
+        return yield* createBodyParseValidationError(
+          new Error('The request body must be an object of fields.'),
+          contentType
+        )
+      }
+
+      body = parsed
     }
 
     const sourceData = {
@@ -255,7 +234,7 @@ export const getValidationData: Effect.Effect<
   RequestData,
   ValidationError,
   RequestService
-> = getValidationDataWithOptions('legacy')
+> = getValidationDataWithOptions()
 
 /**
  * Result of formatting schema errors with details.
@@ -435,11 +414,11 @@ export interface ValidateOptions {
   errorComponent?: string
 
   /**
-   * Request extraction behavior for validateRequest.
-   * Pass a profile string ('legacy' | 'laravel') or an object
-   * with merge order and conflict policy controls.
+   * Which request sources to read and how to treat keys that more than one
+   * source provides. By default route params, query and body are merged, and
+   * a key with different values in two sources fails validation.
    */
-  request?: RequestValidationConfig
+  request?: RequestValidationOptions
 
   /**
    * Effect Schema ParseOptions passed to the decode call.

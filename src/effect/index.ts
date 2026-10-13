@@ -82,10 +82,8 @@ export {
   type Validated,
   type Trusted,
   type RequestValidationSource,
-  type RequestValidationProfile,
   type RequestValidationConflict,
   type RequestValidationOptions,
-  type RequestValidationConfig,
 } from './validation.js'
 
 // Validated Request Services

@@ -23,6 +23,8 @@ To use this file, point the application's own `AGENTS.md` or `CLAUDE.md` at
    from `@popcomputer/web/schema` validators (`requiredString`,
    `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, ...), which
    accept form posts as well as JSON. Pass `errorComponent` for form pages.
+   A key that route params, query and body provide with different values
+   fails validation.
 5. **Load route models with `{param}` placeholders and `bound('param')`.**
    Register each model's Effect Schema in `setupWeb`'s `bindings` and augment
    `WebRouteBindingsType` with the same object. Never query by a route

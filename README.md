@@ -394,7 +394,10 @@ export const createProject = action(
 )
 ```
 
-`validateRequest` returns branded validated data. `dbMutation` and
+`validateRequest` reads route params, query and body, and returns branded
+validated data. A key that two sources provide with different values fails
+validation, so a body field cannot replace a route parameter; pass
+`request: { order: ['body'] }` to read only the body. `dbMutation` and
 `dbTransaction` accept validated or explicitly trusted mutation inputs, making
 the point where application-owned data becomes safe to write visible in code.
 Database failures remain typed Effect failures.

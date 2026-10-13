@@ -14,6 +14,11 @@ import {
 import { RequestService, type RequestContext } from '../../src/effect/services.js'
 import { ValidationError } from '../../src/effect/errors.js'
 import { ErrorCodes } from '../../src/effect/error-catalog.js'
+import { Hono } from 'hono'
+import { setupWeb } from '../../src/setup.js'
+import { action } from '../../src/effect/action.js'
+import { json } from '../../src/effect/responses.js'
+import { effectRoutes } from '../../src/effect/routing.js'
 import type { RequestData } from '../../src/effect/validation.js'
 
 // Helper to create a mock request context
@@ -135,7 +140,7 @@ describe('getValidationData', () => {
     }
   })
 
-  test('body overrides query which overrides params', async () => {
+  test('a key with different values in two sources fails validation', async () => {
     const request = createMockRequest({
       method: 'POST',
       params: { name: 'from-params' },
@@ -144,11 +149,11 @@ describe('getValidationData', () => {
     })
 
     const exit = await runWithRequestAsync(getValidationData, request)
-    expect(Exit.isSuccess(exit)).toBe(true)
+    const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()
 
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value.name).toBe('from-body')
-    }
+    expect(Option.isSome(error) && error.value.errors.name).toStartWith(
+      'Conflicting values for name from params'
+    )
   })
 
   test('does not extract body for GET requests', async () => {
@@ -696,7 +701,7 @@ describe('validateRequest', () => {
     }
   })
 
-  test('supports laravel profile that excludes route params', async () => {
+  test('excludes route params when the order omits them', async () => {
     const schema = S.Struct({
       id: S.String,
     })
@@ -708,7 +713,7 @@ describe('validateRequest', () => {
     })
 
     const exit = await runWithRequestAsync(
-      validateRequest(schema, { request: 'laravel' }),
+      validateRequest(schema, { request: { order: ['query', 'body'] } }),
       request
     )
 
@@ -750,34 +755,6 @@ describe('validateRequest', () => {
 
     if (Exit.isSuccess(exit)) {
       expect(exit.value.name).toBe('from-params')
-    }
-  })
-
-  test('custom order takes precedence over profile when both are provided', async () => {
-    const schema = S.Struct({
-      id: S.String,
-    })
-
-    const request = createMockRequest({
-      method: 'POST',
-      params: { id: '123' },
-      body: {},
-    })
-
-    const exit = await runWithRequestAsync(
-      validateRequest(schema, {
-        request: {
-          profile: 'laravel',
-          order: ['params', 'body'],
-        },
-      }),
-      request
-    )
-
-    expect(Exit.isSuccess(exit)).toBe(true)
-
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value.id).toBe('123')
     }
   })
 
@@ -898,6 +875,52 @@ describe('validateRequest', () => {
 
     if (Exit.isSuccess(exit)) {
       expect(exit.value.name).toBe('from-parse-body')
+    }
+  })
+})
+
+describe('validateRequest through a route', () => {
+  const ProjectInput = S.Struct({ id: S.String, name: S.String })
+
+  const createApp = () => {
+    const app = new Hono()
+    setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    effectRoutes(app).post('/projects/{id}', action(Effect.gen(function* () {
+      const input = yield* validateRequest(ProjectInput)
+
+      return yield* json({ id: input.id, name: input.name })
+    })))
+
+    return app
+  }
+
+  const post = (body: string) =>
+    createApp().request('/projects/project-1', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body,
+    })
+
+  test('a body field cannot replace a route parameter', async () => {
+    const res = await post(JSON.stringify({ id: 'project-2', name: 'Renamed' }))
+
+    expect(res.status).toBe(422)
+    expect(JSON.stringify(await res.json())).toContain('Conflicting values for id from params and body')
+  })
+
+  test('a body field equal to the route parameter is accepted', async () => {
+    const res = await post(JSON.stringify({ id: 'project-1', name: 'Renamed' }))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ id: 'project-1', name: 'Renamed' })
+  })
+
+  test('a JSON body that is not an object is a validation error, not a crash', async () => {
+    for (const body of ['null', '[1, 2]', '"text"', '3']) {
+      const res = await post(body)
+
+      expect(res.status).toBe(422)
     }
   })
 })
