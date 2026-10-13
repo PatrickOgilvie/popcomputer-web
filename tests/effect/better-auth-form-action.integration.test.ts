@@ -163,7 +163,6 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
-      errorComponent: 'Auth/Login',
       errorMapper: ({ code }) => ({ email: code ?? 'MISSING_ERROR_CODE' }),
       call: (authClient: typeof auth, input, request) =>
         authClient.api.signInEmail({
@@ -186,7 +185,6 @@ describe('betterAuthFormAction with Better Auth', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
     const error = getValidationError(exit)
 
-    expect(error.component).toBe('Auth/Login')
     expect(error.errors).toEqual({ email: 'INVALID_EMAIL_OR_PASSWORD' })
   })
 
@@ -203,7 +201,6 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const action = betterAuthFormAction({
       schema: RegistrationSchema,
-      errorComponent: 'Auth/Register',
       errorMapper: ({ code }) => ({ email: code ?? 'MISSING_ERROR_CODE' }),
       call: (authClient: typeof auth, input, request) =>
         authClient.api.signUpEmail({
@@ -223,7 +220,6 @@ describe('betterAuthFormAction with Better Auth', () => {
     const exit = await Effect.runPromiseExit(Effect.provide(action, layer))
     const error = getValidationError(exit)
 
-    expect(error.component).toBe('Auth/Register')
     expect(error.errors).toEqual({
       email: 'USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL',
     })
@@ -236,7 +232,6 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
-      errorComponent: 'Auth/Login',
       errorMapper: () => {
         errorMapperCalled = true
 
@@ -289,7 +284,6 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
-      errorComponent: 'Auth/Login',
       call: async () =>
         Response.json({
             code: 'INVALID_SESSION',
@@ -352,7 +346,6 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
-      errorComponent: 'Auth/Login',
       call: async () => {
         throw apiError
       },
@@ -396,7 +389,6 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
-      errorComponent: 'Auth/Login',
       call: async () => {
         throw redirect
       },
@@ -442,7 +434,6 @@ describe('betterAuthFormAction with Better Auth', () => {
 
     const action = betterAuthFormAction({
       schema: CredentialsSchema,
-      errorComponent: 'Auth/Login',
       call: async () => {
         throw spoofedError
       },

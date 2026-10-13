@@ -188,20 +188,13 @@ export async function renderErrorResponse<E extends Env>(
       return finalize(c.json(formatter.json.format(structured), 422))
     }
 
-    const requestContext = openWebContext(c)
-    const page = requestContext.web
+    // A form submission goes back to the form, whose page shows the errors.
+    // Invalid query parameters on a page visit render the error page.
+    if (!['GET', 'HEAD'].includes(c.req.method.toUpperCase())) {
+      openWebContext(c).flash?.setErrors(error.errors, c.req.header('X-Inertia-Error-Bag') || undefined)
 
-    if (error.component && page) {
-      page.setErrors(error.errors)
-
-      return finalize(await page.render(error.component))
+      return finalize(c.redirect(previousUrl(c), 303))
     }
-
-    page?.setErrors(error.errors)
-
-    const referer = c.req.header('Referer')
-
-    return finalize(c.redirect(referer?.length ? referer : '/', 303))
   }
 
   if (error instanceof UnauthorizedError) {
@@ -248,6 +241,21 @@ export async function renderErrorResponse<E extends Env>(
 
   // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   return finalize(c.json(formatter.json.format(structured), status as ContentfulStatusCode))
+}
+
+/** The same-origin page the request came from, or the home page. */
+function previousUrl<E extends Env>(c: HonoContext<E>): string {
+  const referer = c.req.header('Referer')
+
+  if (!referer) return '/'
+
+  try {
+    const previous = new URL(referer)
+
+    return previous.origin === new URL(c.req.url).origin ? `${previous.pathname}${previous.search}` : '/'
+  } catch {
+    return '/'
+  }
 }
 
 function appendVerifiedErrorHeaders(

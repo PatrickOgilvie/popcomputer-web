@@ -179,7 +179,7 @@ describe('the README route test', () => {
       const project = yield* bound('project')
       yield* authorize((auth) => auth.user.id === project.userId)
 
-      const input = yield* validateRequest(UpdateProject, { errorComponent: 'Projects/Edit' })
+      const input = yield* validateRequest(UpdateProject)
 
       yield* dbMutation((db) =>
         db.update(projects).set(input).where(eq(projects.id, project.id))

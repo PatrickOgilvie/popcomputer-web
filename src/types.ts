@@ -20,13 +20,18 @@ export type LazyPageProp = PagePropValue | (() => PagePropValue | Promise<PagePr
 
 export type SharedPageProps = Record<string, LazyPageProp>
 
+/** Field errors, or field errors under the error bags of named forms. */
+export type PageErrors = Readonly<Record<string, string | Readonly<Record<string, string>>>>
+
 export interface PageObject<TProps extends object = PageProps> {
   component: string
-  props: TProps & { errors?: Record<string, string> }
+  props: TProps & { errors?: PageErrors }
   url: string
   version: string
   clearHistory?: boolean
   encryptHistory?: boolean
+  /** Inertia 3's flash data: values the previous request handed to this page. */
+  flash?: Readonly<Record<string, unknown>>
 }
 
 export interface WebConfig {

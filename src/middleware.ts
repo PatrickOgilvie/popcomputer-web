@@ -12,6 +12,7 @@ import type {
 } from './types.js'
 import { HEADERS } from './types.js'
 import { openWebContext } from './request-context.js'
+import { openFlash } from './flash.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
@@ -21,7 +22,7 @@ declare module 'hono' {
 }
 
 interface ValidationErrorBag {
-  [field: string]: string
+  [field: string]: string | Readonly<Record<string, string>>
 }
 
 // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
@@ -76,6 +77,7 @@ export function web(config: WebConfig): MiddlewareHandler {
   return async (c: Context, next) => {
     const sharedProps: Record<string, LazyPageProp> = {}
     const errors: ValidationErrorBag = {}
+    const flash = openFlash(c)
 
     const getVersion = () => 
       config.version instanceof Function ? config.version() : config.version
@@ -145,8 +147,11 @@ export function web(config: WebConfig): MiddlewareHandler {
           mergedProps.set(key, value)
         }
 
-        // Add errors
-        if (Object.keys(errors).length > 0) {
+        // Field errors: flashed by a failed form submission, then set by this request.
+        const flashed = flash.take()
+        const pageErrors = { ...flashed.errors, ...errors }
+
+        if (Object.keys(pageErrors).length > 0) {
           const decodedErrors = S.decodeUnknownOption(
             S.Record(S.String, S.String)
           )(mergedProps.get('errors'))
@@ -155,7 +160,7 @@ export function web(config: WebConfig): MiddlewareHandler {
             ? { ...decodedErrors.value }
             : {}
 
-          Object.assign(mergedErrors, errors)
+          Object.assign(mergedErrors, pageErrors)
           mergedProps.set('errors', mergedErrors)
         }
 
@@ -176,6 +181,7 @@ export function web(config: WebConfig): MiddlewareHandler {
           version,
           clearHistory: options.clearHistory,
           encryptHistory: options.encryptHistory,
+          flash: flashed.flash,
         }
 
         if (isInertia) {
@@ -195,6 +201,7 @@ export function web(config: WebConfig): MiddlewareHandler {
 
     const requestContext = openWebContext(c)
     requestContext.web = instance
+    requestContext.flash = flash
     c.set('web', instance)
     await next()
 
@@ -215,6 +222,13 @@ export function web(config: WebConfig): MiddlewareHandler {
           headers: { 'Location': location, 'Vary': HEADERS.INERTIA },
         })
       }
+    }
+
+    const committed = c.res ? flash.commit(c.res) : undefined
+
+    if (committed !== undefined && committed !== c.res) {
+      // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
+      c.res = committed
     }
 
     // Return the response to ensure proper propagation in forwarding scenarios

@@ -124,8 +124,6 @@ export interface FieldError {
 export interface ValidationErrorData {
   /** Field-level errors */
   fields: Record<string, FieldError>
-  /** Inertia component to re-render */
-  component?: string
 }
 
 /**

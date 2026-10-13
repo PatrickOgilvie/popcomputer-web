@@ -366,27 +366,6 @@ describe('validateUnknown with typed input', () => {
     }
   })
 
-  test('includes error component', () => {
-    const schema = S.Struct({
-      name: S.String.check(S.isMinLength(1)),
-    })
-
-    const exit = Effect.runSyncExit(
-      validateUnknown(schema, { name: '' }, {
-        errorComponent: 'Users/Create',
-      })
-    )
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error.component).toBe('Users/Create')
-      }
-    }
-  })
-
   test('uses required-field error code for missing fields', () => {
     const schema = S.Struct({
       name: S.String,
@@ -558,7 +537,6 @@ describe('validateRequest', () => {
     const exit = await runWithRequestAsync(
       validateRequest(schema, {
         messages: { email: 'Email required' },
-        errorComponent: 'Auth/Register',
       }),
       request
     )
@@ -569,7 +547,6 @@ describe('validateRequest', () => {
       if (Option.isSome(option)) {
         const error = option.value
         expect(error.errors.email).toBe('Email required')
-        expect(error.component).toBe('Auth/Register')
       }
     }
   })

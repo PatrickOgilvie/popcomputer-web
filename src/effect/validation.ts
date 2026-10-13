@@ -92,8 +92,7 @@ function isJsonContentType(contentType: string): boolean {
 }
 
 function createSourceConflictValidationError(
-  conflicts: ReadonlyArray<SourceConflict>,
-  component?: string
+  conflicts: ReadonlyArray<SourceConflict>
 ): ValidationError {
   const errors: Record<string, string> = {}
   const fieldDetails: Record<string, FieldError> = {}
@@ -116,7 +115,6 @@ function createSourceConflictValidationError(
   return new ValidationError({
     errors,
     fieldDetails,
-    component,
     code: ErrorCodes.VAL_006_SOURCE_CONFLICT,
   })
 }
@@ -126,8 +124,7 @@ function mergeRequestSources(
     source: RequestValidationSource
     data: RequestData
   }>,
-  onConflict: RequestValidationConflict,
-  component?: string
+  onConflict: RequestValidationConflict
 ): Effect.Effect<RequestData, ValidationError, never> {
   const merged: RequestData = {}
   const sourceOfKey = new Map<string, RequestValidationSource>()
@@ -168,15 +165,14 @@ function mergeRequestSources(
   }
 
   if (conflicts.length > 0) {
-    return Effect.fail(createSourceConflictValidationError(conflicts, component))
+    return Effect.fail(createSourceConflictValidationError(conflicts))
   }
 
   return Effect.succeed(merged)
 }
 
 function getValidationDataWithOptions(
-  config?: RequestValidationOptions,
-  errorComponent?: string
+  config?: RequestValidationOptions
 ): Effect.Effect<RequestData, ValidationError, RequestService> {
   return Effect.gen(function* () {
     const request = yield* RequestService
@@ -220,8 +216,7 @@ function getValidationDataWithOptions(
 
     return yield* mergeRequestSources(
       order.map((source) => ({ source, data: sourceData[source] })),
-      onConflict,
-      errorComponent
+      onConflict
     )
   })
 }
@@ -374,16 +369,6 @@ export interface ValidateOptions {
   attributes?: Record<string, string>
 
   /**
-   * The Inertia component to re-render when validation fails.
-   * If set, a ValidationError will trigger a re-render of this component
-   * with the errors passed as props. If not set, redirects back.
-   *
-   * @example
-   * 'Projects/Create'
-   */
-  errorComponent?: string
-
-  /**
    * Which request sources to read and how to treat keys that more than one
    * source provides. By default route params, query and body are merged, and
    * a key with different values in two sources fails validation.
@@ -469,7 +454,6 @@ function runValidation<A, I, Input>(
       return new ValidationError({
         errors,
         fieldDetails: details,
-        component: options.errorComponent,
         code: determineValidationCode(details),
       })
     })
@@ -496,10 +480,7 @@ export const validateRequest = Effect.fn('Web.validateRequest')(function* <A, I>
   schema: S.Codec<A, I>,
   options: ValidateOptions = {}
 ) {
-  const data = yield* getValidationDataWithOptions(
-    options.request,
-    options.errorComponent
-  )
+  const data = yield* getValidationDataWithOptions(options.request)
 
   return yield* validateUnknown(schema, data, options)
 })

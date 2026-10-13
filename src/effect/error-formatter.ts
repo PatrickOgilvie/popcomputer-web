@@ -103,9 +103,7 @@ function projectValidationExtension(value: ValidationErrorData | undefined): obj
     }
   }
 
-  return value.component === undefined
-    ? { fields }
-    : { fields, component: value.component }
+  return { fields }
 }
 
 /**

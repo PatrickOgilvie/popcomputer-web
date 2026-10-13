@@ -386,7 +386,6 @@ export function classifyBetterAuthFailure(
 
 export function toAuthActionError(
   failure: BetterAuthBoundaryFailure,
-  component: string,
   errorMapper: ((error: BetterAuthActionError) => Record<string, string>) | undefined
 ): AuthRedirect | ValidationError | AuthRateLimitError | HttpError {
   return Match.value(failure).pipe(Match.tagsExhaustive({
@@ -398,7 +397,6 @@ export function toAuthActionError(
     BetterAuthRequestRejected: (failure) =>
       new ValidationError({
         errors: (errorMapper ?? defaultAuthErrorMapper)(failure.error),
-        component,
         headers: new Headers(failure.headers),
       }),
     BetterAuthRateLimited: (failure) =>

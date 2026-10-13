@@ -258,7 +258,8 @@ export interface PageRenderer {
     props?: T
   ): Promise<Response>
   share(key: string, value: PagePropValue): void
-  setErrors(errors: Record<string, string>): void
+  /** Hand a value to the next page the user sees, as Inertia's page `flash`. */
+  flash(key: string, value: PagePropValue): void
 }
 
 export class PageService extends Context.Service<

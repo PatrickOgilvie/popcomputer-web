@@ -69,19 +69,18 @@ function structured(
 }
 
 /**
- * Validation Error - Field-level validation failures
+ * Validation Error - Field-level validation failures.
+ *
+ * A form submission that fails with it goes back to the form, whose page
+ * receives `errors`; a JSON client gets a 422.
  *
  * @example
  * ```ts
- * yield* new ValidationError({
- *   errors: { email: 'Invalid email format' },
- *   component: 'Auth/Login',
- * })
+ * yield* new ValidationError({ errors: { email: 'Invalid email format' } })
  * ```
  */
 export class ValidationError extends Schema.TaggedError<ValidationError>()('ValidationError', {
   errors: Schema.Record(Schema.String, Schema.String),
-  component: Schema.optional(Schema.String),
   fieldDetails: Schema.optional(Schema.Record(Schema.String, FieldErrorSchema)),
   code: OptionalErrorCode,
   /** Verified response headers accumulated by an external provider. */
@@ -103,7 +102,6 @@ export class ValidationError extends Schema.TaggedError<ValidationError>()('Vali
         : `Validation failed for: ${fieldNames.join(', ')}`,
       validation: {
         fields: this.fieldDetails ?? this.createFieldDetails(),
-        component: this.component,
       },
     }
   }
@@ -128,7 +126,7 @@ export class ValidationError extends Schema.TaggedError<ValidationError>()('Vali
    */
   static fromFields(
     errors: Record<string, string>,
-    options?: { component?: string; code?: ErrorCode }
+    options?: { code?: ErrorCode }
   ): ValidationError {
     return new ValidationError({ errors, ...options })
   }

@@ -218,7 +218,6 @@ setupWeb(new Hono<TestEnv>(), {
 
 const typedAuthAction = betterAuthFormAction({
   schema: S.Struct({ email: S.String }),
-  errorComponent: 'Auth/Login',
   errorMapper: (error) => {
     const status: number | undefined = error.status
     const code: string | undefined = error.code

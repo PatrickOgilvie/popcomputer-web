@@ -34,9 +34,10 @@ TypeScript example here and in the README type-checks against the package.
 4. **Read request input only through `validateRequest(Schema)`.** Build schemas
    from `@popcomputer/web/schema` validators (`requiredString`,
    `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, ...), which
-   accept form posts as well as JSON. Pass `errorComponent` for form pages.
-   A key that route params, query and body provide with different values
-   fails validation.
+   accept form posts as well as JSON. A form that fails validation goes back
+   to the page it came from, which receives the field errors as `errors`;
+   a JSON client gets a `422`. A key that route params, query and body
+   provide with different values fails validation.
 5. **Load route models with `{param}` placeholders and `bound('param')`.**
    Register each model's Effect Schema in `setupWeb`'s `bindings` and augment
    `WebRouteBindingsType` with the same object. Never query by a route
@@ -96,9 +97,7 @@ export const updateProject = action(
     const project = yield* bound('project')
     yield* authorize((auth) => auth.user.id === project.userId)
 
-    const input = yield* validateRequest(UpdateProject, {
-      errorComponent: 'Projects/Edit',
-    })
+    const input = yield* validateRequest(UpdateProject)
 
     yield* dbMutation((db) =>
       db.update(projects).set(input).where(eq(projects.id, project.id))
@@ -120,7 +119,8 @@ routes.put('/projects/{project}', updateProject, {
 Test it as the README's Testing section shows: request
 `PUT /projects/project-1` with `testEnv(signedIn({ id: 'user-1' }),
 testBindings)` and expect a `303` to `/projects/project-1`, a `403` for
-another user, and a `422` for an empty name.
+another user, and, for an empty name, a `303` back to the form whose next page
+has `errors.name` (a JSON request gets a `422`).
 
 ## Do not use
 

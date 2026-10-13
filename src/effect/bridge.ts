@@ -450,14 +450,14 @@ function createPageRenderer<E extends Env>(c: HonoContext<E>): PageRenderer {
       // oxlint-disable-next-line effecttsgo/async-function -- PageRenderer.render is a Promise-returning Hono adapter contract, including this missing-configuration response.
       render: async () => c.text('@popcomputer/web is not configured', 500),
       share: () => {},
-      setErrors: () => {},
+      flash: () => {},
     }
   }
 
   return {
     render: (component, props) => Promise.resolve(page.render(component, props)),
     share: (key, value) => page.share(key, value),
-    setErrors: (errors) => page.setErrors(errors),
+    flash: (key, value) => requestContext.flash?.set(key, value),
   }
 }
 

@@ -54,7 +54,6 @@ describe('Auth Integration Types', () => {
         S.Codec.Encoded<typeof LoginSchema>
       >({
         schema: LoginSchema,
-        errorComponent: 'Auth/Login',
         call: async (_auth, _input) => {
           return { headers: new Headers() }
         },
@@ -74,7 +73,6 @@ describe('Auth Integration Types', () => {
         S.Codec.Encoded<typeof RegisterSchema>
       >({
         schema: RegisterSchema,
-        errorComponent: 'Auth/Register',
         call: async (_auth, _input) => {
           return { headers: new Headers() }
         },
@@ -112,7 +110,6 @@ describe('Auth Integration Types', () => {
         S.Codec.Encoded<typeof LoginSchema>
       >({
         schema: LoginSchema,
-        errorComponent: 'Auth/Login',
         call: async (_auth, _input) => ({ headers: new Headers() }),
       })
 
@@ -121,7 +118,6 @@ describe('Auth Integration Types', () => {
         S.Codec.Encoded<typeof RegisterSchema>
       >({
         schema: RegisterSchema,
-        errorComponent: 'Auth/Register',
         call: async (_auth, _input) => ({ headers: new Headers() }),
       })
 
@@ -156,7 +152,6 @@ describe('Auth Integration Types', () => {
         S.Codec.Encoded<typeof ForgotPasswordSchema>
       >({
         schema: ForgotPasswordSchema,
-        errorComponent: 'Auth/ForgotPassword',
         call: async (_auth, _input) => ({ headers: new Headers() }),
       })
 
@@ -175,7 +170,6 @@ describe('Auth Integration Types', () => {
     test('betterAuthFormAction result is assignable to AuthActionEffect', () => {
       const action = betterAuthFormAction({
         schema: LoginSchema,
-        errorComponent: 'Auth/Login',
         call: async () => ({ headers: new Headers() }),
       })
 

@@ -9,7 +9,7 @@ import type { PageProps } from '../../src/types.js'
 import {
   redirect,
   render,
-  renderWithErrors,
+  flash,
   json,
   text,
   notFound,
@@ -33,18 +33,16 @@ import { Redirect } from '../../src/effect/errors.js'
 const createMockPage = (): PageRenderer & {
   renders: Array<{ component: string; props?: PageProps }>
   shared: PageProps
-  errors: Record<string, string>
+  flashed: Record<string, unknown>
 } => {
   const renders: Array<{ component: string; props?: PageProps }> = []
   const shared: PageProps = {}
-  const errors: Record<string, string> = {}
+  const flashed: Record<string, unknown> = {}
 
   return {
     renders,
     shared,
-    get errors() {
-      return errors
-    },
+    flashed,
     render: async (component, props) => {
       renders.push({ component, props })
 
@@ -55,8 +53,8 @@ const createMockPage = (): PageRenderer & {
     share: (key, value) => {
       shared[key] = value
     },
-    setErrors: (newErrors) => {
-      Object.assign(errors, newErrors)
+    flash: (key, value) => {
+      flashed[key] = value
     },
   }
 }
@@ -141,38 +139,17 @@ describe('render', () => {
   })
 })
 
-describe('renderWithErrors', () => {
-  test('sets errors before rendering', async () => {
+describe('flash', () => {
+  test('hands values to the next page', async () => {
     const mockPage = createMockPage()
-    const layer = Layer.succeed(PageService, mockPage)
 
-    const effect = renderWithErrors('Users/Create', {
-      name: 'Name is required',
-      email: 'Invalid email',
-    })
-
-    await Effect.runPromise(Effect.provide(effect, layer))
-
-    expect(mockPage.errors).toEqual({
-      name: 'Name is required',
-      email: 'Invalid email',
-    })
-    expect(mockPage.renders[0].component).toBe('Users/Create')
-  })
-
-  test('includes props with errors', async () => {
-    const mockPage = createMockPage()
-    const layer = Layer.succeed(PageService, mockPage)
-
-    const effect = renderWithErrors(
-      'Users/Create',
-      { name: 'Required' },
-      { existingUser: { id: 1 } }
+    await Effect.runPromise(
+      Effect.all([flash('success', 'Project created.'), flash('count', 3)]).pipe(
+        Effect.provide(Layer.succeed(PageService, mockPage))
+      )
     )
 
-    await Effect.runPromise(Effect.provide(effect, layer))
-
-    expect(mockPage.renders[0].props).toEqual({ existingUser: { id: 1 } })
+    expect(mockPage.flashed).toEqual({ success: 'Project created.', count: 3 })
   })
 })
 

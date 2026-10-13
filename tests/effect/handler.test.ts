@@ -237,48 +237,6 @@ describe('Error Handling', () => {
       )
     })
 
-    test('renders component with errors for Inertia requests', async () => {
-      const app = createApp()
-
-      effectRoutes(app).post(
-        '/',
-        Effect.fail(
-          new ValidationError({
-            errors: { name: 'Required' },
-            component: 'Users/Create',
-          })
-        )
-      )
-
-      const res = await app.request('/', {
-        method: 'POST',
-        headers: { 'X-Inertia': 'true' },
-      })
-
-      expect(res.status).toBe(200)
-      const json = await res.json()
-      expect(json.component).toBe('Users/Create')
-      expect(json.props.errors).toEqual({ name: 'Required' })
-    })
-
-    test('redirects back without component', async () => {
-      const app = createApp()
-
-      effectRoutes(app).post(
-        '/form',
-        Effect.fail(
-          new ValidationError({ errors: { field: 'Error' } })
-        )
-      )
-
-      const res = await app.request('/form', {
-        method: 'POST',
-        headers: { Referer: '/form' },
-      })
-
-      expect(res.status).toBe(303)
-      expect(res.headers.get('Location')).toBe('/form')
-    })
   })
 
   describe('UnauthorizedError', () => {

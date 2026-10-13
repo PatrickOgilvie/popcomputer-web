@@ -9,6 +9,7 @@ import type {
 } from './effect/services.js'
 import type { WebInstance } from './types.js'
 import type { PageCacheState } from './page-cache.js'
+import type { FlashStore } from './flash.js'
 import type {
   BackgroundSupervisor,
   EffectBridgeConfig,
@@ -30,6 +31,8 @@ export interface WebRequestContext<E extends Env = Env> {
   authUser?: AuthUser
   /** web() middleware — renderer / shared props / errors instance */
   web?: WebInstance
+  /** web() middleware — flash data from the previous request and for the next. */
+  flash?: FlashStore
   /**
    * effectBridge() — per-request Effect runtime.
    * Typed over `any` services: the concrete union depends on per-app bridge

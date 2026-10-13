@@ -425,9 +425,7 @@ const CreateProject = S.Struct({
 export const createProject = action(
   Effect.gen(function* () {
     const auth = yield* authorize()
-    const input = yield* validateRequest(CreateProject, {
-      errorComponent: 'Projects/Create',
-    })
+    const input = yield* validateRequest(CreateProject)
 
     const [project] = yield* dbMutation((db) =>
       db.insert(projects)

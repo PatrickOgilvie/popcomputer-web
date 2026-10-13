@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- A form submission that fails validation redirects back (303) to the page it came from, which receives the field errors as `errors` on its next render, as Inertia expects. The page renders with all of its own props; `errorComponent` re-rendered the form with only `errors`, so an edit page lost the record it edits. `validateRequest`'s `errorComponent` option, `betterAuthFormAction`'s `errorComponent`, `ValidationError.component` and `renderWithErrors` are removed. Errors go under the form's error bag when Inertia sends `X-Inertia-Error-Bag`. Invalid query parameters on a page visit render the error page with 422, and JSON clients get a 422 as before.
+- `PageService` has `flash(key, value)` in place of `setErrors`.
 - Database operations read the request's client from `DatabaseService` and give their callback the application's Drizzle client with its own types: `dbMutation(db, input, (tx, values) => ...)` is `dbMutation((db) => ...)`, and `dbTransaction(db, ...)` is `dbTransaction(async (tx) => ...)`. The `SafeTx` wrapper that required `asTrusted` or validated values erased the table type of `insert`, `update` and `delete`, so `.returning()` rows were `{ [x: string]: any }` and `.values()` and `.set()` checked no columns. Drizzle's own types now check every column, and `validateRequest`, the only way an action reads request input, removes undeclared keys. `asTrusted`, `Trusted`, `Validated`, `SafeTx`, `MutationInput` and `mergeMutationInput` are removed, and `validateRequest` returns the decoded value unbranded.
 - `DatabaseMutationFailed` and `DatabaseTransactionFailed` are one `DatabaseError` with an `operation` (`query`, `mutation`, `transaction` or `batch`), with the code `WEB_DB_501_OPERATION_FAILED`. `DatabaseConstraintViolation` has `columns` and an optional `constraintName`.
 - `dbTransaction` is a type error for a driver whose transactions are synchronous, such as `bun:sqlite`: its `transaction()` commits as soon as the callback returns, before any awaited write runs, so earlier writes stayed committed when a later one failed. On D1, which rejects `BEGIN`, a transaction is a defect whose message names `dbBatch`.
@@ -49,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `flash(key, value)` hands a value to the next page the user sees, as Inertia 3's page `flash` field: the page a redirect renders, or the page the same request renders. Flash data and failed-form errors travel in a short-lived `HttpOnly` cookie (`__Host-` over HTTPS) that the next visit reads and clears; Inertia prefetches leave it for the visit.
 - `dbQuery((db) => ...)` for reads, failing with `DatabaseError`.
 - `dbBatch((db) => [...statements])` applies statements atomically on drivers with batches (Cloudflare D1, libsql, Neon HTTP) and returns each statement's typed result.
 - `uniqueFieldErrors({ slug: 'Taken.' })`, a pipeable combinator that turns a unique violation on a listed column into a `ValidationError` for that field.

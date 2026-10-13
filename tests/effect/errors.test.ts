@@ -29,15 +29,6 @@ describe('Error Types', () => {
       expect(error.errors.email).toBe('Invalid email address')
     })
 
-    test('includes optional component', () => {
-      const error = new ValidationError({
-        errors: { name: 'Required' },
-        component: 'Users/Create',
-      })
-
-      expect(error.component).toBe('Users/Create')
-    })
-
     test('can be used with Effect.fail', () => {
       const program = Effect.fail(
         new ValidationError({ errors: { field: 'Error' } })

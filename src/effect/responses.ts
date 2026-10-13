@@ -40,21 +40,17 @@ export const render = <T extends PageProps>(
   })
 
 /**
- * Render a page component with validation errors pre-set.
+ * Hand a value to the page the user sees next, as Inertia's page `flash`.
+ * After a redirect, that is the page the redirect renders.
  *
  * @example
- * return yield* renderWithErrors('Auth/Login', { email: 'Invalid' })
+ * yield* flash('success', 'Project created.')
+ * return yield* redirect(`/projects/${project.id}`)
  */
-export const renderWithErrors = <T extends PageProps>(
-  component: string,
-  errors: Record<string, string>,
-  props?: T
-): Effect.Effect<Response, never, PageService> =>
+export const flash = (key: string, value: PagePropValue): Effect.Effect<void, never, PageService> =>
   Effect.gen(function* () {
     const page = yield* PageService
-    page.setErrors(errors)
-
-    return yield* Effect.promise(() => page.render(component, props))
+    page.flash(key, value)
   })
 
 /**

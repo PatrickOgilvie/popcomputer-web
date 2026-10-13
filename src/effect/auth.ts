@@ -647,7 +647,6 @@ export {
  */
 export interface BetterAuthFormActionConfig<A, I> {
   readonly schema: S.Codec<A, I, never, never>
-  readonly errorComponent: string
   /** Call Better Auth through the application's client (WebAuthType). */
   readonly call: (auth: AuthType, input: A, request: Request) => Promise<BetterAuthActionResult>
   readonly errorMapper?: (error: BetterAuthActionError) => Record<string, string>
@@ -672,15 +671,13 @@ export function betterAuthFormAction<A, I>(
     const auth = yield* AuthService
     const request = yield* RequestService
 
-    const input = yield* validateRequest(config.schema, {
-      errorComponent: config.errorComponent,
-    })
+    const input = yield* validateRequest(config.schema)
 
     const result = yield* runBetterAuthApiCall(() =>
       config.call(auth, input, buildAuthRequest(request))
     ).pipe(
       Effect.mapError((failure) =>
-        toAuthActionError(failure, config.errorComponent, config.errorMapper)
+        toAuthActionError(failure, config.errorMapper)
       )
     )
 

@@ -111,7 +111,7 @@ const createMockPage = (): PageRenderer & {
     share: (key, value) => {
       shared[key] = value
     },
-    setErrors: () => {},
+    flash: () => {},
   }
 }
 
@@ -334,7 +334,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       redirectTo: '/dashboard',
       call: (auth, input, request) =>
         credentialsApi(auth).signInEmail({
@@ -379,7 +378,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       redirectTo: '/',
       call: async () => ({ headers: mockHeaders }),
     })
@@ -414,7 +412,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       redirectTo: '/',
       call: async () => ({ headers: new Headers() }),
     })
@@ -442,7 +439,6 @@ describe('betterAuthFormAction', () => {
         expect(error._tag).toBe('ValidationError')
 
         if (Predicate.isTagged(error, 'ValidationError')) {
-          expect(error.component).toBe('Auth/Login')
         }
       }
     }
@@ -468,7 +464,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       redirectTo: '/',
       errorMapper,
       call: async () => {
@@ -503,7 +498,6 @@ describe('betterAuthFormAction', () => {
 
         if (Predicate.isTagged(error, 'ValidationError')) {
           expect(error.errors.email).toBe('Invalid email or password')
-          expect(error.component).toBe('Auth/Login')
         }
       }
     }
@@ -517,7 +511,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       redirectTo: '/',
       // No errorMapper provided - should use default
       call: async () => {
@@ -566,7 +559,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       errorMapper: () => {
         errorMapperCalled = true
 
@@ -624,7 +616,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       errorMapper: () => {
         errorMapperCalled = true
 
@@ -680,7 +671,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       redirectTo: (input: { returnTo?: string }) => input.returnTo ?? '/home',
       call: async () => ({ headers: new Headers() }),
     })
@@ -715,7 +705,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       redirectTo: '/',
       call: async () => {
         // Some better-auth methods return a full Response
@@ -758,7 +747,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       redirectTo: '/dashboard',
       errorMapper: (error) => {
         mappedError = error
@@ -799,7 +787,6 @@ describe('betterAuthFormAction', () => {
 
         if (failure.value instanceof ValidationError) {
           expect(failure.value.errors).toEqual({ email: 'INVALID_EMAIL_OR_PASSWORD' })
-          expect(failure.value.component).toBe('Auth/Login')
         }
       }
     }
@@ -819,7 +806,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       errorMapper: () => {
         errorMapperCalled = true
 
@@ -874,7 +860,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       errorMapper: () => {
         errorMapperCalled = true
 
@@ -929,7 +914,6 @@ describe('betterAuthFormAction', () => {
 
     const action = betterAuthFormAction({
       schema: LoginSchema,
-      errorComponent: 'Auth/Login',
       redirectTo: '/',
       call: async () => {
         // Some better-auth methods return raw Headers

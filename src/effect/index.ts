@@ -108,7 +108,7 @@ export { background } from './background.js'
 export {
   redirect,
   render,
-  renderWithErrors,
+  flash,
   json,
   text,
   notFound,
