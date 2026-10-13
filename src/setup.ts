@@ -46,7 +46,14 @@ export interface AuthBackgroundTasks {
 }
 
 /** Better Auth: the client, the signed-in user it decodes, and the user pages see. */
-export interface WebAuthOptions<E extends Env, Auth, ClientServices, User, PublicUser extends object> {
+export interface WebAuthOptions<
+  E extends Env,
+  Auth,
+  ClientServices,
+  User,
+  PublicUser extends object,
+  SignInPath extends string = string,
+> {
   /** Build the Better Auth server client at the request composition seam. */
   readonly client?: (c: Context<E>, services: ClientServices) => Auth
   /**
@@ -68,7 +75,7 @@ export interface WebAuthOptions<E extends Env, Auth, ClientServices, User, Publi
    * Where a signed-out visitor goes when a route needs a user: `authorize()`
    * and `RequireAuthLayer` redirect here. Defaults to `/login`.
    */
-  readonly signInPath?: string
+  readonly signInPath?: SignInPath
 }
 
 interface WebSetupOptions<E extends Env, AppServices, RequestServices> extends WebConfig {
@@ -159,7 +166,7 @@ export interface WebSetupConfig<
   readonly database?: (c: Context<E>) => DB
   /** Authentication. The client factory receives the request's database when one is configured. */
   // NoInfer: DB comes from `database` alone, never from the client's parameters.
-  readonly auth?: WebAuthOptions<E, Auth, AuthClientServices<NoInfer<DB>>, User, PublicUser>
+  readonly auth?: WebAuthOptions<E, Auth, AuthClientServices<NoInfer<DB>>, User, PublicUser, NoInfer<RoutePath<Paths>>>
   /** The Drizzle schema route model binding reads tables and relations from. */
   readonly schema?: Schema
   /** Each route model binding's row parser, by route placeholder (`{project}`). */

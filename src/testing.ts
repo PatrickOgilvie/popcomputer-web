@@ -15,7 +15,7 @@ import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser
 import type { Registered } from './effect/register.js'
 import { attachTestDatabase, attachTestLayer } from './effect/test-env.js'
 import type { PageName } from './effect/pages.js'
-import type { FlashData, PagePropsFor } from './react.js'
+import type { ErrorPageProps, FlashData, PagePropsFor } from './react.js'
 import type { ErrorResponseBody } from './effect/error-formatter.js'
 
 type RegisteredBindings = Registered<'bindings', never>
@@ -175,6 +175,38 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
     // i.e. when this Better Auth-shaped session is an AuthUser['session'].
     session: session as unknown as AuthUser['session'],
   }
+}
+
+/** The error page an Inertia request rendered, as a test reads it. */
+export interface TestErrorPage {
+  readonly component: string
+  readonly props: Omit<PagePropsFor<ErrorPageProps>, 'errors'> & { readonly errors: TestFieldErrors }
+}
+
+/**
+ * Read the error page an Inertia request rendered, typed as the error page
+ * component receives it. Rejects when the response is not the error page.
+ *
+ * @example
+ * const page = await readErrorPage(await app.request('/book/ada?tz=Mars/Olympus', { headers: { 'X-Inertia': 'true' } }))
+ * expect(page.props.errors.tz).toBe('Unknown time zone')
+ */
+export async function readErrorPage(response: Response): Promise<TestErrorPage> {
+  if (response.headers.get('X-Inertia') !== 'true') {
+    throw new Error(`Expected the error page, but the response is ${response.status}. Request pages with the X-Inertia: true header.`)
+  }
+
+  const page: unknown = await response.json()
+  const props: unknown = page instanceof Object ? Reflect.get(page, 'props') : undefined
+
+  if (!(props instanceof Object) || typeof Reflect.get(props, 'status') !== 'number') {
+    const rendered: unknown = page instanceof Object ? Reflect.get(page, 'component') : undefined
+    throw new Error(`Expected the error page, but the response rendered '${String(rendered)}' (${response.status}).`)
+  }
+
+  // SAFETY: the boundary renders the error page with ErrorPageProps, the
+  // shared props and errors; the status it carries identifies it.
+  return page as TestErrorPage
 }
 
 /**

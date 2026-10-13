@@ -681,9 +681,10 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
   }
 
   /** Create an error when a persisted row fails its registered parser. */
-  static invalidBoundRow(binding: string, table: string): RouteConfigurationError {
+  static invalidBoundRow(binding: string, table: string, issue?: string): RouteConfigurationError {
     return new RouteConfigurationError({
-      message: `A row loaded for route binding "${binding}" did not satisfy its registered schema.`,
+      message: `A row loaded for route binding "${binding}" did not satisfy its registered schema` +
+        (issue === undefined ? '.' : `: ${issue}`),
       hint: `Align the "${binding}" parser with persisted rows from "${table}" or repair the invalid data.`,
       binding,
       table,

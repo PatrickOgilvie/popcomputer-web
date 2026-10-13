@@ -443,7 +443,7 @@ export function decodeBoundRow<Row>(
   row: Row
 ): Promise<S.Schema.Type<typeof S.Unknown>> {
   return Effect.runPromise(S.decodeUnknownEffect(binding.rowSchema)(row).pipe(
-    Effect.mapError(() => RouteConfigurationError.invalidBoundRow(binding.param, binding.tableName)),
+    Effect.mapError((issue) => RouteConfigurationError.invalidBoundRow(binding.param, binding.tableName, issue.message)),
   ))
 }
 

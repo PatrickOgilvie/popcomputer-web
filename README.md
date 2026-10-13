@@ -183,11 +183,13 @@ export default Show
 ```
 
 The client resolves each page by name. A map of every page to its component,
-checked with `satisfies { readonly [Name in PageName]: unknown }` (`PageName`
-from `@popcomputer/web/effect`), makes a page without a component a type error,
-and `createInertiaApp({ resolve: (name) => components[name as PageName] })`
-reads it. A page component typed `WebPage<'Name'>` is a React function
-component.
+typed `{ readonly [Name in PageName]: WebPage<Name> }` (`PageName` from
+`@popcomputer/web/effect`), makes a page without a component a type error. The
+resolver checks a name with a guard, `(name): name is PageName => name in
+components`, and falls back to the error page, which is not a registered page:
+`createInertiaApp({ resolve: (name) => (isPage(name) ? components[name] :
+ErrorPage) })`. A page component typed `WebPage<'Name'>` is a React function
+component; type the error page `WebErrorPage` from `@popcomputer/web/react`.
 
 A component a page renders takes its props from the same declaration:
 `PagePropsFor<'Projects/Show'>['project']` from `@popcomputer/web/react` is the
@@ -955,7 +957,7 @@ endings, not statements to run in sequence:
 |---|---|
 | Render a page | `return yield* render('Dashboard', { stats })` |
 | Redirect | `return yield* redirect(paths.project, { project: project.id })` |
-| Redirect to the page the request came from | `return yield* back(paths.projects)` |
+| Redirect to the page the request came from | `return yield* back(paths.project, { project: project.id })`, falling back to that path |
 | Redirect from a helper or guard layer, ending the action | `yield* redirectNow(paths.dashboard)` |
 | Return JSON | `return yield* json({ projects })` |
 | Return JSON declared by a schema, encoded as page props are | `return yield* json(ProjectList, { projects })` |
@@ -975,7 +977,9 @@ with `redirectTo` goes to that page instead, such as a wizard's earlier step. Th
 `errors`; a form that names an Inertia error bag gets them under its name.
 Errors and flash values travel in a short-lived `HttpOnly` cookie that the
 next visit reads and clears. A JSON client gets a 422 instead, and invalid
-query parameters on a page visit render the error page with 422.
+query parameters on a page visit render the error page with 422, with the
+invalid fields as `errors`; `readErrorPage(res)` from `@popcomputer/web/testing`
+reads it in a test.
 
 `file(body, { contentType, filename })` answers with a file, such as an export
 or a feed: text, bytes, or an Effect `Stream` sent as it is produced. A
@@ -1006,7 +1010,10 @@ A JSON API declares each response as an Effect Schema and answers with
 `json(Schema, value)`: the value is checked against the schema and encoded
 through its JSON form, so a `Date` leaves as an ISO string, and a test reads
 it back with `readJson(res, Schema)` from `@popcomputer/web/testing`. A client
-decodes it with the same schema, so the shape is declared once.
+decodes it with the same schema,
+`S.decodeUnknownSync(S.toCodecJson(Schema))(await res.json())`, so the shape is
+declared once; a schema the client imports is bundled with it, so declare
+response schemas apart from the Drizzle tables.
 
 `errors` names each invalid field's message, as a form's page receives them.
 `ErrorResponseBody` from `@popcomputer/web/effect` types the envelope, and
@@ -1025,7 +1032,9 @@ its layout defaults for them.
 ## Caching and background work
 
 The data cache keeps computed values in a store, checked against an Effect
-Schema when read. Provide a store with `kvCache` in `services.request`:
+Schema when read. Provide a store with `kvCache` in `services.request`; KV
+keeps an entry at least 60 seconds, its shortest expiry, and `cache` still
+treats it as fresh only for its `ttl`:
 
 ```ts
 import { kvCache } from '@popcomputer/web/cache'
@@ -1105,7 +1114,7 @@ const forgetAbandonedOrders = Effect.gen(function* () {
 
 export default {
   fetch: app.fetch,
-  scheduled: (_controller: unknown, env: Bindings, ctx: ExecutionContext) =>
+  scheduled: (_controller: unknown, env: Partial<Bindings>, ctx: ExecutionContext) =>
     routes.run(forgetAbandonedOrders, env, ctx),
 }
 ```
@@ -1149,10 +1158,10 @@ so server-only changes still appear.
   response, after all middleware, still allows it: no `Set-Cookie`, and no
   other `Cache-Control`.
 - The `X-Popweb-Cache` response header reports `HIT`, `MISS`, `DYNAMIC` or
-  `BYPASS` on the pages the default page cache considers; a bound route, or one
-  with a `cache` option of its own, carries none.
+  `BYPASS` on the pages the default page cache considers; a route with a
+  `{param}` placeholder, or with a `cache` option of its own, carries none.
 - A test of the default page cache stubs the Cache API
-  (`globalThis.caches = { default: store }`) and reads each response's body
+  (`Reflect.set(globalThis, 'caches', { default: store })`) and reads each response's body
   before the next request: a page is stored once its body has streamed. A test
   request signed in with `signedIn` sends no session cookie, so it can be
   served a guest's cached page; send the session cookie a browser would.
@@ -1584,8 +1593,9 @@ names on D1 (`['idempotency_key']`), which `uniqueFieldErrors` matches against
 the schema's camelCase keys too. An index on an expression, such as
 `lower(email)`, reports no columns, only its name: `uniqueFieldErrors({ email:
 'A contact has this email.' }, { constraints: { contacts_email_lower_unique:
-'email' } })` puts it on its field, as it does a composite key that belongs on
-another field.
+'email' } })` puts it on its field. SQLite and D1 report a constraint by its
+columns instead, so name a composite key that belongs on another field by
+them: `{ constraints: { 'org_id,user_id': 'email' } }`.
 
 On D1, write the same statements as one `dbBatch((db) => [...])`. A batch
 cannot branch on an earlier statement's result, so a write that depends on

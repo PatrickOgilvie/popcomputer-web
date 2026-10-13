@@ -16,7 +16,7 @@
 import { Context, Effect, Layer, Schema as S, Struct } from 'effect'
 import { Hono } from 'hono'
 import { boolean, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
-import { betterAuthSession } from '@popcomputer/web/auth'
+import { betterAuthLogoutAction, betterAuthSession } from '@popcomputer/web/auth'
 import { tableSchema } from '@popcomputer/web/schema'
 import { setupWeb } from '@popcomputer/web'
 import type { FlashData, SharedProps, WebPage } from '@popcomputer/web/react'
@@ -238,6 +238,9 @@ export const external = redirect('https://example.com/callback')
 redirect('/projets/{project}', { project: 'p1' })
 // @ts-expect-error '/membres' is not a declared path
 href('/membres')
+export const signOut = betterAuthLogoutAction({ redirectTo: paths.project.replace('{project}', 'p1') })
+// @ts-expect-error '/logn' is not a declared path
+betterAuthLogoutAction({ redirectTo: '/logn' })
 
 // Routes register only on declared paths.
 // @ts-expect-error '/projets/{project}' is not a declared path

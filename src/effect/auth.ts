@@ -422,14 +422,14 @@ export {
 } from './better-auth-boundary.js'
 
 /** Options for {@link betterAuthRedirect}. */
-export interface BetterAuthRedirectOptions<Result, E = never, R = never> {
+export interface BetterAuthRedirectOptions<Result, E = never, R = never, Path extends string = string> {
   /**
    * Where to send the user once Better Auth accepts the call: a path, or a
    * function of Better Auth's result returning a path or an Effect that
    * computes one, such as a lookup of the new user's first team. Call Better
    * Auth with `returnHeaders: true` to receive its result with the cookies.
    */
-  readonly redirectTo: string | ((result: Result) => string | Effect.Effect<string, E, R>)
+  readonly redirectTo: (Path & PathTarget<Path>) | ((result: Result) => string | Effect.Effect<string, E, R>)
   /** Field errors for a rejected call, such as wrong credentials, keyed by the form's fields. */
   readonly errors?: (error: BetterAuthActionError) => Record<string, string>
 }
@@ -454,9 +454,14 @@ export interface BetterAuthRedirectOptions<Result, E = never, R = never> {
  *   )
  * }))
  */
-export function betterAuthRedirect<Result extends BetterAuthActionResult, E = never, R = never>(
+export function betterAuthRedirect<
+  Result extends BetterAuthActionResult,
+  E = never,
+  R = never,
+  const Path extends string = string,
+>(
   call: (auth: AuthType, request: Request) => Promise<Result>,
-  options: BetterAuthRedirectOptions<Result, E, R>
+  options: BetterAuthRedirectOptions<Result, E, R, Path>
 ): Effect.Effect<
   Response,
   AuthRedirect | ValidationError | AuthRateLimitError | HttpError | E,
@@ -518,16 +523,17 @@ export const betterAuthHandler: Effect.Effect<Response, HttpError, RequestServic
 /**
  * Config for better-auth logout actions.
  */
-export interface BetterAuthLogoutConfig {
-  redirectTo?: string
+export interface BetterAuthLogoutConfig<Path extends string = string> {
+  /** Where to send the signed-out visitor: a declared path. Defaults to `/`. */
+  redirectTo?: Path & PathTarget<Path>
   cookieNames?: string[]
 }
 
 /**
  * Create a better-auth logout action that clears cookies and redirects.
  */
-export function betterAuthLogoutAction(
-  config: BetterAuthLogoutConfig = {}
+export function betterAuthLogoutAction<const Path extends string = '/'>(
+  config: BetterAuthLogoutConfig<Path> = {}
 ): Effect.Effect<Response, never, RequestService | AuthService> {
   return Effect.gen(function* () {
     const auth = yield* AuthService

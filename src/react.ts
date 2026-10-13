@@ -75,6 +75,16 @@ export interface ErrorPageProps {
   readonly fixes?: ReadonlyArray<{ readonly description: string; readonly code?: string }>
 }
 
+/**
+ * The error page component (setupWeb's `errors.component`): its props, the
+ * shared `auth.user` and props, and `errors`, the invalid fields of a page
+ * visit whose query failed validation.
+ *
+ * @example
+ * const ErrorPage: WebErrorPage = ({ status, message, errors }) => <main>...</main>
+ */
+export type WebErrorPage = WebPage<ErrorPageProps>
+
 export type PageResolver = (name: string) =>
   | Promise<{ default: ComponentType<never> }>
   | { default: ComponentType<never> }

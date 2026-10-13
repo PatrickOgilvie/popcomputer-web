@@ -165,9 +165,11 @@ export function dbBatch<const Items extends BatchArgument>(
 /** Unique constraints `uniqueFieldErrors` reports by name, with the form field each belongs to. */
 export interface UniqueFieldErrorsOptions<Field extends string> {
   /**
-   * Constraint names whose violation belongs on a field: an index on an
-   * expression, such as `lower(email)`, reports no columns, and a composite
-   * key, such as `(org_id, user_id)`, may belong on another field.
+   * Unique constraints whose violation belongs on a field, each named as the
+   * database reports it: by name, as Postgres names an index on an expression
+   * such as `lower(email)`, which reports no columns; or by its columns joined
+   * with commas, as SQLite and D1 report a composite key such as
+   * `'org_id,user_id'` that belongs on another field.
    */
   readonly constraints?: Readonly<Record<string, Field>>
 }
@@ -186,6 +188,9 @@ export interface UniqueFieldErrorsOptions<Field extends string> {
  * yield* dbMutation((db) => db.insert(contacts).values(contact)).pipe(
  *   uniqueFieldErrors({ email: 'A contact has this email.' }, { constraints: { contacts_email_lower_unique: 'email' } })
  * )
+ * yield* dbMutation((db) => db.insert(memberships).values(member)).pipe(
+ *   uniqueFieldErrors({ email: 'Already a member.' }, { constraints: { 'org_id,user_id': 'email' } })
+ * )
  */
 export function uniqueFieldErrors<const Field extends string>(
   messages: Readonly<Record<Field, string>>,
@@ -199,7 +204,10 @@ export function uniqueFieldErrors<const Field extends string>(
         return Effect.fail(error)
       }
 
-      const named = error.constraintName === undefined ? undefined : options.constraints?.[error.constraintName]
+      const byColumns = error.columns.join(',')
+      const named =
+        (error.constraintName === undefined ? undefined : options.constraints?.[error.constraintName]) ??
+        (byColumns === '' ? undefined : options.constraints?.[byColumns])
       const errors = Object.fromEntries(
         Object.entries<string>(messages).filter(([field]) =>
           field === named || error.columns.includes(field) || error.columns.includes(snakeCase(field))

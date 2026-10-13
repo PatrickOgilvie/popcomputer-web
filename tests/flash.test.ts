@@ -16,7 +16,7 @@ import { back, flash, invalid, redirect, redirectNow, render } from '../src/effe
 import { positiveInt, requiredString } from '../src/effect/schema.js'
 import { validateRequest } from '../src/effect/validation.js'
 import { ValidationError } from '../src/effect/errors.js'
-import { followRedirect, readError, readPage } from '../src/testing.js'
+import { followRedirect, readError, readErrorPage, readPage } from '../src/testing.js'
 
 const CreateProject = S.Struct({ name: requiredString })
 
@@ -180,6 +180,15 @@ describe('flash', () => {
 
     expect(body.props.errors).toEqual({})
     expect(body.flash).toEqual({})
+  })
+})
+
+describe('readErrorPage', () => {
+  test('reads the error page with the invalid fields', async () => {
+    const page = await readErrorPage(await createApp().request('/search?page=first', { headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } }))
+
+    expect(page.props.status).toBe(422)
+    expect(typeof page.props.errors.page).toBe('string')
   })
 })
 

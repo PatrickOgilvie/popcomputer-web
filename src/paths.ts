@@ -26,10 +26,6 @@ type DeclaredPaths = Registered<'paths', never>
 /** A route path setupWeb's `paths` declares, or any path before the application declares them. */
 export type DeclaredPath = [DeclaredPaths] extends [never] ? string : DeclaredPaths[keyof DeclaredPaths] & string
 
-/** Shown in place of a path literal that is not a declared path. */
-export type UndeclaredPath =
-  "Not one of setupWeb's paths: declare it in src/paths.ts and build the URL from it, or pass an absolute URL."
-
 /**
  * A path `href`, `redirect` and `back` accept: a declared path, an absolute
  * URL, or a string computed at runtime, such as one `href` built. A literal
@@ -39,7 +35,12 @@ export type PathTarget<Path extends string> = string extends Path
   ? Path
   : Path extends DeclaredPath | `http://${string}` | `https://${string}`
     ? Path
-    : UndeclaredPath
+    : {
+        // Written out rather than named, so the compiler's message shows it,
+        // with the paths the application declares.
+        readonly __error: "Not one of setupWeb's paths: declare it in src/paths.ts and build the URL from it, or pass an absolute URL."
+        readonly declaredPaths: DeclaredPath
+      }
 
 /** A route path's placeholder names: `{project}` and `{project:slug}` are both `project`. */
 export type PathParamName<Path extends string> =

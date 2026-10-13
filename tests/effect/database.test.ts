@@ -306,6 +306,20 @@ describe('uniqueFieldErrors', () => {
     expect(failureOf(exit)).toMatchObject({ value: { _tag: 'ValidationError', errors: { email: 'A contact has this email.' } } })
     expect(violation.toStructured().message).toContain('"contacts_email_lower_unique"')
   })
+
+  test('reports a composite key by its columns, as SQLite reports it, on another field', async () => {
+    const { layer, db } = openDatabase()
+    await db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Intro' })
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Again' })).pipe(
+        uniqueFieldErrors({ title: 'Choose another address for this page.' }, { constraints: { 'workspace_id,slug': 'title' } }),
+        Effect.provide(layer)
+      )
+    )
+
+    expect(failureOf(exit)).toMatchObject({ value: { errors: { title: 'Choose another address for this page.' } } })
+  })
 })
 
 class SlugTaken extends Schema.TaggedError<SlugTaken>()('SlugTaken', { slug: Schema.String }) {}

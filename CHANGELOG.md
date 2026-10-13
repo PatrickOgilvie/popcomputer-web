@@ -68,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `WebErrorPage` from `@popcomputer/web/react` types the error page component, and `readErrorPage(response)` from `@popcomputer/web/testing` reads it in a test, with the invalid fields of a page visit as `errors`.
+- `betterAuthRedirect`'s and `betterAuthLogoutAction`'s `redirectTo`, and `auth.signInPath`, take declared paths, as `redirect` does.
 - `tableSchema(table, overrides)` checks the columns `overrides` names with the schemas given, such as a JSON column's or a `$type<...>()` narrowing's, and derives the rest from the table.
 - `uniqueFieldErrors(messages, { constraints })` names unique constraints by the field they belong on, for an index on an expression such as `lower(email)`, which reports no columns, or a composite key that belongs on another field. A constraint violation's message on development pages names the constraint and its columns.
 - Once setupWeb declares `paths`, a path literal given to `redirect`, `redirectNow`, `back`, `href` or `intendedUrl` must be a declared path or an absolute URL, so a misspelled path is a type error naming the fix; a URL computed at runtime is a string and passes. `back(fallback, params)` fills its fallback's placeholders.
@@ -113,6 +115,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A misspelled path literal's type error shows why and lists the declared paths; it read `not assignable to parameter of type 'never'`.
+- `uniqueFieldErrors`'s `constraints` also names a constraint by its columns, joined with commas, as SQLite and D1 report one: they report no constraint name, so a mapping by name never matched there.
+- An invalid bound row's error names the field that failed its schema.
 - `kvCache` keeps an entry at least 60 seconds, the shortest expiry Workers KV accepts; `cache()` with a shorter `ttl` failed every write and never cached. `cache()` still treats an entry as fresh only for its `ttl`.
 - `HttpError.rateLimited(seconds)` sends `Retry-After` as a header as well as in the body.
 - A binding `scope` can name any earlier binding of its route, not only the one before it, and a scope naming no binding before it fails with an error listing the ones it can name; it was ignored, and the route failed with a hint to add the scope it had.
@@ -158,6 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The package version is `0.8.0-next.0` while these changes are unreleased.
 - A `shareProps` computation that fails is reported to `EffectErrorObserverService`, and the page renders without its props, instead of failing every page as a defect.
 - A misspelled `config` name's type error lists the binding names it accepts.
 - The package ships `CHANGELOG.md`.
