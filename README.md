@@ -1829,7 +1829,10 @@ export const paymentWebhook = action(Effect.gen(function* () {
   the validators also serves as a page's props schema, so a filter form's
   query and the page that shows it share one.
 - **Lists in forms**: decode a list with `S.Array(Item)`; a failing item's
-  errors are keyed by its path, as `items.2.amount`. A step of a wizard that
+  errors are keyed by its path, as `items.2.amount`. Read them in React from
+  the page's `errors` prop, ``errors[`items.${index}.amount`]``, which takes any
+  path; Inertia's `useForm().errors` is keyed by the form's top-level fields
+  only, so reading a nested path from it needs a cast. A step of a wizard that
   fails on another step's data fails with
   `new ValidationError({ errors, redirectTo })` to send the visitor to that
   step.
