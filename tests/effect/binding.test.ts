@@ -1225,8 +1225,24 @@ describe('route model binding loads when the action asks', () => {
       })))
       .get('/projects/{project}/ping', action(json({ pong: true })))
 
+    routes.prefix('/teams/{project}').get('/settings', action(Effect.gen(function* () {
+      return yield* json(yield* bound('project'))
+    }))).post('/archive', action(json({ archived: true })), { purges: true })
+
     return { app, queries }
   }
+
+  test('a prefix\'s placeholders bind models for the routes under it', async () => {
+    const { app } = createApp()
+    const found = await app.request('/teams/secret-project/settings')
+    const missing = await app.request('/teams/no-such-project/settings')
+    const archived = await app.request('/teams/secret-project/archive', { method: 'POST' })
+
+    expect(found.status).toBe(200)
+    expect(await found.json()).toEqual({ id: 'secret-project', userId: 'user-1' })
+    expect(missing.status).toBe(404)
+    expect(archived.status).toBe(200)
+  })
 
   test('signed-out requests cannot tell whether a project exists', async () => {
     for (const guard of [false, true]) {

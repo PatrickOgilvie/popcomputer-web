@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A route under a prefix with `{placeholders}`, such as `routes.prefix('/orgs/{org}').get('/settings', ...)`, answered 404: the prefix's placeholders were registered literally. They are now route parameters and bind models, and `purges: true` under such a prefix purges them.
 - Page props, shared props, flash values and the shared `auth.user` are encoded from their schema's type, which is what the React page receives as JSON: a schema built from validators, such as a filter form's, serves as a page's props, where a date in it failed with `Expected JSON value`.
 - `ensureArray` reports a failing item under its index (`tags.1`), as `S.Array` does.
 - `required(message)` shows its message when the field is missing, such as an unselected radio group, as well as when it is blank.

@@ -515,9 +515,11 @@ export class EffectRouteBuilder<
     ...handlers: MiddlewareHandler<E>[]
   ): this {
     if (this.pathPrefix) {
+      const prefix = toHonoPath(this.pathPrefix)
+
       // Two patterns: '/api/*' does not match '/api' itself in Hono
-      this.app.use(this.pathPrefix, ...handlers)
-      this.app.use(`${this.pathPrefix}/*`, ...handlers)
+      this.app.use(prefix, ...handlers)
+      this.app.use(`${prefix}/*`, ...handlers)
     } else {
       this.app.use('/*', ...handlers)
     }
@@ -1032,9 +1034,12 @@ export class EffectRouteBuilder<
     effect: Effect.Effect<Response | Redirect, AppError, R>,
     options?: EffectRouteOptions
   ): void {
-    const bindings = parseBindings(path)
+    // The prefix's placeholders are the route's too: /orgs/{org} as a prefix
+    // binds org for every route under it.
+    const routePath = this.resolvePath(path)
+    const bindings = parseBindings(routePath)
     const honoPath = toHonoPath(path)
-    const fullPath = this.resolvePath(honoPath)
+    const fullPath = toHonoPath(routePath)
 
     const configured = this.bridgeConfig?.bindings
 
