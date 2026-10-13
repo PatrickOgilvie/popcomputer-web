@@ -117,6 +117,20 @@ const reportStoreFailure = (operation: string) => (error: CacheError | Schema.Sc
     metadata: { operation },
   }, 'Cache store failed; the value was computed instead')
 
+/**
+ * Report an invalidation the store failed. The write it follows has
+ * happened, so failing the request would misreport it; the entry stays stale
+ * until it expires.
+ */
+const reportInvalidationFailure = (operation: string) => (error: CacheError) =>
+  observeOrLog({
+    source: 'framework',
+    handling: 'handled',
+    kind: 'failure',
+    error,
+    metadata: { operation },
+  }, 'Cache invalidation failed; the entry stays until it expires')
+
 /** A failure to encode or decode an entry, as the CacheError explicit operations fail with. */
 const entryError = (reason: string) => (cause: Schema.SchemaError) =>
   new CacheError({ reason, cause })
@@ -365,7 +379,9 @@ export type CacheInvalidateOptions<V> = {
 }
 
 /**
- * Invalidate a cache key.
+ * Invalidate a cache key. A store that fails is reported to
+ * `EffectErrorObserverService`, not to the visitor: the write the
+ * invalidation follows has happened, and the entry expires on its own.
  *
  * @example
  * ```typescript
@@ -379,7 +395,7 @@ export type CacheInvalidateOptions<V> = {
 export const cacheInvalidate = <V = unknown>(
   key: string,
   options?: CacheInvalidateOptions<V>
-): Effect.Effect<void, CacheError, CacheService> =>
+): Effect.Effect<void, never, CacheService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
 
@@ -388,10 +404,14 @@ export const cacheInvalidate = <V = unknown>(
       : key
 
     yield* cacheService.delete(effectiveKey)
-  }).pipe(Effect.withSpan('Web.cacheInvalidate'))
+  }).pipe(
+    Effect.catchTag('CacheError', reportInvalidationFailure('invalidate')),
+    Effect.withSpan('Web.cacheInvalidate')
+  )
 
 /**
- * Invalidate all cache keys with a given prefix.
+ * Invalidate all cache keys with a given prefix. A store that fails is
+ * reported, as for `cacheInvalidate`.
  *
  * @example
  * ```typescript
@@ -400,7 +420,7 @@ export const cacheInvalidate = <V = unknown>(
  */
 export const cacheInvalidatePrefix = (
   prefix: string
-): Effect.Effect<void, CacheError, CacheService> =>
+): Effect.Effect<void, never, CacheService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
     let cursor: string | undefined = undefined
@@ -424,7 +444,10 @@ export const cacheInvalidatePrefix = (
 
       cursor = page.cursor
     }
-  }).pipe(Effect.withSpan('Web.cacheInvalidatePrefix'))
+  }).pipe(
+    Effect.catchTag('CacheError', reportInvalidationFailure('invalidatePrefix')),
+    Effect.withSpan('Web.cacheInvalidatePrefix')
+  )
 
 export { CacheService, type CacheClient } from './effect/services.js'
 export { CacheError }

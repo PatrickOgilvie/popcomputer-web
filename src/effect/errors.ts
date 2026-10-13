@@ -779,8 +779,8 @@ export type AppError =
  * Cache Error - The cache store failed an explicit cache operation.
  *
  * `cache()` never fails with it: a cache that cannot be read or written
- * computes the value instead. `cacheGet`, `cacheSet` and the invalidation
- * helpers fail with it, which the boundary renders as 503.
+ * computes the value instead, and the invalidation helpers report it.
+ * `cacheGet` and `cacheSet` fail with it, which the boundary renders as 503.
  */
 export class CacheError extends Schema.TaggedError<CacheError>()('CacheError', {
   reason: Schema.String,

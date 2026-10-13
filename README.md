@@ -1004,8 +1004,11 @@ export const listProjects = action(Effect.gen(function* () {
 
 `cache` never fails because of the store: an unreachable store or an entry that
 no longer matches the schema computes the value instead, and the failure goes
-to `EffectErrorObserverService`. `cacheGet`, `cacheSet`, `cacheInvalidate` and
-`cacheInvalidatePrefix` fail with `CacheError`, which renders as 503.
+to `EffectErrorObserverService`. `cacheGet` and `cacheSet` fail with
+`CacheError`, which renders as 503. `cacheInvalidate` and
+`cacheInvalidatePrefix`, which follow a write that has already happened,
+report a store failure instead of failing the request; the entry stays until
+it expires.
 Stale-while-revalidate refreshes in the background when the request has an
 execution context and inline otherwise.
 

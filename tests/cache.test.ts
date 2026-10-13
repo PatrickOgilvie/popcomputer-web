@@ -686,6 +686,26 @@ describe('cache', () => {
       expect(value.name).toBe('Ada')
       expect(observed).toEqual(['cache.get', 'cache.put'])
     })
+
+    it('invalidation reports a store that fails instead of failing the write it follows', async () => {
+      const observed: string[] = []
+
+      const observer = Layer.succeed(EffectErrorObserverService, {
+        observe: (event) => Effect.sync(() => {
+          observed.push(String(event.metadata?.operation))
+        }),
+      })
+
+      await Effect.gen(function* () {
+        yield* cacheInvalidate('user:1')
+        yield* cacheInvalidatePrefix('user:')
+      }).pipe(
+        Effect.provide(Layer.mergeAll(Layer.succeed(CacheService, failingClient), observer)),
+        Effect.runPromise
+      )
+
+      expect(observed).toEqual(['invalidate', 'invalidatePrefix'])
+    })
   })
 
   describe('integration scenarios', () => {

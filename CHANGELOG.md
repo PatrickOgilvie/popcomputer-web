@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- `cacheInvalidate` and `cacheInvalidatePrefix` report a store failure to `EffectErrorObserverService` and succeed, instead of failing with `CacheError` (503): they follow a write that has already happened, so the 503 told the visitor a saved change had failed. The entry stays until it expires.
 - `signedIn` gives a user without a `name` the name `Test User` instead of `null`, which fits Better Auth's `user` table, whose `name` is not null.
 - `readPage(...).flash` is typed by setupWeb's `flash` declaration (`FlashData`) instead of `Record<string, unknown>`.
 - A `{param}` without a parser in `bindings` is a plain parameter, read with `validateRequest`, beside the route's models. `bound()` failed on any route that mixed the two, because every placeholder was loaded as a model. `bound('param')` for a plain parameter fails with a configuration error naming it, and route parameter validation and cache tags cover only the route's models.
