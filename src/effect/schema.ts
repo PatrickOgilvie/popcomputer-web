@@ -1207,9 +1207,66 @@ const formatBytes = (bytes: number): string =>
   : bytes >= 1000 ? `${Math.round(bytes / 100) / 10} KB`
   : `${bytes} bytes`
 
+/** The bytes a file of a type starts with, at an offset, as `[offset, bytes]` pairs any of which may match. */
+const SIGNATURES: Readonly<Record<string, { readonly label: string; readonly starts: ReadonlyArray<readonly [number, string]> }>> = {
+  'image/png': { label: 'PNG image', starts: [[0, '\x89PNG\r\n\x1a\n']] },
+  'image/jpeg': { label: 'JPEG image', starts: [[0, '\xff\xd8\xff']] },
+  'image/gif': { label: 'GIF image', starts: [[0, 'GIF87a'], [0, 'GIF89a']] },
+  'image/webp': { label: 'WebP image', starts: [[8, 'WEBP']] },
+  'image/avif': { label: 'AVIF image', starts: [[4, 'ftypavif'], [4, 'ftypavis']] },
+  'image/heic': { label: 'HEIC image', starts: [[4, 'ftypheic'], [4, 'ftypheix'], [4, 'ftypmif1']] },
+  'image/bmp': { label: 'BMP image', starts: [[0, 'BM']] },
+  'application/pdf': { label: 'PDF', starts: [[0, '%PDF-']] },
+  'application/zip': { label: 'ZIP archive', starts: [[0, 'PK\x03\x04']] },
+}
+
+/** Whether bytes begin as markup a browser could run: `<html`, `<svg`, `<?xml`, `<!DOCTYPE`. */
+const looksLikeMarkup = (head: string): boolean => /^(?:\xef\xbb\xbf)?\s*<(?:[!?a-z])/i.test(head)
+
 /**
- * A file uploaded through a multipart form, checked for type and size.
- * `validateRequest` reads multipart bodies; a file input left empty is no file.
+ * Whether a file's first bytes are what its declared type says: a type with
+ * a known signature must start with it, and any other image must not be
+ * markup. A file whose declared type is neither passes.
+ */
+const contentMatches = (type: string, head: string): boolean => {
+  const signature = SIGNATURES[essence(type)]
+
+  // An active type, such as an SVG, is markup by nature: it is accepted only when named.
+  if (ACTIVE_CONTENT_TYPES.has(essence(type))) return true
+
+  if (signature !== undefined) return signature.starts.some(([offset, bytes]) => head.startsWith(bytes, offset))
+
+  return !(essence(type).startsWith('image/') && looksLikeMarkup(head))
+}
+
+const labelOf = (type: string): string => SIGNATURES[essence(type)]?.label ?? essence(type)
+
+/** A file whose contents are what its declared type says, as `contentMatches` checks them. */
+const fileOfItsType = S.File.pipe(
+  S.decodeTo(
+    S.File,
+    SchemaTransformation.transformEffect({
+      decode: (file: File, options) =>
+        Effect.promise(() => file.slice(0, 32).arrayBuffer()).pipe(
+          Effect.flatMap((buffer) => {
+            const head = String.fromCharCode(...new Uint8Array(buffer))
+
+            return contentMatches(file.type, head)
+              ? Effect.succeed(file)
+              : Effect.fail(new SchemaIssue.InvalidValue({ message: `The file is not a ${labelOf(file.type)}` }, file, options))
+          })
+        ),
+      encode: (file: File) => Effect.succeed(file),
+    })
+  )
+)
+
+/**
+ * A file uploaded through a multipart form, checked for type and size, and
+ * for contents that match its type: a PNG must start as a PNG does, so an
+ * HTML page sent as `image/png` is refused, and no image may be markup a
+ * browser would run. `validateRequest` reads multipart bodies; a file input
+ * left empty is no file.
  *
  * @example
  * const PostForm = S.Struct({ title: requiredString, cover: upload({ types: ['image/*'], maxBytes: 5_000_000 }) })
@@ -1225,7 +1282,7 @@ export const upload = (options: UploadOptions = {}) =>
       (file: File) => options.maxBytes === undefined || file.size <= options.maxBytes,
       { message: `The file must be at most ${formatBytes(options.maxBytes ?? 0)}` }
     )
-  )
+  ).pipe(S.decodeTo(fileOfItsType))
 
 /** An optional upload: an absent field or a file input left empty decodes to `null`. */
 export const nullableUpload = (options: UploadOptions = {}) => {

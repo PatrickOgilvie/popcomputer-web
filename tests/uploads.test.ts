@@ -42,7 +42,7 @@ describe('uploads', () => {
   test('a multipart file reaches the action', async () => {
     const res = await createApp().request('/posts', {
       method: 'POST',
-      body: form(new File([new Uint8Array(10)], 'cover.png', { type: 'image/png' })),
+      body: form(new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0])], 'cover.png', { type: 'image/png' })),
     })
 
     expect(await res.json()).toEqual({ title: 'Launch', cover: 'cover.png', bytes: 10 })
@@ -61,15 +61,16 @@ describe('uploads', () => {
 })
 
 describe('upload types', () => {
-  const decode = S.decodeUnknownExit(upload({ types: ['text/plain', 'image/*'] }))
+  const decode = (file: File) => Effect.runPromiseExit(S.decodeUnknownEffect(upload({ types: ['text/plain', 'image/*'] }))(file))
+  const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
-  test('compare the media type without its parameters, in any case', () => {
-    expect(decode(new File(['x'], 'notes.txt', { type: 'text/plain;charset=utf-8' }))._tag).toBe('Success')
-    expect(decode(new File(['x'], 'notes.txt', { type: 'Text/Plain; charset=UTF-8' }))._tag).toBe('Success')
-    expect(decode(new File(['x'], 'photo.png', { type: 'image/png' }))._tag).toBe('Success')
+  test('compare the media type without its parameters, in any case', async () => {
+    expect((await decode(new File(['x'], 'notes.txt', { type: 'text/plain;charset=utf-8' })))._tag).toBe('Success')
+    expect((await decode(new File(['x'], 'notes.txt', { type: 'Text/Plain; charset=UTF-8' })))._tag).toBe('Success')
+    expect((await decode(new File([png], 'photo.png', { type: 'image/png' })))._tag).toBe('Success')
   })
 
-  test('reject other types', () => {
-    expect(decode(new File(['x'], 'page.html', { type: 'text/html;charset=utf-8' }))._tag).toBe('Failure')
+  test('reject other types', async () => {
+    expect((await decode(new File(['x'], 'page.html', { type: 'text/html;charset=utf-8' })))._tag).toBe('Failure')
   })
 })

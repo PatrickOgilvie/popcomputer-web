@@ -911,11 +911,17 @@ describe('Absent form fields', () => {
 
 describe('Uploads', () => {
   const Form = S.Struct({ cover: upload({ types: ['image/*'], maxBytes: 1024 }), attachment: nullableUpload() })
-  const decode = (input: object) => S.decodeUnknownExit(Form)(input)
-  const png = new File([new Uint8Array(100)], 'cover.png', { type: 'image/png' })
+  const decode = (input: object) => Effect.runPromiseExit(S.decodeUnknownEffect(Form)(input))
+  // A PNG's signature, then padding: what the content check reads.
+  const pngBytes = (size: number) => {
+    const bytes = new Uint8Array(size)
+    bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    return bytes
+  }
+  const png = new File([pngBytes(100)], 'cover.png', { type: 'image/png' })
 
-  test('accepts a file of an accepted type and size', () => {
-    const exit = decode({ cover: png })
+  test('accepts a file of an accepted type and size', async () => {
+    const exit = await decode({ cover: png })
 
     expect(exit._tag === 'Success' && exit.value).toEqual({ cover: png, attachment: null })
   })
@@ -923,26 +929,28 @@ describe('Uploads', () => {
   test.each([
     ['an empty file input', new File([], '', { type: 'application/octet-stream' }), 'Choose a file'],
     ['another type', new File(['x'], 'notes.txt', { type: 'text/plain' }), 'The file must be image/*'],
-    ['a larger file', new File([new Uint8Array(2048)], 'big.png', { type: 'image/png' }), 'The file must be at most 1 KB'],
+    ['a larger file', new File([pngBytes(2048)], 'big.png', { type: 'image/png' }), 'The file must be at most 1 KB'],
     ['an SVG, which can carry script, for a family', new File(['<svg/>'], 'cover.svg', { type: 'image/svg+xml' }), 'The file must be image/*'],
-  ])('rejects %s', (_name, cover, message) => {
-    expect(String(S.decodeUnknownExit(Form)({ cover }))).toContain(message)
+    ['a page sent as a PNG', new File(['<html><script>alert(1)</script></html>'], 'cover.png', { type: 'image/png' }), 'The file is not a PNG image'],
+    ['markup sent as another image', new File(['<!DOCTYPE html><p>'], 'cover.tiff', { type: 'image/tiff' }), 'The file is not a image/tiff'],
+  ])('rejects %s', async (_name, cover, message) => {
+    expect(String(await decode({ cover }))).toContain(message)
   })
 
-  test('names a size limit in decimal units', () => {
+  test('names a size limit in decimal units', async () => {
     const big = new File([new Uint8Array(10_000_001)], 'big.jpg', { type: 'image/jpeg' })
 
-    expect(String(S.decodeUnknownExit(upload({ maxBytes: 10_000_000 }))(big))).toContain('The file must be at most 10 MB')
+    expect(String(await Effect.runPromiseExit(S.decodeUnknownEffect(upload({ maxBytes: 10_000_000 }))(big)))).toContain('The file must be at most 10 MB')
   })
 
-  test('accepts an SVG when its type is named', () => {
+  test('accepts an SVG when its type is named', async () => {
     const svg = new File(['<svg/>'], 'logo.svg', { type: 'image/svg+xml' })
 
-    expect(S.decodeUnknownExit(upload({ types: ['image/svg+xml'] }))(svg)._tag).toBe('Success')
+    expect((await Effect.runPromiseExit(S.decodeUnknownEffect(upload({ types: ['image/svg+xml'] }))(svg)))._tag).toBe('Success')
   })
 
-  test('reads an empty optional file input as no file', () => {
-    const exit = decode({ cover: png, attachment: new File([], '') })
+  test('reads an empty optional file input as no file', async () => {
+    const exit = await decode({ cover: png, attachment: new File([], '') })
 
     expect(exit._tag === 'Success' && exit.value.attachment).toBeNull()
   })

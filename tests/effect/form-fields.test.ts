@@ -77,9 +77,9 @@ describe('validateRequest reads nested form and query fields', () => {
   test('a multipart form with files, as Inertia sends one with an upload', async () => {
     const body = new FormData()
     body.append('items[0][amount]', '12.5')
-    body.append('items[0][receipt]', new File(['a'], 'taxi.pdf', { type: 'application/pdf' }))
+    body.append('items[0][receipt]', new File(['%PDF-1.7 a'], 'taxi.pdf', { type: 'application/pdf' }))
     body.append('items[1][amount]', '3')
-    body.append('items[1][receipt]', new File(['b'], 'lunch.pdf', { type: 'application/pdf' }))
+    body.append('items[1][receipt]', new File(['%PDF-1.7 b'], 'lunch.pdf', { type: 'application/pdf' }))
 
     const res = await app.request('/receipts', { method: 'POST', body, headers: { Accept: 'application/json' } })
 
