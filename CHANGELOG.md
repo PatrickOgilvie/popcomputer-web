@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `testEnv(layer, bindings, { database })` gives a test request its own database in place of setupWeb's `database` factory: the database operations, route model binding and the Better Auth client all use it, such as an in-process PGlite database.
+- `applyMigrations(folder, run)` from `@popcomputer/web/testing` applies drizzle-kit's SQL migrations through any driver, such as Miniflare's D1 or PGlite.
 - `ValidationError` has an optional `redirectTo`: a failed form submission goes to that page with its field errors instead of back, such as a wizard's last step sending errors to an earlier one.
 - `file(body, { contentType, filename })` answers with a file: text, bytes, a web stream or an Effect `Stream`, inline or as a download. `json` and `text` take `{ status, headers }` as well as a status.
 - `betterAuthRedirect`'s `redirectTo` can be a function of Better Auth's result returning a path or an Effect, so a sign-up can land on, or first create, the new user's own page.
@@ -105,6 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The README documents testing against the production database family (PGlite for Postgres, Miniflare's D1 for D1), `readPage`, uploads and request headers, predicate guards, `file`, where a failed form goes, what Workers Cache cannot see (cookies), what `purges: true` purges, and the type-only import an augmenting file needs under TypeScript 7.
 - `bound(key)` accepts only the keys of the registered bindings once the application augments `WebRouteBindingsType`, so a misspelled key is a type error at the call (`BoundKey`).
 - `dbTransaction` is a type error on Cloudflare D1 (a database whose driver client prepares and batches statements but has no `transaction`), naming `dbBatch`. It failed at runtime.
 - A request built with `testEnv` that declares no `ENVIRONMENT` or `NODE_ENV` binding renders errors with development details, so a failing test shows why. Pass `ENVIRONMENT: 'production'` to test production error pages.

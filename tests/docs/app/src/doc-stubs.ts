@@ -29,6 +29,8 @@ export declare function loadProjects(
 ): Promise<ReadonlyArray<typeof ProjectSummary.Type>>
 
 export declare const newProject: typeof projects.$inferInsert
+export declare const testDb: ReturnType<typeof createDb>
+export { testBindings } from './test-bindings'
 
 export interface AuditEvent {
   readonly action: string
@@ -38,6 +40,7 @@ export declare const event: AuditEvent
 export declare function sendAuditEvent(event: AuditEvent): Effect.Effect<void>
 
 export { showProject } from './actions/projects/show'
+export { showDashboard } from './actions/dashboard'
 export { updateProject } from './actions/projects/update'
 export { ClockLive, auditLogFor } from './services'
 export const showProjectBySlug = json({ page: 'Projects/Show' })

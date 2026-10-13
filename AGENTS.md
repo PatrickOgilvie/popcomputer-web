@@ -22,17 +22,18 @@ To use this file, point the application's own `AGENTS.md` or `CLAUDE.md` at
    it. Type each React page as `WebPage<'Projects/Show'>` from
    `@popcomputer/web/react`. Never declare a page's props twice.
 4. **End every branch with a response helper:** `return yield* render(...)`,
-   `redirect(...)`, `json(...)`, `jsonOrRender(...)`, `notFound(...)`,
-   `forbidden(...)` or `httpError(...)`. `yield* flash(key, value)` before a
+   `redirect(...)`, `json(...)`, `jsonOrRender(...)`, `file(...)`,
+   `notFound(...)`, `forbidden(...)` or `httpError(...)`. `yield* flash(key, value)` before a
    redirect hands a message to the next page. Expected failures are typed
    Effect failures. Do not `throw` in an action.
 5. **Read request input only through `validateRequest(Schema)`.** Build schemas
    from `@popcomputer/web/schema` validators (`requiredString`,
    `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, ...), which
-   accept form posts as well as JSON. A form that fails validation goes back
-   to the page it came from, which receives the field errors as `errors`;
-   a JSON client gets a `422`. A key that route params, query and body
-   provide with different values fails validation.
+   accept form posts as well as JSON, and `upload(...)` for files. A form that
+   fails validation goes back to the page it came from, which receives the
+   field errors as `errors`; a JSON client gets a `422`. A key that route
+   params, query and body provide with different values fails validation.
+   Read headers and a raw body (a webhook signature) with `RequestService`.
 6. **Load route models with `{param}` placeholders and `bound('param')`.**
    Register each model's Effect Schema in `setupWeb`'s `bindings` and augment
    `WebRouteBindingsType` with the same object. Never query by a route
@@ -68,7 +69,10 @@ To use this file, point the application's own `AGENTS.md` or `CLAUDE.md` at
     read bindings, headers or bound models are already rendered per request.
 12. **Test through the app.** `app.request(path, init, testEnv(layer,
     bindings))` from `@popcomputer/web/testing` runs the real route;
-    `signedIn(user)` signs the request in. Assert on `X-Inertia` JSON responses.
+    `signedIn(user)` signs the request in, and `readPage(res, 'Name')` reads
+    an `X-Inertia` response typed by the page registry. Test against the
+    production database family: PGlite for Postgres (`testEnv`'s `database`),
+    Miniflare's D1 for D1, migrated with `applyMigrations`.
 
 Every name has one entrypoint: `@popcomputer/web` for `setupWeb`, template
 helpers and Hono middleware; `@popcomputer/web/effect` for actions, routes,

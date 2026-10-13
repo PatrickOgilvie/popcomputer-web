@@ -9,6 +9,7 @@ import { verifyOrigin, type VerifyOriginConfig } from './security.js'
 import type { PagePropValue, WebConfig } from './types.js'
 import { loadUserMiddleware, shareAuthMiddleware } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
+import { readTestDatabase } from './effect/test-env.js'
 import { pageCache } from './page-cache.js'
 import type {
   AuthService,
@@ -291,7 +292,11 @@ function createSetupMiddleware<
       // SAFETY: DB/Auth generics are the app's declared client types; the
       // WebDatabaseType/WebAuthType module augmentations make these
       // the same types DatabaseService/AuthService hand back to handlers.
-      const db = config.database?.(c)
+      // A test request may bring its own database (testEnv's `database`).
+      const testDatabase = readTestDatabase(c.env)
+      // SAFETY: testEnv types the database as DatabaseType, which the
+      // application's WebDatabaseType augmentation makes the factory's DB.
+      const db = testDatabase === undefined ? config.database?.(c) : testDatabase as DB
 
       if (db !== undefined) {
         // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.

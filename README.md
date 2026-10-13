@@ -126,6 +126,8 @@ not runtime configuration.
 
 ```ts
 // src/web-types.ts
+// Import the module this file augments, so TypeScript resolves it.
+import type {} from '@popcomputer/web/effect'
 import type { createAuth } from './auth'
 import type { createDb } from './db'
 import type * as schema from './schema'
@@ -163,6 +165,7 @@ Each page component's props are an Effect Schema, registered once:
 ```ts
 // src/pages.ts
 import { Schema as S } from 'effect'
+import type {} from '@popcomputer/web/effect'
 
 export const Project = S.Struct({
   id: S.String,
@@ -517,6 +520,12 @@ sources provide with different values fails validation, so a body field cannot
 replace a route parameter; pass `request: { order: ['body'] }` to read only the
 body.
 
+A multipart form's files reach the schema as `File` values. Check them with
+`upload({ types: ['image/*'], maxBytes: 5_000_000 })`, or `nullableUpload(...)`
+when the file is optional; a file input left empty is no file. Headers and the
+raw body, such as an `Idempotency-Key` or a webhook signature, are read from
+`RequestService`'s `header()` and `raw()`.
+
 The database operations read the request's client from `DatabaseService` and
 give their callback the application's Drizzle client with its own types:
 
@@ -722,6 +731,18 @@ application needs it: it exposes every endpoint Better Auth and its plugins
 define, so user fields declared with `input: true` become settable by anyone
 who signs up.
 
+A guard can be any layer that fails. Turn an authorization rule into one for a
+group of routes with `Layer.effectDiscard`:
+
+```ts
+import { Layer } from 'effect'
+import { authorize } from '@popcomputer/web/effect'
+
+const RequireVerified = Layer.effectDiscard(authorize(({ user }) => user.emailVerified))
+
+routes.provide(RequireVerified).get('/billing', showDashboard)
+```
+
 An application that authenticates some other way, such as API keys, provides
 its own user service through a layer that fails with `UnauthorizedError`:
 `routes.provide(ApiKeyAuth)` runs it before the action, so every route
@@ -747,11 +768,17 @@ redirect renders, or the page the same request renders.
 
 A form submission that fails validation, whether in `validateRequest` or as a
 `ValidationError` the action fails with, redirects back (303) to the page it
-came from. That page renders with all of its own props and the field errors as
+came from: its same-origin `Referer`, or `/` without one. A `ValidationError`
+with `redirectTo` goes to that page instead, such as a wizard's earlier step. That page renders with all of its own props and the field errors as
 `errors`; a form that names an Inertia error bag gets them under its name.
 Errors and flash values travel in a short-lived `HttpOnly` cookie that the
 next visit reads and clears. A JSON client gets a 422 instead, and invalid
 query parameters on a page visit render the error page with 422.
+
+`file(body, { contentType, filename })` answers with a file, such as an export
+or a feed: text, bytes, or an Effect `Stream` sent as it is produced. A
+`filename` offers it as a download. `json` and `text` take
+`{ status, headers }` as well as a status.
 
 Typed failures, defects, Hono exceptions, and not-found responses share the
 configured error boundary. Use `EffectErrorObserverService` as the integration
@@ -879,6 +906,26 @@ yield* cache.purge({ tags: [PAGE_CACHE_TAG] })
 Other cached responses, such as JSON APIs and text, use `maxAge` and
 `staleWhileRevalidate` in `Cache-Control` for every cache.
 
+Workers Cache answers a hit before the Worker runs, so it cannot look at the
+visitor's cookies. Use the `cache` option only for pages that are the same for
+every visitor, signed in or not: a cached page shows `auth.user: null` to a
+member, and a form that redirects back to it loses its flashed errors on a hit.
+A page with per-visitor parts belongs on the default page cache, which checks
+cookies first, or renders per request.
+
+`purges` removes cached entries after a successful write. `purges: true`
+derives the tags from the route's own parameters: a write route bound by
+`{post}` (an id) purges `post:<id>`, which matches pages tagged by the same
+column but not a page read by `{post:slug}`. Use the same binding column on
+the read and write routes, or purge explicit tags, computed from the record,
+with `ResponseCacheService` after the write:
+
+```ts
+const project = yield* bound('project')
+const responseCache = yield* ResponseCacheService
+yield* responseCache.purge({ tags: [`project:${project.id}`, 'projects'] })
+```
+
 ## Testing
 
 Test routes through the application itself. `app.request` runs the real
@@ -930,6 +977,54 @@ assert on the component and props rather than HTML.
 
 An action is an Effect, so a test can also run it directly and provide the
 services it reads, for example `Effect.provide(signedIn({ id: 'user-1' }))`.
+
+`readPage` reads a page response typed by the page registry, and rejects with
+what the response was instead when it is not that page:
+
+```ts
+import { readPage, signedIn, testEnv } from '@popcomputer/web/testing'
+
+const res = await app.request(
+  '/projects/project-1',
+  { headers: { 'X-Inertia': 'true' } },
+  testEnv(signedIn({ id: 'user-1' }), testBindings)
+)
+const page = await readPage(res, 'Projects/Show')
+
+page.props.project.createdAt // a string: the JSON the browser receives
+```
+
+### A database for tests
+
+Test against the database family production uses, so transactions, batches
+and constraint errors behave the same:
+
+- **Postgres** (including through Hyperdrive): an in-process
+  [PGlite](https://pglite.dev) database with `drizzle-orm/pglite`. Apply the
+  migrations drizzle-kit generates with `applyMigrations('./drizzle', (sql) =>
+  client.exec(sql))`, and pass the Drizzle client as `testEnv`'s `database`. It
+  replaces setupWeb's `database` factory for that request, so the database
+  operations, route model binding and Better Auth all use it.
+- **Cloudflare D1**: Miniflare's real D1 runs under Bun. Create
+  `new Miniflare({ modules: true, script: 'export default {}', d1Databases:
+  ['DB'] })`, migrate `await miniflare.getD1Database('DB')` with
+  `applyMigrations('./drizzle', (sql) => d1.prepare(sql).run())`, and pass it
+  as the `DB` binding. `getKVNamespace` and `getR2Bucket` give the other
+  bindings the same way. Dispose of Miniflare when the test process ends.
+
+`bun:sqlite` is a synchronous driver: it can stand in for neither, since
+`dbTransaction` and `dbBatch` are type errors for it.
+
+```ts
+const env = testEnv(signedIn({ id: 'user-1' }), testBindings, { database: testDb })
+```
+
+A request built with `testEnv` renders failures with their development
+details unless its bindings set `ENVIRONMENT`; pass `ENVIRONMENT: 'production'`
+to test the production error page. `services.app` is built once per test
+process, from the first request's bindings: replace an application service in
+a test with a layer in `testEnv` rather than different bindings. A failed
+build is retried by the next request.
 
 ## Lower-level composition
 

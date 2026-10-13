@@ -8,7 +8,10 @@ import { action } from '../src/effect/action.js'
 import { authorize, AuthUserService, DatabaseService } from '../src/effect/services.js'
 import { flash, json, notFound, redirect, render } from '../src/effect/responses.js'
 import { effectRoutes } from '../src/effect/routing.js'
-import { signedIn, testEnv } from '../src/testing.js'
+import { applyMigrations, signedIn, testEnv } from '../src/testing.js'
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Database } from 'bun:sqlite'
 import { eq } from 'drizzle-orm'
 import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite'
@@ -225,6 +228,31 @@ describe('the README route test', () => {
     )
 
     expect(await res.json()).toMatchObject({ props: { project: { name: 'Gemini' } } })
+  })
+
+  test("a test's database replaces the database factory's for binding and writes", async () => {
+    const { app, db, testBindings } = await createProjectsApp()
+    const migrations = await mkdtemp(join(tmpdir(), 'popweb-migrations-'))
+    await writeFile(join(migrations, '0000_projects.sql'), [
+      'CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, user_id TEXT NOT NULL);',
+      "INSERT INTO projects (id, name, user_id) VALUES ('project-1', 'Gemini', 'user-1');",
+    ].join('\n--> statement-breakpoint\n'))
+
+    const sqlite = new Database(':memory:')
+    await applyMigrations(migrations, async (statement) => sqlite.run(statement))
+    const testDb = drizzle(sqlite, { schema: projectsSchema })
+    const env = () => testEnv(signedIn({ id: 'user-1' }), testBindings, { database: testDb })
+
+    const show = await app.request('/projects/project-1', { headers: { 'X-Inertia': 'true' } }, env())
+    await app.request('/projects/project-1', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Gemini II', description: null }),
+    }, env())
+
+    expect(await show.json()).toMatchObject({ props: { project: { name: 'Gemini' } } })
+    expect(testDb.select({ name: projects.name }).from(projects).all()).toEqual([{ name: 'Gemini II' }])
+    expect(db.select({ name: projects.name }).from(projects).all()).toEqual([{ name: 'Apollo' }])
   })
 
   test("answers 404 for another member's project", async () => {

@@ -10,8 +10,8 @@
  * const res = await app.request('/projects', {}, testEnv(signedIn({ id: 'user-1' })))
  */
 import { DateTime, Effect, Layer, Redacted } from 'effect'
-import { AuthUserService, type AuthUser, type DefaultAuthUser, type WebBindingsType } from './effect/services.js'
-import { attachTestLayer } from './effect/test-env.js'
+import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser, type WebBindingsType } from './effect/services.js'
+import { attachTestDatabase, attachTestLayer } from './effect/test-env.js'
 import type { PageName } from './effect/pages.js'
 import type { PagePropsFor } from './react.js'
 
@@ -31,11 +31,52 @@ export type TestBindings = WebBindingsType extends { type: infer Bindings } ? Pa
  *
  * @param bindings - Bindings the request reads from `c.env` and Effect `Config`.
  */
-export function testEnv<ROut>(layer: Layer.Layer<ROut>, bindings: TestBindings = {}): TestBindings {
+export function testEnv<ROut>(
+  layer: Layer.Layer<ROut>,
+  bindings: TestBindings = {},
+  options: TestEnvOptions = {}
+): TestBindings {
   const env = { ...bindings }
   attachTestLayer(env, layer)
 
+  if (options.database !== undefined) attachTestDatabase(env, options.database)
+
   return env
+}
+
+/** What a test request uses in place of the application's own setup. */
+export interface TestEnvOptions {
+  /**
+   * The database in place of setupWeb's `database` factory: the database
+   * operations, route model binding and the Better Auth client all use it,
+   * such as an in-process PGlite database migrated with `applyMigrations`.
+   */
+  readonly database?: DatabaseType
+}
+
+/**
+ * Apply drizzle-kit's SQL migrations in `folder`, in file order, running each
+ * statement through `run`: `(sql) => d1.prepare(sql).run()` for a Miniflare
+ * D1 database, `(sql) => pglite.exec(sql)` for PGlite.
+ *
+ * @example
+ * await applyMigrations('./drizzle', (sql) => client.exec(sql))
+ */
+export async function applyMigrations(
+  folder: string,
+  run: (statement: string) => Promise<unknown>
+): Promise<void> {
+  const { readdir, readFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const files = (await readdir(folder)).filter((name) => name.endsWith('.sql')).sort()
+
+  for (const file of files) {
+    const statements = (await readFile(join(folder, file), 'utf8')).split('--> statement-breakpoint')
+
+    for (const statement of statements) {
+      if (statement.trim()) await run(statement)
+    }
+  }
 }
 
 /** Whether the default test session fits the application's AuthUser session. */
