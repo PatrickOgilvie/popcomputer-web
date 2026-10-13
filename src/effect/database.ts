@@ -169,7 +169,8 @@ export interface UniqueFieldErrorsOptions<Field extends string> {
    * database reports it: by name, as Postgres names an index on an expression
    * such as `lower(email)`, which reports no columns; or by its columns joined
    * with commas, as SQLite and D1 report a composite key such as
-   * `'org_id,user_id'` that belongs on another field.
+   * `'org_id,user_id'` that belongs on another field. Columns match in any
+   * order, in the schema's camelCase or the database's snake_case.
    */
   readonly constraints?: Readonly<Record<string, Field>>
 }
@@ -204,10 +205,10 @@ export function uniqueFieldErrors<const Field extends string>(
         return Effect.fail(error)
       }
 
-      const byColumns = error.columns.join(',')
-      const named =
-        (error.constraintName === undefined ? undefined : options.constraints?.[error.constraintName]) ??
-        (byColumns === '' ? undefined : options.constraints?.[byColumns])
+      const violated = error.columns.length === 0 ? undefined : columnsKey(error.columns)
+      const named = Object.entries<Field>(options.constraints ?? {}).find(([key]) =>
+        key === error.constraintName || (violated !== undefined && columnsKey(key.split(',')) === violated)
+      )?.[1]
       const errors = Object.fromEntries(
         Object.entries<string>(messages).filter(([field]) =>
           field === named || error.columns.includes(field) || error.columns.includes(snakeCase(field))
@@ -530,4 +531,9 @@ function readConstraintDetails(error: object): ConstraintDetails {
 
 function snakeCase(name: string): string {
   return name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)
+}
+
+/** A constraint's columns as one key, in snake_case and sorted: `'userId, orgId'` is `org_id,user_id`. */
+function columnsKey(columns: ReadonlyArray<string>): string {
+  return columns.map((column) => snakeCase(column.trim())).sort().join(',')
 }

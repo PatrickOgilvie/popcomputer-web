@@ -320,6 +320,38 @@ describe('uniqueFieldErrors', () => {
 
     expect(failureOf(exit)).toMatchObject({ value: { errors: { title: 'Choose another address for this page.' } } })
   })
+
+  test.each(['slug,workspace_id', 'workspaceId, slug', 'slug, workspaceId'])(
+    'matches a composite key named as %p, in any order and case',
+    async (key) => {
+      const { layer, db } = openDatabase()
+      await db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Intro' })
+
+      const exit = await Effect.runPromiseExit(
+        dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Again' })).pipe(
+          uniqueFieldErrors({ title: 'Taken.' }, { constraints: { [key]: 'title' } }),
+          Effect.provide(layer)
+        )
+      )
+
+      expect(failureOf(exit)).toMatchObject({ value: { errors: { title: 'Taken.' } } })
+    }
+  )
+
+  test('says in development how to show an unmapped violation on a field', async () => {
+    const { layer, db } = openDatabase()
+    await db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Intro' })
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Again' })).pipe(Effect.provide(layer))
+    )
+    const violation = Option.getOrUndefined(failureOf(exit))
+    assert.ok(violation instanceof DatabaseConstraintViolation)
+
+    expect(violation.toStructured().message).toContain(
+      "uniqueFieldErrors(messages, { constraints: { 'workspace_id,slug': 'field' } })"
+    )
+  })
 })
 
 class SlugTaken extends Schema.TaggedError<SlugTaken>()('SlugTaken', { slug: Schema.String }) {}

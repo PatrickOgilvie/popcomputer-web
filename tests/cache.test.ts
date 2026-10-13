@@ -205,6 +205,20 @@ describe('cache', () => {
     ))
   })
 
+  it('recomputes an entry stored after now, as when a test sets the clock back', async () => {
+    const { layer } = makeTestCache()
+    let computations = 0
+    const compute = Effect.sync(() => ++computations)
+
+    await Effect.gen(function* () {
+      yield* TestClock.adjust('1 day')
+      yield* cache('k', compute, S.Number, { ttl: '1 hour' })
+      yield* TestClock.setTime(0)
+
+      expect(yield* cache('k', compute, S.Number, { ttl: '1 hour' })).toBe(2)
+    }).pipe(Effect.provide(layer), Effect.runPromise)
+  })
+
   it('serves a cached value that holds dates, as JSON would turn them into strings', async () => {
     const { layer } = makeTestCache()
     const Stats = S.Struct({ total: S.Number, computedAt: S.Date })

@@ -37,19 +37,19 @@ export interface ParsedBinding {
 }
 
 /** Explicit parent scope for a binding when Drizzle cannot infer it. */
-export interface RouteBindingScope {
+export interface RouteBindingScope<Column extends string = string> {
   /** Child-table property key or keys containing the parent reference. */
-  readonly foreignKey: string | readonly string[]
+  readonly foreignKey: Column | readonly Column[]
   /** Parent-table property key or keys. Defaults to `id`. */
   readonly references?: string | readonly string[]
 }
 
 /** Optional overrides for a parsed route-model binding. */
-export interface RouteBindingOptions {
+export interface RouteBindingOptions<Column extends string = string> {
   /** Drizzle schema key when it cannot be derived from the route parameter. */
   readonly table?: string
-  /** Parent binding scopes, keyed by the parent route parameter. */
-  readonly scope?: Readonly<Record<string, RouteBindingScope>>
+  /** Parent binding scopes, keyed by the parent binding's name in setupWeb's bindings. */
+  readonly scope?: Readonly<Record<string, RouteBindingScope<Column>>>
 }
 
 /**
@@ -81,11 +81,70 @@ export type RouteBindingsConfig = Readonly<Record<string, RouteBindingConfig>>
  * Most bindings name their table, or an Effect Schema, directly. Use this
  * only when a table name or nested parent scope is ambiguous.
  */
+export function routeBinding<T extends RouteBindingTable>(
+  table: T,
+  options?: RouteBindingOptions<Extract<keyof T['$inferSelect'], string>>
+): RouteBindingDefinition<T['$inferSelect']>
+export function routeBinding<A>(
+  schema: S.Codec<A, unknown, never, never>,
+  options?: RouteBindingOptions
+): RouteBindingDefinition<A>
 export function routeBinding<A>(
   schema: S.Codec<A, unknown, never, never> | RouteBindingTable<A>,
   options: RouteBindingOptions = {}
 ): RouteBindingDefinition<A> {
   return { schema, ...options }
+}
+
+/** Whether a Drizzle table has a column under this property key. */
+function hasColumn(table: RouteBindingTable, key: string): boolean {
+  const column: unknown = Object.getOwnPropertyDescriptor(table, key)?.value
+
+  return column instanceof Object && 'columnType' in column
+}
+
+/** A Drizzle table's SQL name. */
+function tableNameOf(table: RouteBindingTable): string {
+  const name: unknown = Reflect.get(table, DRIZZLE_TABLE_NAME)
+
+  return typeof name === 'string' ? name : 'table'
+}
+
+/**
+ * Check setupWeb's bindings when it is called, so a scope that names no
+ * binding, or a column a table does not have, fails at startup, naming the
+ * fix, instead of failing every request to the routes that use it.
+ */
+export function assertBindingsConfig(bindings: RouteBindingsConfig): void {
+  const names = Object.keys(bindings)
+
+  for (const [name, config] of Object.entries(bindings)) {
+    if (!isBindingDefinition(config)) continue
+
+    const source = config.schema
+
+    for (const [parent, scope] of Object.entries(config.scope ?? {})) {
+      if (parent === name || !Object.hasOwn(bindings, parent)) {
+        throw RouteConfigurationError.scopeNotABinding(name, parent, names.filter((other) => other !== name))
+      }
+
+      if (isBindingTable(source)) {
+        for (const key of normalizeStringList(scope.foreignKey)) {
+          if (!hasColumn(source, key)) throw RouteConfigurationError.bindingColumnNotFound(name, tableNameOf(source), key)
+        }
+      }
+
+      const parentSource = bindingSource(bindings[parent])
+
+      if (isBindingTable(parentSource)) {
+        for (const key of normalizeStringList(scope.references ?? 'id')) {
+          if (!hasColumn(parentSource, key)) {
+            throw RouteConfigurationError.bindingColumnNotFound(parent, tableNameOf(parentSource), key)
+          }
+        }
+      }
+    }
+  }
 }
 
 const DRIZZLE_TABLE = Symbol.for('drizzle:IsDrizzleTable')

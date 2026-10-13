@@ -359,34 +359,34 @@ describe('testClock settle', () => {
     const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
     let attempts = 0
 
-    // Fails twice, then succeeds, waiting 1s then 2s between attempts.
-    const deliver = Effect.suspend(() => {
-      attempts += 1
+    const attemptedAt: number[] = []
 
-      return attempts < 3 ? Effect.fail('unavailable' as const) : Effect.succeed(attempts)
+    // Fails four times, then succeeds, waiting 1s, 2s, 4s and 8s between attempts.
+    const deliver = Effect.gen(function* () {
+      attemptedAt.push(yield* Clock.currentTimeMillis)
+
+      return attemptedAt.length < 5 ? yield* Effect.fail('unavailable' as const) : attemptedAt.length
     }).pipe(Effect.retry(Schedule.exponential('1 second')), Effect.orDie)
 
     routes.post('/deliver', action(Effect.gen(function* () {
-      const delivered = yield* deliver
-      const at = yield* Clock.currentTimeMillis
-
-      return yield* json({ delivered, at })
+      return yield* json({ delivered: yield* deliver })
     })))
 
     const res = await time.settle(app.request('/deliver', { method: 'POST' }, testEnv(time.layer)))
 
-    expect(await res.json()).toEqual({ delivered: 3, at: Date.parse('2026-01-01T00:00:03Z') })
+    expect(await res.json()).toEqual({ delivered: 5 })
+    expect(attemptedAt.map((at, i) => i === 0 ? 0 : (at - attemptedAt[i - 1]!) / 1000)).toEqual([0, 1, 2, 4, 8])
   })
 
-  test('rejects when the request does not answer within the steps', async () => {
+  test('rejects when the request does not answer within the turns', async () => {
     const time = await testClock(new Date('2026-01-01T00:00:00Z'))
     const app = new Hono()
     const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
 
-    routes.get('/stuck', action(Effect.sleep('1 hour').pipe(Effect.flatMap(() => json({ ok: true })))))
+    routes.get('/stuck', action(Effect.never.pipe(Effect.flatMap(() => json({ ok: true })))))
 
-    await expect(time.settle(app.request('/stuck', {}, testEnv(time.layer)), '1 second', 3))
-      .rejects.toThrow('did not settle within 3 steps')
+    await expect(time.settle(app.request('/stuck', {}, testEnv(time.layer)), 3))
+      .rejects.toThrow('did not settle within 3 turns')
   })
 })
 

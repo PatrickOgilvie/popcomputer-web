@@ -23,6 +23,7 @@ import {
   inferParamsSchema,
   routeBinding,
   type ParsedBinding,
+  type RouteBindingOptions,
 } from '../../src/effect/binding.js'
 import { RouteConfigurationError } from '../../src/effect/errors.js'
 import { ErrorCodes } from '../../src/effect/error-catalog.js'
@@ -345,6 +346,32 @@ describe('binding scopes', () => {
     ).rejects.toMatchObject({
       message: 'Route binding "flag" is scoped to "team", which is not one binding before it on this route.',
       hint: 'Name one of the bindings before "flag" in its scope: "project", "environment".',
+    })
+  })
+
+  describe('when setupWeb is called, it checks', () => {
+    test('a scope that names no other binding', () => {
+      expect(() => setupWeb(new Hono(), {
+        version: '1',
+        render: (page) => JSON.stringify(page),
+        bindings: {
+          project: projects,
+          flag: routeBinding(flags, { scope: { projcet: { foreignKey: 'projectId' } } }),
+        },
+      })).toThrow('Route binding "flag" is scoped to "projcet", which is not another of setupWeb\'s bindings.')
+    })
+
+    test('a foreign key or reference the tables do not have', () => {
+      const setup = (scope: RouteBindingOptions<keyof typeof flags.$inferSelect>) => () => setupWeb(new Hono(), {
+        version: '1',
+        render: (page) => JSON.stringify(page),
+        bindings: { project: projects, flag: routeBinding(flags, scope) },
+      })
+
+      // @ts-expect-error flags has no column projectUuid
+      expect(setup({ scope: { project: { foreignKey: 'projectUuid' } } })).toThrow('Column "projectUuid" for route binding "flag"')
+      expect(setup({ scope: { project: { foreignKey: 'projectId', references: 'uuid' } } })).toThrow('Column "uuid" for route binding "project"')
+      expect(setup({ scope: { project: { foreignKey: 'projectId' } } })).not.toThrow()
     })
   })
 })

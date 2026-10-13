@@ -37,7 +37,7 @@ import {
   type ErrorBoundaryConfig,
 } from './effect/handler.js'
 import { NotFoundError } from './effect/errors.js'
-import type { RouteBindingsConfig } from './effect/binding.js'
+import { assertBindingsConfig, type RouteBindingsConfig } from './effect/binding.js'
 import type { PageSchemas } from './effect/pages.js'
 
 /** Better Auth-compatible owner for deferred promise work. */
@@ -323,6 +323,7 @@ export function setupWeb<
   RoutePath<Paths>
 > {
   assertSetupConfig(config)
+  if (config.bindings !== undefined) assertBindingsConfig(config.bindings)
   app.use('*', createSetupMiddleware(config))
   registerErrorHandlers(app, config.errors)
 

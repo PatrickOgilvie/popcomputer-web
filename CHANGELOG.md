@@ -71,7 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `cache(key, effect, schema, { ttl, tags })` tags an entry with the cache tags a route's `purges` and `purgeCache` name: the route that purges one of them after a write invalidates the data along with the cached responses. `purgeCache` also works in `routes.run`.
-- `testClock`'s `settle(request, step?, maxSteps?)` moves the test clock until a request that waits on it answers, such as an action retrying with `Schedule.exponential`.
+- `testClock`'s `settle(request, maxTurns?)` runs a request that waits on the test clock to the end, moving the clock to the end of each pending sleep in turn, so an action retrying with `Schedule.exponential` waits exactly its delays.
+- `setupWeb` checks its bindings when it is called: a `scope` that names no other binding, or a `foreignKey` or `references` column its table lacks, throws a `RouteConfigurationError` naming the fix, instead of failing every request to the routes that use the binding. `routeBinding(table, { scope })` types `foreignKey` by the table's columns.
+- `uniqueFieldErrors`'s `constraints` match a composite key's columns in any order, in camelCase or snake_case, and the development error page of an unmapped unique violation shows the `constraints` entry that would map it.
+- A data cache entry stored after the current time, as when a test sets its clock back, is a miss.
 - `WebErrorPage` from `@popcomputer/web/react` types the error page component, and `readErrorPage(response)` from `@popcomputer/web/testing` reads it in a test, with the invalid fields of a page visit as `errors`.
 - `betterAuthRedirect`'s and `betterAuthLogoutAction`'s `redirectTo`, and `auth.signInPath`, take declared paths, as `redirect` does.
 - `tableSchema(table, overrides)` checks the columns `overrides` names with the schemas given, such as a JSON column's or a `$type<...>()` narrowing's, and derives the rest from the table.

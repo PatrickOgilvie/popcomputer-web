@@ -9,7 +9,7 @@
  * @example
  * const res = await app.request('/projects', {}, testEnv(signedIn({ id: 'user-1' })))
  */
-import { Clock, DateTime, Effect, Layer, Redacted, Schema as S, Scope, type Duration } from 'effect'
+import { Clock, DateTime, Duration, Effect, Layer, Redacted, Schema as S, Scope } from 'effect'
 import { TestClock } from 'effect/testing'
 import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser } from './effect/services.js'
 import type { Registered } from './effect/register.js'
@@ -382,11 +382,13 @@ export interface TestTime {
   /** Move the clock forward, as `advance('7 days')` or `advance(Duration.hours(2))`. */
   advance(duration: Duration.Input): Promise<void>
   /**
-   * Move the clock forward by `step` until `work` settles, such as a request
-   * whose retries wait on `Schedule.exponential`: each wait ends when the
-   * clock passes it. Rejects after `maxSteps` steps without settling.
+   * Run `work` that waits on the clock, such as a request whose retries wait
+   * on `Schedule.exponential`, to the end: each time it waits, move the clock
+   * to the end of the earliest pending sleep, so the waits take exactly their
+   * durations. Rejects after `maxTurns` turns of the event loop without
+   * settling (default 10,000).
    */
-  settle<A>(work: A | PromiseLike<A>, step?: Duration.Input, maxSteps?: number): Promise<A>
+  settle<A>(work: A | PromiseLike<A>, maxTurns?: number): Promise<A>
 }
 
 /**
@@ -411,14 +413,30 @@ export async function testClock(start: Date | number = Date.UTC(2026, 0, 1)): Pr
   const set = (time: Date | number) =>
     Effect.runPromise(clock.setTime(time instanceof Date ? time.getTime() : time))
 
+  // When each pending sleep ends, so settle can move the clock to the next.
+  const wakeTimes: number[] = []
+  const tracked: Clock.Clock = {
+    ...clock,
+    sleep: (duration) => Effect.suspend(() => {
+      const wake = clock.currentTimeMillisUnsafe() + Duration.toMillis(duration)
+      wakeTimes.push(wake)
+
+      return clock.sleep(duration).pipe(
+        Effect.ensuring(Effect.sync(() => {
+          wakeTimes.splice(wakeTimes.indexOf(wake), 1)
+        }))
+      )
+    }),
+  }
+
   await set(start)
 
   return {
-    layer: Layer.succeed(Clock.Clock, clock),
+    layer: Layer.succeed(Clock.Clock, tracked),
     now: () => new Date(clock.currentTimeMillisUnsafe()),
     set,
     advance: (duration) => Effect.runPromise(clock.adjust(duration)),
-    settle: async (work, step = '1 second', maxSteps = 10_000) => {
+    settle: async (work, maxTurns = 10_000) => {
       let settled = false
       const observed = Promise.resolve(work).then(
         (value) => {
@@ -433,19 +451,24 @@ export async function testClock(start: Date | number = Date.UTC(2026, 0, 1)): Pr
         }
       )
 
-      for (let steps = 0; !settled; steps += 1) {
-        if (steps >= maxSteps) {
+      for (let turns = 0; !settled; turns += 1) {
+        if (turns >= maxTurns) {
           // The timeout is the failure this test reports; a later rejection of
           // the abandoned work is not.
           observed.catch(() => undefined)
 
-          throw new Error(`The work did not settle within ${maxSteps} steps of the test clock.`)
+          throw new Error(`The work did not settle within ${maxTurns} turns of the event loop.`)
         }
 
-        // Let the work run until it waits on the clock, then move the clock.
+        // Let the work run until it waits, then end the earliest sleep. Work
+        // waiting on anything else, such as a database, gets another turn.
         await new Promise((resolve) => setTimeout(resolve, 0))
 
-        if (!settled) await Effect.runPromise(clock.adjust(step))
+        const next = Math.min(...wakeTimes)
+
+        if (!settled && Number.isFinite(next)) {
+          await Effect.runPromise(clock.setTime(Math.max(next, clock.currentTimeMillisUnsafe())))
+        }
       }
 
       return observed

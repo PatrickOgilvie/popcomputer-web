@@ -462,6 +462,10 @@ export class DatabaseConstraintViolation extends Schema.TaggedError<DatabaseCons
   toStructured(context: ErrorContext = emptyContext()): StructuredError {
     const name = this.constraintName === undefined ? '' : ` "${this.constraintName}"`
     const columns = this.columns.length === 0 ? '' : ` on ${this.columns.join(', ')}`
+    const key = this.constraintName ?? (this.columns.length === 0 ? undefined : this.columns.join(','))
+    const mapping = this.constraint === 'unique' && key !== undefined
+      ? ` Show it on a form field with uniqueFieldErrors(messages, { constraints: { '${key}': 'field' } }).`
+      : ''
 
     // Database messages are sensitive: production replaces this one, so the
     // constraint's name and columns reach only development pages and logs,
@@ -470,7 +474,7 @@ export class DatabaseConstraintViolation extends Schema.TaggedError<DatabaseCons
       ErrorCodes.DB_502_CONSTRAINT_VIOLATION,
       { constraint: this.constraint },
       context,
-      { message: `${this.message} (${this.constraint} constraint${name}${columns})` }
+      { message: `${this.message} (${this.constraint} constraint${name}${columns}).${mapping}` }
     )
   }
 }
@@ -664,6 +668,18 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
       hint: earlier.length > 0
         ? `Name one of the bindings before "${binding}" in its scope: ${earlier.map((name) => `"${name}"`).join(', ')}.`
         : `"${binding}" is the route's first binding, so it has no parent to scope to: remove its scope.`,
+      binding,
+      code: ErrorCodes.RTE_603_RELATION_NOT_FOUND,
+    })
+  }
+
+  /** Create an error for a binding whose scope names no other binding. */
+  static scopeNotABinding(binding: string, scope: string, bindings: readonly string[]): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" is scoped to "${scope}", which is not another of setupWeb's bindings.`,
+      hint: bindings.length > 0
+        ? `Name the binding of its parent in its scope: one of ${bindings.map((name) => `"${name}"`).join(', ')}.`
+        : `Add the parent's binding to setupWeb's bindings, or remove "${binding}"'s scope.`,
       binding,
       code: ErrorCodes.RTE_603_RELATION_NOT_FOUND,
     })

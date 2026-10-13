@@ -324,8 +324,9 @@ export const cache = <V, E, R>(
 
     const now = yield* Clock.currentTimeMillis
 
-    // A purge of any of its tags since the entry was stored makes it a miss.
-    const entry = decoded !== undefined && Option.isSome(generations) &&
+    // A purge of any of its tags since the entry was stored makes it a miss,
+    // as does an entry stored after now, by a clock a test has set back.
+    const entry = decoded !== undefined && Option.isSome(generations) && decoded.t <= now &&
       tags.every((tag) => decoded.g?.[tag] === generations.value[tag])
       ? decoded
       : undefined

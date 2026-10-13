@@ -1028,8 +1028,13 @@ through its JSON form, so a `Date` leaves as an ISO string, and a test reads
 it back with `readJson(res, Schema)` from `@popcomputer/web/testing`. A client
 decodes it with the same schema,
 `S.decodeUnknownSync(S.toCodecJson(Schema))(await res.json())`, so the shape is
-declared once; a schema the client imports is bundled with it, so declare
-response schemas apart from the Drizzle tables.
+declared once. A schema a client imports is bundled with it, so declare a
+response schema that a separate client decodes, such as a CLI's or an SDK's,
+apart from the Drizzle tables, unlike a page schema, which React reads only as
+a type: read its columns with `columnsOf(table, Schema)` and answer with
+`json(Schema, rows)`, where a field whose column changes type fails to
+type-check. The same holds for a page answered with `jsonOrRender` that such
+a client decodes.
 
 `errors` names each invalid field's message, as a form's page receives them.
 `ErrorResponseBody` from `@popcomputer/web/effect` types the envelope, and
@@ -1659,7 +1664,9 @@ the schema's camelCase keys too. An index on an expression, such as
 'A contact has this email.' }, { constraints: { contacts_email_lower_unique:
 'email' } })` puts it on its field. SQLite and D1 report a constraint by its
 columns instead, so name a composite key that belongs on another field by
-them: `{ constraints: { 'org_id,user_id': 'email' } }`.
+them, in any order and in either case: `{ constraints: { 'org_id,user_id':
+'email' } }`. In development, the error page of a violation no mapping
+matched shows the `constraints` entry that would map it.
 
 On D1, write the same statements as one `dbBatch((db) => [...])`. A batch
 cannot branch on an earlier statement's result, so a write that depends on
@@ -1970,6 +1977,16 @@ used. The next release declares everything once, in `setupWeb`; the
 9. **Remove handlers for failures that are gone.** `cacheInvalidate` and
    `cacheInvalidatePrefix` no longer fail (they report a store failure), so
    an `Effect.catchTag('CacheError', ...)` on them is a type error.
+10. **Check API clients' error responses.** A request that asks for no HTML
+    but sends an `Accept` header (`fetch`'s `*/*`) or an `Authorization`
+    header is now a JSON client: its failures are JSON, and a signed-out one
+    gets a 401 instead of a redirect to sign in. No type error points at this;
+    a test that expected an HTML error page or a redirect for such a request
+    now gets JSON.
+11. **Give a helper that reads a route model its requirement.** A helper
+    annotated `Effect.Effect<A, E, BoundModels>` that calls `bound('project')`
+    adds `RouteModel<'project'>`, and an action reading a model its route's
+    path does not bind is a `missingRouteModels` type error.
 
 Run `tsc --noEmit` after each step: the type errors name what is left.
 
