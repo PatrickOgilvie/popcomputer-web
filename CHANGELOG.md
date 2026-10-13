@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Effect `Config` reads the Worker's bindings in `services.app`, `services.request` and actions: `Config.String('BASE_URL')` reads a var and `Config.Redacted('API_KEY')` a secret. `services.app` is built with the first request's bindings. Service layers may fail with `ConfigError`, and a missing binding fails the request with `WEB_CFG_305_INVALID_CONFIG`, naming the binding in development.
 - A page registry: each page component's props as an Effect Schema, passed as setupWeb's `pages` and mirrored by augmenting `WebPagesType`. `render` and `jsonOrRender` then accept only registered pages and check props against the schema, and encode them as JSON through it, so a `Date` reaches the client as an ISO string. `WebPage<'Projects/Show'>` types the React component with the JSON form of the same props (`Jsonify`). setupWeb requires `pages` once `WebPagesType` is augmented.
 - `render` and `jsonOrRender` run in a `Web.render` span naming the component.
 - `ErrorPageProps` from `@popcomputer/web/react` types the error page component.

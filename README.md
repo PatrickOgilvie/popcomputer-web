@@ -364,14 +364,21 @@ Services an action needs beyond the framework's go in `setupWeb`'s
 
 ```ts
 // src/services.ts
-import { Context, Effect, Layer } from 'effect'
+import { Config, Context, Effect, Layer } from 'effect'
 
 export class Clock extends Context.Service<Clock, {
   readonly today: Effect.Effect<string>
+  readonly timeZone: string
 }>()('app/Clock') {}
 
-export const ClockLive = Layer.succeed(Clock, Clock.of({
-  today: Effect.sync(() => new Date().toISOString().slice(0, 10)),
+// Config reads the Worker's bindings: here the TIME_ZONE var.
+export const ClockLive = Layer.effect(Clock, Effect.gen(function* () {
+  const timeZone = yield* Config.String('TIME_ZONE').pipe(Config.withDefault('UTC'))
+
+  return Clock.of({
+    today: Effect.sync(() => new Date().toLocaleDateString('en-CA', { timeZone })),
+    timeZone,
+  })
 }))
 
 export class AuditLog extends Context.Service<AuditLog, {
@@ -396,7 +403,10 @@ setupWeb(app, {
 
 `services.app` is built once, on the first request an isolate serves, and
 shared by every later request: configuration, clients that open no connection
-until used, in-memory caches. `services.request` is built for each request from
+until used, in-memory caches. Effect `Config` reads the Worker's bindings in
+both kinds of service and in actions, so `Config.Redacted('API_KEY')` reads a
+secret; a missing binding fails the request with a configuration error that
+names it in development. `services.request` is built for each request from
 its context and bindings. Anything holding a request's I/O, such as a D1, KV or
 Hyperdrive binding, belongs in `services.request`: Workers forbid using it from
 another request. A request service replaces an application service with the

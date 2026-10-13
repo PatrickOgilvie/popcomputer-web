@@ -3,7 +3,7 @@
 import { createMiddleware } from 'hono/factory'
 import type { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
-import type { Layer, Schema as S } from 'effect'
+import type { Config, Layer, Schema as S } from 'effect'
 import { web } from './middleware.js'
 import { verifyOrigin, type VerifyOriginConfig } from './security.js'
 import type { PagePropValue, WebConfig } from './types.js'
@@ -109,11 +109,15 @@ interface WebSetupOptions<E extends Env, AppServices, RequestServices> extends W
      * later request: configuration, clients that open no connection until
      * used, in-memory caches. Never request-bound I/O objects (D1, KV or
      * Hyperdrive handles, open sockets), which Workers forbid using from
-     * another request.
+     * another request. Effect `Config` reads the Worker's bindings, and a
+     * missing one fails requests with a configuration error naming it.
      */
-    app?: Layer.Layer<AppServices>
-    /** Built for each request, from its context and bindings. */
-    request?: (c: Context<E>) => Layer.Layer<RequestServices>
+    app?: Layer.Layer<AppServices, Config.ConfigError>
+    /**
+     * Built for each request, from its context and bindings. Effect `Config`
+     * reads the Worker's bindings here too.
+     */
+    request?: (c: Context<E>) => Layer.Layer<RequestServices, Config.ConfigError>
   }
 
   /**

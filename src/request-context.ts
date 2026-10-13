@@ -1,7 +1,7 @@
 /** The single owner of framework per-request state. */
 
 import type { Context, Env, MiddlewareHandler } from 'hono'
-import type { ManagedRuntime } from 'effect'
+import type { Config, ManagedRuntime } from 'effect'
 import type {
   AuthType,
   AuthUser,
@@ -39,7 +39,7 @@ export interface WebRequestContext<E extends Env = Env> {
    * config, matching the existing getEffectRuntime() contract.
    */
   // oxlint-disable-next-line no-explicit-any -- SAFETY: see doc comment above
-  runtime?: ManagedRuntime.ManagedRuntime<any, never>
+  runtime?: ManagedRuntime.ManagedRuntime<any, Config.ConfigError>
   /** setupWeb() / effectBridge() — owns detached request work and teardown. */
   backgroundSupervisor?: BackgroundSupervisor
   /** effectBridge() — bridge config for downstream route handlers */

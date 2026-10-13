@@ -6,7 +6,7 @@
  * All errors support conversion to structured format via toStructured().
  */
 
-import { Data, Schema } from 'effect'
+import { Config, Data, Schema } from 'effect'
 import type {
   ErrorContext,
   StructuredError,
@@ -732,6 +732,7 @@ export type AppError =
   | ConfigurationError
   | CacheError
   | ResponseCachePurgeError
+  | Config.ConfigError
 
 /**
  * Cache Error - The cache store failed an explicit cache operation.
@@ -782,6 +783,14 @@ export function toStructuredError(
 ): StructuredError {
   if (isStructuredError(cause)) {
     return cause.toStructured(context)
+  }
+
+  if (cause instanceof Config.ConfigError) {
+    return new ConfigurationError({
+      message: `Missing or invalid configuration: ${cause.message}`,
+      hint: 'Set the binding in wrangler.jsonc (vars or secrets), or pass it to testEnv in tests.',
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    }).toStructured(context)
   }
 
   if (cause instanceof Error) {

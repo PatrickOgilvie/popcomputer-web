@@ -8,6 +8,7 @@ import { Predicate, Effect, Exit, Layer, ManagedRuntime, Schema as S } from 'eff
 import type { Context as HonoContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { runEffectWithRuntime } from './handler.js'
 import {
+  bindingsConfiguration,
   buildContextLayer,
   disposeRequestRuntime,
   getEffectBridgeConfig,
@@ -552,12 +553,17 @@ export class EffectRouteBuilder<
 
       const requestRuntime = getEffectRuntime(c)
 
+      // A request service that fails to build, such as one reading a missing
+      // binding with Config, fails the action with its error.
       let contextLayer = requestRuntime
-        ? Layer.succeedContext(await requestRuntime.context())
+        ? Layer.effectContext(requestRuntime.contextEffect)
         : buildContextLayer(c, bridgeConfig ?? getEffectBridgeConfig(c))
 
       if (requestRuntime && bridgeConfig?.services) {
-        contextLayer = Layer.merge(contextLayer, bridgeConfig.services(c))
+        contextLayer = Layer.merge(
+          contextLayer,
+          bridgeConfig.services(c).pipe(Layer.provide(bindingsConfiguration(c.env)))
+        )
       }
 
       // Resolve route model bindings if we have any and schema is configured

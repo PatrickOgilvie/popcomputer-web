@@ -4,7 +4,7 @@
  * Middleware that connects Hono's request handling to Effect's runtime.
  */
 
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import { Cause, Config, ConfigProvider, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { WebRequestContext } from '../request-context.js'
@@ -65,13 +65,15 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
    * Services built once, on the first request an isolate serves, and shared
    * by every later request. They must not hold request-bound I/O objects
    * (D1, KV or Hyperdrive handles, open sockets), which Workers forbid using
-   * from another request; build those in `services`.
+   * from another request; build those in `services`. Effect `Config` reads
+   * the Worker's bindings.
    */
-  app?: Layer.Layer<CustomServices, never, never>
+  app?: Layer.Layer<CustomServices, Config.ConfigError, never>
   /**
-   * Services built for each request, from its context and bindings.
+   * Services built for each request, from its context and bindings. Effect
+   * `Config` reads the Worker's bindings.
    */
-  services?: (c: HonoContext<E>) => Layer.Layer<CustomServices, never, never>
+  services?: (c: HonoContext<E>) => Layer.Layer<CustomServices, Config.ConfigError, never>
   /**
    * Drizzle schema for route model binding.
    * Usually configured via `setupWeb(app, { schema })`.
@@ -470,7 +472,8 @@ function createPageRenderer<E extends Env>(c: HonoContext<E>, pages: PageSchemas
  */
 export function buildContextLayer<E extends Env, CustomServices = never>(
   c: HonoContext<E>,
-  config?: EffectBridgeConfig<E, CustomServices>
+  config?: EffectBridgeConfig<E, CustomServices>,
+  configuration: Layer.Layer<never> = bindingsConfiguration(c.env)
 ): Layer.Layer<
   | RequestService
   | RequestStateService
@@ -482,7 +485,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   | BindingsService
   | ExecutionContextService
   | CustomServices,
-  never,
+  Config.ConfigError,
   never
 > {
   const requestLayer = Layer.succeed(RequestService, createRequestContext(c))
@@ -531,7 +534,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     )
   )
 
-  let baseLayer: Layer.Layer<never, never, never> = Layer.mergeAll(
+  let baseLayer: Layer.Layer<never, Config.ConfigError, never> = Layer.mergeAll(
     requestLayer,
     requestStateLayer,
     responseLayer,
@@ -558,7 +561,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
 
   // Merge custom services if provided
   if (config?.services) {
-    const customServicesLayer = config.services(c)
+    const customServicesLayer = config.services(c).pipe(Layer.provide(configuration))
     baseLayer = Layer.merge(baseLayer, customServicesLayer)
   }
 
@@ -574,9 +577,17 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     | AuthService
     | AuthUserService
     | CustomServices,
-    never,
+    Config.ConfigError,
     never
   >
+}
+
+/**
+ * The Worker's bindings as the Effect configuration: `Config.String('NAME')`
+ * reads a var or secret, in application and request services and in actions.
+ */
+export function bindingsConfiguration(env: unknown): Layer.Layer<never> {
+  return ConfigProvider.layer(ConfigProvider.fromUnknown(env ?? {}))
 }
 
 /**
@@ -615,19 +626,28 @@ export function getEffectBridgeConfig<E extends Env>(
 export function effectBridge<E extends Env, CustomServices = never>(
   config?: EffectBridgeConfig<E, CustomServices>
 ): MiddlewareHandler<E> {
-  // Built lazily by the first request and kept for the isolate's lifetime.
-  const appRuntime = config?.app === undefined ? undefined : ManagedRuntime.make(config.app)
+  // Built by the first request, with that request's bindings as its
+  // configuration, and kept for the isolate's lifetime: a Worker's bindings
+  // are the same for every request it serves.
+  let appRuntime: ManagedRuntime.ManagedRuntime<CustomServices, Config.ConfigError> | undefined
 
   // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
   return async (c, next) => {
     setEffectBridgeConfig(c, config)
+    const configuration = bindingsConfiguration(c.env)
+
+    if (config?.app !== undefined && appRuntime === undefined) {
+      appRuntime = ManagedRuntime.make(config.app.pipe(Layer.provide(configuration)))
+    }
+
     // Later layers win: request services replace app services, and services
-    // from testEnv (@popcomputer/web/testing) replace both.
-    const requestLayer = buildContextLayer(c, config)
+    // from testEnv (@popcomputer/web/testing) replace both. A layer that
+    // fails to build fails the action with its error.
+    const requestLayer = Layer.merge(buildContextLayer(c, config, configuration), configuration)
 
     const appAndRequestLayer = appRuntime === undefined
       ? requestLayer
-      : Layer.merge(Layer.succeedContext(await appRuntime.context()), requestLayer)
+      : Layer.merge(Layer.effectContext(appRuntime.contextEffect), requestLayer)
 
     const testLayer = readTestLayer(c.env)
 
