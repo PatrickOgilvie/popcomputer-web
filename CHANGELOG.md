@@ -145,6 +145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A `shareProps` computation that fails is reported to `EffectErrorObserverService`, and the page renders without its props, instead of failing every page as a defect.
+- A misspelled `config` name's type error lists the binding names it accepts.
 - The package ships `CHANGELOG.md`.
 - The README documents testing against the production database family (PGlite for Postgres, Miniflare's D1 for D1), `readPage`, uploads and request headers, predicate guards, `file`, where a failed form goes, what Workers Cache cannot see (cookies), what `purges: true` purges.
 - `bound(key)` accepts only the keys of the registered bindings, so a misspelled key is a type error at the call (`BoundKey`).

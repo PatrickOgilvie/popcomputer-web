@@ -4,7 +4,8 @@
  * Utility functions for creating responses within Effect computations.
  */
 
-import { Context, Effect, Layer, Option, Stream } from 'effect'
+import { Cause, Context, Effect, Layer, Option, Stream } from 'effect'
+import { observeOrLog } from './error-observer.js'
 import { href, type PathArguments } from '../paths.js'
 import {
   PageService,
@@ -353,7 +354,9 @@ export class PageSharing extends Context.Service<
  * Compute props every page shares, such as a header's unread count, when a
  * page renders: redirects and JSON responses never run it. Provide it on the
  * routes whose pages show them; each `shareProps` a route is given runs, in
- * order. A failure fails the page as a defect.
+ * order. A failure, such as the database being unavailable, is reported to
+ * `EffectErrorObserverService` and the page renders without the props it
+ * computes: shared props are optional on the page, so it shows its defaults.
  *
  * @example
  * export const routes = web.routes.provide(shareProps(Effect.gen(function* () {
@@ -382,7 +385,18 @@ export function shareProps<E, R>(
             }
           })
         ),
-        Effect.orDie,
+        Effect.catchCause((cause) =>
+          observeOrLog(
+            {
+              source: 'user',
+              handling: 'handled',
+              kind: Cause.hasFails(cause) ? 'failure' : 'defect',
+              error: Cause.squash(cause),
+              metadata: { operation: 'shareProps' },
+            },
+            'Shared props failed; the page renders without them'
+          )
+        ),
         Effect.provideContext(context)
       )
 

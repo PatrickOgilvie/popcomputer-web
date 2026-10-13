@@ -8,12 +8,14 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { Effect, Schema as S } from 'effect'
+import { Effect, Layer, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
 import { flash, json, redirect, render, share, shareProps } from '../src/effect/responses.js'
 import { currentUser } from '../src/effect/auth.js'
+import { EffectErrorObserverService } from '../src/effect/error-observer.js'
+import { HttpError } from '../src/effect/errors.js'
 import { signedIn, testEnv } from '../src/testing.js'
 
 function createApp() {
@@ -122,6 +124,33 @@ describe('shareProps', () => {
 
     expect(props.unread).toBeUndefined()
     expect(props.since).toBe('2026-10-13T00:00:00.000Z')
+  })
+
+  test('a computation that fails is reported, and the page renders without its props', async () => {
+    const app = new Hono()
+    const observed: string[] = []
+    const observer = Layer.succeed(EffectErrorObserverService, {
+      observe: (event) => Effect.sync(() => {
+        observed.push(String(event.metadata?.operation))
+      }),
+    })
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      shared: S.Struct({ unread: S.Number }),
+    })
+
+    routes
+      .provide(shareProps(Effect.fail(new HttpError({ status: 503, message: 'Database unavailable' }))))
+      .get('/inbox', action(render('Inbox', { title: 'Inbox' })))
+
+    const res = await app.request('/inbox', { headers: page }, testEnv(observer))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.props.title).toBe('Inbox')
+    expect(body.props.unread).toBeUndefined()
+    expect(observed).toEqual(['shareProps'])
   })
 
   test('redirects and JSON responses never compute them', async () => {

@@ -315,7 +315,8 @@ export interface TestTime {
  * expires: requests given its layer read `Clock` (and `DateTime.now`) from
  * it, and the test moves it between requests. It starts at `start`, by
  * default 2026-01-01T00:00:00Z. An `Effect.sleep` in a request waits until
- * the test advances the clock past it.
+ * the test advances the clock past it. Bun shares a module created at the top
+ * of a support file between test files: set the clock back in `beforeEach`.
  *
  * @example
  * const time = await testClock(new Date('2026-03-01T09:00:00Z'))

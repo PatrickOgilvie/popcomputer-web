@@ -12,12 +12,14 @@ type DeclaredBindings = Registered<'bindings', never>
  * The name of a var or secret: a binding the application declares as a
  * string, or any name before it declares its bindings.
  */
-export type BindingName = [DeclaredBindings] extends [never] ? string : StringBindingName<DeclaredBindings>
-
-/** The names of the string-valued bindings among `Bindings`. */
-type StringBindingName<Bindings> = {
-  [Key in keyof Bindings]-?: NonNullable<Bindings[Key]> extends string ? Key : never
-}[keyof Bindings] & string
+export type BindingName = [DeclaredBindings] extends [never]
+  ? string
+  : Extract<
+      keyof {
+        [Key in keyof DeclaredBindings as NonNullable<DeclaredBindings[Key]> extends string ? Key : never]: unknown
+      },
+      string
+    >
 
 /** Effect Config constructors whose names are the application's bindings. */
 export interface BindingConfig {

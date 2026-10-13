@@ -574,7 +574,9 @@ Props every page shows, such as a header's unread count, are declared in
 `setupWeb`'s `shared` and computed by `shareProps`, provided on the routes
 whose pages show them. It runs when a page renders, never for a redirect or a
 JSON response, and returns any of the declared props; an action can also set
-one with `share(key, value)`.
+one with `share(key, value)`. When it fails, such as when the database is
+unavailable, the failure is reported to `EffectErrorObserverService` and the
+page renders without those props, which pages treat as optional.
 
 ```ts
 const sharedRoutes = routes.provide(shareProps(Effect.gen(function* () {
@@ -896,8 +898,10 @@ session-shaped. `betterAuthSession(tableSchema(schema.user))` takes the user
 from the `user` table, so a field the application adds, such as a `role`, is
 declared in the table (and in Better Auth's `additionalFields`, which tells
 Better Auth to return it), and `authorize()`, `currentUser` and `signedIn`
-follow. Give a narrowed column an enum, `text('role', { enum: ['admin',
-'member'] })`, so the session checks its values. The session token is `Redacted`, so
+follow. Give a narrowed column an enum, so the session checks its values, and
+take it from the Effect schema the application validates input with, so the
+role is declared once: `text('role', { enum: Role.literals })` for
+`const Role = S.Literals(['admin', 'member'])`. The session token is `Redacted`, so
 serializing the auth user never exposes it; read it with `Redacted.value`
 where it is needed. `auth.share` names the fields pages receive as
 `auth.user`.
@@ -1394,6 +1398,11 @@ await time.advance('8 days')
 const expired = await app.request('/invites/abc', {}, env)
 ```
 
+Bun runs every test file in one module registry, so a clock or a test
+database created at the top of a shared support module is shared by all the
+files. A file that moves the clock sets it back in `beforeEach` (`await
+time.set(start)`), and a file that writes rows seeds and reads its own.
+
 ### A database for tests
 
 Test against the database family production uses, so transactions, batches
@@ -1467,6 +1476,11 @@ beside a form field, `notFound(...)` or `forbidden(...)` for access, and
 `flash(...)` then `back(...)` for a refusal the visitor should read. A failure
 the action leaves unhandled is a type error at its registration, naming it in
 `unhandledErrors`.
+
+The transaction can live in the service, as below, or in the action that
+calls several services' methods inside one `dbTransaction`; either way, a
+typed failure after a write, such as a rule a later step checks, rolls that
+write back.
 
 A limit checked by counting and then inserting lets two concurrent requests
 both pass the count. Inside `dbTransaction`, lock the row the limit belongs to
