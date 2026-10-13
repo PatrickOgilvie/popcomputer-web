@@ -78,6 +78,44 @@ later 4.x (tested with 4.13.13), Better Auth 1.x (tested with 1.7.7), and
 Drizzle ORM 0.30 or later 0.x (tested with 0.45.4). Hono 5 and Drizzle 1.0 are
 not supported yet: both change APIs this package uses.
 
+### Upgrading from 0.7
+
+The next release declares everything once, in `setupWeb`; the
+[changelog](CHANGELOG.md) lists every change. In order:
+
+1. **Register the setup instead of augmenting.** Replace the
+   `WebDatabaseType`, `WebAuthType`, `WebBindingsType`, `WebAuthUserType`,
+   `WebRouteBindingsType` and `WebPagesType` augmentations with
+   `export const web = setupWeb(new Hono<Env>(), config)` and
+   `declare module '@popcomputer/web' { interface Register { web: typeof web } }`.
+   Declare the signed-in user in `auth.session`, the public user as the
+   `auth.share` schema, and `shared` and `flash` as schemas. A layer in
+   `services` that uses the database needs an explicit type.
+2. **Declare paths and tables.** Move route paths into `src/paths.ts`, pass it
+   as `setupWeb`'s `paths`, and build URLs with `redirect(paths.x, params)`
+   (always 303) and `href`. Name each binding's table:
+   `bindings: { project: schema.projects }`.
+3. **Use the new database operations.** `dbMutation(db, asTrusted(...),
+   (tx, values) => ...)` becomes `dbMutation((db) => ...)`; reads use
+   `dbQuery`; `dbTransaction` takes an Effect; on D1 use `dbBatch`.
+4. **Let failed forms go back.** Remove `errorComponent`: a failed form
+   redirects to its page with `errors`. Use `flash` for messages and
+   `invalid(...)` for domain errors on a field.
+5. **Move auth routes onto `routes`.** `effectAuthRoutes` and
+   `betterAuthFormAction` are replaced by ordinary actions that return
+   `betterAuthRedirect(...)`, and `betterAuthHandler` for Better Auth's API.
+6. **Move services.** `effect: { services }` is `services: { request }`, with
+   `services.app` for services built once; the KV data cache is
+   `kvCache(c.env.KV)` in `services.request`.
+7. **Check caching.** Cache tags name records (`{table}:{primary key}`), cached
+   responses vary on `Cookie`, and responses without `Cache-Control` get
+   `private, no-cache`.
+8. **Update tests** to `testEnv(layer, bindings, { database })`,
+   `signedIn(user)`, `readPage(res, 'Page')` and `testClock()` from
+   `@popcomputer/web/testing`.
+
+Run `tsc --noEmit` after each step: the type errors name what is left.
+
 ### Upgrading from 0.6
 
 Static pages are now cached at Cloudflare's edge by default; see
