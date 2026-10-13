@@ -196,6 +196,27 @@ describe('cache', () => {
     ))
   })
 
+  it('serves a cached value that holds dates, as JSON would turn them into strings', async () => {
+    const { layer } = makeTestCache()
+    const Stats = S.Struct({ total: S.Number, computedAt: S.Date })
+    let computations = 0
+
+    const compute = Effect.sync(() => {
+      computations++
+
+      return { total: 3, computedAt: new Date(Date.UTC(2026, 9, 13)) }
+    })
+
+    const [first, second] = await Effect.runPromise(Effect.all([
+      cache('stats', compute, Stats, { ttl: '1 minute' }),
+      cache('stats', compute, Stats, { ttl: '1 minute' }),
+    ]).pipe(Effect.provide(layer)))
+
+    expect(computations).toBe(1)
+    expect(second.computedAt).toBeInstanceOf(Date)
+    expect(second).toEqual(first)
+  })
+
   describe('cache()', () => {
     it('reads an entry with a non-finite timestamp as absent', async () => {
       const { layer, store } = makeTestCache()

@@ -19,6 +19,7 @@ import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { json } from '../../src/effect/responses.js'
 import { effectRoutes } from '../../src/effect/routing.js'
+import { requiredString } from '../../src/effect/schema.js'
 import type { RequestData } from '../../src/effect/validation.js'
 
 // Helper to create a mock request context
@@ -331,6 +332,16 @@ describe('validateUnknown with typed input', () => {
         expect(error.errors).toBeDefined()
       }
     }
+  })
+
+  test('an absent field reads as required, as an empty one does', () => {
+    const exit = Effect.runSyncExit(validateUnknown(S.Struct({ name: requiredString, title: requiredString }), { title: '' }))
+    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()
+
+    expect(Option.isSome(failure) && failure.value.errors).toEqual({
+      name: 'This field is required',
+      title: 'This field is required',
+    })
   })
 
   test('reports every invalid field', () => {

@@ -70,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `cache()` serves values that hold dates: a value is stored through its schema's JSON codec (`Schema.toCodecJson`), so it decodes back to itself. A `Date` came back as a string the schema rejected, so the value was computed on every call and the decode failure went only to the error observer. `cache`, `cacheGet` and `cacheSet` accept a schema of any encoded form (`CacheSchema<V>`).
+- An absent required field reports "This field is required", as an empty one does, instead of Effect's "Missing key".
+- Every 404 has the same message in production, so a response cannot tell a missing record from one the visitor may not see by the resource name in the message (`notFound('Team')` against a missing `{team}` binding).
 - `flash()` reaches the next page when the action's response sets cookies of its own, such as `betterAuthRedirect`'s session: Hono replaced the response's `Set-Cookie` headers when the flash cookie was added.
 - Route model binding loads through the request's `DatabaseService`, so a database a test provides with `testEnv` serves `bound()` as it serves `dbQuery`. It used the `database` factory's client.
 - `WebPage` types `errors` as Inertia does, so a field error and an error bag's fields (`errors.createProject.name`) both read as strings.

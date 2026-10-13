@@ -49,9 +49,14 @@ export type CacheGetOptions = {
 // ============================================================================
 
 /** Internal schema for storing value with metadata */
-const CacheEntrySchema = <V>(valueSchema: Schema.Codec<V>) =>
+/** The schema a cached value is checked against; it needs no services. */
+export type CacheSchema<V> = Schema.Codec<V, unknown, never, never>
+
+// The value is stored as JSON through its schema's JSON codec, so values such
+// as dates, which JSON would turn into strings, decode back to themselves.
+const CacheEntrySchema = <V>(valueSchema: CacheSchema<V>) =>
   Schema.Struct({
-    v: valueSchema,
+    v: Schema.toCodecJson(valueSchema),
     t: Schema.Finite, // cachedAt timestamp
   })
 
@@ -76,7 +81,7 @@ const hashString = (str: string): string => {
  * Generate a version string from a schema's AST.
  * The hash changes when the schema structure changes.
  */
-const hashSchema = <V>(schema: Schema.Codec<V>): string => {
+const hashSchema = <V>(schema: CacheSchema<V>): string => {
   // Stringify the AST - this captures the schema structure
   const astString = JSON.stringify(schema.ast)
 
@@ -88,7 +93,7 @@ const hashSchema = <V>(schema: Schema.Codec<V>): string => {
  */
 const resolveKey = <V>(
   key: string,
-  schema: Schema.Codec<V>,
+  schema: CacheSchema<V>,
   version: string | boolean | undefined
 ): string => {
   if (version === true) {
@@ -198,7 +203,7 @@ export function kvCache(kv: KVNamespaceLike): Layer.Layer<CacheService> {
 export const cache = <V, E, R>(
   key: string,
   compute: Effect.Effect<V, E, R>,
-  schema: Schema.Codec<V>,
+  schema: CacheSchema<V>,
   options: CacheOptions
 ): Effect.Effect<V, E, R | CacheService | ExecutionContextService> =>
   Effect.gen(function* () {
@@ -290,7 +295,7 @@ export const cache = <V, E, R>(
  */
 export const cacheGet = <V>(
   key: string,
-  schema: Schema.Codec<V>,
+  schema: CacheSchema<V>,
   options?: CacheGetOptions
 ): Effect.Effect<Option.Option<V>, CacheError, CacheService> =>
   Effect.gen(function* () {
@@ -327,7 +332,7 @@ export const cacheGet = <V>(
 export const cacheSet = <V>(
   key: string,
   value: V,
-  schema: Schema.Codec<V>,
+  schema: CacheSchema<V>,
   options: CacheOptions
 ): Effect.Effect<void, CacheError, CacheService> =>
   Effect.gen(function* () {
@@ -354,7 +359,7 @@ export const cacheSet = <V>(
 
 export type CacheInvalidateOptions<V> = {
   /** Schema used when caching (required if version is set) */
-  schema: Schema.Codec<V>
+  schema: CacheSchema<V>
   /** Version option (must match what was used when caching) */
   version: string | boolean
 }

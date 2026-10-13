@@ -10,7 +10,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
-import { ForbiddenError, HttpError, type AppError } from '../../src/effect/errors.js'
+import { ForbiddenError, HttpError, NotFoundError, type AppError } from '../../src/effect/errors.js'
 
 function appFailingWith(error: AppError) {
   const app = new Hono()
@@ -68,5 +68,18 @@ describe('error page', () => {
 
     expect(res.status).toBe(403)
     expect(await res.json()).toMatchObject({ code: 'WEB_AUTH_102_FORBIDDEN', tag: 'ForbiddenError' })
+  })
+
+  test('every 404 reads the same in production, whatever the resource name', async () => {
+    const production = { ENVIRONMENT: 'production' }
+    const team = await appFailingWith(new NotFoundError({ resource: 'Team' })).request('/', api, production)
+    const bound = await appFailingWith(new NotFoundError({ resource: 'team', id: 'acme' })).request('/', api, production)
+    const read = async (res: Response) => {
+      const { timestamp: _timestamp, ...body } = await res.json()
+
+      return body
+    }
+
+    expect(await read(team)).toEqual(await read(bound))
   })
 })

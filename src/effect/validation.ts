@@ -13,7 +13,15 @@ import { ErrorCodes, type ErrorCode } from './error-catalog.js'
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
 
-const formatSchemaIssue = SchemaIssue.makeFormatterStandardSchemaV1()
+// An absent field reads as the required-field message validators use for an
+// empty one, rather than Effect's "Missing key", unless the schema sets its own.
+const formatSchemaIssue = SchemaIssue.makeFormatterStandardSchemaV1({
+  leafHook: (issue) => {
+    const message = SchemaIssue.defaultLeafHook(issue)
+
+    return issue._tag === 'MissingKey' && message === 'Missing key' ? 'This field is required' : message
+  },
+})
 
 type FormattedSchemaIssue = ReturnType<typeof formatSchemaIssue>['issues'][number]
 

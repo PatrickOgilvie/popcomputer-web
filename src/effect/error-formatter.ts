@@ -36,6 +36,7 @@ const SENSITIVE_MESSAGE_CATEGORIES = new Set<StructuredError['category']>([
  * Generic, client-safe message used in place of sensitive error messages.
  */
 const SAFE_GENERIC_MESSAGE = 'An error occurred. Please try again later.'
+const NOT_FOUND_MESSAGE = 'The page you requested was not found.'
 
 interface FormattedError {
   code: string
@@ -68,6 +69,10 @@ export function getClientSafeMessage(
   isDev: boolean
 ): string {
   if (isDev) return error.message
+
+  // Every 404 reads the same, so a response cannot tell a missing record from
+  // one the visitor may not see, whatever resource name the action used.
+  if (error.httpStatus === 404) return NOT_FOUND_MESSAGE
 
   if (
     error.httpStatus >= 500 ||
