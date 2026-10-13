@@ -1188,35 +1188,45 @@ const project = yield* bound('project')
 const task = yield* bound('task')
 ```
 
-`bound('task')` is the table's row, checked against the table's columns as it
-loads, and a parameter name need not match its table: `bindings: { author:
-schema.users }` loads `{author}` from `users`. A JSON column, or a text column
-narrowed with `$type<Role>()`, is typed but not checked by its column: name an
-Effect Schema for the binding, such as `tableSchema(schema.contacts, { custom:
-CustomValues })`, whose overrides check those columns and derive the rest;
-the binding loads from the table the schema was built from.
+### What a model is
 
-The package parses route parameters and database rows before exposing them.
-A route loads its models the first time the action calls `bound()`, so a guard
-or `authorize()` that runs first decides before any database lookup, and a
-signed-out visitor cannot tell an existing record from a missing one. A missing
-row fails `bound()` with `NotFoundError`, which renders a 404. The route's
-models load together, so a missing one is a 404 whichever the action asks
-for. `{post}` looks the record up by the table's `id` column, or, for a table
-without one, its primary key; `{post:slug}` names the column by its property
+`bound('task')` is the table's row, checked against the table's columns as it
+loads: their types, nullability and enum values. A parameter name need not
+match its table: `bindings: { author: schema.users }` loads `{author}` from
+`users`. A JSON column, or a text column narrowed with `$type<Role>()`, is
+typed but not checked by its column: name an Effect Schema for the binding,
+such as `tableSchema(schema.contacts, { custom: CustomValues })`, whose
+overrides check those columns and derive the rest; the binding loads from the
+table the schema was built from.
+
+### When a model loads
+
+A route loads its models the first time the action calls `bound()`, so a
+guard or `authorize()` that runs first decides before any database lookup,
+and a signed-out visitor cannot tell an existing record from a missing one.
+A missing row fails `bound()` with `NotFoundError`, which renders a 404. The
+route's models load together, so a missing one is a 404 whichever the action
+asks for.
+
+`{post}` looks the record up by the table's `id` column, or, for a table
+without one, its primary key. `{post:slug}` names the column by its property
 key in the table (`certificateToken`, not the SQL `certificate_token`), and a
-column the table lacks fails when the route is registered. A page that
-answers when a record is missing, such as an article that falls back to
-another locale, takes that parameter as a plain parameter, with no binding,
-and queries with it, scoped by its bound parent, and tags its cached response
-with what it read using `tagCache`.
+column the table lacks fails when the route is registered.
+
+To lock a bound record inside `dbTransaction`, read it again by its id with
+`.for('update')`, as [Rules live in services](#rules-live-in-services-actions-decide-what-a-failure-means)
+shows; the bound row was read before the transaction began.
+
+### Nested models are scoped to their parent
+
 A nested binding is scoped to the binding before it. Drizzle's metadata
 finds the relationship when the child's column references the parent's
 (`.references(() => projects.id)`) or a relation declares it, so
 `bindings: { project: schema.projects, task: schema.tasks }` loads only the
-project's tasks. Name the relationship with `routeBinding` when the metadata
-has none, or to scope a binding to an earlier one than the binding before it,
-such as a project's flag under one of the project's environments,
+project's tasks: another project's task under this one's path is a 404.
+Name the relationship with `routeBinding` when the metadata has none, or to
+scope a binding to an earlier one than the binding before it, such as a
+project's flag under one of the project's environments,
 `/projects/{project}/environments/{environment}/flags/{flag:key}`. `setupWeb`
 checks each scope's binding and columns when it is called:
 
@@ -1234,6 +1244,8 @@ const routeBindings = {
 
 This fails closed when a child lookup cannot be safely scoped to its parent.
 
+### A lookup names one record
+
 A lookup column must name one record within the route's scope: a slug unique
 only within an organization belongs under it, as
 `/orgs/{organization:slug}/events/{event:slug}`. When the column matches more
@@ -1244,19 +1256,49 @@ in the path (`/c/{company:slug}/shops/{shop:code}`), which also keeps links
 to another tenant's records from loading, or make the column unique across
 tenants.
 
-A placeholder without a parser in `bindings` is a plain parameter: the action
-reads it with `validateRequest`, as in `/teams/{team}/invites/{token}`, where
-`bound('team')` loads the team and `token` arrives with the request's input.
+### Plain parameters
+
+A placeholder without a binding is a plain parameter: the action reads it
+with `validateRequest`, beside the route's models. In
+`/teams/{team}/invites/{token}`, `bound('team')` loads the team and `token`
+arrives with the request's input, to be looked up like any other input,
+scoped by the team. A page that answers when a record is missing, such as an
+article that falls back to another locale, takes that parameter as a plain
+parameter too, queries with it scoped by its bound parent, and tags its
+cached response with what it read using `tagCache`.
+
+### Reading a model outside the action
 
 `bound('project')` needs a route whose path, or prefix, has `{project}`: the
 types track it as the Effect requirement `RouteModel<'project'>`, which only
 such a route provides. An action, or a guard layer, that reads a model its
 route does not bind fails to type-check where the route is registered, with
-`missingRouteModels: "project"`. A helper that reads a model and annotates its
-type includes the requirement, as in `Effect.Effect<Project, BoundModelError,
-BoundModels | RouteModel<'project'>>`, and a test that runs one outside a route
-provides `BoundModels.fromModels({ project })`, which binds the models it
-holds.
+`missingRouteModels: "project"`. A helper that reads a model states the
+requirement in its type, so every action that uses it carries it:
+
+```ts
+import type { BoundModelError, BoundModels, RouteModel } from '@popcomputer/web/effect'
+
+type Project = typeof projects.$inferSelect
+
+// The route's project, or a 404 for anyone but its owner.
+export const ownProject = (
+  userId: string
+): Effect.Effect<Project, BoundModelError, BoundModels | RouteModel<'project'>> =>
+  Effect.gen(function* () {
+    const project = yield* bound('project')
+
+    if (project.userId !== userId) return yield* notFound('Project')
+
+    return project
+  })
+```
+
+An action calls it after `authorize()`, `const project = yield* ownProject(auth.user.id)`,
+and only a route with `{project}` accepts that action.
+
+A test that runs such a helper outside a route provides
+`BoundModels.fromModels({ project })`, which binds the models it holds.
 
 Route model binding is currently Drizzle-specific even though the basic
 `DatabaseService` can hold any application database client.
