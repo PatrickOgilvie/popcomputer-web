@@ -25,7 +25,7 @@ export const showProject = action(
 
 ## Contents
 
-- [Why this shape](#why-this-shape) · [Installation](#installation) · [Quick start](#quick-start)
+- [Why this shape](#why-this-shape) · [Installation](#installation) · [Quick start](#quick-start) · [Which API for which task](#which-api-for-which-task)
 - Building: [Application services](#application-services) · [Validation and the database](#validation-and-the-database) · [Route model binding](#route-model-binding) · [Auth](#auth) · [Responses and failures](#responses-and-failures) · [JSON endpoints](#json-endpoints) · [Lint rules](#lint-rules)
 - Running: [Caching and background work](#caching-and-background-work) · [Scheduled and queued work](#scheduled-and-queued-work) · [Page caching](#page-caching)
 - [Testing](#testing) · [Patterns from real applications](#patterns-from-real-applications) · [User input in, files out](#user-input-in-files-out)
@@ -754,6 +754,101 @@ void createInertiaApp({
 `createTemplate`'s `scripts` loads this module, built by Vite or another
 bundler; `createVersion(manifest)` changes with every build, so a visitor on
 an old build reloads into the new one.
+
+## Which API for which task
+
+Each task has one API. When the one you need is not here, the type checker
+and the lint rules name it where an action reaches for something else.
+
+**Requests and responses**
+
+| Task | Use | See |
+| --- | --- | --- |
+| Read form, query or JSON input | `validateRequest(Schema)` | [Validation](#validation-and-the-database) |
+| Read a header, or the raw body a webhook signs | `RequestService`'s `header(name)` and `raw()` | [Webhooks](#webhooks-verify-the-raw-body-then-record-the-event-once) |
+| Accept a file | `upload({ types, maxBytes })` in the schema | [User input in, files out](#user-input-in-files-out) |
+| Render a page | `render('Projects/Show', props)` | [Quick start](#4-write-actions-and-register-routes) |
+| Redirect after a write | `redirect(paths.project, { project: id })` | [Responses](#responses-and-failures) |
+| Go back to the page the request came from | `back(paths.projects)` | [Responses](#responses-and-failures) |
+| Send the visitor elsewhere from a helper or a guard | `redirectNow(paths.onboarding)` | [Responses](#responses-and-failures) |
+| Show a domain error beside a form field | `invalid({ amount: 'Too low.' })` | [Rules live in services](#rules-live-in-services-actions-decide-what-a-failure-means) |
+| Hand a message to the next page | `flash('success', 'Saved.')` | [Responses](#responses-and-failures) |
+| Answer a JSON API | an `endpoint` contract, implemented with `action(endpoint, handler)` | [JSON endpoints](#json-endpoints) |
+| Answer JSON from a page's action | `json(Schema, value)` or `jsonOrRender('Page', props)` | [Responses](#responses-and-failures) |
+| Answer a failure with a body a client reads | `httpError(status, message, Schema, body)` | [Responses](#responses-and-failures) |
+| Hide a record the visitor may not see | `notFound('Project')` | [Route model binding](#route-model-binding) |
+| Refuse a visitor who can see the record | `authorize((auth) => rule)`, or `forbidden(message)` | [Auth](#auth) |
+| Serve a file or a download | `file(body, { contentType, filename })` | [User input in, files out](#user-input-in-files-out) |
+| Answer a poll that has nothing new | `ifChanged(etag, response)` | [Responses](#responses-and-failures) |
+| Add a header to every response of some routes | `responseHeader(name, value)` in a guard layer | [Responses](#responses-and-failures) |
+| Keep a value in the visitor's browser | `cookie(name, Schema, options)`, declared once | [Responses](#responses-and-failures) |
+| Answer a CORS preflight | `routes.options(path, action(noContent(headers)))` | [Responses](#responses-and-failures) |
+
+**Routes, models and pages**
+
+| Task | Use | See |
+| --- | --- | --- |
+| Declare a URL, and build links to it | `paths` in `src/paths.ts`, `href(paths.project, params)` | [Quick start](#4-write-actions-and-register-routes) |
+| Load the record a URL names | `bindings: { project: schema.projects }`, then `bound('project')` | [Route model binding](#route-model-binding) |
+| Guard a group of routes | `routes.provide(layer)`, such as `RequireAuthLayer` | [A layer guards a group of routes](#a-layer-guards-a-group-of-routes) |
+| Show the same props on every page | `shared` in `setupWeb`, computed by `shareProps(effect)` | [Quick start](#4-write-actions-and-register-routes) |
+| Declare a page's props | a schema in `src/pages.ts`, typed in React as `WebPage<'Name'>` | [Describe the pages](#2-describe-the-pages) |
+| Take a page's fields from a table | `tableSchema(table).mapFields(Struct.pick([...]))` | [Describe the pages](#2-describe-the-pages) |
+| Type a form | `useForm<FormInput<typeof Schema>>`, `FormErrors<typeof Schema>` | [Write the client](#5-write-the-client) |
+| Type the error page | `WebErrorPage` | [Write the client](#5-write-the-client) |
+
+**Auth**
+
+| Task | Use | See |
+| --- | --- | --- |
+| Require a signed-in user | `authorize()` | [Auth](#auth) |
+| Read the user when signing in is optional | `currentUser` | [Auth](#auth) |
+| Sign in or sign up | `validateRequest`, then `betterAuthRedirect(call, { redirectTo, errors })` | [Signing in and out](#signing-in-and-out) |
+| Return to the page the visitor wanted | `intendedUrl(fallback)` | [Signing in and out](#signing-in-and-out) |
+| Call Better Auth for a result | `betterAuthCall(call, { errors })` | [Signing in and out](#signing-in-and-out) |
+| Sign out | `betterAuthLogoutAction({ redirectTo, clear })` | [Signing in and out](#signing-in-and-out) |
+| Add a field to the user | a column on the user table, with `betterAuthFields` | [Auth](#auth) |
+| Authenticate an API key | a layer failing with `new UnauthorizedError({ message, challenge: 'Bearer' })` | [Caching an API](#caching-an-api-that-authenticates-each-request) |
+
+**The database**
+
+| Task | Use | See |
+| --- | --- | --- |
+| Read | `dbQuery((db) => ...)` | [Validation and the database](#validation-and-the-database) |
+| Write | `dbMutation((db) => ...)` | [Validation and the database](#validation-and-the-database) |
+| Write several things together (Postgres, MySQL, libsql) | `dbTransaction(Effect.gen(...))` | [Validation and the database](#validation-and-the-database) |
+| Write several things together on Cloudflare D1 | `dbBatch((db) => [...])` | [Constraints](#constraints-keep-invariants-that-concurrent-requests-would-break) |
+| Insert only while a condition holds, on D1 | `db.insert(table).select(db.select(rowOf(table, values))...)` | [Constraints](#constraints-keep-invariants-that-concurrent-requests-would-break) |
+| Keep a rule concurrent requests could break | a constraint (`CHECK`, unique, exclusion, trigger) | [Constraints](#constraints-keep-invariants-that-concurrent-requests-would-break) |
+| Show a duplicate beside its field | `uniqueFieldErrors({ slug: 'Taken.' })` | [Validation and the database](#validation-and-the-database) |
+| Show a named rule beside its fields | `constraintFieldErrors({ name: { field: message } })` | [Constraints](#constraints-keep-invariants-that-concurrent-requests-would-break) |
+| Select exactly the columns a page shows | `columnsOf(table, Schema)` | [Describe the pages](#2-describe-the-pages) |
+
+**Services, background work and caching**
+
+| Task | Use | See |
+| --- | --- | --- |
+| Provide a service | `services: { app, request }` in `setupWeb` | [Application services](#application-services) |
+| Read a var or a secret | `config.string('NAME')`, `config.redacted('KEY')` | [Application services](#application-services) |
+| Work after the response | `background('name', effect)` | [Caching and background work](#caching-and-background-work) |
+| Run a Cron Trigger or a Queue consumer | `routes.scheduled(job)`, `routes.queue(Schema, handle)` | [Scheduled and queued work](#scheduled-and-queued-work) |
+| Cache computed data | `cache(key, effect, Schema, { ttl, tags })`, with `kvCache` in `services` | [Caching and background work](#caching-and-background-work) |
+| Cache a public page for a time | the route's `cache` option | [Workers Cache](#time-based-caching-with-workers-cache) |
+| Refresh cached pages and data after a write | `purges: true`, `purgeCache(recordCacheTag(table, id))` | [Workers Cache](#time-based-caching-with-workers-cache) |
+| Tag a cached page with records it read | `tagCache(recordCacheTag(table, id))` | [Workers Cache](#time-based-caching-with-workers-cache) |
+
+**Testing**
+
+| Task | Use | See |
+| --- | --- | --- |
+| Run a request through the application | `app.request(path, init, testEnv(layer, bindings, { database }))` | [Testing](#testing) |
+| Sign a request in | `signedIn(user)` in `testEnv`'s layer | [Testing](#testing) |
+| Read a page, JSON, a failure or a cookie | `readPage`, `readJson`, `readError`, `readErrorPage`, `readCookie` | [Testing](#testing) |
+| Make several requests as one visitor, or follow a redirect | `testBrowser(app, env)` and its `follow(res)` | [Testing](#testing) |
+| Replace a service that reaches another system | `Layer.succeed(Service, fake)` in `testEnv`'s layer | [Testing](#testing) |
+| Move time | `testClock()` | [Testing](#testing) |
+| Use the production database family | PGlite or Miniflare's D1, migrated with `applyMigrations` | [A database for tests](#a-database-for-tests) |
+| Run a Queue consumer | `testBatch(bodies)` | [Scheduled and queued work](#scheduled-and-queued-work) |
 
 ## Data flow
 
