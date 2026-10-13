@@ -1,7 +1,8 @@
-// Drizzle tables the README examples refer to as `./schema`.
-import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
+// Drizzle tables the README examples refer to as `./schema`. The examples'
+// database is Postgres, as `src/db.ts` in the README creates it.
+import { pgTable, text } from 'drizzle-orm/pg-core'
 
-export const projects = sqliteTable('projects', {
+export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   slug: text('slug').notNull(),
@@ -9,7 +10,7 @@ export const projects = sqliteTable('projects', {
   userId: text('user_id').notNull(),
 })
 
-export const tasks = sqliteTable('tasks', {
+export const tasks = pgTable('tasks', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),
   title: text('title').notNull(),

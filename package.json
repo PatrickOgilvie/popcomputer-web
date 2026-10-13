@@ -93,6 +93,7 @@
     }
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.9",
     "@inertiajs/core": "3.9.1",
     "@types/bun": "^1.4.3",
     "@types/react": "^19.3.0",
@@ -101,6 +102,7 @@
     "effect": "4.0.3",
     "esbuild": "^0.28.2",
     "hono": "^4.13.13",
+    "postgres": "^3.4.9",
     "typescript": "^7.0.2"
   }
 }

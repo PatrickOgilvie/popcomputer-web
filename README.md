@@ -289,6 +289,66 @@ declare module '@inertiajs/core' {
 }
 ```
 
+The database and Better Auth come from two small factories. On Postgres,
+through Hyperdrive in production:
+
+```ts
+// src/db.ts
+import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
+import { drizzle } from 'drizzle-orm/postgres-js'
+import postgres from 'postgres'
+import * as schema from './schema'
+
+// Drizzle's driver-independent Postgres database: a PGlite client in tests
+// has this type too, so testEnv accepts it in place of Hyperdrive's.
+export type Database = PgDatabase<PgQueryResultHKT, typeof schema>
+
+export function createDb(url: string): Database {
+  return drizzle(postgres(url), { schema })
+}
+```
+
+```ts
+// src/auth.ts
+import { betterAuth, type BetterAuthOptions } from 'better-auth'
+import { drizzleAdapter } from 'better-auth/adapters/drizzle'
+import type { Database } from './db'
+import * as schema from './schema'
+
+export interface CreateAuthOptions {
+  readonly db: Database
+  readonly secret: string
+  readonly baseURL: string
+  readonly advanced?: BetterAuthOptions['advanced']
+}
+
+// Better Auth's tables (user, session, account, verification) belong in
+// ./schema: `npx @better-auth/cli generate` writes them.
+export function createAuth(options: CreateAuthOptions) {
+  return betterAuth({
+    database: drizzleAdapter(options.db, { provider: 'pg', schema }),
+    secret: options.secret,
+    baseURL: options.baseURL,
+    advanced: options.advanced,
+    emailAndPassword: { enabled: true },
+  })
+}
+
+export interface CreateStatelessAuthOptions {
+  readonly secret: string
+  readonly advanced?: BetterAuthOptions['advanced']
+}
+
+// Better Auth without a database, for an application without accounts of its own.
+export function createStatelessAuth(options: CreateStatelessAuthOptions) {
+  return betterAuth({ secret: options.secret, advanced: options.advanced })
+}
+```
+
+On Cloudflare D1, `createDb` takes the binding instead,
+`drizzle(c.env.DB, { schema })` from `drizzle-orm/d1`, and the adapter's
+`provider` is `'sqlite'`.
+
 The configuration is deliberately flat. `setupWeb({ web: { ... } })` would
 repeat the framework boundary without clarifying ownership.
 
@@ -1074,6 +1134,20 @@ and constraint errors behave the same:
 
 `bun:sqlite` is a synchronous driver: it can stand in for neither, since
 `dbTransaction` and `dbBatch` are type errors for it.
+
+```ts
+// src/test-db.ts
+import { PGlite } from '@electric-sql/pglite'
+import { drizzle } from 'drizzle-orm/pglite'
+import { applyMigrations } from '@popcomputer/web/testing'
+import type { Database } from './db'
+import * as schema from './schema'
+
+const client = new PGlite()
+await applyMigrations('./drizzle', (sql) => client.exec(sql))
+
+export const testDb: Database = drizzle(client, { schema })
+```
 
 ```ts
 const env = testEnv(signedIn({ id: 'user-1' }), testBindings, { database: testDb })

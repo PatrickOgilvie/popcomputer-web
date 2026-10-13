@@ -30,7 +30,7 @@ export declare function loadProjects(
 ): Promise<ReadonlyArray<typeof ProjectSummary.Type>>
 
 export declare const newProject: typeof projects.$inferInsert
-export declare const testDb: ReturnType<typeof createDb>
+export { testDb } from './test-db'
 export { testBindings } from './test-bindings'
 
 export interface AuditEvent {
