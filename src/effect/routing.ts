@@ -523,7 +523,11 @@ export class EffectRouteBuilder<
       // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
       rows.set(binding.param, result)
       models.set(binding.param, await decodeBoundRow(binding, result))
-      recordTags.push(formatRecordTag(binding.tableName, Object.getOwnPropertyDescriptor(result, binding.primaryKey)?.value))
+      const key: unknown = Object.getOwnPropertyDescriptor(result, binding.primaryKey)?.value
+
+      if (key !== undefined && key !== null) {
+        recordTags.push(formatRecordTag(binding.tableName, key))
+      }
     }
 
     return { models, recordTags }
