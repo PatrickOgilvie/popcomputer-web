@@ -73,6 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `dbBatch` takes a list built at run time, such as one statement per line of a form, and returns its results as a list; an empty list runs nothing.
+- A route registered after an earlier route whose path matches it, such as `/products/new` after `/products/{product}`, throws at registration naming the order that works; it was never reached. Configuration errors thrown when the application starts carry their fix in the message.
+- `cache()` no longer requires `ExecutionContextService`: a service built on it keeps the framework service out of its interface, and a stale value refreshes inline without one.
+- The type error for `dbTransaction` on Cloudflare D1, or a driver without transactions, prints its text, naming `dbBatch`.
 - A unique index on an expression, such as `lower(handle)`, is reported by its name on SQLite and D1 (`UNIQUE constraint failed: index '...'`), so `uniqueFieldErrors`'s `constraints` map it to its field; it was read as a column named `index`.
 - A form posted while signed out goes to sign in with the page the form was on as `?redirect=`.
 - `ErrorResponse` from `@popcomputer/web/schema` is the JSON error envelope as an Effect Schema, which a client decodes failures with; `ErrorResponseBody` is its type. `httpError(status, message, Schema, body)` checks and encodes an error's body through a schema, a test reads it with `readError(res, Schema)`, and a client decodes it with `errorResponseWith(Schema)`.

@@ -125,7 +125,7 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig): void {
 
     for (const [parent, scope] of Object.entries(config.scope ?? {})) {
       if (parent === name || !Object.hasOwn(bindings, parent)) {
-        throw RouteConfigurationError.scopeNotABinding(name, parent, names.filter((other) => other !== name))
+        throw RouteConfigurationError.scopeNotABinding(name, parent, names.filter((other) => other !== name)).atStartup()
       }
 
       if (isBindingTable(source)) {

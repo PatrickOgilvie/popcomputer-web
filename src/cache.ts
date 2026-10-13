@@ -273,10 +273,12 @@ export const cache = <V, E, R>(
   compute: Effect.Effect<V, E, R>,
   schema: CacheSchema<V>,
   options: CacheOptions
-): Effect.Effect<V, E, R | CacheService | ExecutionContextService> =>
+): Effect.Effect<V, E, R | CacheService> =>
   Effect.gen(function* () {
     const cacheService = yield* CacheService
-    const executionContext = yield* ExecutionContextService
+    // A stale value refreshes in the background when the request has an
+    // execution context, and inline otherwise, as in a test.
+    const executionContext = Option.getOrUndefined(yield* Effect.serviceOption(ExecutionContextService))
     const entrySchema = CacheEntrySchema(schema)
     const jsonSchema = Schema.fromJsonString(entrySchema)
 
@@ -341,7 +343,7 @@ export const cache = <V, E, R>(
 
       if (swrMs > 0 && age < ttlMs + swrMs) {
         // Stale but within SWR window - return stale, trigger background refresh
-        if (executionContext.isAvailable) {
+        if (executionContext?.isAvailable === true) {
           yield* executionContext.runInBackground(
             Effect.gen(function* () {
               const freshValue = yield* compute

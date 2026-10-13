@@ -479,4 +479,22 @@ describe('dbBatch', () => {
     })
     expect(countPages(sqlite)).toBe(0)
   })
+
+  test('takes a list built at run time, and runs nothing for an empty one', async () => {
+    const { layer, sqlite } = openDatabase()
+    const slugs: ReadonlyArray<string> = ['a', 'b', 'c']
+
+    const results = await Effect.runPromise(
+      dbBatch((db) => slugs.map((slug) => db.insert(pages).values({ workspaceId: 1, slug, title: slug.toUpperCase() })))
+        .pipe(Effect.provide(layer))
+    )
+    const none = await Effect.runPromise(
+      dbBatch((db) => slugs.filter(() => false).map((slug) => db.insert(pages).values({ workspaceId: 1, slug, title: slug })))
+        .pipe(Effect.provide(layer))
+    )
+
+    expect(results).toHaveLength(3)
+    expect(none).toEqual([])
+    expect(countPages(sqlite)).toBe(3)
+  })
 })

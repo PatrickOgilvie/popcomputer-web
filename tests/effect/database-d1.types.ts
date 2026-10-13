@@ -52,6 +52,14 @@ export const writes = Effect.gen(function* () {
 
   // @ts-expect-error Drizzle cannot run db.run(sql) in a D1 batch
   yield* dbBatch((db) => [db.run('DELETE FROM pages')])
+
+  // A list built at run time is a batch, with a list of results.
+  const ids: ReadonlyArray<string> = ['p1', 'p2']
+  const inserted = yield* dbBatch((db) => ids.map((id) => db.insert(pages).values({ id })))
+  expectType<Equals<typeof inserted extends ReadonlyArray<unknown> ? true : false, true>>()
+
+  // @ts-expect-error nor in a list
+  yield* dbBatch((db) => ids.map(() => db.run('DELETE FROM pages')))
 })
 
 // A result typed `any`, as D1's are without Cloudflare's types, is an error type.

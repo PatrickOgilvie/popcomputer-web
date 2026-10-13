@@ -551,6 +551,16 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     return 500
   }
 
+  /**
+   * This error as thrown while the application starts, where no error page
+   * shows its hint: the message carries the fix.
+   */
+  atStartup(): RouteConfigurationError {
+    return this.hint === undefined || this.message.endsWith(this.hint)
+      ? this
+      : new RouteConfigurationError({ ...this, message: `${this.message} ${this.hint}` })
+  }
+
   toStructured(context: ErrorContext = emptyContext()): StructuredError {
     const code = this.code ?? this.inferCode()
 
@@ -586,6 +596,18 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     return new RouteConfigurationError({
       message: `Route '${path}' has purges: true, but its path has no {param} that binds a model whose record it could purge.`,
       hint: "List the tags it changes instead, such as purges: ['posts'] for the table a create route writes.",
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
+  /** Create an error for a route an earlier route's path answers first. */
+  static routeShadowed(method: string, path: string, earlierMethod: string, earlier: string): RouteConfigurationError {
+    const verb = (name: string) => name === 'all' ? 'ALL' : name.toUpperCase()
+    const hint = `Register ${path} before ${earlier}.`
+
+    return new RouteConfigurationError({
+      message: `${verb(method)} ${path} is registered after ${verb(earlierMethod)} ${earlier}, whose path matches it, so it is never reached: routes answer in the order they are registered.`,
+      hint,
       code: ErrorCodes.CFG_305_INVALID_CONFIG,
     })
   }

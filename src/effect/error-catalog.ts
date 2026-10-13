@@ -141,7 +141,7 @@ setupWeb(app, { version, render, database, schema })`,
   }),
 
   signIn: (): FixSuggestion => ({
-    description: 'The request has no signed-in user. Sign in, then retry.',
+    description: 'Authenticate the request as the route requires: sign in for a session, or send the credential the application checks, such as an API key.',
   }),
 }
 

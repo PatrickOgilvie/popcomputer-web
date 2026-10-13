@@ -166,6 +166,31 @@ export type RunCheck<R, Services> = [ModelName<Exclude<R, Services>>] extends [n
       readonly fix: 'routes.run has no route path, so it binds no models: load the record with dbQuery, or pass it to the Effect.'
     }
 
+/**
+ * Whether a Hono route pattern matches every request a later path would:
+ * each of its `:param` segments matches any one segment, including the later
+ * path's own placeholders, and a trailing `*` matches the rest.
+ */
+function patternMatches(pattern: string, path: string): boolean {
+  const segments = pattern.split('/')
+  const target = path.split('/')
+
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i]
+
+    if (segment === '*' && i === segments.length - 1) return target.length >= segments.length - 1
+    if (i >= target.length) return false
+    if (segment.startsWith(':')) {
+      // A parameter with a pattern or that is optional may not match it.
+      if (target[i] === '' || segment.includes('{') || segment.endsWith('?')) return false
+      continue
+    }
+    if (segment !== target[i]) return false
+  }
+
+  return segments.length === target.length
+}
+
 /** The path the route that `run` sends its Effects through answers on. */
 const RUN_PATH = '/__popweb/run'
 
@@ -987,7 +1012,18 @@ export class EffectRouteBuilder<
       options?.purges === true &&
       !bindings.some((binding) => (configured ? Object.hasOwn(configured, binding.param) : true))
     ) {
-      throw RouteConfigurationError.purgesWithoutBindings(path)
+      throw RouteConfigurationError.purgesWithoutBindings(path).atStartup()
+    }
+
+    // Routes answer in registration order, so a path an earlier route's
+    // pattern matches, such as /products/new after /products/{product}, is
+    // never reached.
+    const shadowing = this.registry.all().find((earlier) =>
+      (earlier.method === method || earlier.method === 'all') && patternMatches(earlier.fullPath, fullPath)
+    )
+
+    if (shadowing) {
+      throw RouteConfigurationError.routeShadowed(method, path, shadowing.method, shadowing.path).atStartup()
     }
 
     // Register route metadata

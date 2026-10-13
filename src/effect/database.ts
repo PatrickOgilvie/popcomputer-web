@@ -140,23 +140,38 @@ class RolledBack {
  * how Cloudflare D1 makes several writes atomic; libsql and Neon's HTTP
  * driver support it too. Each statement's result comes back in order.
  *
+ * A list built at run time, such as one statement per line of a form, is a
+ * batch too: its results are a list, and an empty list runs nothing.
+ *
  * @example
  * yield* dbBatch((db) => [
  *   db.delete(tasks).where(eq(tasks.projectId, project.id)),
  *   db.delete(projects).where(eq(projects.id, project.id)),
  * ])
+ * yield* dbBatch((db) => lines.map((line) => db.update(stock).set(...).where(...)))
  */
 export function dbBatch<const Items extends BatchArgument>(
   statements: (db: DatabaseType) => Items & CheckedBatchItems<Items>
-): Effect.Effect<BatchResults<Items>, DatabaseWriteError, DatabaseService> {
+): Effect.Effect<BatchResults<Items>, DatabaseWriteError, DatabaseService>
+export function dbBatch<Item extends BatchStatement>(
+  statements: (db: DatabaseType) => ReadonlyArray<Item> & CheckedBatchItems<ReadonlyArray<Item>>
+): Effect.Effect<ReadonlyArray<DatabaseResult<Awaited<Item>>>, DatabaseWriteError, DatabaseService>
+export function dbBatch(
+  statements: (db: DatabaseType) => ReadonlyArray<unknown>
+): Effect.Effect<unknown, DatabaseWriteError, DatabaseService> {
   return run(
     'batch',
     (db) => {
-      // SAFETY: BatchArgument is an error type unless DatabaseType has a
-      // `batch(statements)` method, whose results Drizzle returns in order.
-      const batching = db as unknown as Batches<Items>
+      const items = statements(db)
 
-      return batching.batch(statements(db))
+      if (items.length === 0) return Promise.resolve([])
+
+      // SAFETY: BatchArgument is an error type unless DatabaseType has a
+      // `batch(statements)` method, whose results Drizzle returns in order;
+      // the list is not empty.
+      const batching = db as unknown as Batches<ReadonlyArray<unknown>>
+
+      return batching.batch(items)
     },
     (cause) => classifyFailure(cause, 'batch')
   )
@@ -223,24 +238,6 @@ export function uniqueFieldErrors<const Field extends string>(
 // Driver capabilities, read from the application's Drizzle client type
 // ---------------------------------------------------------------------------
 
-/** Shown where a transaction client is expected when the driver has none. */
-interface TransactionsNotSupported {
-  readonly __error: 'This database client has no transaction() method.'
-  readonly __hint: 'Use dbBatch for atomic writes, or a driver with transactions.'
-}
-
-/** Shown where a transaction client is expected for a synchronous driver. */
-interface SynchronousTransactionsNotSupported {
-  readonly __error: 'This database driver runs transactions synchronously, so awaited writes run after it commits.'
-  readonly __hint: 'Use an asynchronous driver (libsql, Postgres, MySQL), or dbBatch for atomic writes.'
-}
-
-/** Shown where a transaction client is expected for Cloudflare D1. */
-interface D1TransactionsNotSupported {
-  readonly __error: 'Cloudflare D1 has no interactive transactions: it rejects BEGIN and SAVEPOINT.'
-  readonly __hint: 'Use dbBatch((db) => [...statements]) to apply several writes atomically.'
-}
-
 /** Shown where batch statements are expected when the driver cannot batch. */
 interface BatchNotSupported {
   readonly __error: 'This database client has no batch() method.'
@@ -281,17 +278,30 @@ type IsD1RunResult = DatabaseType extends BaseSQLiteDatabase<'async', infer Run,
  * The client `transaction(run)` passes to its callback, when the driver
  * awaits the callback before committing, or an error type naming why it
  * cannot. A synchronous driver's `transaction` returns the callback's result
- * instead of a promise.
+ * instead of a promise. The error types are written inline, so a type error
+ * at `dbTransaction` prints their text.
  */
 export type TransactionClient = [TransactionMethod] extends [never]
-  ? TransactionsNotSupported
+  ? {
+      readonly __error: 'This database client has no transaction() method.'
+      readonly __hint: 'Use dbBatch for atomic writes, or a driver with transactions.'
+    }
   : IsD1 extends true
-    ? D1TransactionsNotSupported
+    ? {
+        readonly __error: 'Cloudflare D1 has no interactive transactions: it rejects BEGIN and SAVEPOINT.'
+        readonly __hint: 'Use dbBatch((db) => [...statements]) to apply several writes atomically.'
+      }
   : TransactionMethod extends (run: (tx: infer Tx) => infer _, ...config: infer _Config) => infer Result
     ? Result extends PromiseLike<unknown>
       ? Tx
-      : SynchronousTransactionsNotSupported
-    : TransactionsNotSupported
+      : {
+          readonly __error: 'This database driver runs transactions synchronously, so awaited writes run after it commits.'
+          readonly __hint: 'Use an asynchronous driver (libsql, Postgres, MySQL), or dbBatch for atomic writes.'
+        }
+    : {
+        readonly __error: 'This database client has no transaction() method.'
+        readonly __hint: 'Use dbBatch for atomic writes, or a driver with transactions.'
+      }
 
 /**
  * What `dbTransaction` adds to its argument's type: nothing for a driver with
@@ -311,6 +321,9 @@ export type BatchArgument = [BatchMethod] extends [never]
   : BatchMethod extends (statements: infer Statements, ...rest: infer _Rest) => unknown
     ? Statements
     : readonly [BatchNotSupported]
+
+/** One statement the database's batch takes. */
+export type BatchStatement = BatchArgument extends ReadonlyArray<infer Item> ? Item : never
 
 /** Each batched statement's result, in order. */
 export type BatchResults<Items> = { -readonly [K in keyof Items]: DatabaseResult<Awaited<Items[K]>> }

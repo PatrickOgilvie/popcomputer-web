@@ -744,3 +744,36 @@ describe('Real-world Patterns', () => {
     expect((await app.request('/dashboard/settings')).status).toBe(200)
   })
 })
+
+describe('a route an earlier route answers first', () => {
+  const ok = Effect.succeed(new Response('ok'))
+
+  test('is refused at registration, naming the order that works', () => {
+    const routes = effectRoutes(new Hono()).get('/products/{product}', ok)
+
+    expect(() => routes.get('/products/new', ok)).toThrow(
+      'GET /products/new is registered after GET /products/{product}, whose path matches it, so it is never reached'
+    )
+  })
+
+  test('is allowed before the placeholder path, for another method, or one segment longer', () => {
+    const routes = effectRoutes(new Hono())
+      .get('/products/new', ok)
+      .get('/products/{product}', ok)
+      .post('/products/import', ok)
+      .get('/products/{product}/edit', ok)
+
+    expect(routes.getRegistry().all().map((route) => route.path)).toEqual([
+      '/products/new',
+      '/products/{product}',
+      '/products/import',
+      '/products/{product}/edit',
+    ])
+  })
+
+  test('is refused under a catch-all registered for every method', () => {
+    const routes = effectRoutes(new Hono()).all('/api/auth/*', ok)
+
+    expect(() => routes.get('/api/auth/session', ok)).toThrow('Register /api/auth/session before /api/auth/*')
+  })
+})

@@ -198,6 +198,11 @@ A component a page renders takes its props from the same declaration:
 A renamed prop, a missing page or a `Date` used as a `Date` in the browser is a
 type error on the side that drifted.
 
+A row joined from several tables spreads `columnsOf` for each table, which
+takes the fields that table has: `{ ...columnsOf(stockLevels, StockLine),
+...columnsOf(products, StockLine) }`. A field both tables have comes from the
+later one, so select it by name instead.
+
 A query reads exactly the columns a page shows with `columnsOf`, which takes
 them from the page's schema, beside any values it computes:
 
@@ -776,11 +781,15 @@ A route loads its models the first time the action calls `bound()`, so a guard
 or `authorize()` that runs first decides before any database lookup, and a
 signed-out visitor cannot tell an existing record from a missing one. A missing
 row fails `bound()` with `NotFoundError`, which renders a 404.
-A nested binding is scoped to the binding before it, through a relationship
-discoverable from Drizzle metadata or an explicit scope. A scope can name any
-earlier binding of the route instead, such as a project's flag under one of
-the project's environments, `/projects/{project}/environments/{environment}/flags/{flag:key}`,
-with `scope: { project: { foreignKey: 'projectId' } }`:
+A nested binding is scoped to the binding before it. Drizzle's metadata
+finds the relationship when the child's column references the parent's
+(`.references(() => projects.id)`) or a relation declares it, so
+`bindings: { project: schema.projects, task: schema.tasks }` loads only the
+project's tasks. Name the relationship with `routeBinding` when the metadata
+has none, or to scope a binding to an earlier one than the binding before it,
+such as a project's flag under one of the project's environments,
+`/projects/{project}/environments/{environment}/flags/{flag:key}`. `setupWeb`
+checks each scope's binding and columns when it is called:
 
 ```ts
 import * as schema from '../schema'
@@ -930,7 +939,12 @@ Better Auth writes the new user itself, so records the application creates
 for a new user, such as a provider's profile, are a second write: create them
 in `redirectTo`'s Effect, which runs after the user exists, and make them
 idempotent (`onConflictDoNothing`), or create them on first use, so a failure
-between the two writes leaves nothing the next request cannot repair.
+between the two writes leaves nothing the next request cannot repair. Fields
+the server sets rather than the form, such as a role or a team, are `input:
+false` in `betterAuthFields`, so a sign-up cannot send them: set them in that
+Effect, or keep them in the application's own table, such as a membership,
+which a guard layer reads. Sign-up passes `returnHeaders: true` to
+`auth.api.signUpEmail`, and reads the new user from `result.response.user`.
 
 A signed-out visitor to a guarded page is redirected with 302 on a page load
 and 303 on an Inertia visit, as Inertia requires; a test asserts the
@@ -1166,6 +1180,7 @@ const forgetAbandonedOrders = Effect.gen(function* () {
 
 export default {
   fetch: app.fetch,
+  // Partial, so a test calls the same handler with testEnv's bindings.
   scheduled: (_controller: unknown, env: Partial<Bindings>, ctx: ExecutionContext) =>
     routes.run(forgetAbandonedOrders, env, ctx),
 }
@@ -1677,8 +1692,18 @@ the schema's camelCase keys too. An index on an expression, such as
 'email' } })` puts it on its field. SQLite and D1 report a constraint by its
 columns instead, so name a composite key that belongs on another field by
 them, in any order and in either case: `{ constraints: { 'org_id,user_id':
-'email' } }`. In development, the error page of a violation no mapping
-matched shows the `constraints` entry that would map it.
+'email' } }`. A composite key reports each of its columns, so a message keyed
+by one of them, `{ sku: 'Taken.' }` for a key on `(company_id, sku)`, already
+matches; `constraints` is for a field that is not one of them. In
+development, the error page of a violation no mapping matched shows the
+`constraints` entry that would map it.
+
+An update of a row that is not there changes nothing and fails nothing: read
+`meta.changes` on D1, or `.returning()`, to tell. SQLite checks a `CHECK`
+before an upsert's conflict, so `INSERT ... ON CONFLICT DO UPDATE` whose
+inserted values break the check fails even when the row exists; insert a
+starting row with `onConflictDoNothing()` and update it after, in the same
+batch.
 
 On D1, write the same statements as one `dbBatch((db) => [...])`. A batch
 cannot branch on an earlier statement's result, so a write that depends on
@@ -1712,7 +1737,10 @@ const addTaskIfRoom = (projectId: string, title: string) =>
 
 When a limit cannot be a constraint, a guarded update such as
 `UPDATE ... WHERE (SELECT count(*) ...) < 100` that changed no row
-(`meta.changes === 0`) is the limit refusing it. A value the database computes, such as the next ticket number in an
+(`meta.changes === 0`) is the limit refusing it. A statement can depend on
+the one before it through SQLite's `changes()`, the rows the previous
+statement changed: ``sql`changes() = 1` `` in an insert-select's `WHERE`
+writes a log row only after an update that applied, in the same batch. A value the database computes, such as the next ticket number in an
 organization, belongs in the insert:
 ``sql`(SELECT coalesce(max(number), 0) + 1 FROM ...)` ``. Write every
 statement with the query builder: Drizzle's D1 batch fails at runtime on
@@ -1878,8 +1906,10 @@ form.
 - **State machines**: model a record's states as a `Schema.TaggedUnion`
   (build a state with `.cases.Draft.make(...)`) and its transitions as one
   function returning an Effect that fails with a typed error for an illegal
-  one; the action maps that error, and a page schema built from the union
-  lets React switch over the states exhaustively.
+  one; the action maps those errors, all of them with one handler when they
+  answer alike (`Effect.catchTag(['ClaimLocked', 'AlreadyPaid'], refuse)`),
+  and a page schema built from the union lets React switch over the states
+  exhaustively.
 - **Services that join transactions**: keep `DatabaseService` in a service
   method's requirements (`Effect.Effect<A, E, DatabaseService>`) instead of
   providing it inside the service, so a method called in `dbTransaction`
