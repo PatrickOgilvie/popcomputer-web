@@ -47,7 +47,7 @@ export interface RouteCacheOptions {
    * is always tagged with each of its records (see recordCacheTag); these
    * append after them.
    */
-  tags?: readonly string[]
+  tags?: readonly CacheTag[]
 }
 
 /**
@@ -189,6 +189,14 @@ type DeclaredSchema = Registered<'schema', never>
 export type TableName = [DeclaredSchema] extends [never] ? string : Extract<keyof DeclaredSchema, string>
 
 /**
+ * A Cache-Tag the application names: a table of its schema, by its key in the
+ * schema (`planPrices`, not the SQL name `plan_prices`), which an index of the
+ * table's records carries, or one record, `recordCacheTag(table, key)`. Any
+ * string before the application registers its schema.
+ */
+export type CacheTag = [DeclaredSchema] extends [never] ? string : TableName | `${TableName}:${string}`
+
+/**
  * The Cache-Tag that names one database record: `{table}:{primary key}`. A
  * cached page tags itself with the record of each of its route's bindings,
  * and `purges: true` purges the records its route's bindings name, so a page
@@ -198,8 +206,12 @@ export type TableName = [DeclaredSchema] extends [never] ? string : Extract<keyo
  * @example
  * yield* cache.purge({ tags: [recordCacheTag('posts', post.id)] })
  */
-export function recordCacheTag(table: TableName, key: string | number | bigint): string {
-  return formatRecordTag(table, key)
+export function recordCacheTag<const Table extends TableName>(
+  table: Table,
+  key: string | number | bigint
+): `${Table}:${string}` {
+  // SAFETY: formatRecordTag writes `${table}:${key}`.
+  return formatRecordTag(table, key) as `${Table}:${string}`
 }
 
 /** recordCacheTag for a table name the route's binding plan resolved. */
@@ -534,7 +546,7 @@ export function makePendingPurges(): PendingPurges['Service'] {
  * @example
  * yield* purgeCache(recordCacheTag('listings', offer.listingId), 'listings')
  */
-export const purgeCache = (...tags: readonly string[]): Effect.Effect<void, never, PendingPurges> =>
+export const purgeCache = (...tags: readonly CacheTag[]): Effect.Effect<void, never, PendingPurges> =>
   Effect.flatMap(PendingPurges, (pending) => pending.add(tags))
 
 /**

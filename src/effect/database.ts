@@ -467,6 +467,10 @@ const CONSTRAINT_CODES = new Map<string, Constraint>([
   ['ER_ROW_IS_REFERENCED_2', 'foreign-key'],
   ['23502', 'not-null'],
   ['23514', 'check'],
+  // An exclusion constraint, such as no two bookings of a room overlapping.
+  ['23P01', 'exclusion'],
+  // A trigger's RAISE(ABORT, 'name'), how SQLite states such a rule.
+  ['SQLITE_CONSTRAINT_TRIGGER', 'trigger'],
   ['SQLITE_CONSTRAINT_UNIQUE', 'unique'],
   ['SQLITE_CONSTRAINT_PRIMARYKEY', 'unique'],
   ['SQLITE_CONSTRAINT_FOREIGNKEY', 'foreign-key'],
@@ -484,6 +488,7 @@ const SQLITE_CONSTRAINT_MESSAGES: ReadonlyArray<readonly [RegExp, Constraint]> =
   [/\bFOREIGN KEY constraint failed\b/, 'foreign-key'],
   [/\bNOT NULL constraint failed\b/, 'not-null'],
   [/\bCHECK constraint failed\b/, 'check'],
+  [/\bSQLITE_CONSTRAINT_TRIGGER\b/, 'trigger'],
 ]
 
 function classifyError(error: object): Constraint | undefined {
@@ -512,6 +517,14 @@ interface ConstraintDetails {
  */
 function readConstraintDetails(error: object): ConstraintDetails {
   const message = messageOf(error)
+  // A trigger's RAISE(ABORT, 'name') reports the name as the message, which
+  // D1 wraps: `D1_ERROR: name: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)`.
+  const code: unknown = Object.getOwnPropertyDescriptor(error, 'code')?.value
+  const d1Trigger = /^D1_ERROR: (.+?): SQLITE_CONSTRAINT \(extended: SQLITE_CONSTRAINT_TRIGGER\)/.exec(message)
+
+  if (d1Trigger) return { columns: [], constraintName: d1Trigger[1] }
+  if (code === 'SQLITE_CONSTRAINT_TRIGGER') return { columns: [], constraintName: message }
+
   // `UNIQUE constraint failed: index 'user_handle_lower_unique'`, for an
   // index on an expression, such as lower(handle), which has no columns
   const sqliteIndex = /(?:UNIQUE|NOT NULL) constraint failed: index '([^']+)'/.exec(message)

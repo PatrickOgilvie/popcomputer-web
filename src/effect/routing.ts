@@ -40,6 +40,7 @@ import {
   ResponseCacheService,
   PendingPurges,
   makePendingPurges,
+  type CacheTag,
   formatRecordTag,
   type RouteCacheOptions,
 } from './response-cache.js'
@@ -277,7 +278,7 @@ export interface EffectRouteOptions {
    * the action changes that the route does not name, it purges with
    * `purgeCache(...tags)`.
    */
-  purges?: true | readonly string[]
+  purges?: true | readonly CacheTag[]
 }
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])

@@ -34,6 +34,8 @@ import {
   flash,
   json,
   back,
+  purgeCache,
+  recordCacheTag,
   redirect,
   type DatabaseError,
   type DatabaseService,
@@ -124,6 +126,7 @@ export const web = setupWeb(new Hono<Env>(), {
   version: '1',
   render: () => '',
   database: (c) => createDb(c.env.REGION),
+  schema: { members, users },
   bindings: { project: Project, member: members },
   pages,
   paths,
@@ -226,6 +229,11 @@ const ProjectGuard = Layer.effectDiscard(Effect.asVoid(bound('project')))
 web.routes.provide(ProjectGuard).get(paths.project, action(json({ ok: true })))
 // @ts-expect-error /members/{member} does not bind the project the guard reads
 web.routes.provide(ProjectGuard).get(paths.member, action(json({ ok: true })))
+
+// Cache tags name the schema's tables by their keys, and their records.
+export const purgedMembers = purgeCache('members', recordCacheTag('users', 'u1'))
+// @ts-expect-error team_members is not a table of the schema
+purgeCache('team_members')
 
 // A JSON response declared by a schema takes values of its type.
 const Evaluation = S.Struct({ flag: S.String, enabled: S.Boolean })

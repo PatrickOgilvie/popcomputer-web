@@ -191,9 +191,18 @@ export interface TestErrorPage {
  * const page = await readErrorPage(await app.request('/book/ada?tz=Mars/Olympus', { headers: { 'X-Inertia': 'true' } }))
  * expect(page.props.errors.tz).toBe('Unknown time zone')
  */
+/** Why a response is not an Inertia page, as a test that expected one needs to know. */
+function notAPage(response: Response): string {
+  if (response.status === 409 && response.headers.has('X-Inertia-Location')) {
+    return "Inertia answered 409 because the request's X-Inertia-Version is not the app's version: send setupWeb's version, or no X-Inertia-Version."
+  }
+
+  return 'Request pages with the X-Inertia: true header.'
+}
+
 export async function readErrorPage(response: Response): Promise<TestErrorPage> {
   if (response.headers.get('X-Inertia') !== 'true') {
-    throw new Error(`Expected the error page, but the response is ${response.status}. Request pages with the X-Inertia: true header.`)
+    throw new Error(`Expected the error page, but the response is ${response.status}. ${notAPage(response)}`)
   }
 
   const page: unknown = await response.json()
@@ -354,7 +363,7 @@ export async function readPage<Component extends PageName>(
     throw new Error(
       `Expected the '${component}' page, but the response is ${response.status}` +
         (location ? ` to ${location}` : ` ${response.headers.get('Content-Type') ?? ''}`) +
-        '. Request pages with the X-Inertia: true header.'
+        `. ${notAPage(response)}`
     )
   }
 

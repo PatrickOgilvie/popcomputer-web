@@ -314,28 +314,46 @@ export const forbidden = (message = 'Forbidden'): Effect.Effect<never, Forbidden
  *
  * @example
  * return yield* httpError(409, 'Some lines are short of stock.', InsufficientStock, { lines })
+ * return yield* httpError(429, 'Slow down.', RateLimited, { retryAfter }, { headers: { 'Retry-After': String(retryAfter) } })
  */
 export function httpError<A, I>(
   status: number,
   message: string,
   schema: S.Codec<A, I, never, never>,
-  body: NoInfer<A>
+  body: NoInfer<A>,
+  options?: HttpErrorOptions
 ): Effect.Effect<never, HttpError>
-export function httpError(status: number, message: string, body?: PagePropValue): Effect.Effect<never, HttpError>
+export function httpError(
+  status: number,
+  message: string,
+  body?: PagePropValue,
+  options?: HttpErrorOptions
+): Effect.Effect<never, HttpError>
 export function httpError(
   status: number,
   message: string,
   third?: unknown,
-  fourth?: unknown
+  fourth?: unknown,
+  fifth?: HttpErrorOptions
 ): Effect.Effect<never, HttpError> {
-  if (!S.isSchema(third)) return Effect.fail(new HttpError({ status, message, body: third }))
+  const declared = S.isSchema(third)
+  // SAFETY: the overloads put the options fourth when no schema comes third.
+  const options = declared ? fifth : (fourth as HttpErrorOptions | undefined)
+  const headers = options?.headers === undefined ? undefined : new Headers(options.headers)
+
+  if (!declared) return Effect.fail(new HttpError({ status, message, body: third, headers }))
 
   // SAFETY: the schema overload takes only schemas without services.
   return S.encodeUnknownEffect(S.toCodecJson(third as S.Codec<unknown, unknown, never, never>))(fourth).pipe(
     Effect.mapError((issue) => new Error(`The ${status} error's body does not match its schema: ${issue.message}`)),
     Effect.orDie,
-    Effect.flatMap((body) => Effect.fail(new HttpError({ status, message, body })))
+    Effect.flatMap((body) => Effect.fail(new HttpError({ status, message, body, headers })))
   )
+}
+
+/** Headers an `httpError` response carries, such as `Retry-After` on a 429. */
+export interface HttpErrorOptions {
+  readonly headers?: HeadersInit
 }
 
 /**

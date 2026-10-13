@@ -12,6 +12,7 @@ import { Clock, Duration, Effect, Layer, Option, Random, Schema } from 'effect'
 import { CacheService, ExecutionContextService, type CacheClient } from './effect/services.js'
 import { CacheError } from './effect/errors.js'
 import { observeOrLog } from './effect/error-observer.js'
+import type { CacheTag } from './effect/response-cache.js'
 
 // ============================================================================
 // Types
@@ -38,7 +39,7 @@ export type CacheOptions = {
    * and `recordCacheTag` name them: a route that purges one of them after a
    * write also invalidates this entry, as it does a cached response.
    */
-  tags?: ReadonlyArray<string>
+  tags?: ReadonlyArray<CacheTag>
 }
 
 export type CacheGetOptions = {

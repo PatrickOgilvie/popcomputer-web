@@ -391,6 +391,17 @@ describe('testClock settle', () => {
 })
 
 describe('readPage', () => {
+  test('explains an asset version conflict rather than asking for X-Inertia', async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '2', render: (page) => JSON.stringify(page) })
+    routes.get('/dashboard', action(render('Dashboard')))
+
+    const res = await app.request('/dashboard', { headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } })
+
+    expect(res.status).toBe(409)
+    await expect(readPage(res, 'Dashboard')).rejects.toThrow("X-Inertia-Version is not the app's version")
+  })
+
   test('says why the response rendered the error page instead', async () => {
     const app = new Hono()
     const { routes } = setupWeb(app, {

@@ -307,6 +307,35 @@ describe('uniqueFieldErrors', () => {
     expect(violation.toStructured().message).toContain('"contacts_email_lower_unique"')
   })
 
+  test('reports a rule a SQLite trigger raises by the name it raises', async () => {
+    const { layer, db, sqlite } = openDatabase()
+    sqlite.run(`CREATE TRIGGER pages_one_draft BEFORE INSERT ON pages
+      WHEN NEW.title = 'Draft' AND EXISTS (SELECT 1 FROM pages WHERE workspace_id = NEW.workspace_id AND title = 'Draft')
+      BEGIN SELECT RAISE(ABORT, 'pages_one_draft_per_workspace'); END`)
+    await db.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'Draft' })
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'b', title: 'Draft' })).pipe(Effect.provide(layer))
+    )
+
+    expect(failureOf(exit)).toMatchObject({
+      value: { _tag: 'DatabaseConstraintViolation', constraint: 'trigger', constraintName: 'pages_one_draft_per_workspace' },
+    })
+  })
+
+  test('reads the name D1 reports for a trigger', async () => {
+    const { layer } = openDatabase()
+    const exit = await Effect.runPromiseExit(
+      dbMutation(() => Promise.reject(new Error(
+        'D1_ERROR: interview_panel_double_booked: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)'
+      ))).pipe(Effect.provide(layer))
+    )
+
+    expect(failureOf(exit)).toMatchObject({
+      value: { constraint: 'trigger', constraintName: 'interview_panel_double_booked' },
+    })
+  })
+
   test('reports a SQLite index on an expression by its name', async () => {
     const { layer, db, sqlite } = openDatabase()
     sqlite.run('CREATE UNIQUE INDEX pages_title_lower_unique ON pages (lower(title))')

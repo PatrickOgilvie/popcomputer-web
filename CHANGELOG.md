@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- Route `cache.tags`, `purges`, `purgeCache` and the data cache's `tags` take the schema's tables, by their key in the schema, and record tags (`CacheTag`), once the application registers its schema: a tag naming a table by its SQL name, which nothing ever purged, is a type error. `recordCacheTag` returns a record tag of that table.
+- `DatabaseConstraintViolation`'s `constraint` adds `'exclusion'` (Postgres's exclusion constraints) and `'trigger'` (a SQLite or D1 trigger's `RAISE(ABORT, 'name')`, with the name as `constraintName`); both were a `DatabaseError`, a 500.
+
+### Added
+
+- `validateRequest(Schema, { redirectTo })` sends a failed form to the page given, such as a wizard's step, with its errors.
+- `httpError(status, message, Schema, body, { headers })` carries headers, such as `Retry-After`, beside a typed body.
+
 ### Fixed
 
+- `readPage` and `readErrorPage` explain an asset version conflict (409) instead of asking for the `X-Inertia` header the request sent.
 - A route under a prefix with `{placeholders}`, such as `routes.prefix('/orgs/{org}').get('/settings', ...)`, answered 404: the prefix's placeholders were registered literally. They are now route parameters and bind models, and `purges: true` under such a prefix purges them.
 - Page props, shared props, flash values and the shared `auth.user` are encoded from their schema's type, which is what the React page receives as JSON: a schema built from validators, such as a filter form's, serves as a page's props, where a date in it failed with `Expected JSON value`.
 - `ensureArray` reports a failing item under its index (`tags.1`), as `S.Array` does.

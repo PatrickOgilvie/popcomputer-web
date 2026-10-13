@@ -444,7 +444,7 @@ function describeCause(cause: unknown): string {
  */
 export class DatabaseConstraintViolation extends Schema.TaggedError<DatabaseConstraintViolation>()('DatabaseConstraintViolation', {
   operation: DatabaseOperation,
-  constraint: Schema.Literals(['unique', 'foreign-key', 'not-null', 'check', 'unknown']),
+  constraint: Schema.Literals(['unique', 'foreign-key', 'not-null', 'check', 'exclusion', 'trigger', 'unknown']),
   columns: Schema.Array(Schema.String),
   constraintName: Schema.optional(Schema.String),
   cause: Schema.Unknown,

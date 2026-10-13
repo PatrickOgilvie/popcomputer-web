@@ -1010,7 +1010,9 @@ came from: its same-origin `Referer`, or `/` without one. A `ValidationError`
 with `redirectTo` goes to that page instead, such as a wizard's earlier step. That page renders with all of its own props and the field errors as
 `errors`; a form that names an Inertia error bag gets them under its name.
 Errors and flash values travel in a short-lived `HttpOnly` cookie that the
-next visit reads and clears. A JSON client gets a 422 instead, and invalid
+next visit reads and clears. The cookie is readable, not encrypted: never
+flash a secret, such as a new API key shown once; render the page with it
+from the action instead. A JSON client gets a 422 instead, and invalid
 query parameters on a page visit render the error page with 422, with the
 invalid fields as `errors`; `readErrorPage(res)` from `@popcomputer/web/testing`
 reads it in a test.
@@ -1072,7 +1074,9 @@ ShortOfStock, { lines })` checks and encodes it, a test reads it with
 `errorResponseWith(ShortOfStock)`. A body without a schema,
 `httpError(409, 'Already checked in.', { code: 'ticket_already_used' })`,
 reaches the client as `{ ..., "httpStatus": 409, "body": { "code":
-"ticket_already_used" } }`. Production replaces the message of a 5xx or an
+"ticket_already_used" } }`. Answer a record the client may not see with `notFound(...)`,
+which is what a missing bound record answers, rather than an `httpError(404,
+...)` with a body of its own, so a client cannot tell which ids exist. Production replaces the message of a 5xx or an
 internal failure with a generic one. Test the envelope a client receives with
 `ENVIRONMENT: 'production'` in the test bindings.
 
@@ -1185,16 +1189,32 @@ const forgetAbandonedOrders = Effect.gen(function* () {
   yield* dbMutation((db) => db.delete(orders).where(lt(orders.paidAt, cutoff)))
 })
 
+// A Queue consumer acknowledges each message once its work succeeds, and
+// leaves a failed one for the queue to retry.
+const sendReminder = (body: unknown) => Effect.log('reminder', body)
+
 export default {
   fetch: app.fetch,
   // Partial, so a test calls the same handler with testEnv's bindings.
-  scheduled: (_controller: unknown, env: Partial<Bindings>, ctx: ExecutionContext) =>
-    routes.run(forgetAbandonedOrders, env, ctx),
+  scheduled: async (_controller: unknown, env: Partial<Bindings>, ctx: ExecutionContext) => {
+    await routes.run(forgetAbandonedOrders, env, ctx)
+  },
+  queue: async (
+    batch: { readonly messages: ReadonlyArray<{ readonly body: unknown; ack(): void; retry(): void }> },
+    env: Partial<Bindings>,
+    ctx: ExecutionContext
+  ) => {
+    for (const message of batch.messages) {
+      await routes.run(sendReminder(message.body), env, ctx).then(() => message.ack(), () => message.retry())
+    }
+  },
 }
 ```
 
-A test runs the job the same way, with `testEnv`'s bindings, so its fakes,
-clock and database apply:
+A handler awaits `routes.run` rather than returning it, since the platform
+expects no value, and types the queue batch by the parts it uses, so a test
+passes plain objects. A test runs the job the same way, with `testEnv`'s
+bindings, so its fakes, clock and database apply:
 `await routes.run(forgetAbandonedOrders, testEnv(time.layer, testBindings))`.
 
 ### Page caching
@@ -1287,7 +1307,10 @@ and crawlers.
 
 A bound route's cached page carries the Cache-Tag of each record it reads,
 `recordCacheTag(table, primaryKey)` such as `projects:project-1`, whichever
-column the route looks the record up by. `purges` removes cached entries after
+column the route looks the record up by. Tags name tables by their key in the
+schema, `planPrices` rather than the SQL name `plan_prices`, and the route
+options, `purgeCache` and `cache` take only those and record tags, so a
+misspelled table is a type error. `purges` removes cached entries after
 a successful write. `purges: true` purges the records the route's bindings name
 and the table of its last binding, so a write by id purges the page read by
 slug, and the table's tag purges an index that declares it:
@@ -1511,7 +1534,11 @@ and constraint errors behave the same:
   migrations drizzle-kit generates with `applyMigrations('./drizzle', (sql) =>
   client.exec(sql))`, and pass the Drizzle client as `testEnv`'s `database`. It
   replaces setupWeb's `database` factory for that request, so the database
-  operations, route model binding and Better Auth all use it.
+  operations, route model binding and Better Auth all use it. PGlite runs one
+  transaction at a time, so a test of concurrent requests passes even when
+  the code races; test locking against a real Postgres, passing a postgres.js
+  Drizzle client as `database` the same way, in a test that runs when a
+  database URL is set.
 - **Cloudflare D1**: Miniflare's real D1 runs under Bun. Create
   `new Miniflare({ modules: true, script: 'export default {}', d1Databases:
   ['DB'] })`, migrate `await miniflare.getD1Database('DB')` with
@@ -1519,7 +1546,10 @@ and constraint errors behave the same:
   as the `DB` binding. `getKVNamespace` and `getR2Bucket` give the other
   bindings the same way; their types differ slightly from
   `@cloudflare/workers-types`', so provide a KV store to the data cache as
-  `kvCache(kv)` in the test layer rather than as a binding. A Miniflare
+  `kvCache(kv)` in the test layer rather than as a binding, and type a binding
+  an application service reads by the methods it calls (`KVNamespaceLike`
+  from `@popcomputer/web/cache`, or a small interface of the R2 methods), so
+  both objects fit. A Miniflare
   created once at the top of a shared module is disposed of once, in a file
   `bunfig.toml`'s `preload` names: Bun shares modules between test files, so
   an `afterAll` in that module disposes of it while other files still use
@@ -1640,9 +1670,14 @@ A rule the database can state is safest stated there: a `CHECK (stock >= 0)`
 on the stock column, a unique index on an order's idempotency key, a unique
 event id for a webhook. A write that would break one fails with
 `DatabaseConstraintViolation`, whose `constraint` says which kind
-(`'unique'`, `'check'`, `'foreign-key'`, `'not-null'`), and the whole
-`dbTransaction`, or the whole `dbBatch` on Cloudflare D1, is undone. The same
-action works on both, with no count-then-write race:
+(`'unique'`, `'check'`, `'foreign-key'`, `'not-null'`, `'exclusion'`,
+`'trigger'`) and `constraintName` which one, and the whole `dbTransaction`,
+or the whole `dbBatch` on Cloudflare D1, is undone. A rule no `CHECK` or
+unique index can state, such as no two interviews of one interviewer
+overlapping, is an exclusion constraint on Postgres (`EXCLUDE USING gist`)
+and a trigger on SQLite and D1 (`SELECT RAISE(ABORT, 'interviewer_double_booked')`),
+whose raised text is the `constraintName`. The same action works on both,
+with no count-then-write race:
 
 ```ts
 import { eq, sql } from 'drizzle-orm'
@@ -1949,10 +1984,10 @@ form.
   query string, is a list. Read them in React from
   the page's `errors` prop, ``errors[`items.${index}.amount`]``, which takes any
   path; Inertia's `useForm().errors` is keyed by the form's top-level fields
-  only, so reading a nested path from it needs a cast. A step of a wizard that
-  fails on another step's data fails with
-  `new ValidationError({ errors, redirectTo })` to send the visitor to that
-  step.
+  only, so reading a nested path from it needs a cast. A wizard whose final
+  submit carries every step's fields validates each step's part with
+  `validateRequest(Step, { redirectTo: href(paths.applyStep, { step }) })`, so
+  a failure goes back to that step with its errors.
 - **Forms whose fields depend on earlier answers**, such as a survey's
   conditional questions: validate in two passes, `validateRequest(Envelope)`
   for what decides the rest, then `validateRequest(schemaFor(envelope))`; the
@@ -1970,8 +2005,8 @@ form.
   renders.
 - **Public pages that read data**: the `cache` route option, with
   `purges: true` on the routes that change their records, `purgeCache(...)`
-  for other records an action changes, and the table's name in an index
-  page's `tags`. Signed-in visitors render their own page, so the
+  for other records an action changes, and the table's key in the schema in
+  an index page's `tags`. Signed-in visitors render their own page, so the
   same route serves both.
 - **Work after the response**, such as a confirmation email:
   `background('order-email', mailer.send(...))`. Its failure is reported, not

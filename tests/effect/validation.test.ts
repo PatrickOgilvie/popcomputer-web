@@ -970,3 +970,25 @@ describe('field messages a form shows', () => {
       .toEqual({ 'condition.questionId': 'This field is required' })
   })
 })
+
+describe('validateRequest redirectTo', () => {
+  test('sends a failed step back to the page given, with its errors', async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    routes.post('/apply', action(Effect.gen(function* () {
+      const input = yield* validateRequest(S.Struct({ company: requiredString }), { redirectTo: '/apply/experience' })
+
+      return yield* json(input)
+    })))
+
+    const res = await app.request('/apply', {
+      method: 'POST',
+      body: new URLSearchParams('company='),
+      headers: { Accept: 'text/html', Referer: 'http://localhost/apply/review' },
+    })
+
+    expect(res.status).toBe(303)
+    expect(res.headers.get('Location')).toBe('/apply/experience')
+  })
+})

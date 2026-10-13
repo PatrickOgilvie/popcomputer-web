@@ -99,8 +99,9 @@ TypeScript example here and in the README type-checks against the package.
    statement. Write only validated input and values the server derives, and
    scope `where` clauses with bound models. State an invariant concurrent
    requests could break as a database constraint (`CHECK (stock >= 0)`, a
-   unique idempotency key or webhook event id) and handle
-   `DatabaseConstraintViolation` by its `constraint`. Pipe a write through
+   unique idempotency key or webhook event id, or a trigger raising a named
+   abort on D1) and handle `DatabaseConstraintViolation` by its `constraint`
+   and `constraintName`. Pipe a write through
    `uniqueFieldErrors({ column: 'message' })` to show a duplicate as a field
    error.
 9. **Provide application services in `setupWeb`'s `services`:** `app` for
@@ -224,10 +225,13 @@ them with `Effect.catchTag`, or fail with `HttpError`), and
 `render(...)` means the page or its props differ from `src/pages.ts`.
 `Argument of type 'string' is not assignable to parameter of type 'readonly
 [never, ...never[]]'` at an `Effect.catchTag` means the Effect no longer fails
-with that tag: remove the handler. A registration reporting
-`missingServices: "unnamed service"` for an `Effect<..., unknown, unknown>`
-means an earlier type error in the action made its types unknown: fix that
-one first.
+with that tag: remove the handler. The same error at a `catchTag` written
+apart from an Effect, as a reusable helper, means TypeScript cannot see the
+errors it handles: write it inside `.pipe(...)`, or as a function of the
+Effect it handles. A registration or an
+`action(...)` reporting an `Effect<..., unknown, unknown>`, or
+`missingServices: "unnamed service"`, means an earlier type error in the
+action made its types unknown: fix that one first.
 `'web' implicitly has type 'any'` (TS7022) means a layer in `services` has no
 type annotation and uses a type `setupWeb` declares (`dbQuery`, `config`,
 `bound`): annotate the layer, as rule 9 shows.

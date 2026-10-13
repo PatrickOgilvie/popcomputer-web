@@ -31,6 +31,9 @@ function createApp() {
     // SAFETY: deliberately breaks the declared shape at runtime to check the response fails.
     .get('/api/broken', action(json(Evaluation, { flag: 'beta', enabled: 'yes' } as never)))
     .get('/page', action(Effect.fail(new HttpError({ status: 409, message: 'Taken' }))))
+    .post('/api/limited', action(httpError(429, 'Slow down.', S.Struct({ retryAfter: S.Number }), { retryAfter: 30 }, {
+      headers: { 'Retry-After': '30' },
+    })))
     .post('/api/sales', action(httpError(409, 'Some lines are short of stock.', ShortOfStock, {
       lines: [{ sku: 'A-1', available: 2 }],
       checkedAt: new Date(Date.UTC(2026, 9, 13)),
@@ -80,5 +83,15 @@ describe('httpError(status, message, Schema, body)', () => {
     const res = await createApp().request('/api/sales', { method: 'POST', headers: { Accept: '*/*' } })
 
     await expect(readError(res, S.Struct({ total: S.Number }))).rejects.toThrow('does not match the envelope')
+  })
+})
+
+describe('httpError headers', () => {
+  test('carries headers beside a typed body', async () => {
+    const res = await createApp().request('/api/limited', { method: 'POST', headers: { Accept: '*/*' } })
+
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('30')
+    expect((await readError(res, S.Struct({ retryAfter: S.Number }))).body).toEqual({ retryAfter: 30 })
   })
 })

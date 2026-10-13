@@ -435,6 +435,16 @@ export interface ValidateOptions {
    * validateRequest(CreateProject, { parseOptions: { onExcessProperty: 'error' } })
    */
   parseOptions?: ParseOptions
+
+  /**
+   * Where a form that fails validation goes back to, with its errors,
+   * instead of the page it was posted from: a wizard's step, when the final
+   * submit carries every step's fields.
+   *
+   * @example
+   * validateRequest(Experience, { redirectTo: href(paths.applyStep, { job: job.slug, step: 'experience' }) })
+   */
+  redirectTo?: string
 }
 
 /**
@@ -530,7 +540,10 @@ export const validateRequest = Effect.fn('Web.validateRequest')(function* <A, I>
   schema: S.Codec<A, I>,
   options: ValidateOptions = {}
 ) {
-  const data = yield* getValidationDataWithOptions(options.request)
+  const redirectTo = options.redirectTo
+  const validated = Effect.flatMap(getValidationDataWithOptions(options.request), (data) => validateUnknown(schema, data, options))
 
-  return yield* validateUnknown(schema, data, options)
+  return yield* redirectTo === undefined
+    ? validated
+    : Effect.mapError(validated, (error) => new ValidationError({ ...error, redirectTo }))
 })
