@@ -23,6 +23,7 @@
 
 import type { LintRule } from './ast.js'
 import {
+  noAuthApiInAction,
   noCatchAllInAction,
   noEffectRunnerInAction,
   noHonoContextInAction,
@@ -60,6 +61,7 @@ export const rules: Readonly<Record<string, LintRule>> = {
   'no-provision-in-action': noProvisionInAction,
   'require-background': requireBackground,
   'no-validation-in-endpoint': noValidationInEndpoint,
+  'no-auth-api-in-action': noAuthApiInAction,
 }
 
 /** The plugin Oxlint's `jsPlugins` or ESLint's `plugins` loads. */

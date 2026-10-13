@@ -321,7 +321,7 @@ application reads its types from:
 | `new Hono<Env>()` | `BindingsService`, Effect `Config`, `testEnv`'s bindings |
 | `database` | `DatabaseService` and the `db` in `dbQuery`, `dbMutation`, `dbBatch` |
 | `schema`, `bindings` | `bound('project')`, its keys and the model's row type |
-| `auth.client` | `AuthService` and `betterAuthRedirect`'s `auth` |
+| `auth.client` | `AuthService`, and the endpoints `betterAuthRedirect` and `betterAuthCall` call |
 | `auth.session` | `authorize()`, `currentUser`, `AuthUserService`, `signedIn` |
 | `auth.share` | `auth.user` in `SharedProps` and `WebPage` (default: `id`, `name`, `image`) |
 | `pages` | `render`, `jsonOrRender`, `WebPage`, `readPage` |
@@ -377,15 +377,22 @@ export interface CreateAuthOptions {
   readonly advanced?: BetterAuthOptions['advanced']
 }
 
-// Better Auth's tables (user, session, account, verification) belong in
-// ./schema: `npx @better-auth/cli generate` writes them.
+// Better Auth's tables (user, session, account, verification, rateLimit)
+// belong in ./schema: `npx @better-auth/cli generate` writes them.
 export function createAuth(options: CreateAuthOptions) {
   return betterAuth({
     database: drizzleAdapter(options.db, { provider: 'pg', schema }),
     secret: options.secret,
     baseURL: options.baseURL,
-    advanced: options.advanced,
     emailAndPassword: { enabled: true },
+    // Limit signing in and up per client, counted in the database so every
+    // Worker isolate shares the count. Better Auth turns its limits on only
+    // when NODE_ENV is 'production', which a Worker does not set.
+    rateLimit: { enabled: true, storage: 'database' },
+    advanced: {
+      ...options.advanced,
+      ipAddress: { ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for'], ...options.advanced?.ipAddress },
+    },
   })
 }
 
@@ -865,9 +872,9 @@ and the lint rules name it where an action reaches for something else.
 | --- | --- | --- |
 | Require a signed-in user | `authorize()` | [Auth](#auth) |
 | Read the user when signing in is optional | `currentUser` | [Auth](#auth) |
-| Sign in or sign up | `validateRequest`, then `betterAuthRedirect(call, { redirectTo, errors })` | [Signing in and out](#signing-in-and-out) |
+| Sign in or sign up | `validateRequest`, then `betterAuthRedirect('signInEmail', { body }, { redirectTo, errors })` | [Signing in and out](#signing-in-and-out) |
 | Return to the page the visitor wanted | `intendedUrl(fallback)` | [Signing in and out](#signing-in-and-out) |
-| Call Better Auth for a result | `betterAuthCall(call, { errors })` | [Signing in and out](#signing-in-and-out) |
+| Call Better Auth for a result | `betterAuthCall('enableTwoFactor', { body }, { errors })` | [Signing in and out](#signing-in-and-out) |
 | Sign out | `betterAuthLogoutAction({ redirectTo, clear })` | [Signing in and out](#signing-in-and-out) |
 | Add a field to the user | a column on the user table, with `betterAuthFields` | [Auth](#auth) |
 | Authenticate an API key | a layer failing with `new UnauthorizedError({ message, challenge: 'Bearer' })` | [Caching an API](#caching-an-api-that-authenticates-each-request) |
@@ -1280,32 +1287,43 @@ returns. `routes.provide(layer)` guards every route registered through it:
 `RequireGuestLayer` sends a signed-in member home, and `RequireAuthLayer`
 sends a signed-out visitor to `auth.signInPath` (default `/login`), as
 `authorize()` does. A sign-in action validates its form like any action, then
-calls Better Auth through `betterAuthRedirect`, which answers with a redirect
-carrying the session cookie:
+calls a Better Auth endpoint, by its name on `auth.api`, through
+`betterAuthRedirect`, which answers with a redirect carrying the session
+cookie:
 
 ```ts
 // src/actions/auth.ts
-import { Effect, Schema as S } from 'effect'
+import { Effect } from 'effect'
 import { action, intendedUrl, validateRequest } from '@popcomputer/web/effect'
 import { betterAuthRedirect } from '@popcomputer/web/auth'
-import { email, requiredString } from '@popcomputer/web/schema'
+import { SignIn } from '../forms'
 import { paths } from '../paths'
-
-const SignIn = S.Struct({ email, password: requiredString })
 
 export const signIn = action(
   Effect.gen(function* () {
     const input = yield* validateRequest(SignIn)
     const redirectTo = yield* intendedUrl(paths.projects)
 
-    return yield* betterAuthRedirect(
-      (auth, request) =>
-        auth.api.signInEmail({ body: input, headers: request.headers, asResponse: true }),
-      { redirectTo, errors: (error) => ({ email: error.message }) }
-    )
+    return yield* betterAuthRedirect('signInEmail', { body: input }, {
+      redirectTo,
+      errors: (error) => ({ email: error.message }),
+    })
   })
 )
 ```
+
+The call goes through Better Auth's request handler, as its own client's
+calls do, so its rate limits, origin checks and plugins' hooks apply to the
+form as they do to its routes; a call to `auth.api` from server code skips
+them, which leaves a sign-in form open to password guessing. Better Auth's
+types name the endpoints, including those its plugins add, and type each
+one's body and result, so a misspelled endpoint or a missing password is a
+type error. A sign-in refused for its rate limit fails with
+`AuthRateLimitError`, which the error page answers with a 429; show it on the
+form instead with
+`Effect.catchTag('AuthRateLimitError', (error) => invalid({ email: \`Too many attempts. Try again in ${error.retryAfterSeconds} seconds.\` }))`.
+In tests, each `testBrowser` is a client at its own address, so the limits
+count each browser apart.
 
 ```ts
 // src/auth-routes.ts
@@ -1331,7 +1349,7 @@ A signed-out visit to a guarded page goes to the sign-in path with the page as
 returns only paths on this site. A rejection, such as a wrong password or a
 registered email, goes back to the form with the field errors `errors` returns; rate limits and Better Auth
 failures stay separate typed errors. Sign-up works the same way with
-`auth.api.signUpEmail`, after whatever else the action does with the input.
+`'signUpEmail'`, after whatever else the action does with the input.
 
 Better Auth writes the new user itself, so records the application creates
 for a new user, such as a provider's profile, are a second write: create them
@@ -1341,13 +1359,15 @@ between the two writes leaves nothing the next request cannot repair. Fields
 the server sets rather than the form, such as a role or a team, are `input:
 false` in `betterAuthFields`, so a sign-up cannot send them: set them in that
 Effect, or keep them in the application's own table, such as a membership,
-which a guard layer reads. Sign-up passes `returnHeaders: true` to
-`auth.api.signUpEmail`, and reads the new user from `result.response.user`.
+which a guard layer reads. `redirectTo` given a function receives the
+endpoint's result, sign-up's `{ token, user }`, so it reads the new user's id
+as `result.user.id`.
 
 A Better Auth call whose result the action uses, such as enabling two-factor
 (which returns the secret) or checking a password, goes through
-`betterAuthCall(call, { errors })` from `@popcomputer/web/auth`, which maps
-its failures as `betterAuthRedirect` does and returns the result. A link
+`betterAuthCall('enableTwoFactor', { body }, { errors })` from
+`@popcomputer/web/auth`, which sends it as `betterAuthRedirect` does, maps its
+failures the same way and returns the result. A link
 Better Auth emails, such as a reset link, points at its own `/api/auth/*`
 endpoint; build the application's own link from the token with `href`, so it
 lands on a page of the application. A failure Better Auth answers with a
@@ -1788,11 +1808,12 @@ The README's and AGENTS.md's examples pass them.
 | `no-raw-request-input` | `RequestService`'s `json()`, `parseBody()`, `query()` or `params()` | `validateRequest(Schema)`, or the endpoint's contract |
 | `no-hono-context-in-action` | Hono's `c.req`, `c.env` or `c.json` inside an action | `validateRequest`, `config.string`, response helpers |
 | `no-effect-runner-in-action` | `Effect.runPromise` and the other runners | `yield*` the Effect |
-| `no-catch-all-in-action` | `Effect.catch`, `orDie`, `ignore` and the like over the database, `authorize()`, `bound()` or `validateRequest` | `Effect.catchTag` for the failures the action answers |
+| `no-catch-all-in-action` | `Effect.catch`, `orDie`, `ignore` and the like over the database, `authorize()`, `bound()` or `validateRequest`, called or piped | `Effect.catchTag` for the failures the action answers |
 | `no-raw-response-in-action` | `new Response(...)` | `json`, `text`, `file` (which serves uploads with `nosniff`), `noContent` |
 | `no-provision-in-action` | `Effect.provide` in an action module | `services` in `setupWeb`, or `routes.provide(layer)` |
 | `require-background` | `waitUntil(...)` | `background('name', effect)` |
 | `no-validation-in-endpoint` | `validateRequest` or `json` in an endpoint's action | The handler's argument, and the returned value |
+| `no-auth-api-in-action` | `auth.api.signInEmail(...)` and Better Auth's other endpoints called from an action, which skips its rate limits | `betterAuthRedirect('signInEmail', { body }, ...)` or `betterAuthCall(...)` |
 
 A line that breaks a rule on purpose says why, as
 `// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`.

@@ -212,6 +212,34 @@ export const noCatchAllInAction: LintRule = {
 
         if (operation !== undefined) context.report({ node, messageId: 'broad', data: { name, operation: `${operation}()` } })
       },
+      // Point-free, as `authorize().pipe(Effect.orDie)`.
+      MemberExpression(node: MemberExpression) {
+        const parent = node.parent
+
+        if (parent === null || !isCall(parent) || !parent.arguments.includes(node)) return
+
+        const object = unwrap(node.object)
+        const name = propertyName(node)
+        const imported = isIdentifier(object) ? imports.importedName(object, EFFECT) : undefined
+
+        if (name === undefined || !BROAD_RECOVERY.has(name) || (imported !== 'Effect' && imported !== '*')) return
+
+        const pipe = unwrap(parent.callee)
+
+        if (!isMember(pipe) || propertyName(pipe) !== 'pipe') return
+
+        let operation: string | undefined
+
+        contains(pipe.object, (candidate) => {
+          const called = isCall(candidate) ? imports.calledName(candidate, WEB_EFFECT) : undefined
+
+          if (called !== undefined && ANSWERED_BY_BOUNDARY.has(called)) operation ??= called
+
+          return operation !== undefined
+        })
+
+        if (operation !== undefined) context.report({ node, messageId: 'broad', data: { name, operation: `${operation}()` } })
+      },
     }
   },
 }
@@ -318,6 +346,55 @@ export const noValidationInEndpoint: LintRule = {
         )
 
         if (inEndpoint) context.report({ node, messageId: name === 'validateRequest' ? 'validateRequest' : 'json' })
+      },
+    }
+  },
+}
+
+export const noAuthApiInAction: LintRule = {
+  meta: {
+    type: 'problem',
+    docs: { description: "Actions call Better Auth through betterAuthRedirect or betterAuthCall, whose calls Better Auth's rate limits cover." },
+    messages: {
+      api:
+        "auth.api.{{name}} runs Better Auth's endpoint without its rate limits, origin checks or plugins' hooks, so a sign-in form calling it is open to password guessing. Call it by name with betterAuthRedirect('{{name}}', { body }, { redirectTo, errors }) or betterAuthCall('{{name}}', { body }), which send it through Better Auth's handler.",
+    },
+  },
+  create(context) {
+    const imports = new Imports()
+    const clients = new Set<string>()
+
+    return {
+      ImportDeclaration: (node: ImportDeclaration) => imports.add(node),
+      VariableDeclarator(node: VariableDeclarator) {
+        const init = node.init === null ? undefined : unwrap(node.init)
+
+        if (init?.type !== 'YieldExpression' || !isIdentifier(node.id)) return
+
+        const argument = 'argument' in init && init.argument !== null && typeof init.argument === 'object'
+          // SAFETY: a yield's argument is a syntax tree node.
+          ? unwrap(init.argument as AstNode)
+          : undefined
+
+        if (isIdentifier(argument) && imports.importedName(argument, WEB_EFFECT) === 'AuthService') clients.add(node.id.name)
+      },
+      CallExpression(node: CallExpression) {
+        if (!isActionModule(imports)) return
+
+        const callee = unwrap(node.callee)
+
+        if (!isMember(callee)) return
+
+        const api = unwrap(callee.object)
+        const name = propertyName(callee)
+
+        if (!isMember(api) || propertyName(api) !== 'api' || name === undefined) return
+
+        const client = unwrap(api.object)
+
+        if (isIdentifier(client) && (clients.has(client.name) || client.name === 'auth')) {
+          context.report({ node, messageId: 'api', data: { name } })
+        }
       },
     }
   },

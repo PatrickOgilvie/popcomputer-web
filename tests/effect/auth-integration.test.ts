@@ -9,7 +9,8 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { APIError } from 'better-auth'
+import { betterAuth } from 'better-auth'
+import { memoryAdapter } from 'better-auth/adapters/memory'
 import { Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
@@ -23,36 +24,22 @@ import { validateRequest } from '../../src/effect/validation.js'
 import { signedIn, testEnv } from '../../src/testing.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
-const SESSION = 'better-auth.session_token=session-1; Path=/; HttpOnly; SameSite=Lax'
-
-/** A Better Auth client that accepts one password. */
-const fakeAuth = {
-  api: {
-    signInEmail: async (input: {
-      readonly body: { readonly email: string; readonly password: string }
-      readonly headers: Headers
-      readonly returnHeaders: true
-    }) => {
-      if (input.body.password !== 'correct horse') {
-        throw new APIError('UNAUTHORIZED', { message: 'Invalid email or password', code: 'INVALID_EMAIL_OR_PASSWORD' })
-      }
-
-      return { headers: new Headers({ 'set-cookie': SESSION }) }
-    },
-    signUpEmail: async (input: { readonly body: { readonly email: string; readonly password: string }; readonly returnHeaders: true }) => ({
-      headers: new Headers({ 'set-cookie': SESSION }),
-      response: { user: { id: 'user-2', email: input.body.email } },
-    }),
-    signOut: async () => ({ headers: new Headers({ 'set-cookie': 'better-auth.session_token=; Max-Age=0; Path=/' }) }),
-    getSession: async () => null,
-  },
-  handler: async (request: Request) => Response.json({ forwarded: new URL(request.url).pathname }),
+/** A Better Auth with email and password, in memory, limiting requests as `rateLimit` says. */
+function createAuth(rateLimit: { readonly enabled: boolean } = { enabled: false }) {
+  return betterAuth({
+    database: memoryAdapter({ user: [], session: [], account: [], verification: [], rateLimit: [] }),
+    baseURL: 'http://localhost',
+    secret: 'auth-flow-test-secret-with-enough-entropy-0123456789',
+    emailAndPassword: { enabled: true },
+    rateLimit: { ...rateLimit, storage: 'memory' },
+    logger: { disabled: true },
+  })
 }
 
 declare module '../../src/effect/register.js' {
   interface Register {
     web: WebDeclaration<{
-      auth: typeof fakeAuth
+      auth: ReturnType<typeof createAuth>
     }>
   }
 }
@@ -63,49 +50,49 @@ const signIn = action(Effect.gen(function* () {
   const input = yield* validateRequest(SignIn)
   const redirectTo = yield* intendedUrl('/dashboard')
 
-  return yield* betterAuthRedirect(
-    (auth, request) => auth.api.signInEmail({ body: input, headers: request.headers, returnHeaders: true }),
-    { redirectTo, errors: (error) => ({ email: error.message }) }
-  )
+  return yield* betterAuthRedirect('signInEmail', { body: input }, {
+    redirectTo,
+    errors: (error) => ({ email: error.message }),
+  })
 }))
 
 // Sign-up lands on the new member's first team, which the redirect computes.
 const signUp = action(Effect.gen(function* () {
   const input = yield* validateRequest(SignIn)
 
-  return yield* betterAuthRedirect(
-    (auth) => auth.api.signUpEmail({ body: input, returnHeaders: true }),
-    { redirectTo: (result) => Effect.succeed(`/teams/first-of-${result.response.user.id}`) }
-  )
+  return yield* betterAuthRedirect('signUpEmail', { body: { ...input, name: 'Grace' } }, {
+    redirectTo: (result) => Effect.succeed(`/teams/first-of-${result.user.id}`),
+  })
 }))
 
 // Sign-up whose follow-up refuses after Better Auth created the user.
 const signUpThenRefuse = action(Effect.gen(function* () {
   const input = yield* validateRequest(SignIn)
 
-  return yield* betterAuthRedirect(
-    (auth) => auth.api.signUpEmail({ body: input, returnHeaders: true }),
-    { redirectTo: () => Effect.fail(new ValidationError({ errors: { invitation: 'This invitation has expired.' } })) }
-  )
+  return yield* betterAuthRedirect('signUpEmail', { body: { ...input, name: 'Ada' } }, {
+    redirectTo: () => Effect.fail(new ValidationError({ errors: { invitation: 'This invitation has expired.' } })),
+  })
 }))
 
 // A password check whose result the action uses.
 const checkPassword = action(Effect.gen(function* () {
   const input = yield* validateRequest(SignIn)
-  const result = yield* betterAuthCall(
-    (auth, request) => auth.api.signInEmail({ body: input, headers: request.headers, returnHeaders: true }),
-    { errors: (error) => ({ password: error.message }) }
-  )
+  const result = yield* betterAuthCall('signInEmail', { body: input }, {
+    errors: (error) => ({ password: error.message }),
+  })
 
-  return yield* json({ checked: result.headers instanceof Headers })
+  return yield* json({ checked: result.user.email === input.email })
 }))
 
-function createApp() {
+async function createApp(rateLimit?: { readonly enabled: boolean }) {
+  const auth = createAuth(rateLimit)
+  await auth.api.signUpEmail({ body: { name: 'Ada', email: 'ada@example.com', password: 'correct horse' } })
+
   const app = new Hono()
   const { routes } = setupWeb(app, {
     version: '1',
     render: (page) => JSON.stringify(page),
-    auth: { client: () => fakeAuth, signInPath: '/sign-in' },
+    auth: { client: () => auth, signInPath: '/sign-in' },
   })
 
   routes
@@ -127,6 +114,9 @@ function createApp() {
   return app
 }
 
+const SESSION = 'better-auth.session_token='
+const hasSession = (res: Response) => res.headers.getSetCookie().some((cookie) => cookie.startsWith(SESSION) && !cookie.startsWith(`${SESSION};`))
+
 const page = { 'X-Inertia': 'true', 'X-Inertia-Version': '1' }
 
 const submitSignIn = (app: Hono, password: string) =>
@@ -138,7 +128,7 @@ const submitSignIn = (app: Hono, password: string) =>
 
 describe('auth flow on routes', () => {
   test('betterAuthCall returns the result, or the rejection as field errors', async () => {
-    const app = createApp()
+    const app = await createApp()
     const check = (password: string) => app.request('/check-password', {
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -149,32 +139,32 @@ describe('auth flow on routes', () => {
     const failed = await check('wrong')
 
     expect(await passed.json()).toEqual({ checked: true })
-    expect(passed.headers.getSetCookie().some((cookie) => cookie.startsWith('better-auth.session_token='))).toBe(true)
+    expect(hasSession(passed)).toBe(true)
     expect(failed.status).toBe(422)
     expect((await failed.json()).errors).toEqual({ password: 'Invalid email or password' })
   })
 
   test('a sign-up whose redirectTo fails keeps the session Better Auth created', async () => {
-    const res = await createApp().request('/sign-up-refused', {
+    const res = await (await createApp()).request('/sign-up-refused', {
       method: 'POST',
       headers: { Accept: 'text/html', Referer: 'http://localhost/invitations/abc' },
-      body: new URLSearchParams({ email: 'ada@example.com', password: 'correct horse' }),
+      body: new URLSearchParams({ email: 'new@example.com', password: 'correct horse' }),
     })
 
     expect(res.status).toBe(303)
     expect(res.headers.get('Location')).toBe('/invitations/abc')
-    expect(res.headers.getSetCookie().some((cookie) => cookie.startsWith('better-auth.session_token=session-1'))).toBe(true)
+    expect(hasSession(res)).toBe(true)
   })
 
   test('a signed-out visitor to a member route goes to the configured sign-in path', async () => {
-    const res = await createApp().request('/dashboard')
+    const res = await (await createApp()).request('/dashboard')
 
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toBe('/sign-in?redirect=%2Fdashboard')
   })
 
   test('signing in returns to the page the visitor was sent away from', async () => {
-    const app = createApp()
+    const app = await createApp()
     const signInFrom = (referer: string) =>
       app.request('/sign-in', {
         method: 'POST',
@@ -190,15 +180,15 @@ describe('auth flow on routes', () => {
   })
 
   test('signing in redirects with the session cookie Better Auth sets', async () => {
-    const res = await submitSignIn(createApp(), 'correct horse')
+    const res = await submitSignIn((await createApp()), 'correct horse')
 
     expect(res.status).toBe(303)
     expect(res.headers.get('Location')).toBe('/dashboard')
-    expect(res.headers.getSetCookie()).toContain(SESSION)
+    expect(hasSession(res)).toBe(true)
   })
 
   test('a rejected sign-in goes back to the form with the error on its field', async () => {
-    const app = createApp()
+    const app = await createApp()
     const rejected = await submitSignIn(app, 'wrong')
     const flash = rejected.headers.getSetCookie().find((cookie) => cookie.startsWith('popweb-flash='))?.split(';')[0] ?? ''
 
@@ -210,25 +200,25 @@ describe('auth flow on routes', () => {
   })
 
   test('signing up can redirect by Better Auth\'s result', async () => {
-    const res = await createApp().request('/sign-up', {
+    const res = await (await createApp()).request('/sign-up', {
       method: 'POST',
       headers: { ...page, 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'grace@example.com', password: 'correct horse' }),
     })
 
-    expect(res.headers.get('Location')).toBe('/teams/first-of-user-2')
-    expect(res.headers.getSetCookie()).toContain(SESSION)
+    expect(res.headers.get('Location')).toMatch(/^\/teams\/first-of-\w+/)
+    expect(hasSession(res)).toBe(true)
   })
 
   test('a signed-in member visiting a guest page goes home', async () => {
-    const res = await createApp().request('/sign-in', {}, testEnv(signedIn({ id: 'user-1' })))
+    const res = await (await createApp()).request('/sign-in', {}, testEnv(signedIn({ id: 'user-1' })))
 
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toBe('/')
   })
 
   test('signing out clears the session and goes home', async () => {
-    const res = await createApp().request('/sign-out', { method: 'POST', headers: page })
+    const res = await (await createApp()).request('/sign-out', { method: 'POST', headers: page })
 
     expect(res.status).toBe(303)
     expect(res.headers.get('Location')).toBe('/')
@@ -236,8 +226,39 @@ describe('auth flow on routes', () => {
   })
 
   test("betterAuthHandler forwards the request to Better Auth's API", async () => {
-    const res = await createApp().request('/api/auth/get-session')
+    const res = await (await createApp()).request('/api/auth/get-session')
 
-    expect(await res.json()).toEqual({ forwarded: '/api/auth/get-session' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toBeNull()
   })
+
+  test("a sign-in form is rate limited as Better Auth's own route is", async () => {
+    const app = await createApp({ enabled: true })
+    const statuses: number[] = []
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const res = await app.request('/sign-in', {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.7' },
+        body: JSON.stringify({ email: 'ada@example.com', password: 'guess' }),
+      })
+      statuses.push(res.status)
+    }
+
+    // Better Auth allows three sign-ins per address in ten seconds.
+    expect(statuses).toEqual([422, 422, 422, 429])
+  })
+})
+
+// Better Auth's own types name the endpoints and type their bodies and results.
+export const typedCalls = Effect.gen(function* () {
+  // @ts-expect-error 'signInEmial' is not one of Better Auth's endpoints.
+  yield* betterAuthCall('signInEmial', { body: { email: 'ada@example.com', password: 'correct horse' } })
+  // @ts-expect-error Signing in takes a password.
+  yield* betterAuthCall('signInEmail', { body: { email: 'ada@example.com' } })
+
+  const signedUp = yield* betterAuthCall('signUpEmail', { body: { name: 'Ada', email: 'ada@example.com', password: 'correct horse' } })
+  const id: string = signedUp.user.id
+
+  return id
 })

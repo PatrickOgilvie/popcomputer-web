@@ -416,117 +416,252 @@ export {
   type BetterAuthEffectClient,
 } from './better-auth-boundary.js'
 
+/** Better Auth's server API, from the registered auth client, or none when no client is registered. */
+type AuthApi = AuthType extends { readonly api: infer Api } ? Api : never
+
+/**
+ * The name of one of Better Auth's endpoints on `auth.api`, such as
+ * `'signInEmail'` or `'signUpEmail'`, including the endpoints its plugins add.
+ */
+export type BetterAuthEndpoint = [AuthApi] extends [never] ? string : EndpointNames<AuthApi>
+
+// Distributed over the API, so an auth client typed as a union of clients names each one's endpoints.
+type EndpointNames<Api> = Api extends unknown
+  ? { readonly [Name in keyof Api]: Api[Name] extends { readonly path: string } ? Name : never }[keyof Api] & string
+  : never
+
+type EndpointOf<Api, Name> = Api extends unknown ? (Name extends keyof Api ? Api[Name] : never) : never
+
+type EndpointArgument<Name> = EndpointOf<AuthApi, Name> extends (...args: infer Args) => unknown
+  ? NonNullable<Args[0]>
+  : never
+
+/** What an endpoint is sent: its `body`, or for a GET its `query`, as `auth.api` takes them. */
+export type BetterAuthEndpointInput<Name extends string> = [AuthApi] extends [never]
+  ? { readonly body?: unknown; readonly query?: Readonly<Record<string, unknown>> }
+  : Pick<EndpointArgument<Name>, Extract<keyof EndpointArgument<Name>, 'body' | 'query'>>
+
+/** What an endpoint answers on success, as `auth.api` returns it, such as sign-up's `{ token, user }`. */
+export type BetterAuthEndpointResult<Name extends string> = [AuthApi] extends [never]
+  ? unknown
+  : EndpointOf<AuthApi, Name> extends (...args: never) => infer Result
+    ? Awaited<Result>
+    : unknown
+
 /** Options for {@link betterAuthRedirect}. */
 export interface BetterAuthRedirectOptions<Result, E = never, R = never, Path extends string = string> {
   /**
    * Where to send the user once Better Auth accepts the call: a path, or a
-   * function of Better Auth's result returning a path or an Effect that
-   * computes one, such as a lookup of the new user's first team. Call Better
-   * Auth with `returnHeaders: true` to receive its result with the cookies.
+   * function of the endpoint's result returning a path or an Effect that
+   * computes one, such as a lookup of the new user's first team.
    */
   readonly redirectTo: (Path & PathTarget<Path>) | ((result: Result) => string | Effect.Effect<string, E, R>)
   /** Field errors for a rejected call, such as wrong credentials, keyed by the form's fields. */
-  readonly errors?: (error: BetterAuthActionError) => Record<string, string>
+  readonly errors?: (error: BetterAuthActionError) => Readonly<Record<string, string | undefined>>
+}
+
+/** A field error mapper's result, without the fields it left out. */
+function definedErrors(
+  errors: ((error: BetterAuthActionError) => Readonly<Record<string, string | undefined>>) | undefined
+): ((error: BetterAuthActionError) => Record<string, string>) | undefined {
+  if (errors === undefined) return undefined
+
+  return (error) => {
+    const defined: Record<string, string> = {}
+
+    for (const [field, message] of Object.entries(errors(error))) {
+      if (message !== undefined) defined[field] = message
+    }
+
+    return defined
+  }
+}
+
+/** A Better Auth instance as the framework sends calls through it. */
+interface BetterAuthInstance {
+  readonly api: object
+  readonly handler: (request: Request) => Response | Promise<Response>
+  readonly $context?: Promise<{ readonly baseURL?: string }>
+  readonly options?: { readonly basePath?: string }
+}
+
+function isBetterAuthInstance(auth: unknown): auth is BetterAuthInstance {
+  return auth instanceof Object && Reflect.get(auth, 'api') instanceof Object && Reflect.get(auth, 'handler') instanceof Function
+}
+
+/** The headers of the request that reach Better Auth: its cookies, client address and origin, not its body's. */
+const BODY_HEADERS = ['content-length', 'content-type', 'content-encoding', 'transfer-encoding']
+
+/**
+ * Send an endpoint call through Better Auth's request handler, as its own
+ * client does, rather than its server API: the handler applies Better Auth's
+ * rate limits, origin checks and plugin hooks, which server calls skip.
+ */
+async function sendThroughHandler(
+  auth: unknown,
+  original: Request,
+  name: string,
+  input: { readonly body?: unknown; readonly query?: unknown }
+): Promise<Response> {
+  if (!isBetterAuthInstance(auth)) {
+    throw new Error('Better Auth is not configured: setupWeb has no auth.client, or it returned something that is not a Better Auth instance.')
+  }
+
+  const endpoint: unknown = Reflect.get(auth.api, name)
+  const path: unknown = endpoint instanceof Object ? Reflect.get(endpoint, 'path') : undefined
+
+  if (!(endpoint instanceof Object) || typeof path !== 'string') {
+    throw new Error(`Better Auth has no endpoint named '${name}' on auth.api; a plugin's endpoint needs the plugin in betterAuth({ plugins }).`)
+  }
+
+  const endpointOptions: unknown = Reflect.get(endpoint, 'options')
+  const declared: unknown = endpointOptions instanceof Object ? Reflect.get(endpointOptions, 'method') : undefined
+  const methods = (Array.isArray(declared) ? declared : [declared]).filter((method): method is string => typeof method === 'string')
+  const method = input.body !== undefined && methods.includes('POST') ? 'POST' : methods[0] ?? 'POST'
+
+  const context = auth.$context === undefined ? undefined : await auth.$context
+  const base = context?.baseURL !== undefined && context.baseURL !== ''
+    ? context.baseURL
+    : `${new URL(original.url).origin}${auth.options?.basePath ?? '/api/auth'}`
+  const url = new URL(`${base.replace(/\/$/, '')}${path}`)
+
+  if (input.query instanceof Object) {
+    for (const [key, value] of Object.entries(input.query)) {
+      if (value !== undefined && value !== null) url.searchParams.set(key, String(value))
+    }
+  }
+
+  const headers = new Headers(original.headers)
+  for (const header of BODY_HEADERS) headers.delete(header)
+  headers.set('accept', 'application/json')
+
+  if (input.body !== undefined) headers.set('content-type', 'application/json')
+
+  return auth.handler(new Request(url, {
+    method,
+    headers,
+    body: input.body === undefined || method === 'GET' ? undefined : JSON.stringify(input.body),
+  }))
+}
+
+/** An endpoint's success as the action receives it: its JSON body, and the response carrying its cookies. */
+function readEndpointResult(response: Response): Effect.Effect<unknown> {
+  return Effect.promise(async () => {
+    const text = await response.clone().text()
+
+    if (text.trim() === '') return null
+
+    try {
+      return JSON.parse(text)
+    } catch {
+      return text
+    }
+  })
+}
+
+/** Call an endpoint through the handler, with its failures classified and its cookies kept for the response. */
+function callEndpoint(
+  name: string,
+  input: { readonly body?: unknown; readonly query?: unknown },
+  errors: ((error: BetterAuthActionError) => Record<string, string>) | undefined
+): Effect.Effect<{ readonly result: unknown; readonly response: Response }, AuthRedirect | ValidationError | AuthRateLimitError | HttpError, RequestService | AuthService> {
+  return Effect.gen(function* () {
+    const auth = yield* AuthService
+    const request = yield* RequestService
+
+    const response = yield* runBetterAuthApiCall(() => sendThroughHandler(auth, request.raw(), name, input)).pipe(
+      Effect.mapError((failure) => toAuthActionError(failure, errors))
+    )
+
+    // Once Better Auth has signed the visitor in, its session cookie reaches
+    // whatever response the request ends with, even if the action fails
+    // after it, as a sign-up whose follow-up refuses.
+    const jar = yield* Effect.serviceOption(CookieService)
+
+    if (Option.isSome(jar)) {
+      for (const cookie of response.headers.getSetCookie()) jar.value.append(cookie)
+    }
+
+    return { result: yield* readEndpointResult(response), response }
+  })
 }
 
 /**
- * Call Better Auth and answer with a 303 redirect that carries the cookies
- * it sets, such as the session after signing in or up.
+ * Call one of Better Auth's endpoints, by its name on `auth.api`, and answer
+ * with a 303 redirect carrying the cookies it sets, such as the session after
+ * signing in or up.
  *
- * Run it in an action after `validateRequest`, so the action decides what to
- * validate and what else to do. A rejection, such as wrong credentials or a
- * registered email, fails with ValidationError, so the form shows it; a rate
- * limit fails with AuthRateLimitError, and a Better Auth failure with
- * HttpError.
+ * The call goes through Better Auth's request handler, as its own client's
+ * do, so its rate limits, origin checks and plugins' hooks apply: a sign-in
+ * form is limited as Better Auth's own route is. Run it in an action after
+ * `validateRequest`. A rejection, such as wrong credentials or a registered
+ * email, fails with ValidationError, so the form shows it; a rate limit fails
+ * with AuthRateLimitError, and a Better Auth failure with HttpError.
  *
  * @example
  * export const signIn = action(Effect.gen(function* () {
  *   const input = yield* validateRequest(SignIn)
  *
- *   return yield* betterAuthRedirect(
- *     (auth, request) => auth.api.signInEmail({ body: input, headers: request.headers, asResponse: true }),
- *     { redirectTo: '/projects' }
- *   )
+ *   return yield* betterAuthRedirect('signInEmail', { body: input }, {
+ *     redirectTo: '/projects',
+ *     errors: (error) => ({ email: error.message }),
+ *   })
  * }))
  */
 export function betterAuthRedirect<
-  Result extends BetterAuthActionResult,
+  const Name extends BetterAuthEndpoint,
   E = never,
   R = never,
   const Path extends string = string,
 >(
-  call: (auth: AuthType, request: Request) => Promise<Result>,
-  options: BetterAuthRedirectOptions<Result, E, R, Path>
+  endpoint: Name,
+  input: BetterAuthEndpointInput<Name>,
+  options: BetterAuthRedirectOptions<BetterAuthEndpointResult<Name>, E, R, Path>
 ): Effect.Effect<
   Response,
   AuthRedirect | ValidationError | AuthRateLimitError | HttpError | E,
   RequestService | AuthService | R
 > {
   return Effect.gen(function* () {
-    const auth = yield* AuthService
-    const request = yield* RequestService
+    const { result, response } = yield* callEndpoint(endpoint, input, definedErrors(options.errors))
 
-    const result = yield* runBetterAuthApiCall(() => call(auth, buildAuthRequest(request))).pipe(
-      Effect.mapError((failure) => toAuthActionError(failure, options.errors))
-    )
-    const resultHeaders = getHeaders(result)
-
-    // Once Better Auth has signed the visitor in, its session cookie reaches
-    // whatever response the request ends with, even if redirectTo fails
-    // after it created the user.
+    // SAFETY: the endpoint's JSON body is what auth.api's endpoint returns.
+    const typed = result as BetterAuthEndpointResult<Name>
+    const destination = typeof options.redirectTo === 'string' ? options.redirectTo : options.redirectTo(typed)
+    const location = Effect.isEffect(destination) ? yield* destination : destination
+    const headers = new Headers({ Location: location })
     const jar = yield* Effect.serviceOption(CookieService)
 
-    if (resultHeaders && Option.isSome(jar)) {
-      const carried = new Headers()
-      appendSetCookies(carried, resultHeaders)
-      for (const cookie of carried.getSetCookie()) jar.value.append(cookie)
-    }
+    // Without the request's cookie jar, the redirect carries the cookies itself.
+    if (Option.isNone(jar)) appendSetCookies(headers, response.headers)
 
-    const destination = typeof options.redirectTo === 'string' ? options.redirectTo : options.redirectTo(result)
-    const location = Effect.isEffect(destination) ? yield* destination : destination
-    const responseHeaders = new Headers({ Location: location })
-
-    if (resultHeaders && Option.isNone(jar)) {
-      appendSetCookies(responseHeaders, resultHeaders)
-    }
-
-    return new Response(null, { status: 303, headers: responseHeaders })
+    return new Response(null, { status: 303, headers })
   }).pipe(Effect.withSpan('Web.betterAuthRedirect'))
 }
 
 /**
- * Call Better Auth for a result the action uses, such as the secret that
- * enabling two-factor returns or a password check, with its failures mapped
- * as `betterAuthRedirect` maps them: a rejection becomes the field errors
- * `errors` returns, and a rate limit a typed error. Cookies the call sets,
- * from `returnHeaders: true`, reach the response the request ends with.
+ * Call one of Better Auth's endpoints, by its name on `auth.api`, for a
+ * result the action uses, such as the secret that enabling two-factor returns
+ * or a password check, through Better Auth's request handler as
+ * `betterAuthRedirect` does. A rejection becomes the field errors `errors`
+ * returns, and a rate limit a typed error; cookies the call sets reach the
+ * response the request ends with.
  *
  * @example
- * const enrolment = yield* betterAuthCall(
- *   (auth, request) => auth.api.enableTwoFactor({ body: { password }, headers: request.headers }),
- *   { errors: (error) => ({ password: error.message }) }
- * )
+ * const enrolment = yield* betterAuthCall('enableTwoFactor', { body: { password } }, {
+ *   errors: (error) => ({ password: error.message }),
+ * })
  */
-export function betterAuthCall<Result>(
-  call: (auth: AuthType, request: Request) => Promise<Result>,
-  options: { readonly errors?: (error: BetterAuthActionError) => Record<string, string> } = {}
-): Effect.Effect<Result, AuthRedirect | ValidationError | AuthRateLimitError | HttpError, RequestService | AuthService> {
-  return Effect.gen(function* () {
-    const auth = yield* AuthService
-    const request = yield* RequestService
-    const result = yield* runBetterAuthApiCall(() => call(auth, buildAuthRequest(request))).pipe(
-      Effect.mapError((failure) => toAuthActionError(failure, options.errors))
-    )
-    // A call made with returnHeaders: true answers { headers, response }.
-    const headers: unknown = result instanceof Object ? Reflect.get(result, 'headers') : undefined
-    const jar = yield* Effect.serviceOption(CookieService)
-
-    if (headers instanceof Headers && Option.isSome(jar)) {
-      for (const cookie of headers.getSetCookie()) jar.value.append(cookie)
-    }
-
-    return result
-  }).pipe(Effect.withSpan('Web.betterAuthCall'))
+export function betterAuthCall<const Name extends BetterAuthEndpoint>(
+  endpoint: Name,
+  input: BetterAuthEndpointInput<Name>,
+  options: { readonly errors?: (error: BetterAuthActionError) => Readonly<Record<string, string | undefined>> } = {}
+): Effect.Effect<BetterAuthEndpointResult<Name>, AuthRedirect | ValidationError | AuthRateLimitError | HttpError, RequestService | AuthService> {
+  return callEndpoint(endpoint, input, definedErrors(options.errors)).pipe(
+    // SAFETY: the endpoint's JSON body is what auth.api's endpoint returns.
+    Effect.map(({ result }) => result as BetterAuthEndpointResult<Name>),
+    Effect.withSpan('Web.betterAuthCall')
+  )
 }
 
 /**

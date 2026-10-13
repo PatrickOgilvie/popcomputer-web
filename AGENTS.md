@@ -89,8 +89,12 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
    `currentUser` when signing in is optional. Guard a group of routes with
    `routes.provide(RequireAuthLayer)` or `routes.provide(RequireGuestLayer)`.
    Sign users in and up with an action that validates its form and returns
-   `betterAuthRedirect(...)` from `@popcomputer/web/auth`; call Better Auth
-   for a result the action uses with `betterAuthCall(...)`. A role a user
+   `betterAuthRedirect('signInEmail', { body: input }, { redirectTo, errors })`
+   from `@popcomputer/web/auth`, which sends the call through Better Auth's
+   handler so its rate limits apply; call Better Auth for a result the action
+   uses with `betterAuthCall(endpoint, { body })`. Never call `auth.api` from
+   an action: it skips Better Auth's rate limits. Turn them on in
+   `betterAuth({ rateLimit: { enabled: true, storage: 'database' } })`. A role a user
    holds per team or workspace lives on a membership row a guard layer
    reads, not on the user. Register a JSON
    API's routes on `routes.jsonApi()`, with their declared paths

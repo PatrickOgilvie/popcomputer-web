@@ -310,7 +310,10 @@ export interface TestApp {
 /**
  * A browser for a test: it keeps the cookies responses set, drops the ones
  * they clear, and sends each to the paths it covers, so a session, a cart
- * cookie and flash carry across requests as they do for a visitor.
+ * cookie and flash carry across requests as they do for a visitor. Each
+ * browser sends its own client address (`CF-Connecting-IP` and
+ * `X-Forwarded-For`), so rate limits per client, such as Better Auth's on
+ * signing in, count each browser apart.
  *
  * @example
  * const browser = testBrowser(app, testEnv(layer, testBindings))
@@ -334,8 +337,15 @@ export interface TestBrowser {
   setCookie(name: string, value: string, path?: string): void
 }
 
+/** How many browsers tests have made, each a client at its own address. */
+let browsers = 0
+
 export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
   const jar = new Map<string, { readonly value: string; readonly path: string }>()
+  // Each browser is its own client, at its own address, as Cloudflare and
+  // a proxy report it, so per-client rate limits treat browsers apart.
+  browsers += 1
+  const address = `198.18.${Math.floor(browsers / 250) % 250}.${(browsers % 250) + 1}`
 
   const keep = (response: Response): Response => {
     for (const header of response.headers.getSetCookie()) {
@@ -369,6 +379,8 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
     const method = (init.method ?? 'GET').toUpperCase()
 
     if (sent.length > 0) headers.set('Cookie', [given, ...sent].filter(Boolean).join('; '))
+    if (!headers.has('CF-Connecting-IP')) headers.set('CF-Connecting-IP', address)
+    if (!headers.has('X-Forwarded-For')) headers.set('X-Forwarded-For', address)
     if (page !== undefined && !headers.has('Referer')) headers.set('Referer', page)
 
     const response = keep(await app.request(path, { ...init, headers }, env))

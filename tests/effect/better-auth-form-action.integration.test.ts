@@ -22,23 +22,21 @@ import type { AuthType } from '../../src/effect/services.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
 /**
- * A sign-in form action: validate the form, then call Better Auth with the
- * input and redirect with the cookies it sets.
+ * A form action: validate the form, then call a Better Auth endpoint with the
+ * input through its request handler and redirect with the cookies it sets.
  */
-function formAction<A, I>(config: {
+function formAction<A extends { readonly email: string; readonly password: string; readonly name?: string }, I>(config: {
   readonly schema: S.Codec<A, I, never, never>
-  readonly call: (auth: AuthType, input: A, request: Request) => Promise<BetterAuthActionResult>
+  readonly endpoint?: 'signInEmail' | 'signUpEmail'
   readonly errorMapper?: (error: BetterAuthActionError) => Record<string, string>
-  readonly redirectTo?: string | ((input: A) => string)
 }) {
   return Effect.gen(function* () {
     const input = yield* validateRequest(config.schema)
-    const redirectTo = config.redirectTo instanceof Function ? config.redirectTo(input) : config.redirectTo ?? '/'
+    const body = { name: input.name ?? 'Test User', email: input.email, password: input.password }
 
-    return yield* betterAuthRedirect(
-      (auth, request) => config.call(auth, input, request),
-      { redirectTo, errors: config.errorMapper }
-    )
+    return yield* config.endpoint === 'signUpEmail'
+      ? betterAuthRedirect('signUpEmail', { body }, { redirectTo: '/', errors: config.errorMapper })
+      : betterAuthRedirect('signInEmail', { body: { email: input.email, password: input.password } }, { redirectTo: '/', errors: config.errorMapper })
   })
 }
 
@@ -68,6 +66,11 @@ function createTestAuth() {
     emailAndPassword: { enabled: true },
     logger: { disabled: true },
   })
+}
+
+/** A Better Auth whose request handler answers every call as the test says, for the boundary's classification. */
+function answeringAuth(answer: (request: Request) => Promise<Response>) {
+  return { ...createTestAuth(), handler: answer }
 }
 
 declare module '../../src/effect/register.js' {
@@ -193,12 +196,6 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
     const action = formAction({
       schema: CredentialsSchema,
       errorMapper: ({ code }) => ({ email: code ?? 'MISSING_ERROR_CODE' }),
-      call: (authClient: typeof auth, input, request) =>
-        authClient.api.signInEmail({
-          body: input,
-          request,
-          returnHeaders: true,
-        }),
     })
 
     const request = createAuthRequest('http://localhost:3000/login', {
@@ -230,13 +227,8 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
 
     const action = formAction({
       schema: RegistrationSchema,
+      endpoint: 'signUpEmail',
       errorMapper: ({ code }) => ({ email: code ?? 'MISSING_ERROR_CODE' }),
-      call: (authClient: typeof auth, input, request) =>
-        authClient.api.signUpEmail({
-          body: input,
-          request,
-          returnHeaders: true,
-        }),
     })
 
     const request = createAuthRequest('http://localhost:3000/register', registration)
@@ -255,9 +247,16 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
   })
 
   test('does not expose an unknown dependency message through the production HTTP response', async () => {
-    const auth = createTestAuth()
     const secretMessage = 'postgres://user:secret@database.example/internal'
     let errorMapperCalled = false
+    const auth = answeringAuth(async () => {
+      // oxlint-disable-next-line no-throw-literal, only-throw-error -- SAFETY: This unverified SDK-shaped rejection tests that the boundary never exposes its secret-bearing fields.
+      throw {
+        status: 400,
+        message: secretMessage,
+        headers: { 'set-cookie': 'unverified=must-not-survive; Path=/' },
+      }
+    })
 
     const action = formAction({
       schema: CredentialsSchema,
@@ -265,14 +264,6 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
         errorMapperCalled = true
 
         return { form: 'This should not be rendered' }
-      },
-      call: async () => {
-        // oxlint-disable-next-line no-throw-literal, only-throw-error -- SAFETY: This unverified SDK-shaped rejection tests that the boundary never exposes its secret-bearing fields.
-        throw {
-          status: 400,
-          message: secretMessage,
-          headers: { 'set-cookie': 'unverified=must-not-survive; Path=/' },
-        }
       },
     })
 
@@ -309,23 +300,20 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
   })
 
   test('preserves cookies from a resolved Better Auth error response', async () => {
-    const auth = createTestAuth()
+    const auth = answeringAuth(async () =>
+      Response.json({
+          code: 'INVALID_SESSION',
+          message: 'Please sign in again.',
+        }, {
+          status: 401,
+          headers: {
+            'content-type': 'application/json',
+            'set-cookie': 'better-auth.session_token=; Max-Age=0; Path=/',
+            'x-auth-recovery': 'reauthenticate',
+          },
+        }))
 
-    const action = formAction({
-      schema: CredentialsSchema,
-      call: async () =>
-        Response.json({
-            code: 'INVALID_SESSION',
-            message: 'Please sign in again.',
-          }, {
-            status: 401,
-            headers: {
-              'content-type': 'application/json',
-              'set-cookie': 'better-auth.session_token=; Max-Age=0; Path=/',
-              'x-auth-recovery': 'reauthenticate',
-            },
-          }),
-    })
+    const action = formAction({ schema: CredentialsSchema })
 
     const app = new Hono()
 
@@ -357,8 +345,6 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
   })
 
   test('preserves Better Auth hidden headers from a thrown APIError', async () => {
-    const auth = createTestAuth()
-
     const apiError = new APIError('UNAUTHORIZED', {
       code: 'INVALID_SESSION',
       message: 'Please sign in again.',
@@ -373,12 +359,10 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
       })
     )
 
-    const action = formAction({
-      schema: CredentialsSchema,
-      call: async () => {
-        throw apiError
-      },
+    const auth = answeringAuth(async () => {
+      throw apiError
     })
+    const action = formAction({ schema: CredentialsSchema })
 
     const app = new Hono()
 
@@ -409,19 +393,15 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
   })
 
   test('preserves thrown Better Auth redirects as redirect control flow', async () => {
-    const auth = createTestAuth()
-
     const redirect = new APIError('FOUND', undefined, {
       Location: 'https://identity.example/continue',
       'Set-Cookie': 'oauth-state=verified; HttpOnly; Path=/',
     })
 
-    const action = formAction({
-      schema: CredentialsSchema,
-      call: async () => {
-        throw redirect
-      },
+    const auth = answeringAuth(async () => {
+      throw redirect
     })
+    const action = formAction({ schema: CredentialsSchema })
 
     const app = new Hono()
 
@@ -452,7 +432,6 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
   })
 
   test('does not trust an Error named APIError without a numeric statusCode', async () => {
-    const auth = createTestAuth()
     const spoofedError = new Error('spoofed')
     spoofedError.name = 'APIError'
     Reflect.set(spoofedError, 'status', 401)
@@ -461,12 +440,10 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
       'x-spoofed-auth': 'true',
     })
 
-    const action = formAction({
-      schema: CredentialsSchema,
-      call: async () => {
-        throw spoofedError
-      },
+    const auth = answeringAuth(async () => {
+      throw spoofedError
     })
+    const action = formAction({ schema: CredentialsSchema })
 
     const app = new Hono()
 

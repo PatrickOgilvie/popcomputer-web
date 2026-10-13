@@ -196,30 +196,19 @@ setupWeb(new Hono<TestEnv>(), {
 const typedAuthAction = Effect.gen(function* () {
   const input = yield* validateRequest(S.Struct({ email: S.String }))
 
-  return yield* betterAuthRedirect(
-    async (auth, request) => {
-      const configuredAuth: TestAuth = auth
-      const email: string = input.email
-      const originalRequest: Request = request
-      void configuredAuth
-      void email
-      void originalRequest
+  // A client without Better Auth's endpoint types takes any endpoint name and body.
+  return yield* betterAuthRedirect('signInEmail', { body: input }, {
+    redirectTo: '/',
+    errors: (error) => {
+      const status: number | undefined = error.status
+      const code: string | undefined = error.code
+      const message: string = error.message
+      void status
+      void code
 
-      return new Headers()
+      return { email: message, password: undefined }
     },
-    {
-      redirectTo: '/',
-      errors: (error) => {
-        const status: number | undefined = error.status
-        const code: string | undefined = error.code
-        const message: string = error.message
-        void status
-        void code
-
-        return { email: message }
-      },
-    }
-  )
+  })
 })
 
 void typedAuthAction

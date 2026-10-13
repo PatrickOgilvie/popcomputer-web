@@ -48,12 +48,36 @@ function formAction<A, I>(config: {
   return Effect.gen(function* () {
     const input = yield* validateRequest(config.schema)
     const redirectTo = config.redirectTo instanceof Function ? config.redirectTo(input) : config.redirectTo ?? '/'
+    const auth = yield* AuthService
+    // Better Auth's handler answers the call as the test's `call` does.
+    const answering = handlerAuth(async (request) => answerFrom(await config.call(auth, input, request)))
 
-    return yield* betterAuthRedirect(
-      (auth, request) => config.call(auth, input, request),
-      { redirectTo, errors: config.errorMapper }
-    )
+    return yield* betterAuthRedirect('signInEmail', { body: { email: 'test@example.com', password: 'password123' } }, {
+      redirectTo,
+      errors: config.errorMapper,
+    }).pipe(Effect.provideService(AuthService, answering))
   })
+}
+
+/** A Better Auth endpoint, as `auth.api` has it: a function with its path. */
+const endpointAt = <Input>(path: string, call: (input: Input) => Promise<BetterAuthActionResult>) =>
+  Object.assign(call, { path, options: { method: 'POST' } })
+
+/** A Better Auth whose handler answers every call with `answer`. */
+const handlerAuth = (answer: (request: Request) => Promise<Response>): TestCredentialsAuth => ({
+  api: {
+    signInEmail: endpointAt('/sign-in/email', async () => answerFrom(await answer(new Request('http://localhost/')))),
+    signUpEmail: endpointAt('/sign-up/email', async () => answerFrom(await answer(new Request('http://localhost/')))),
+  },
+  handler: answer,
+})
+
+/** A Better Auth server call's result as its handler would answer it. */
+function answerFrom(result: BetterAuthActionResult): Response {
+  if (result instanceof Response) return result
+  if (result instanceof Headers) return new Response('{}', { headers: result })
+
+  return Response.json(result.response ?? {}, { status: result.status ?? 200, headers: result.headers })
 }
 
 /** The input Better Auth's email endpoints receive. */
@@ -63,12 +87,13 @@ interface EmailCredentialsInput {
   readonly returnHeaders?: boolean
 }
 
-/** The Better Auth endpoints the form action tests call. */
+/** The Better Auth endpoints the form action tests call, and the handler they are sent through. */
 interface TestCredentialsAuth {
   readonly api: {
-    readonly signInEmail: (input: EmailCredentialsInput) => Promise<BetterAuthActionResult>
-    readonly signUpEmail: (input: EmailCredentialsInput) => Promise<BetterAuthActionResult>
+    readonly signInEmail: ((input: EmailCredentialsInput) => Promise<BetterAuthActionResult>) & { readonly path: string }
+    readonly signUpEmail: ((input: EmailCredentialsInput) => Promise<BetterAuthActionResult>) & { readonly path: string }
   }
+  readonly handler: (request: Request) => Promise<Response>
 }
 
 /** The Better Auth endpoint the logout action calls. */
@@ -303,34 +328,24 @@ describe('betterAuthRedirect in a form action', () => {
     shouldSucceed?: boolean
     error?: { code?: string; message?: string }
     responseHeaders?: Headers
-  } = {}): TestCredentialsAuth => ({
-    api: {
-      signInEmail: async () => {
-        if (!options.shouldSucceed && options.error) {
-          // oxlint-disable-next-line only-throw-error -- SAFETY: The fake SDK deliberately rejects with the supplied value to exercise boundary classification.
-          throw options.error
-        }
+  } = {}): TestCredentialsAuth => {
+    const answer = async (cookie: string): Promise<BetterAuthActionResult> => {
+      if (!options.shouldSucceed && options.error) {
+        // oxlint-disable-next-line only-throw-error -- SAFETY: The fake SDK deliberately rejects with the supplied value to exercise boundary classification.
+        throw options.error
+      }
 
-        return {
-          headers: options.responseHeaders ?? new Headers({
-            'set-cookie': 'better-auth.session_token=abc123; Path=/; HttpOnly',
-          }),
-        }
-      },
-      signUpEmail: async () => {
-        if (!options.shouldSucceed && options.error) {
-          // oxlint-disable-next-line only-throw-error -- SAFETY: The fake SDK deliberately rejects with the supplied value to exercise boundary classification.
-          throw options.error
-        }
+      return { headers: options.responseHeaders ?? new Headers({ 'set-cookie': cookie }) }
+    }
 
-        return {
-          headers: options.responseHeaders ?? new Headers({
-            'set-cookie': 'better-auth.session_token=xyz789; Path=/; HttpOnly',
-          }),
-        }
+    return {
+      api: {
+        signInEmail: endpointAt('/sign-in/email', () => answer('better-auth.session_token=abc123; Path=/; HttpOnly')),
+        signUpEmail: endpointAt('/sign-up/email', () => answer('better-auth.session_token=xyz789; Path=/; HttpOnly')),
       },
-    },
-  })
+      handler: async () => answerFrom(await answer('better-auth.session_token=abc123; Path=/; HttpOnly')),
+    }
+  }
 
   test('returns 303 redirect on successful authentication', async () => {
     const LoginSchema = S.Struct({
