@@ -1655,6 +1655,18 @@ framework package in an application.
 - Page props cross to the browser as JSON. `Jsonify` describes the result
   (dates and bigints become strings); page schemas should describe plain
   data rather than classes or Effect data types.
+- A table binding checks each column's database type, nullability and enum
+  values, but not a narrowing declared only in TypeScript, such as
+  `text('role').$type<Role>()`: name an Effect Schema for that binding, or
+  give the column an enum.
+- Workers Cache answers before the Worker runs, so a page cached with the
+  `cache` option is shared only by visitors who send no cookies. Visitors
+  with analytics cookies render it afresh; the default page cache, which runs
+  in the Worker, ignores those cookies but caches only pages that read no
+  data.
+- The service-layer cycle: `setupWeb`'s type includes its services and the
+  database type comes from `setupWeb`, so a layer in `services` whose service
+  uses the database needs an explicit type.
 
 ## Developing this package
 
