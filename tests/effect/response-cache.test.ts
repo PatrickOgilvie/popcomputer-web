@@ -619,6 +619,48 @@ describe('purges route option', () => {
     expect(purges).toEqual([{ tags: ['posts:post-1', 'posts'] }])
   })
 
+  test('a plain {param} beside a model binding is read as input, not loaded', async () => {
+    const { Database } = await import('bun:sqlite')
+    const { drizzle } = await import('drizzle-orm/bun-sqlite')
+    const { sqliteTable, text } = await import('drizzle-orm/sqlite-core')
+    const { webServices } = await import('../../src/request-context.js')
+    const { bound } = await import('../../src/effect/binding.js')
+
+    const teams = sqliteTable('teams', { id: text('id').primaryKey() })
+    const schema = { teams }
+    const bindings = { team: S.Struct({ id: S.String }) }
+
+    const sqlite = new Database(':memory:')
+    sqlite.run(`CREATE TABLE teams (id TEXT PRIMARY KEY)`)
+    const db = drizzle(sqlite, { schema })
+    db.insert(teams).values({ id: 'team-1' }).run()
+
+    const { purges, layer } = recordingCacheLayer()
+
+    const app = new Hono()
+    app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+    app.use('*', webServices(() => ({ db: db as never })))
+    app.use('*', effectBridge({ schema, bindings }))
+
+    effectRoutes(app, { schema, bindings, services: () => layer }).post(
+      '/teams/{team}/invites/{token}',
+      Effect.gen(function* () {
+        yield* bound('team')
+        const { token } = yield* validateRequest(S.Struct({ token: S.String }))
+
+        return Response.json({ token })
+      }),
+      { purges: true }
+    )
+
+    const res = await app.request('/teams/team-1/invites/abc', { method: 'POST' })
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ token: 'abc' })
+    expect(purges).toEqual([{ tags: ['teams:team-1', 'teams'] }])
+  })
+
   test('purges: true on a route without a {param} fails at registration', () => {
     const register = () =>
       effectRoutes(createApp()).post('/posts', Effect.succeed(new Redirect({ url: '/posts', status: 303 })), {

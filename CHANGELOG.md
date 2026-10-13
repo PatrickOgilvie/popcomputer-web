@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- A `{param}` without a parser in `bindings` is a plain parameter, read with `validateRequest`, beside the route's models. `bound()` failed on any route that mixed the two, because every placeholder was loaded as a model. `bound('param')` for a plain parameter fails with a configuration error naming it, and route parameter validation and cache tags cover only the route's models.
 - `purges: true` on a route whose path has no `{param}` throws at registration, naming the route; it purged nothing. List the tags such a route changes, as in `purges: ['posts']`.
 - Responses the `cache` route option stores vary on `Cookie` as well as `X-Inertia`. Workers Cache served a guest's cached page to a signed-in member (`auth.user: null`) and to a form redirecting back with flashed errors; now any request with a cookie renders afresh. A signed-in request on a cached route gets `Cache-Control: no-store` instead of no header and a development warning.
 - `setupWeb` gives every response without a `Cache-Control` header `private, no-cache` (`DEFAULT_CACHE_CONTROL`, applied by `privateByDefault()`). With Workers Cache enabled, a response without one is stored for a heuristic lifetime and served to other visitors.

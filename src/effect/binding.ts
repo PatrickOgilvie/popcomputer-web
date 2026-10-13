@@ -670,15 +670,16 @@ export function columnTypeToSchema(
  * @returns An Effect Schema for validating route params, or null if inference fails
  */
 export function inferParamsSchema<Schema extends object>(
-  bindings: ParsedBinding[],
-  schema: Schema
+  bindings: readonly ParsedBinding[],
+  schema: Schema,
+  configured?: RouteBindingsConfig
 ): S.Codec<unknown, unknown, never, never> | null {
   if (bindings.length === 0) return null
 
   const fields: Record<string, S.Codec<unknown, unknown, never, never>> = {}
 
   for (const binding of bindings) {
-    const tableName = pluralize(binding.param)
+    const tableName = bindingTableName(binding, configured)
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
     const table = Object.getOwnPropertyDescriptor(schema, tableName)?.value
 

@@ -560,11 +560,16 @@ export class EffectRouteBuilder<
       // Get schema from bridgeConfig or from context (set by setupWeb/effectBridge)
       const schema = bridgeConfig?.schema ?? getEffectSchema(c)
       const configuredBindings = bridgeConfig?.bindings ?? getEffectBindings(c)
+      // A {param} with a binding parser names a model; any other is a plain
+      // parameter the action reads with validateRequest.
+      const modelBindings = configuredBindings
+        ? bindings.filter((binding) => Object.hasOwn(configuredBindings, binding.param))
+        : []
 
       // Use provided params schema, or infer from database schema if available
       const paramsSchema = options?.params ?? (
-        bindings.length > 0 && schema
-          ? inferParamsSchema(bindings, schema) ?? undefined
+        modelBindings.length > 0 && schema
+          ? inferParamsSchema(modelBindings, schema, configuredBindings) ?? undefined
           : undefined
       )
 
@@ -597,7 +602,7 @@ export class EffectRouteBuilder<
         db: object
       ): Promise<BindingLoadOutcome> => {
         try {
-          bindingPlanPromise ??= compileBindingPlan(bindings, bindingSchema, parsers)
+          bindingPlanPromise ??= compileBindingPlan(modelBindings, bindingSchema, parsers)
 
           return await this.resolveBindings(c, await bindingPlanPromise, db)
         } catch (cause) {
@@ -615,12 +620,8 @@ export class EffectRouteBuilder<
         database: Option.Option<object>
       ): Effect.Effect<LoadedModels, BoundModelError> =>
         Effect.gen(function* () {
-          if (bindings.length === 0) {
+          if (!configuredBindings || modelBindings.length === 0) {
             return { models: new Map(), recordTags: [] }
-          }
-
-          if (!configuredBindings) {
-            return yield* RouteConfigurationError.bindingParserNotConfigured(bindings[0].param)
           }
 
           if (Option.isNone(database)) {
@@ -658,6 +659,10 @@ export class EffectRouteBuilder<
                 return Effect.fail(RouteConfigurationError.schemaNotConfigured(key))
               }
 
+              if (!modelBindings.some((binding) => binding.param === key)) {
+                return Effect.fail(RouteConfigurationError.bindingParserNotConfigured(key))
+              }
+
               return Effect.map(load, (loaded) => loaded.models.get(key))
             },
           })
@@ -692,7 +697,7 @@ export class EffectRouteBuilder<
       let recordTags: readonly string[] = []
       const cacheOption = options?.cache
 
-      if (cacheOption && bindings.length > 0 && BODYLESS_METHODS.has(c.req.method)) {
+      if (cacheOption && modelBindings.length > 0 && BODYLESS_METHODS.has(c.req.method)) {
         handlerEffect = handlerEffect.pipe(
           Effect.tap((result) =>
             result instanceof Response && result.status >= 200 && result.status < 300
@@ -712,9 +717,8 @@ export class EffectRouteBuilder<
       const purges = options?.purges
 
       if (purges) {
-        const writtenTable = bindings.length > 0
-          ? [bindingTableName(bindings[bindings.length - 1], configuredBindings)]
-          : []
+        const writtenModel = modelBindings[modelBindings.length - 1]
+        const writtenTable = writtenModel ? [bindingTableName(writtenModel, configuredBindings)] : []
 
         const purgeTags: Effect.Effect<readonly string[], BoundModelError, RouteRecords> = purges === true
           ? Effect.flatMap(RouteRecords, (records) => records.tags).pipe(
@@ -818,7 +822,12 @@ export class EffectRouteBuilder<
     const honoPath = toHonoPath(path)
     const fullPath = this.resolvePath(honoPath)
 
-    if (options?.purges === true && bindings.length === 0) {
+    const configured = this.bridgeConfig?.bindings
+
+    if (
+      options?.purges === true &&
+      !bindings.some((binding) => (configured ? Object.hasOwn(configured, binding.param) : true))
+    ) {
       throw RouteConfigurationError.purgesWithoutBindings(path)
     }
 

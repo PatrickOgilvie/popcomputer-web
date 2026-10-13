@@ -641,6 +641,11 @@ const routeBindings = {
 ```
 
 This fails closed when a child lookup cannot be safely scoped to its parent.
+
+A placeholder without a parser in `bindings` is a plain parameter: the action
+reads it with `validateRequest`, as in `/teams/{team}/invites/{token}`, where
+`bound('team')` loads the team and `token` arrives with the request's input.
+
 Route model binding is currently Drizzle-specific even though the basic
 `DatabaseService` can hold any application database client.
 
