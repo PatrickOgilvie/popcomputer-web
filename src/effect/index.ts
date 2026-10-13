@@ -188,3 +188,6 @@ export {
 
 // Config for the Worker's vars and secrets, named as the bindings declare them
 export { config, type BindingConfig, type BindingName } from './config.js'
+
+// The JSON body every failure answers a JSON client with
+export type { ErrorResponseBody } from './error-formatter.js'

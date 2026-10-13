@@ -98,7 +98,9 @@ not supported yet: both change APIs this package uses.
 
 ### Upgrading from 0.7
 
-The next release declares everything once, in `setupWeb`; the
+These steps take an application on the 0.7.0 release to the unreleased
+changes that follow it; skip any that name an API the application never
+used. The next release declares everything once, in `setupWeb`; the
 [changelog](CHANGELOG.md), shipped in the package as
 `node_modules/@popcomputer/web/CHANGELOG.md`, lists every change. In order:
 
@@ -228,6 +230,12 @@ export const Project = tableSchema(schema.projects).mapFields(
 export const ProjectSummary = tableSchema(schema.projects).mapFields(Struct.pick(['id', 'name']))
 
 export const Task = tableSchema(schema.tasks)
+
+// A page that shows computed values beside columns adds them as fields.
+export const ProjectCard = tableSchema(schema.projects).mapFields((fields) => ({
+  ...Struct.pick(fields, ['id', 'name']),
+  openTasks: S.Number,
+}))
 
 export const pages = {
   'Projects/Index': S.Struct({ projects: S.Array(ProjectSummary) }),
@@ -1020,6 +1028,8 @@ A JSON client gets every failure in one envelope, whatever its status:
 ```
 
 `errors` names each invalid field's message, as a form's page receives them.
+`ErrorResponseBody` from `@popcomputer/web/effect` types the envelope, and
+`readError(res)` from `@popcomputer/web/testing` reads it in a test.
 An `HttpError` with a body adds it as `body`, so a domain error a JSON action
 maps with `httpError(409, 'Already checked in.', { code: 'ticket_already_used' })`
 reaches the client as `{ ..., "httpStatus": 409, "body": { "code":
@@ -1084,8 +1094,12 @@ the Effect. The name identifies the work in error reports:
 yield* background('audit.send', sendAuditEvent(event))
 ```
 
-Without an execution context, as in tests, background work runs before the
-response returns, so a test sees its effects; in a Worker it runs after.
+In a Worker, background work starts at once and runs beside the rest of the
+action: the response does not wait for it, and the Worker's execution context
+keeps it alive after the response. Without an execution context, as in tests,
+it runs where it is called, before the response returns, so a test sees its
+effects but not a race between them; pass an execution context as
+`app.request`'s fourth argument to test concurrent behaviour.
 
 ### Scheduled and queued work
 
@@ -1114,6 +1128,10 @@ export default {
     routes.run(forgetAbandonedOrders, env, ctx),
 }
 ```
+
+A test runs the job the same way, with `testEnv`'s bindings, so its fakes,
+clock and database apply:
+`await routes.run(forgetAbandonedOrders, testEnv(time.layer, testBindings))`.
 
 ### Page caching
 
@@ -1388,7 +1406,8 @@ and constraint errors behave the same:
 
 An application on D1 adds Cloudflare's types to `tsconfig.json`'s
 `compilerOptions.types` (`"@cloudflare/workers-types"`, or the file
-`wrangler types` writes). Drizzle's D1 results name them, and without them a
+`wrangler types` writes), or imports a type from them, such as
+`import type { D1Database } from '@cloudflare/workers-types'` in `src/env.ts`. Drizzle's D1 results name them, and without them a
 result is `any`, which the database operations report as a type error.
 
 ```ts
@@ -1696,6 +1715,21 @@ export const paymentWebhook = action(Effect.gen(function* () {
   `errorBag: 'reject'`). The request carries `X-Inertia-Error-Bag`, and the
   failed form's errors arrive under `errors.reject`, so only that form shows
   them.
+- **State machines**: model a record's states as a `Schema.TaggedUnion`
+  (build a state with `.cases.Draft.make(...)`) and its transitions as one
+  function returning an Effect that fails with a typed error for an illegal
+  one; the action maps that error, and a page schema built from the union
+  lets React switch over the states exhaustively.
+- **Services that join transactions**: keep `DatabaseService` in a service
+  method's requirements (`Effect.Effect<A, E, DatabaseService>`) instead of
+  providing it inside the service, so a method called in `dbTransaction`
+  takes part in it.
+- **Forms built per record**, such as a quiz's answers: build the schema from
+  the record (`S.Struct({ answers: S.Tuple(questions.map(answerSchema)) })`)
+  and annotate its type, since a tuple built from a runtime array infers as
+  empty; errors arrive keyed by position, as `answers.3`. A schema built from
+  the validators also serves as a page's props schema, so a filter form's
+  query and the page that shows it share one.
 - **Lists in forms**: decode a list with `S.Array(Item)`; a failing item's
   errors are keyed by its path, as `items.2.amount`. A step of a wizard that
   fails on another step's data fails with

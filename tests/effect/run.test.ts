@@ -7,9 +7,10 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { Config, Context, Effect, Layer, Schema as S } from 'effect'
+import { Clock, Config, Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
+import { testClock, testEnv } from '../../src/testing.js'
 
 class Counter extends Context.Service<Counter, { readonly next: Effect.Effect<number> }>()('test/Counter') {}
 
@@ -53,6 +54,15 @@ describe('routes.run', () => {
       _tag: 'SweepFailed',
       reason: 'locked',
     })
+  })
+
+  test('runs with a test\'s layer and bindings from testEnv', async () => {
+    const { routes } = createApp()
+    const time = await testClock(new Date('2026-05-01T00:00:00Z'))
+
+    const now = await routes.run(Clock.currentTimeMillis, testEnv(time.layer, { REGION: 'weur' }))
+
+    expect(now).toBe(Date.parse('2026-05-01T00:00:00Z'))
   })
 
   test('cannot be reached by a request', async () => {

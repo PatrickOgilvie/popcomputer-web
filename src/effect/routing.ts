@@ -322,7 +322,8 @@ export class EffectRouteBuilder<
    * in a Cron Trigger or a Queue consumer: the database, `services`, `Config`
    * from the bindings and `background()` work as they do in an action, with
    * this builder's provided layers. Resolves with the Effect's value and
-   * rejects with its failure.
+   * rejects with its failure. A test passes `testEnv(layer, bindings)` as
+   * `env`, so its fakes, clock and database apply.
    *
    * @example
    * export default {
@@ -332,7 +333,9 @@ export class EffectRouteBuilder<
    */
   async run<A, Err, R>(
     effect: Effect.Effect<A, Err, R> & RunCheck<R, Services>,
-    env: E['Bindings'],
+    // Partial, so a test passes testEnv's bindings and its layer applies; a
+    // binding the Effect reads that is missing fails as it does in a request.
+    env: Partial<E['Bindings']>,
     executionCtx?: ExecutionContext
   ): Promise<A> {
     let provided: Layer.Layer<never, AppError, never> = Layer.empty

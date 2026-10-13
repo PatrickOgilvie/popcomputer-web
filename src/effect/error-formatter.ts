@@ -38,7 +38,12 @@ const SENSITIVE_MESSAGE_CATEGORIES = new Set<StructuredError['category']>([
 const SAFE_GENERIC_MESSAGE = 'An error occurred. Please try again later.'
 const NOT_FOUND_MESSAGE = 'The page you requested was not found.'
 
-interface FormattedError {
+/**
+ * The JSON body every failure answers a JSON client with, whatever its
+ * status: `errors` for a failed form, `body` for an `HttpError` that carries
+ * one. Read it in tests with `readError` from `@popcomputer/web/testing`.
+ */
+export interface ErrorResponseBody {
   code: string
   tag: string
   category: StructuredError['category']
@@ -148,8 +153,8 @@ export class JsonErrorFormatter implements ErrorFormatter {
     }
   }
 
-  format(error: StructuredError): FormattedError {
-    const output: FormattedError = {
+  format(error: StructuredError): ErrorResponseBody {
+    const output: ErrorResponseBody = {
       code: error.code,
       tag: error.tag,
       category: error.category,

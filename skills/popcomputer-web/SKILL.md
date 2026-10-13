@@ -209,7 +209,10 @@ them with `Effect.catchTag`, or fail with `HttpError`). A type error at
 `render(...)` means the page or its props differ from `src/pages.ts`.
 `Argument of type 'string' is not assignable to parameter of type 'readonly
 [never, ...never[]]'` at an `Effect.catchTag` means the Effect no longer fails
-with that tag: remove the handler.
+with that tag: remove the handler. A registration reporting
+`missingServices: "unnamed service"` for an `Effect<..., unknown, unknown>`
+means an earlier type error in the action made its types unknown: fix that
+one first.
 `'web' implicitly has type 'any'` (TS7022) means a layer in `services` has no
 type annotation and uses a type `setupWeb` declares (`dbQuery`, `config`,
 `bound`): annotate the layer, as rule 9 shows.

@@ -16,6 +16,7 @@ import type { Registered } from './effect/register.js'
 import { attachTestDatabase, attachTestLayer } from './effect/test-env.js'
 import type { PageName } from './effect/pages.js'
 import type { FlashData, PagePropsFor } from './react.js'
+import type { ErrorResponseBody } from './effect/error-formatter.js'
 
 type RegisteredBindings = Registered<'bindings', never>
 
@@ -174,6 +175,27 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
     // i.e. when this Better Auth-shaped session is an AuthUser['session'].
     session: session as unknown as AuthUser['session'],
   }
+}
+
+/**
+ * Read the error a JSON client received: the envelope every failure answers
+ * with, typed. Rejects when the response is a success or not that envelope.
+ *
+ * @example
+ * const res = await app.request('/api/check-in', { method: 'POST', headers: { Accept: 'application/json' } }, env)
+ * const error = await readError(res)
+ * expect(error.errors).toEqual({ code: 'This field is required' })
+ */
+export async function readError(response: Response): Promise<ErrorResponseBody> {
+  const body: unknown = response.status >= 400 ? await response.json() : undefined
+
+  if (!(body instanceof Object) || typeof Reflect.get(body, 'code') !== 'string') {
+    throw new Error(`Expected a JSON error, but the response is ${response.status} ${response.headers.get('Content-Type') ?? ''}.`)
+  }
+
+  // SAFETY: the boundary answers every JSON client's failure with this
+  // envelope, which carries a string code; the check above found one.
+  return body as ErrorResponseBody
 }
 
 /** An application a test sends requests to: the Hono app setupWeb configured. */

@@ -16,7 +16,7 @@ import { back, flash, invalid, redirect, redirectNow, render } from '../src/effe
 import { positiveInt, requiredString } from '../src/effect/schema.js'
 import { validateRequest } from '../src/effect/validation.js'
 import { ValidationError } from '../src/effect/errors.js'
-import { followRedirect, readPage } from '../src/testing.js'
+import { followRedirect, readError, readPage } from '../src/testing.js'
 
 const CreateProject = S.Struct({ name: requiredString })
 
@@ -241,10 +241,10 @@ describe('domain failures on a form', () => {
     const res = await offer(offersApp(), 5, { 'X-Inertia': '', Accept: 'application/json' })
 
     expect(res.status).toBe(422)
-    expect(await res.json()).toMatchObject({
-      code: 'WEB_VAL_004_SCHEMA_MISMATCH',
-      errors: { amount: 'Offers start at 10.' },
-    })
+
+    const error = await readError(res)
+    expect(error.code).toBe('WEB_VAL_004_SCHEMA_MISMATCH')
+    expect(error.errors).toEqual({ amount: 'Offers start at 10.' })
   })
 
   test('back() returns to the page the request came from', async () => {
