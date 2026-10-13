@@ -25,6 +25,9 @@
       ],
       "@popcomputer/web/react": [
         "../../dist/react.d.ts"
+      ],
+      "@popcomputer/web/paths": [
+        "../../dist/paths.d.ts"
       ]
     }
   },

@@ -351,6 +351,19 @@ and returns `{ app, routes }`. For manual Hono composition, see
 
 ### 4. Write actions and register routes
 
+Each route's path is declared once, and every URL to it is built from that
+declaration: the route registration, a server redirect and a client link. The
+module holds only data, so server and React code both import it.
+
+```ts
+// src/paths.ts
+export const paths = {
+  projects: '/projects',
+  project: '/projects/{project}',
+  task: '/projects/{project}/tasks/{task}',
+} as const
+```
+
 ```ts
 // src/actions/projects/show.ts
 import { Effect } from 'effect'
@@ -378,12 +391,16 @@ export const showProject = action(
 ```ts
 // src/routes.ts
 import { routes } from './app'
+import { paths } from './paths'
 import { showProject } from './actions/projects/show'
 
-routes.get('/projects/{project}', showProject, {
-  name: 'projects.show',
-})
+routes.get(paths.project, showProject, { name: 'projects.show' })
 ```
+
+`redirect(paths.project, { project: project.id })` and, in React,
+`href(paths.project, { project: project.id })` from `@popcomputer/web/paths` fill
+the path's placeholders; the parameters are typed from them, so a renamed
+placeholder is a type error at every URL built from it.
 
 `routes` accepts an action only when the setup provides every service the
 action uses and the action fails only with the package's errors. Otherwise the

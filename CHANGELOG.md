@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- `redirect(path, params, query)` fills a route path's placeholders and always answers 303: `redirect(paths.project, { project: project.id })`. The status argument is removed; a `Redirect` value can still carry another status.
 - An application declares each type once, in `setupWeb`, and registers the result once: `export const web = setupWeb(new Hono<Env>(), config)` and `declare module '@popcomputer/web' { interface Register { web: typeof web } }`. The bindings type comes from the Hono environment, the database and auth types from the `database` and `auth.client` factories, the signed-in user from `auth.session`, route models from `bindings`, and pages from `pages`. The augmentation interfaces `WebDatabaseType`, `WebAuthType`, `WebBindingsType`, `WebAuthUserType`, `WebRouteBindingsType` and `WebPagesType`, which restated those types, are removed with `SessionParserOption`; `auth.session` is never separately required, since the user type is what it decodes. A test or hand-composed application registers types directly with `WebDeclaration<{ database: ... }>`.
 - `auth.share` is an Effect Schema of the public user, through which the signed-in user is encoded as the `auth.user` page prop, instead of a projection function; a field it does not name never reaches the browser. `shareAuth` and `shareAuthMiddleware` take `{ schema }` instead of `project`, `fields` and `mapUser`.
 - `SharedProps` from `@popcomputer/web/react` is derived from the registration (`auth.user` from `auth.share`, plus the `shared` props) instead of an interface the application augments.
@@ -60,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `href(path, params, query)` from the new `@popcomputer/web/paths` entrypoint builds a link from a route path, with its parameters typed from the path's placeholders (`{project}`, `{page:slug}`). An application declares each path once, in a module of paths that server and React code both import, and registers, redirects and links with it.
 - setupWeb's `shared` and `flash` options declare, as Effect Schema structs, the props shared with every page and the values `flash` hands to the next page. `share(key, value)` and `flash(key, value)` accept only their fields and encode values through them; `SharedProps` and `FlashData` type them in React, and pointing Inertia's `InertiaConfig` at them types `usePage()`.
 - A signed-out visit to a guarded page carries the page to the sign-in path as `?redirect=`, and `intendedUrl(fallback)` returns it after signing in, reading the parameter from the request or the sign-in page's `Referer`. Only paths on the same site are returned.
 - `testEnv(layer, bindings, { database })` gives a test request its own database in place of setupWeb's `database` factory: the database operations, route model binding and the Better Auth client all use it, such as an in-process PGlite database.

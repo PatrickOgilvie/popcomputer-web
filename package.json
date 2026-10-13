@@ -27,6 +27,10 @@
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js"
     },
+    "./paths": {
+      "types": "./dist/paths.d.ts",
+      "import": "./dist/paths.js"
+    },
     "./cache": {
       "types": "./dist/cache.d.ts",
       "import": "./dist/cache.js"

@@ -5,6 +5,7 @@
  */
 
 import { Effect, Stream } from 'effect'
+import { href, type PathArguments } from '../paths.js'
 import {
   PageService,
   ResponseFactoryService,
@@ -24,14 +25,19 @@ import {
 } from './pages.js'
 
 /**
- * Create a redirect response.
+ * Redirect (303) to a route path, filling its placeholders: the path the
+ * route is registered with, so the URL follows it.
  *
  * @example
- * return yield* redirect('/projects')
- * return yield* redirect('/login', 302)
+ * return yield* redirect(paths.project, { project: project.id })
+ * return yield* redirect('/projects', {}, { page: 2 })
  */
-export const redirect = (url: string, status: 302 | 303 = 303): Effect.Effect<Redirect, never, never> =>
-  Effect.succeed(new Redirect({ url, status }))
+export function redirect<const Path extends string>(
+  path: Path,
+  ...args: PathArguments<Path>
+): Effect.Effect<Redirect, never, never> {
+  return Effect.succeed(new Redirect({ url: href(path, ...args), status: 303 }))
+}
 
 /**
  * Render a page component.

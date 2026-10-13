@@ -8,6 +8,7 @@ import manifest from '../dist/manifest.json'
 import { createAuth, createStatelessAuth } from './auth'
 import { createDb } from './db'
 import { pages, ProjectSummary, Task } from './pages'
+import { paths } from './paths'
 import { projects } from './schema'
 
 export { createAuth, createDb, createStatelessAuth, manifest, projects }
@@ -23,7 +24,7 @@ export const auth = createAuth({
 export declare const headers: Headers
 
 export declare const userId: string
-export { pages, ProjectSummary, Task }
+export { pages, paths, ProjectSummary, Task }
 export declare function loadProjects(
   userId: string
 ): Promise<ReadonlyArray<typeof ProjectSummary.Type>>

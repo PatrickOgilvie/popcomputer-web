@@ -19,8 +19,12 @@ To use this file, point the application's own `AGENTS.md` or `CLAUDE.md` at
    app by hand.
 2. **Every handler is an action.** Wrap an `Effect.gen` in `action(...)` and
    register it on the `routes` that `setupWeb` returns:
-   `routes.get/post/put/patch/delete(path, action, { name })`. Registrations
-   chain. `routes` accepts only actions whose services the setup provides.
+   `routes.get/post/put/patch/delete(paths.project, action, { name })`.
+   Declare every path once in `src/paths.ts` (`project: '/projects/{project}'`)
+   and build every URL from it: `redirect(paths.project, { project: id })`
+   in actions, `href(paths.project, { project: id })` from
+   `@popcomputer/web/paths` in React. Registrations chain. `routes` accepts only
+   actions whose services the setup provides.
 3. **Declare every page's props as an Effect Schema** in `src/pages.ts` and
    pass the object as `setupWeb`'s `pages`. Type each React page as
    `WebPage<'Projects/Show'>` from `@popcomputer/web/react`; its props, the
@@ -83,8 +87,8 @@ helpers and Hono middleware; `@popcomputer/web/effect` for actions, routes,
 responses, pages, the database, services and errors;
 `@popcomputer/web/schema` for validators; `@popcomputer/web/auth` for the
 Better Auth integration; `@popcomputer/web/cache` for the KV cache;
-`@popcomputer/web/react` for page component types; `@popcomputer/web/testing`
-in tests.
+`@popcomputer/web/react` for page component types; `@popcomputer/web/paths`
+for `href`, in React and actions alike; `@popcomputer/web/testing` in tests.
 
 ## A complete action
 
@@ -103,6 +107,7 @@ import {
   validateRequest,
 } from '@popcomputer/web/effect'
 import { nullableString, requiredString } from '@popcomputer/web/schema'
+import { paths } from '../../paths'
 import { projects } from '../../schema'
 
 const UpdateProject = S.Struct({
@@ -124,7 +129,7 @@ export const updateProject = action(
     )
     yield* flash('success', 'Project saved.')
 
-    return yield* redirect(`/projects/${project.id}`)
+    return yield* redirect(paths.project, { project: project.id })
   })
 )
 ```
@@ -132,9 +137,7 @@ export const updateProject = action(
 Register it beside the other routes in `src/routes.ts`:
 
 ```ts
-routes.put('/projects/{project}', updateProject, {
-  name: 'projects.update',
-})
+routes.put(paths.project, updateProject, { name: 'projects.update' })
 ```
 
 Test it as the README's Testing section shows: request

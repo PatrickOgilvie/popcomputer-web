@@ -25,6 +25,9 @@
       ],
       "@popcomputer/web/react": [
         "./src/react.ts"
+      ],
+      "@popcomputer/web/paths": [
+        "./src/paths.ts"
       ]
     },
     "rootDir": "."

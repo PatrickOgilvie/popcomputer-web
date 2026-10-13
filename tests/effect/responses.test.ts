@@ -101,10 +101,11 @@ describe('redirect', () => {
     expect(result.status).toBe(303)
   })
 
-  test('creates Redirect with custom status', () => {
-    const result = Effect.runSync(redirect('/login', 302))
+  test('redirects with 303 and takes no status', () => {
+    // @ts-expect-error a status is not a parameter of a path without placeholders
+    redirect('/login', 302)
 
-    expect(result.status).toBe(302)
+    expect(Effect.runSync(redirect('/login')).status).toBe(303)
   })
 
   test('is a pure effect (no dependencies)', () => {
