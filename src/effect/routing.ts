@@ -42,6 +42,8 @@ import {
 import type {
   DatabaseService,
   AuthService,
+  CacheService,
+  ExecutionContextService,
   PageService,
   RequestService,
   RequestStateService,
@@ -67,6 +69,7 @@ import {
   getAppRouteRegistry,
   type HttpMethod,
   type RouteMetadata,
+  type RouteMetadataJson,
 } from './route-registry.js'
 
 /**
@@ -80,18 +83,68 @@ export type EffectHandler<R = never, E extends AppError = AppError> = Effect.Eff
 >
 
 /**
- * Base services available in every route.
+ * Services every route can use, whatever setupWeb configures.
  */
-export type BaseServices =
+export type CoreServices =
   | RequestService
   | RequestStateService
   | ResponseCacheService
   | ResponseFactoryService
   | PageService
-  | DatabaseService
-  | AuthService
   | BindingsService
   | BoundModels
+  | ExecutionContextService
+  | CacheService
+
+/**
+ * Every service the framework can provide to a route: the core services plus
+ * the database and auth services. `effectRoutes(app)` assumes all of them;
+ * the `routes` that setupWeb returns include only what it configures.
+ */
+export type BaseServices = CoreServices | DatabaseService | AuthService
+
+/** The key a service tag declares, for naming it in a type error. */
+type ServiceKey<Service> = Service extends { readonly key: infer Key extends string }
+  ? Key
+  : 'unnamed service'
+
+/** The `_tag` of an error, for naming it in a type error. */
+type ErrorTag<Failure> = Failure extends { readonly _tag: infer Tag extends string }
+  ? Tag
+  : 'untagged error'
+
+/**
+ * `unknown` when a route can run an action that needs `R` and fails with
+ * `Err`; otherwise an object type naming what is wrong, which the action
+ * cannot satisfy, so the compiler reports it at the registration.
+ */
+export type RouteActionCheck<R, Err, Services> = [Exclude<R, Services>] extends [never]
+  ? [Exclude<Err, AppError>] extends [never]
+    ? unknown
+    : {
+        readonly unhandledErrors: ErrorTag<Exclude<Err, AppError>>
+        readonly fix: 'Handle these errors in the action (Effect.catchTag), or fail with one of the package errors such as HttpError.'
+      }
+  : {
+      readonly missingServices: ServiceKey<Exclude<R, Services>>
+      readonly fix: 'Configure the service in setupWeb (database, auth, effect.services), or add it with routes.provide(layer).'
+    }
+
+/** An action a route with `Services` can run. */
+export type RouteAction<R, Err, Services> = Effect.Effect<Response | Redirect, Err, R> &
+  RouteActionCheck<R, Err, Services>
+
+/**
+ * The action as the route runs it. RouteActionCheck rejects, at the call
+ * site, any action whose failures are not AppError, so registered actions
+ * fail only with AppError.
+ */
+function checkedAction<R, Err, Services>(
+  action: RouteAction<R, Err, Services>
+): Effect.Effect<Response | Redirect, AppError, R> {
+  // SAFETY: see above; an action with other failures does not compile.
+  return action as Effect.Effect<Response | Redirect, AppError, R>
+}
 
 /**
  * Route-level configuration options.
@@ -184,14 +237,13 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
  */
 export class EffectRouteBuilder<
   E extends Env,
-  ProvidedServices = never,
-  CustomServices = never
+  Services = BaseServices
 > {
   constructor(
     private readonly app: Hono<E>,
     private readonly layers: Layer.Layer<never, AppError, never>[] = [],
     private readonly pathPrefix: string = '',
-    private readonly bridgeConfig?: EffectBridgeConfig<E, CustomServices>,
+    private readonly bridgeConfig?: EffectBridgeConfig<E, never>,
     private readonly registry: RouteRegistry = getAppRouteRegistry(app),
     private readonly middlewares: MiddlewareHandler<E>[] = []
   ) {}
@@ -206,10 +258,10 @@ export class EffectRouteBuilder<
   provide<
     S,
     LayerErr extends AppError,
-    LayerReq extends BaseServices | ProvidedServices | CustomServices
+    LayerReq extends Services
   >(
     layer: Layer.Layer<S, LayerErr, LayerReq>
-  ): EffectRouteBuilder<E, ProvidedServices | S, CustomServices> {
+  ): EffectRouteBuilder<E, Services | S> {
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
     return new EffectRouteBuilder(
       this.app,
@@ -242,7 +294,7 @@ export class EffectRouteBuilder<
    */
   middleware(
     ...handlers: MiddlewareHandler<E>[]
-  ): EffectRouteBuilder<E, ProvidedServices, CustomServices> {
+  ): EffectRouteBuilder<E, Services> {
     return new EffectRouteBuilder(
       this.app,
       this.layers,
@@ -274,7 +326,7 @@ export class EffectRouteBuilder<
    */
   prefixMiddleware(
     ...handlers: MiddlewareHandler<E>[]
-  ): EffectRouteBuilder<E, ProvidedServices, CustomServices> {
+  ): EffectRouteBuilder<E, Services> {
     if (this.pathPrefix) {
       // Two patterns: '/api/*' does not match '/api' itself in Hono
       this.app.use(this.pathPrefix, ...handlers)
@@ -289,7 +341,7 @@ export class EffectRouteBuilder<
   /**
    * Set path prefix for all routes in this builder.
    */
-  prefix(path: string): EffectRouteBuilder<E, ProvidedServices, CustomServices> {
+  prefix(path: string): EffectRouteBuilder<E, Services> {
     const normalizedPath = path.replace(/\/$/, '')
 
     return new EffectRouteBuilder(
@@ -306,7 +358,7 @@ export class EffectRouteBuilder<
    * Register routes that share this builder's prefix, layers and middleware.
    * Returns the builder so registrations can continue after the group.
    */
-  group(callback: (route: EffectRouteBuilder<E, ProvidedServices, CustomServices>) => void): this {
+  group(callback: (route: EffectRouteBuilder<E, Services>) => void): this {
     callback(this)
 
     return this
@@ -461,8 +513,8 @@ export class EffectRouteBuilder<
     return { models }
   }
 
-  private createHandler<R extends BaseServices | ProvidedServices | CustomServices>(
-    effect: EffectHandler<R, AppError>,
+  private createHandler<R>(
+    effect: Effect.Effect<Response | Redirect, AppError, R>,
     bindings: ParsedBinding[],
     options?: EffectRouteOptions
   ): MiddlewareHandler<E> {
@@ -656,11 +708,13 @@ export class EffectRouteBuilder<
 
       // The route runtime owns every provided Layer until background work has
       // settled, including scoped services added with route.provide().
-      // SAFETY: The builder's provide() constraint and ordered composition above
-      // establish this service union; optional base services retain their runtime
-      // missing-configuration diagnostics. Acquisition failures remain AppError.
+      // SAFETY: the route's Services type admits only actions whose
+      // requirements setupWeb, effect.services and provide() supply, and the
+      // composition above provides those services; acquisition failures remain
+      // AppError. effectRoutes(app) assumes every framework service, so an
+      // unconfigured one is still reported at runtime as a configuration error.
       const routeRuntime = ManagedRuntime.make(
-        fullLayer as Layer.Layer<BaseServices | ProvidedServices | CustomServices, AppError>
+        fullLayer as Layer.Layer<R | ResponseCacheService, AppError>
       )
 
       let response: Response
@@ -706,10 +760,10 @@ export class EffectRouteBuilder<
    * Register a route with the given HTTP method.
    * Parses Laravel-style bindings and converts to Hono path format.
    */
-  private registerRoute<R extends BaseServices | ProvidedServices | CustomServices>(
+  private registerRoute<R>(
     method: HttpMethod,
     path: string,
-    effect: EffectHandler<R, AppError>,
+    effect: Effect.Effect<Response | Redirect, AppError, R>,
     options?: EffectRouteOptions
   ): void {
     const bindings = parseBindings(path)
@@ -750,75 +804,77 @@ export class EffectRouteBuilder<
   }
 
   /** Register a GET route. Supports Laravel-style route model binding: /projects/{project} */
-  get<R extends BaseServices | ProvidedServices | CustomServices>(
+  get<R, Err>(
     path: string,
-    effect: EffectHandler<R, AppError>,
+    effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
-    this.registerRoute('get', path, effect, options)
+    this.registerRoute('get', path, checkedAction(effect), options)
 
     return this
   }
 
   /** Register a POST route. Supports Laravel-style route model binding: /projects/{project} */
-  post<R extends BaseServices | ProvidedServices | CustomServices>(
+  post<R, Err>(
     path: string,
-    effect: EffectHandler<R, AppError>,
+    effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
-    this.registerRoute('post', path, effect, options)
+    this.registerRoute('post', path, checkedAction(effect), options)
 
     return this
   }
 
   /** Register a PUT route. Supports Laravel-style route model binding: /projects/{project} */
-  put<R extends BaseServices | ProvidedServices | CustomServices>(
+  put<R, Err>(
     path: string,
-    effect: EffectHandler<R, AppError>,
+    effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
-    this.registerRoute('put', path, effect, options)
+    this.registerRoute('put', path, checkedAction(effect), options)
 
     return this
   }
 
   /** Register a PATCH route. Supports Laravel-style route model binding: /projects/{project} */
-  patch<R extends BaseServices | ProvidedServices | CustomServices>(
+  patch<R, Err>(
     path: string,
-    effect: EffectHandler<R, AppError>,
+    effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
-    this.registerRoute('patch', path, effect, options)
+    this.registerRoute('patch', path, checkedAction(effect), options)
 
     return this
   }
 
   /** Register a DELETE route. Supports Laravel-style route model binding: /projects/{project} */
-  delete<R extends BaseServices | ProvidedServices | CustomServices>(
+  delete<R, Err>(
     path: string,
-    effect: EffectHandler<R, AppError>,
+    effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
-    this.registerRoute('delete', path, effect, options)
+    this.registerRoute('delete', path, checkedAction(effect), options)
 
     return this
   }
 
   /** Register a route for all HTTP methods. Supports Laravel-style route model binding: /projects/{project} */
-  all<R extends BaseServices | ProvidedServices | CustomServices>(
+  all<R, Err>(
     path: string,
-    effect: EffectHandler<R, AppError>,
+    effect: RouteAction<R, Err, Services>,
     options?: EffectRouteOptions
   ): this {
-    this.registerRoute('all', path, effect, options)
+    this.registerRoute('all', path, checkedAction(effect), options)
 
     return this
   }
 
-  /**
-   * Get the route registry for this builder.
-   * Useful for introspection, CLI tooling, and testing.
-   */
+  /** Every route registered on this builder's application, as JSON. */
+  toJson(): RouteMetadataJson[] {
+    return this.registry.toJson()
+  }
+
+  /** The application's route registry. */
   getRegistry(): RouteRegistry {
     return this.registry
   }
@@ -843,7 +899,11 @@ export interface EffectRoutesConfig<E extends Env, CustomServices = never>
 }
 
 /**
- * Create an Effect route builder for an app.
+ * Create a route builder for an app composed by hand.
+ *
+ * Applications using setupWeb register routes on the `routes` it returns,
+ * whose type admits only the services setupWeb configures. This builder
+ * assumes every framework service is available, plus `CustomServices`.
  *
  * @example
  * effectRoutes(app)
@@ -858,8 +918,8 @@ export interface EffectRoutesConfig<E extends Env, CustomServices = never>
 export function effectRoutes<E extends Env, CustomServices = never>(
   app: Hono<E>,
   config?: EffectRoutesConfig<E, CustomServices>
-): EffectRouteBuilder<E, never, CustomServices> {
+): EffectRouteBuilder<E, BaseServices | CustomServices> {
   const registry = config?.registry ?? getAppRouteRegistry(app)
 
-  return new EffectRouteBuilder(app, [], '', config, registry)
+  return new EffectRouteBuilder<E, BaseServices | CustomServices>(app, [], '', config, registry)
 }

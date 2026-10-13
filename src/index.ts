@@ -17,6 +17,7 @@ export {
   registerErrorHandlers,
   type WebSetupConfig,
   type WebApplication,
+  type WebRouteServices,
   type ErrorHandlerConfig,
   type AuthBackgroundTasks,
 } from './setup.js'

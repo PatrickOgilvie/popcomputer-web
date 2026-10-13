@@ -123,6 +123,9 @@ export {
   effectRoutes,
   type EffectHandler,
   type BaseServices,
+  type CoreServices,
+  type RouteAction,
+  type RouteActionCheck,
   type EffectRouteOptions,
   type EffectRoutesConfig,
 } from './routing.js'

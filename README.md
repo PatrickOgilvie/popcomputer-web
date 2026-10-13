@@ -206,9 +206,7 @@ const AuthSession = S.Struct({
   }),
 })
 
-const app = new Hono<Env>()
-
-const application = setupWeb(app, {
+export const { app, routes } = setupWeb(new Hono<Env>(), {
   version: createVersion(manifest),
   render: createTemplate({
     title: 'Projects',
@@ -235,7 +233,6 @@ const application = setupWeb(app, {
   errors: { component: 'Error' },
 })
 
-export { application }
 export default app
 ```
 
@@ -323,14 +320,21 @@ export const showProject = action(
 
 ```ts
 // src/routes.ts
-import { effectRoutes } from '@popcomputer/web/effect'
-import app from './app'
+import { routes } from './app'
 import { showProject } from './actions/projects/show'
 
-effectRoutes(app).get('/projects/{project}', showProject, {
+routes.get('/projects/{project}', showProject, {
   name: 'projects.show',
 })
 ```
+
+`routes` accepts an action only when the setup provides every service the
+action uses and the action fails only with the package's errors. Otherwise the
+registration is a type error that names the problem, for example
+`missingServices: "@popcomputer/web/Database"` when no `database` is
+configured, or `unhandledErrors: "PaymentDeclined"` for a domain error the
+action has not handled. `routes.provide(layer)` adds services for the routes
+registered through it.
 
 `action` does not hide another execution model. It preserves the Effect's
 success, error, and requirement channels, while documenting that the program is
@@ -409,7 +413,7 @@ Database failures remain typed Effect failures.
 Register an Effect Schema once, then use Laravel-style route placeholders:
 
 ```ts
-effectRoutes(app)
+routes
   .get('/projects/{project}', showProject)
   .get('/projects/{project:slug}', showProjectBySlug)
   .get('/projects/{project}/tasks/{task}', showTask)
@@ -578,7 +582,7 @@ config). The option emits Workers Cache headers and tags. It does not publicly
 cache authenticated, cookie-setting, partial, failed, or mutating responses.
 
 ```ts
-effectRoutes(app).get('/pricing', showPricing, {
+routes.get('/pricing', showPricing, {
   name: 'pricing.show',
   cache: { maxAge: 300, staleWhileRevalidate: 3600 },
 })
@@ -695,6 +699,11 @@ app.use('/admin/*', async (c, next) => {
 
 Add `pageCache({ version })` before `webServices()` to keep the default page
 cache; on a hit it answers before database and auth setup.
+
+Register routes with `effectRoutes(app)`. It cannot see which services the
+hand-written middleware provides, so it accepts actions that use any framework
+service and reports an unconfigured one at runtime, as a configuration error.
+Pass extra service types it should accept as `effectRoutes<Env, Mailer>(app)`.
 
 Plain Hono handlers can render through `c.var.web`:
 

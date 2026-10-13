@@ -145,6 +145,7 @@ function buildFragment(
     importLine(effectNames, 'effect') +
     (taken.has('S') ? '' : "import { Schema as S } from 'effect'; ") +
     (taken.has('app') ? '' : "import app from '../app'; ") +
+    (taken.has('routes') ? '' : "import { routes } from '../app'; ") +
     importLine(free(stubNames), '../doc-stubs')
 
   // Imports stay at module scope; everything after them may need wrapping.

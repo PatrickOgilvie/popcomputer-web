@@ -11,11 +11,18 @@ import { loadUser, shareAuthMiddleware } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
 import { pageCache } from './page-cache.js'
 import type {
+  AuthService,
+  DatabaseService,
   DatabaseType,
   AuthType,
   BindingsType,
   AuthUser,
 } from './effect/services.js'
+import {
+  EffectRouteBuilder,
+  type BaseServices,
+  type CoreServices,
+} from './effect/routing.js'
 import {
   drainRequestBackground,
   effectBridge,
@@ -28,10 +35,6 @@ import {
 } from './effect/handler.js'
 import { NotFoundError } from './effect/errors.js'
 import type { RouteBindingsConfig } from './effect/binding.js'
-import {
-  getAppRouteRegistry,
-  type RouteRegistry,
-} from './effect/route-registry.js'
 
 /** Default Hono environment derived from the application's bindings augmentation. */
 type DefaultEnv = {
@@ -43,12 +46,22 @@ export interface AuthBackgroundTasks {
   readonly handler: (promise: Promise<unknown>) => void
 }
 
-interface WebSetupOptions<
-  E extends Env,
-  CustomServices,
-  DB = undefined,
-  Auth = AuthType,
-> extends WebConfig {
+/** Better Auth configuration: client construction, session parsing and projection. */
+interface WebAuthOptions<E extends Env, Auth, ClientServices> {
+  /** Build the Better Auth server client at the request composition seam. */
+  client?: (c: Context<E>, services: ClientServices) => Auth
+  /**
+   * Parse Better Auth's session response before actions receive it.
+   * The encoded side is intentionally unconstrained because decodeUnknown
+   * owns the external boundary; the decoded AuthUser and context stay strict.
+   */
+  session?: S.Codec<AuthUser, unknown, never, never>
+  /** Explicit public projection placed at `auth.user` in page props. */
+  share?: (auth: AuthUser) => PagePropValue
+  readonly sessionCookie?: string
+}
+
+interface WebSetupOptions<E extends Env, CustomServices> extends WebConfig {
   /**
    * Drizzle schema for route model binding.
    *
@@ -64,41 +77,10 @@ interface WebSetupOptions<
   bindings?: RouteBindingsConfig
 
   /**
-   * Effect bridge configuration (optional).
-   * Only needed for custom Effect services.
+   * Services every route can use, built for each request. Their types join
+   * the services the returned `routes` accept.
    */
   effect?: Pick<EffectBridgeConfig<E, CustomServices>, 'services'>
-
-  /**
-   * Authentication configuration (optional).
-   * Owns client construction, session parsing, and public projection.
-   */
-  auth?: {
-    /** Build the Better Auth server client at the request composition seam. */
-    client?: [DB] extends [undefined]
-      ? (
-          c: Context<E>,
-          services: { readonly backgroundTasks: AuthBackgroundTasks }
-        ) => Auth
-      : DB extends object
-        ? (
-            c: Context<E>,
-            services: {
-              readonly db: DB
-              readonly backgroundTasks: AuthBackgroundTasks
-            }
-          ) => Auth
-        : never
-    /**
-     * Parse Better Auth's session response before actions receive it.
-     * The encoded side is intentionally unconstrained because decodeUnknown
-     * owns the external boundary; the decoded AuthUser and context stay strict.
-     */
-    session?: S.Codec<AuthUser, unknown, never, never>
-    /** Explicit public projection placed at `auth.user` in page props. */
-    share?: (auth: AuthUser) => PagePropValue
-    readonly sessionCookie?: string
-  }
 
   /**
    * Additional middleware to run after the framework middleware.
@@ -133,9 +115,9 @@ interface WebSetupOptions<
 interface WebSetupWithDatabaseConfig<
   E extends Env = DefaultEnv,
   DB extends object = DatabaseType,
-  Auth = AuthType,
+  Auth = never,
   CustomServices = never,
-> extends WebSetupOptions<E, CustomServices, DB, Auth> {
+> extends WebSetupOptions<E, CustomServices> {
   /**
    * Database factory function.
    * Creates the database client for each request.
@@ -146,19 +128,26 @@ interface WebSetupWithDatabaseConfig<
    * ```
    */
   database: (c: Context<E>) => DB
+  /** Authentication. The client factory receives the request's database. */
+  auth?: WebAuthOptions<E, Auth, {
+    readonly db: DB
+    readonly backgroundTasks: AuthBackgroundTasks
+  }>
 }
 
 /** Complete framework configuration for applications without a database. */
 interface WebSetupWithoutDatabaseConfig<
   E extends Env = DefaultEnv,
-  Auth = AuthType,
+  Auth = never,
   CustomServices = never,
-> extends WebSetupOptions<E, CustomServices, undefined, Auth> {
+> extends WebSetupOptions<E, CustomServices> {
   /**
    * A database factory is intentionally absent. This supports applications
    * without persistence and deliberately stateless authentication.
    */
   database?: undefined
+  /** Authentication without a database (Better Auth stateless mode). */
+  auth?: WebAuthOptions<E, Auth, { readonly backgroundTasks: AuthBackgroundTasks }>
 }
 
 /**
@@ -170,7 +159,7 @@ interface WebSetupWithoutDatabaseConfig<
 export type WebSetupConfig<
   E extends Env = DefaultEnv,
   DB = undefined,
-  Auth = AuthType,
+  Auth = never,
   CustomServices = never,
 > = [DB] extends [undefined]
   ? WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
@@ -178,11 +167,25 @@ export type WebSetupConfig<
     ? WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
     : never
 
+/**
+ * The services routes can use under a setup: the core services, the database
+ * and auth services when configured, and `effect.services`.
+ */
+export type WebRouteServices<HasDatabase extends boolean, Auth, CustomServices> =
+  | CoreServices
+  | (HasDatabase extends true ? DatabaseService : never)
+  | ([Auth] extends [never] ? never : AuthService)
+  | CustomServices
+
 /** The configured application returned by {@link setupWeb}. */
-export interface WebApplication<E extends Env> {
+export interface WebApplication<E extends Env, Services = BaseServices> {
   readonly app: Hono<E>
-  /** Metadata for every route registered on `app`. */
-  readonly routes: RouteRegistry
+  /**
+   * Registers the application's routes. An action registered here may use
+   * exactly the services this setup provides; anything else is a type error
+   * naming the missing service. `routes.toJson()` lists every route.
+   */
+  readonly routes: EffectRouteBuilder<E, Services>
 }
 
 /**
@@ -190,11 +193,11 @@ export interface WebApplication<E extends Env> {
  *
  * Installs the framework middleware (page cache, database and auth clients,
  * Inertia rendering, session loading, the per-request Effect runtime) and the
- * shared error boundary on `app`.
+ * shared error boundary on `app`, and returns the routes to register on.
  *
  * @example
  * ```ts
- * const { app, routes } = setupWeb(new Hono<Env>(), {
+ * export const { app, routes } = setupWeb(new Hono<Env>(), {
  *   version: createVersion(manifest),
  *   render: createTemplate({ title: 'My App' }),
  *   database: (c) => createDb(c.env.DATABASE_URL),
@@ -205,25 +208,27 @@ export interface WebApplication<E extends Env> {
  *     session: AuthSession,
  *   },
  * })
+ *
+ * routes.get('/workspaces/{workspace}', showWorkspace)
  * ```
  */
 export function setupWeb<
   E extends Env = DefaultEnv,
   DB extends object = DatabaseType,
-  Auth = AuthType,
+  Auth = never,
   CustomServices = never,
 >(
   app: Hono<E>,
   config: WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
-): WebApplication<E>
+): WebApplication<E, WebRouteServices<true, Auth, CustomServices>>
 export function setupWeb<
   E extends Env = DefaultEnv,
-  Auth = AuthType,
+  Auth = never,
   CustomServices = never,
 >(
   app: Hono<E>,
   config: WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
-): WebApplication<E>
+): WebApplication<E, WebRouteServices<false, Auth, CustomServices>>
 export function setupWeb<
   E extends Env,
   DB extends object,
@@ -234,12 +239,15 @@ export function setupWeb<
   config:
     | WebSetupWithDatabaseConfig<E, DB, Auth, CustomServices>
     | WebSetupWithoutDatabaseConfig<E, Auth, CustomServices>
-): WebApplication<E> {
+): WebApplication<E, WebRouteServices<boolean, Auth, CustomServices>> {
   assertSetupConfig(config)
   app.use('*', createSetupMiddleware(config))
   registerErrorHandlers(app, config.errors)
 
-  return { app, routes: getAppRouteRegistry(app) }
+  return {
+    app,
+    routes: new EffectRouteBuilder<E, WebRouteServices<boolean, Auth, CustomServices>>(app),
+  }
 }
 
 function createSetupMiddleware<
@@ -280,21 +288,11 @@ function createSetupMiddleware<
 
         if (config.auth?.client !== undefined) {
           // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
-          requestCtx.auth = config.auth.client(c, {
-            db,
-            backgroundTasks,
-          }) as AuthType
+          requestCtx.auth = config.auth.client(c, { db, backgroundTasks }) as AuthType
         }
       } else if (config.auth?.client !== undefined) {
-        // SAFETY: the no-database setup overload receives only the shared auth
-        // services; the implementation union cannot retain that branch.
-        const createStatelessAuth = config.auth.client as (
-          context: Context<E>,
-          services: { readonly backgroundTasks: AuthBackgroundTasks }
-        ) => Auth
-
         // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
-        requestCtx.auth = createStatelessAuth(c, { backgroundTasks }) as AuthType
+        requestCtx.auth = config.auth.client(c, { backgroundTasks }) as AuthType
       }
 
       await next()

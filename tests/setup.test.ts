@@ -86,16 +86,13 @@ describe('setupWeb basic configuration', () => {
       errors: { component: 'Problem' },
     })
 
-    effectRoutes(app).get('/healthy', Effect.succeed(new Response('OK')), {
-      name: 'health.show',
-    })
-    effectRoutes(app).get(
-      '/failed',
-      Effect.fail(new NotFoundError({ resource: 'project', id: 'missing' }))
-    )
+    configured.routes
+      .get('/healthy', Effect.succeed(new Response('OK')), { name: 'health.show' })
+      .get('/failed', Effect.fail(new NotFoundError({ resource: 'project', id: 'missing' })))
 
     expect(configured.app).toBe(app)
-    expect(configured.routes.findByName('health.show')?.path).toBe('/healthy')
+    expect(configured.routes.getRegistry().findByName('health.show')?.path).toBe('/healthy')
+    expect(configured.routes.toJson().map((route) => route.fullPath)).toEqual(['/healthy', '/failed'])
 
     const missing = await app.request('/missing', undefined, {
       DATABASE_URL: 'unused',

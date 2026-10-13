@@ -24,8 +24,9 @@ TypeScript example here and in the README type-checks against the package.
    the database, auth, route binding parsers and the error page. Do not add
    framework middleware by hand.
 2. **Every handler is an action.** Wrap an `Effect.gen` in `action(...)` and
-   register it with `effectRoutes(app).get/post/put/patch/delete(path, action,
-   { name })`. Registrations chain.
+   register it on the `routes` that `setupWeb` returns:
+   `routes.get/post/put/patch/delete(path, action, { name })`. Registrations
+   chain. `routes` accepts only actions whose services the setup provides.
 3. **End every branch with a response helper:** `return yield* render(...)`,
    `redirect(...)`, `json(...)`, `jsonOrRender(...)`, `notFound(...)`,
    `forbidden(...)` or `httpError(...)`. Expected failures are typed Effect
@@ -108,7 +109,7 @@ export const updateProject = action(
 Register it beside the other routes in `src/routes.ts`:
 
 ```ts
-effectRoutes(app).put('/projects/{project}', updateProject, {
+routes.put('/projects/{project}', updateProject, {
   name: 'projects.update',
 })
 ```
@@ -129,6 +130,7 @@ another user, and a `422` for an empty name.
 ## Before finishing
 
 Run the application's type check (`tsc --noEmit`) and `bun test`. A type error
-at `effectRoutes(app).get(...)` usually means the action needs a service the
-route does not provide, or fails with an error that is not one of the
-package's typed errors.
+at `routes.get(...)` names the problem: `missingServices` lists services the
+setup does not provide (configure them in `setupWeb`, or `routes.provide(layer)`),
+and `unhandledErrors` lists failures that are not the package's errors (handle
+them with `Effect.catchTag`, or fail with `HttpError`).

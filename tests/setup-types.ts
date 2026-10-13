@@ -9,7 +9,15 @@
 import { Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono, type Context as HonoContext } from 'hono'
 import { setupWeb } from '@popcomputer/web'
-import { bound } from '@popcomputer/web/effect'
+import {
+  action,
+  AuthService,
+  background,
+  bound,
+  DatabaseService,
+  json,
+  NotFoundError,
+} from '@popcomputer/web/effect'
 import {
   betterAuthFormAction,
   effectifyBetterAuth,
@@ -136,7 +144,7 @@ const application = setupWeb(app, {
 
 const inferredApp: Hono<TestEnv> = application.app
 
-const routeCount: number = application.routes.count()
+const routeCount: number = application.routes.toJson().length
 
 void inferredApp
 
@@ -238,3 +246,105 @@ void customEndpointEffect
 const invalidEndpointEffect = effectAuth.api.customEndpoint({ value: 123 })
 
 void invalidEndpointEffect
+
+// ---------------------------------------------------------------------------
+// The routes setupWeb returns accept exactly the services it configures.
+// ---------------------------------------------------------------------------
+
+class TestMailer extends Context.Service<
+  TestMailer,
+  { readonly send: (to: string) => Effect.Effect<void> }
+>()('test/Mailer') {}
+
+class TestDomainFailure extends S.TaggedError<TestDomainFailure>()(
+  'TestDomainFailure',
+  {}
+) {}
+
+const usesDatabase = action(Effect.gen(function* () {
+  const db = yield* DatabaseService
+
+  return yield* json({ name: db.name })
+}))
+
+const usesAuthService = action(Effect.gen(function* () {
+  const auth = yield* AuthService
+
+  return yield* json({ databaseName: auth.databaseName })
+}))
+
+const usesMailer = action(Effect.gen(function* () {
+  const mailer = yield* TestMailer
+  yield* mailer.send('ada@example.com')
+
+  return yield* json({ sent: true })
+}))
+
+const usesCoreServices = action(Effect.gen(function* () {
+  yield* background('audit', Effect.void)
+
+  return yield* json({ ok: true })
+}))
+
+const failsWithDomainError = action(Effect.gen(function* () {
+  yield* new TestDomainFailure()
+
+  return yield* json({ ok: true })
+}))
+
+const failsWithPackageError = action(Effect.gen(function* () {
+  yield* new NotFoundError({ resource: 'project' })
+
+  return yield* json({ ok: true })
+}))
+
+{
+  const { routes } = setupWeb(new Hono<TestEnv>(), {
+    version: 'type-test',
+    render: (page) => JSON.stringify(page),
+  })
+
+  routes.get('/core', usesCoreServices)
+  routes.get('/missing', failsWithPackageError)
+  // @ts-expect-error No database is configured.
+  routes.get('/database', usesDatabase)
+  // @ts-expect-error No auth client is configured.
+  routes.get('/auth', usesAuthService)
+  // @ts-expect-error Nothing provides TestMailer.
+  routes.post('/mail', usesMailer)
+  // @ts-expect-error TestDomainFailure is not one of the package's errors.
+  routes.post('/domain', failsWithDomainError)
+
+  routes
+    .provide(Layer.succeed(TestMailer, TestMailer.of({ send: () => Effect.void })))
+    .post('/mail', usesMailer)
+}
+
+{
+  const { routes } = setupWeb(new Hono<TestEnv>(), {
+    version: 'type-test',
+    render: (page) => JSON.stringify(page),
+    database: (context) => ({ name: context.env.DATABASE_NAME }),
+    auth: { client: (_context, { db }) => ({ databaseName: db.name }) },
+    effect: {
+      services: () => Layer.succeed(TestMailer, TestMailer.of({ send: () => Effect.void })),
+    },
+  })
+
+  routes
+    .get('/database', usesDatabase)
+    .get('/auth', usesAuthService)
+    .post('/mail', usesMailer)
+}
+
+{
+  const { routes } = setupWeb(new Hono<TestEnv>(), {
+    version: 'type-test',
+    render: (page) => JSON.stringify(page),
+    database: (context) => ({ name: context.env.DATABASE_NAME }),
+  })
+
+  routes.get('/database', usesDatabase)
+  // @ts-expect-error A database alone does not configure auth.
+  routes.get('/auth', usesAuthService)
+}
