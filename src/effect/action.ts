@@ -8,7 +8,7 @@
 import { Effect } from 'effect'
 import type { Endpoint, EndpointError, EndpointInput, EndpointSuccess } from '../endpoint.js'
 import { endpointAction, type EndpointAction } from './endpoint-action.js'
-import type { Redirect, ValidationError } from './errors.js'
+import type { Redirect, UnauthorizedError, ValidationError } from './errors.js'
 import type { RequestService, ResponseFactoryService } from './services.js'
 
 /**
@@ -57,7 +57,7 @@ export function action<R, E>(
 export function action<const Ep extends Endpoint, Err, R>(
   endpoint: Ep,
   handler: (input: EndpointInput<Ep>) => Effect.Effect<EndpointSuccess<Ep>, Err, R>
-): EndpointAction<Ep, Exclude<Err, EndpointError<Ep>> | ValidationError, R | RequestService | ResponseFactoryService>
+): EndpointAction<Ep, Exclude<Err, EndpointError<Ep>> | ValidationError | UnauthorizedError, R | RequestService | ResponseFactoryService>
 export function action(
   first: Effect.Effect<Response | Redirect, unknown, unknown> | Endpoint,
   handler?: (input: never) => Effect.Effect<unknown, unknown, unknown>

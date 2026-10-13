@@ -105,3 +105,9 @@ async function client() {
 }
 
 void client
+
+// A contract requiring a user gives the handler `auth`; one that does not, none.
+const secured = endpoint.post('/places/{place}/name', { auth: true, body: S.Struct({ name: S.String }), success: Place })
+action(secured, ({ auth, params }) => Effect.succeed({ id: params.place, name: auth.user.id }))
+// @ts-expect-error The contract does not require a user.
+action(endpoints.showPlace, ({ auth }) => Effect.succeed({ id: String(auth), name: 'x' }))

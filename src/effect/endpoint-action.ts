@@ -13,9 +13,9 @@ import type {
   EndpointSpec,
   EndpointSuccess,
 } from '../endpoint.js'
-import { HttpError, type ValidationError } from './errors.js'
+import { HttpError, type UnauthorizedError, type ValidationError } from './errors.js'
 import { json, noContent } from './responses.js'
-import { RequestService, type ResponseFactoryService } from './services.js'
+import { authorize, RequestService, type ResponseFactoryService } from './services.js'
 import { validateRequest, validateUnknown } from './validation.js'
 
 /** The action implementing an endpoint, which `routes.endpoint` registers on the endpoint's method and path. */
@@ -86,7 +86,7 @@ export function endpointAction<const Ep extends Endpoint, Err, R>(
   handler: (input: EndpointInput<Ep>) => Effect.Effect<EndpointSuccess<Ep>, Err, R>
 ): EndpointAction<
   Ep,
-  Exclude<Err, EndpointError<Ep>> | ValidationError,
+  Exclude<Err, EndpointError<Ep>> | ValidationError | UnauthorizedError,
   R | RequestService | ResponseFactoryService
 > {
   const spec: EndpointSpec = ep.spec
@@ -95,6 +95,9 @@ export function endpointAction<const Ep extends Endpoint, Err, R>(
   const effect = Effect.gen(function* () {
     const request = yield* RequestService
     const input: Record<string, unknown> = { params: request.params() }
+
+    // A signed-out client is answered 401 before its input is read.
+    if (spec.auth === true) input.auth = yield* authorize()
 
     if (spec.query !== undefined) {
       input.query = yield* validateRequest(spec.query, { request: { order: ['query'] } })
@@ -125,8 +128,9 @@ export function endpointAction<const Ep extends Endpoint, Err, R>(
     return yield* noContent()
   })
 
-  // SAFETY: catchIf removed the declared failures, which it answers as
-  // HttpError, so the action fails only with the rest, HttpError and
-  // ValidationError from decoding the input.
-  return { endpoint: ep, effect: effect as Effect.Effect<Response, Exclude<Err, EndpointError<Ep>> | ValidationError, R | RequestService | ResponseFactoryService> }
+  // SAFETY: catch removed the declared failures, which it answers as
+  // HttpError, so the action fails only with the rest, HttpError,
+  // ValidationError from decoding the input and UnauthorizedError from
+  // requiring a user.
+  return { endpoint: ep, effect: effect as Effect.Effect<Response, Exclude<Err, EndpointError<Ep>> | ValidationError | UnauthorizedError, R | RequestService | ResponseFactoryService> }
 }

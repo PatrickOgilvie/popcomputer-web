@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An endpoint contract's `auth: true` requires a signed-in user: the action runs only for one, receiving it as `auth`, and anyone else is answered 401 before the input is read. `openApi` lists the 401 of such an endpoint and the security schemes its new `security` option names, the 404 of an endpoint whose path names a record, and the limits a validator's checks add, such as `requiredString.check(S.isMaxLength(200))`'s `maxLength`.
 - `isoDate` and `isoDateTime` from `@popcomputer/web/schema` accept a calendar day written `YYYY-MM-DD`, kept as that string, and a moment with its time zone, as a `Date`, refusing days the calendar lacks and times without a zone. JSON Schema describes them as `format: date` and `format: date-time`.
 - `testEnv(bindings, { database })` takes bindings without a layer, for a test whose visitors sign in through the application.
 - `routes.scheduled((event) => effect)` and `routes.queue(Schema, (body, message) => effect)` return the Worker's `scheduled` and `queue` handlers, running each job with the application's services and type-checking it as a registration does. The queue handler decodes each message's body with the schema, acknowledges a message whose work succeeds, and logs and retries one whose body does not decode or whose work fails. `testBatch(bodies)` from `@popcomputer/web/testing` makes a batch that records each message's outcome.

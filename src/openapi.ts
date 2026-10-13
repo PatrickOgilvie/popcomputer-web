@@ -19,6 +19,12 @@ export interface OpenApiInfo {
   readonly description?: string
   /** Where the API answers, such as `https://api.example.com`. */
   readonly servers?: ReadonlyArray<string>
+  /**
+   * The ways a client signs in, as OpenAPI security schemes by name, such as
+   * `{ session: { type: 'apiKey', in: 'cookie', name: 'better-auth.session_token' } }`:
+   * an endpoint whose contract has `auth: true` accepts any of them.
+   */
+  readonly security?: Readonly<Record<string, JsonObject>>
 }
 
 const isObject = (value: JsonValue | undefined): value is JsonObject =>
@@ -49,6 +55,15 @@ function mergeWire(encoded: JsonValue | undefined, decoded: JsonValue | undefine
   if (!isObject(decoded)) return encoded
 
   const merged: Record<string, JsonValue> = { ...encoded }
+
+  // The decoded side's checks, such as a validator's maxLength, describe the
+  // same value when both sides have one type.
+  if (encoded.type !== undefined && encoded.type === decoded.type) {
+    for (const keyword of CONSTRAINTS) {
+      if (merged[keyword] === undefined && decoded[keyword] !== undefined) merged[keyword] = decoded[keyword]
+    }
+  }
+
   const encodedProperties = encoded.properties
   const decodedProperties = decoded.properties
 
@@ -75,6 +90,12 @@ function mergeWire(encoded: JsonValue | undefined, decoded: JsonValue | undefine
 
   return merged
 }
+
+/** The keywords that constrain a value of one type, which the decoded side can add to the encoded side's. */
+const CONSTRAINTS = [
+  'minLength', 'maxLength', 'pattern', 'format', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum',
+  'multipleOf', 'minItems', 'maxItems', 'uniqueItems', 'enum', 'description', 'examples', 'title',
+] as const
 
 /** The schema a JSON client sends for an input: its wire format, filled in where a validator decodes from anything. */
 function inputDocument(schema: EndpointSchema): SchemaDocument {
@@ -166,7 +187,13 @@ function failureEnvelope(bodies: ReadonlyArray<JsonValue>): JsonObject {
   }
 }
 
-function operationOf(name: string, spec: EndpointSpec, path: string, components: Components): JsonObject {
+function operationOf(
+  name: string,
+  spec: EndpointSpec,
+  path: string,
+  components: Components,
+  security: Readonly<Record<string, JsonObject>> | undefined
+): JsonObject {
   const pathParameters: JsonValue[] = [...path.matchAll(/\{([^}:]+)(?::[^}]+)?\}/g)].map((match) => ({
     name: match[1],
     in: 'path',
@@ -193,6 +220,17 @@ function operationOf(name: string, spec: EndpointSpec, path: string, components:
     }
   }
 
+  if (spec.auth === true && responses['401'] === undefined) {
+    responses['401'] = { description: 'No one is signed in.', ...json({ $ref: '#/components/schemas/ErrorResponse' }) }
+  }
+
+  if (pathParameters.length > 0 && responses['404'] === undefined) {
+    responses['404'] = {
+      description: 'No record the client may see matches the path.',
+      ...json({ $ref: '#/components/schemas/ErrorResponse' }),
+    }
+  }
+
   if ((spec.query !== undefined || spec.body !== undefined || spec.headers !== undefined) && responses['422'] === undefined) {
     responses['422'] = {
       description: 'The input does not validate: `errors` holds each invalid field’s message.',
@@ -205,6 +243,7 @@ function operationOf(name: string, spec: EndpointSpec, path: string, components:
   if (spec.summary !== undefined) operation.summary = spec.summary
   operation.parameters = [...pathParameters, ...queryParameters, ...headerParameters]
   if (spec.body !== undefined) operation.requestBody = { required: true, ...json(components.add(inputDocument(spec.body))) }
+  if (spec.auth === true && security !== undefined) operation.security = Object.keys(security).map((name) => ({ [name]: [] }))
   operation.responses = responses
 
   return operation
@@ -236,7 +275,7 @@ export function openApi(endpoints: Readonly<Record<string, Endpoint>>, info: Ope
     const path = ep.path.replace(/\{([^}:]+):[^}]+\}/g, '{$1}')
     const operations = paths[path] ?? {}
 
-    operations[ep.method] = operationOf(name, ep.spec, ep.path, components)
+    operations[ep.method] = operationOf(name, ep.spec, ep.path, components, info.security)
     paths[path] = operations
   }
 
@@ -248,7 +287,9 @@ export function openApi(endpoints: Readonly<Record<string, Endpoint>>, info: Ope
 
   if (info.servers !== undefined) document.servers = info.servers.map((url) => ({ url }))
   document.paths = paths
-  document.components = { schemas: components.schemas }
+  document.components = info.security === undefined
+    ? { schemas: components.schemas }
+    : { schemas: components.schemas, securitySchemes: info.security }
 
   return document
 }

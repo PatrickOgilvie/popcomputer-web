@@ -15,10 +15,12 @@ import { responseHeader } from '../../src/effect/response-headers.js'
 import { call, endpoint, endpointRequest, openApi } from '../../src/endpoint.js'
 import { coercedNumber, nullableString, requiredString } from '../../src/effect/schema.js'
 import { href } from '../../src/paths.js'
+import { signedIn, testEnv } from '../../src/testing.js'
 
 const paths = {
   places: '/api/places',
   place: '/api/places/{place}',
+  rename: '/api/places/{place}/name',
 } as const
 
 const Place = S.Struct({ id: S.String, name: S.String, rating: S.Number, createdAt: S.Date })
@@ -45,6 +47,11 @@ const endpoints = {
   }),
   showPlace: endpoint.get(paths.place, { success: Place }),
   deletePlace: endpoint.delete(paths.place),
+  rename: endpoint.post(paths.rename, {
+    auth: true,
+    body: S.Struct({ name: requiredString.check(S.isMaxLength(40)) }),
+    success: S.Struct({ by: S.String, name: S.String }),
+  }),
 }
 
 const created = new Date(Date.UTC(2026, 9, 13))
@@ -84,6 +91,8 @@ const showPlace = action(endpoints.showPlace, ({ params }) =>
 
 const deletePlace = action(endpoints.deletePlace, () => Effect.void)
 
+const rename = action(endpoints.rename, ({ auth, body }) => Effect.succeed({ by: auth.user.id, name: body.name }))
+
 function createApp() {
   const app = new Hono()
   const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
@@ -93,6 +102,7 @@ function createApp() {
     .endpoint(createPlace, { name: 'places.store' })
     .endpoint(showPlace)
     .endpoint(deletePlace)
+    .endpoint(rename)
 
   return { app, routes }
 }
@@ -175,6 +185,26 @@ describe('endpoint actions', () => {
     expect(await res.text()).toBe('')
   })
 
+  test('answer a signed-out client 401 before reading its input, when the contract requires a user', async () => {
+    const { app } = createApp()
+    const send = (env?: object) => app.request('/api/places/p1/name', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '' }),
+    }, env)
+
+    expect((await send()).status).toBe(401)
+    expect((await send(testEnv(signedIn({ id: 'user-1' })))).status).toBe(422)
+
+    const renamed = await app.request('/api/places/p1/name', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Diner' }),
+    }, testEnv(signedIn({ id: 'user-1' })))
+
+    expect(await renamed.json()).toEqual({ by: 'user-1', name: 'Diner' })
+  })
+
   test('register on the method and path their contract declares', () => {
     const { routes } = createApp()
 
@@ -183,6 +213,7 @@ describe('endpoint actions', () => {
       'post /api/places',
       'get /api/places/{place}',
       'delete /api/places/{place}',
+      'post /api/places/{place}/name',
     ])
   })
 
@@ -294,7 +325,28 @@ describe('openApi', () => {
     expect(Object.keys(create.responses).sort()).toEqual(['201', '409', '422'])
     expect(create.responses['409'].description).toBe('PlaceExists, PlaceClosed')
     expect(create.responses['409'].content['application/json'].schema.allOf[1].properties.body.oneOf).toHaveLength(2)
-    expect(at('/api/places/{place}', 'delete').responses).toEqual({ 204: { description: 'Success, with no body.' } })
+    expect(at('/api/places/{place}', 'delete').responses).toMatchObject({ 204: { description: 'Success, with no body.' }, 404: {} })
+  })
+
+  test('lists the 401 and the security of an endpoint requiring a user, and the 404 of a path with a record', () => {
+    const secured = openApi(endpoints, {
+      title: 'Places',
+      version: '1',
+      security: { session: { type: 'apiKey', in: 'cookie', name: 'better-auth.session_token' } },
+    })
+    const operation = JSON.parse(JSON.stringify(secured)).paths['/api/places/{place}/name'].post
+
+    expect(Object.keys(operation.responses).sort()).toEqual(['200', '401', '404', '422'])
+    expect(operation.security).toEqual([{ session: [] }])
+    expect(secured.components).toMatchObject({ securitySchemes: { session: { type: 'apiKey' } } })
+    expect(at('/api/places', 'get').responses['404']).toBeUndefined()
+  })
+
+  test("keeps a validator's limits", () => {
+    expect(at('/api/places/{place}/name', 'post').requestBody.content['application/json'].schema.properties.name).toMatchObject({
+      type: 'string',
+      maxLength: 40,
+    })
   })
 
   test('collects shared schemas as components', () => {

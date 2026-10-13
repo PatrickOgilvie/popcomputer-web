@@ -1693,25 +1693,31 @@ export class SlugTaken extends S.TaggedError<SlugTaken>()('SlugTaken', {
 export const endpoints = {
   listProjects: endpoint.get(paths.apiProjects, {
     summary: 'List your projects, newest first.',
+    auth: true,
     query: S.Struct({ limit: coercedNumber, q: nullableString }),
     success: S.Struct({ data: S.Array(ApiProject) }),
   }),
   createProject: endpoint.post(paths.apiProjects, {
     summary: 'Create a project.',
+    auth: true,
     body: S.Struct({ name: requiredString, slug: alphaDash }),
     success: ApiProject,
     status: 201,
     errors: { 409: SlugTaken },
   }),
-  showProject: endpoint.get(paths.apiProject, { success: ApiProject }),
-  deleteProject: endpoint.delete(paths.apiProject),
+  showProject: endpoint.get(paths.apiProject, { auth: true, success: ApiProject }),
+  deleteProject: endpoint.delete(paths.apiProject, { auth: true }),
 }
 ```
 
 `action(endpoint, handler)` implements one. The handler receives `params`
-(the path's placeholders) and the `query`, `body` and `headers` the contract
-declares, already decoded: input that does not decode is answered `422`, with
-each invalid field's message in `errors`, before the handler runs. It returns
+(the path's placeholders), the signed-in user as `auth` when the contract has
+`auth: true`, and the `query`, `body` and `headers` the contract declares,
+already decoded. A contract with `auth: true` is answered 401 for a client
+that is not signed in, before its input is read, so the requirement is
+declared once, where the API's description reads it too. Input that does not
+decode is answered `422`, with each invalid field's message in `errors`,
+before the handler runs. The handler returns
 the success value, which the response encodes through the `success` schema,
 so only the fields the schema declares leave the server, whatever the row
 holds; an endpoint without `success` answers `204`. A failure the contract
@@ -1729,7 +1735,6 @@ import { and, desc, eq, ilike } from 'drizzle-orm'
 import { Effect } from 'effect'
 import {
   action,
-  authorize,
   bound,
   dbMutation,
   dbQuery,
@@ -1741,9 +1746,8 @@ import { endpoints, SlugTaken } from '../../endpoints'
 import { paths } from '../../paths'
 import { projects } from '../../schema'
 
-export const listProjects = action(endpoints.listProjects, ({ query }) =>
+export const listProjects = action(endpoints.listProjects, ({ auth, query }) =>
   Effect.gen(function* () {
-    const auth = yield* authorize()
     const data = yield* dbQuery((db) =>
       db.select().from(projects)
         .where(and(eq(projects.userId, auth.user.id), query.q === null ? undefined : ilike(projects.name, `%${query.q}%`)))
@@ -1755,9 +1759,8 @@ export const listProjects = action(endpoints.listProjects, ({ query }) =>
   })
 )
 
-export const createProject = action(endpoints.createProject, ({ body }) =>
+export const createProject = action(endpoints.createProject, ({ auth, body }) =>
   Effect.gen(function* () {
-    const auth = yield* authorize()
     const [project] = yield* dbMutation((db) =>
       db.insert(projects)
         .values({ id: crypto.randomUUID(), name: body.name, slug: body.slug, userId: auth.user.id })
@@ -1776,9 +1779,8 @@ export const createProject = action(endpoints.createProject, ({ body }) =>
   })
 )
 
-export const showProject = action(endpoints.showProject, () =>
+export const showProject = action(endpoints.showProject, ({ auth }) =>
   Effect.gen(function* () {
-    const auth = yield* authorize()
     const project = yield* bound('project')
 
     if (project.userId !== auth.user.id) return yield* notFound('Project')
@@ -1787,9 +1789,8 @@ export const showProject = action(endpoints.showProject, () =>
   })
 )
 
-export const deleteProject = action(endpoints.deleteProject, () =>
+export const deleteProject = action(endpoints.deleteProject, ({ auth }) =>
   Effect.gen(function* () {
-    const auth = yield* authorize()
     const project = yield* bound('project')
 
     if (project.userId !== auth.user.id) return yield* notFound('Project')
@@ -1809,27 +1810,37 @@ contract's path is the whole path; group them with `.provide(...)`.
 ```ts
 // src/api-routes.ts
 import { openApi } from '@popcomputer/web/endpoint'
-import { action, json, RequireAuthLayer } from '@popcomputer/web/effect'
+import { action, json } from '@popcomputer/web/effect'
 import { routes } from './app'
 import { createProject, deleteProject, listProjects, showProject } from './actions/api/projects'
 import { endpoints } from './endpoints'
 import { paths } from './paths'
 
-routes.provide(RequireAuthLayer)
+routes
   .endpoint(listProjects)
   .endpoint(createProject, { name: 'api.projects.store' })
   .endpoint(showProject)
   .endpoint(deleteProject, { purges: true })
 
-routes.get(paths.apiDescription, action(json(openApi(endpoints, { title: 'Projects API', version: '1' }))))
+const description = openApi(endpoints, {
+  title: 'Projects API',
+  version: '1',
+  security: { session: { type: 'apiKey', in: 'cookie', name: 'better-auth.session_token' } },
+})
+
+routes.get(paths.apiDescription, action(json(description)))
 ```
 
 `openApi(endpoints, info)` is an OpenAPI 3.1 document: each endpoint named
 by its key, with its path and query parameters, headers, body, success and
-declared failures, and the `422` of an endpoint that reads input. A
-validator that accepts form posts as well as JSON, such as `coercedNumber`, is
-described as the JSON a client sends, a number. Serve it from a route, as
-above, or write it to a file in a build step.
+declared failures; the `422` of an endpoint that reads input, the `401` of
+one with `auth: true`, and the `404` of one whose path names a record. Give
+`security` the ways a client signs in, as OpenAPI security schemes, and each
+endpoint with `auth: true` lists them, so a generated client knows to send
+the session cookie or a bearer token. A validator that accepts form posts as
+well as JSON, such as `coercedNumber`, is described as the JSON a client
+sends, a number, with the limits its checks add, such as a `maxLength`. Serve
+it from a route, as above, or write it to a file in a build step.
 
 `call(endpoint, input, options)` sends a request built from the contract and
 reads the answer: `{ ok: true, value }` with the success decoded, so dates

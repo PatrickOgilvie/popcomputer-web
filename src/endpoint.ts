@@ -36,6 +36,7 @@
 import { Option, Schema as S } from 'effect'
 import { ErrorResponse, type ErrorResponseBody } from './effect/error-response.js'
 import type { PathParamName, PathTarget } from './paths.js'
+import type { AuthUser } from './effect/services.js'
 
 export { openApi, type JsonValue, type OpenApiInfo } from './openapi.js'
 
@@ -56,6 +57,13 @@ export type EndpointErrorSchema = S.Codec<{ readonly _tag: string }, unknown, ne
 export interface EndpointSpec {
   /** One line for the API's reference: what the endpoint does. */
   readonly summary?: string
+  /**
+   * Whether the endpoint needs a signed-in user: the action runs only for
+   * one, which it receives as `auth`, and anyone else is answered 401 before
+   * the input is read. The API's description lists the 401 and the security
+   * schemes `openApi` is given.
+   */
+  readonly auth?: boolean
   /** The query string's parameters, which the action receives as `query`. */
   readonly query?: EndpointSchema
   /** The request body, JSON or a form, which the action receives as `body`. */
@@ -97,9 +105,10 @@ type ErrorSchemaOf<Errors> = {
   readonly [Status in keyof Errors]: Errors[Status] extends ReadonlyArray<infer One> ? One : Errors[Status]
 }[keyof Errors]
 
-/** The input an endpoint's action receives: its path's parameters, and the query, body and headers it declares. */
+/** The input an endpoint's action receives: its path's parameters, the signed-in user it requires, and the query, body and headers it declares. */
 export type EndpointInput<Ep extends Endpoint> = Simplify<
   { readonly params: { readonly [Name in PathParamName<Ep['path']>]: string } } &
+  (Ep['spec'] extends { readonly auth: true } ? { readonly auth: AuthUser } : unknown) &
   (Ep['spec'] extends { readonly query: infer Query } ? { readonly query: TypeOf<Query> } : unknown) &
   (Ep['spec'] extends { readonly body: infer Body } ? { readonly body: TypeOf<Body> } : unknown) &
   (Ep['spec'] extends { readonly headers: infer Headers } ? { readonly headers: TypeOf<Headers> } : unknown)

@@ -162,13 +162,15 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
     each failure a client tells apart as an `S.TaggedError` under its status.
     Declare a JSON number with Effect's schemas (`S.Int.check(S.isGreaterThan(0))`),
     not the form validators, which accept `"12"` for a form's sake.
-    Implement it with `action(endpoints.createProject, ({ params, body }) =>
+    Give it `auth: true` when it needs a signed-in user, which the handler
+    then receives as `auth`, rather than calling `authorize()` in it.
+    Implement it with `action(endpoints.createProject, ({ auth, params, body }) =>
     Effect.gen(...))`, which receives the input decoded and returns the
     success value, and register it with `routes.endpoint(createProject)`,
     which takes the method and path from the contract. Do not call
     `validateRequest` or `json` in it. Test it with `call(endpoints.x, input,
     { fetch: (request) => app.request(request, undefined, env) })`, and
-    publish `openApi(endpoints, info)`. Pages' forms stay ordinary actions.
+    publish `openApi(endpoints, { title, version, security })`. Pages' forms stay ordinary actions.
 
 Every name has one entrypoint: `@popcomputer/web` for `setupWeb`, template
 helpers and Hono middleware; `@popcomputer/web/effect` for actions, routes,
