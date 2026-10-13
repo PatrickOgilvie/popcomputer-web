@@ -506,6 +506,37 @@ export class ResponseCacheService extends Context.Service<
   ResponseCacheClient
 >()('@popcomputer/web/ResponseCache') {}
 
+/** The cache tags an action asked to purge once it succeeds. The route provides it per request. */
+export class PendingPurges extends Context.Service<
+  PendingPurges,
+  {
+    readonly add: (tags: readonly string[]) => Effect.Effect<void>
+    readonly take: Effect.Effect<readonly string[]>
+  }
+>()('@popcomputer/web/PendingPurges') {}
+
+/** An empty set of pending purges, for one request. */
+export function makePendingPurges(): PendingPurges['Service'] {
+  const tags = new Set<string>()
+
+  return PendingPurges.of({
+    add: (added) => Effect.sync(() => added.forEach((tag) => tags.add(tag))),
+    take: Effect.sync(() => [...tags]),
+  })
+}
+
+/**
+ * Purge cached responses with these tags once the action succeeds, with its
+ * route's `purges`: what the action changed besides the records its route
+ * names, such as the listing an accepted offer sold. Nothing is purged when
+ * the action fails, so a rolled-back write leaves the cache alone.
+ *
+ * @example
+ * yield* purgeCache(recordCacheTag('listings', offer.listingId), 'listings')
+ */
+export const purgeCache = (...tags: readonly string[]): Effect.Effect<void, never, PendingPurges> =>
+  Effect.flatMap(PendingPurges, (pending) => pending.add(tags))
+
 /**
  * The purge surface Workers Cache exposes — on the execution context
  * (ctx.cache) or as the `cache` export of the `cloudflare:workers` module —

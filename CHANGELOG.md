@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `purgeCache(...tags)` adds cache tags for the route to purge once the action succeeds, with its `purges`: records the action changed that the route does not name, such as the listing an accepted offer sold. A failed action purges nothing.
+- `followRedirect(app, response, env)` from `@popcomputer/web/testing` follows a redirect as the browser would after a form, as an Inertia visit sending the cookies the response set, so the next page receives its `flash` and `errors`.
 - `invalid({ field: message })` sends a form back with field errors, as `validateRequest` does, to show a domain error beside its field: `Effect.catchTag('OfferTooLow', (error) => invalid({ amount: error.message }))`. `back(fallback)` redirects to the same-origin page the request came from.
 - `testClock(start)` from `@popcomputer/web/testing` gives a test one clock that every request it makes reads (`Clock`, `DateTime.now`), moved with `await time.advance('8 days')` or `time.set(date)`.
 - The README's "Patterns from real applications" collects what building applications taught: rules in services with failures mapped at the action, constraints for invariants under concurrency, guard layers, webhooks, several forms on a page, list fields, cursor pagination, header counts, cached public pages and background work.

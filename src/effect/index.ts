@@ -33,6 +33,8 @@ export {
 export {
   ResponseCacheService,
   ResponseCachePurgeError,
+  PendingPurges,
+  purgeCache,
   PAGE_CACHE_TAG,
   recordCacheTag,
   type TableName,

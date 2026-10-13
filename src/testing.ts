@@ -176,6 +176,54 @@ function toAuthUser(input: SignedInUser, expiresAt: Date): AuthUser {
   }
 }
 
+/** An application a test sends requests to: the Hono app setupWeb configured. */
+export interface TestApp {
+  request(input: string, init?: RequestInit, env?: TestBindings): Response | Promise<Response>
+}
+
+/**
+ * Follow a redirect as the browser would after a form: request its
+ * `Location` as an Inertia visit, sending the cookies the response set. The
+ * next page then receives what the redirect carried, such as `flash` values
+ * and a failed form's `errors`.
+ *
+ * @example
+ * const res = await app.request('/projects', { method: 'POST', body, headers: { Referer: 'http://localhost/projects/new' } }, env)
+ * const form = await readPage(await followRedirect(app, res, env), 'Projects/New')
+ * expect(form.props.errors.name).toBe('This field is required')
+ */
+export async function followRedirect(
+  app: TestApp,
+  response: Response,
+  env?: TestBindings,
+  init: RequestInit = {}
+): Promise<Response> {
+  const location = response.headers.get('Location')
+
+  if (location === null || response.status < 300 || response.status >= 400) {
+    throw new Error(`Expected a redirect, but the response is ${response.status} without a Location.`)
+  }
+
+  const headers = new Headers(init.headers)
+  const cookies = [
+    ...(headers.get('Cookie')?.split(';').map((cookie) => cookie.trim()).filter(Boolean) ?? []),
+    ...setCookies(response),
+  ]
+
+  if (!headers.has('X-Inertia')) headers.set('X-Inertia', 'true')
+  if (cookies.length > 0) headers.set('Cookie', cookies.join('; '))
+
+  return app.request(location, { ...init, headers }, env)
+}
+
+/** The `name=value` pairs a response's cookies set, without the ones it clears. */
+function setCookies(response: Response): readonly string[] {
+  return response.headers
+    .getSetCookie()
+    .filter((cookie) => !/;\s*max-age=0\b/i.test(cookie))
+    .map((cookie) => cookie.split(';', 1)[0].trim())
+}
+
 /**
  * A page's field errors as a test reads them: a field's message, or an error
  * bag's messages by field, so `expect(page.props.errors.name).toBe('...')`

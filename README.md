@@ -1123,6 +1123,15 @@ routes
   .put(paths.project, updateProject, { purges: true })
 ```
 
+`purges: true` names only the route's own records. When an action changes
+another record, such as the listing an accepted offer sold, it adds that
+record's tag with `purgeCache`, purged with the route's after the action
+succeeds and not at all when it fails:
+
+```ts
+yield* purgeCache(recordCacheTag('projects', 'project-1'), 'projects')
+```
+
 When a record changes outside its routes, such as in a queue consumer, purge
 its tag yourself:
 
@@ -1197,6 +1206,29 @@ const res = await app.request(
 const page = await readPage(res, 'Projects/Show')
 
 page.props.project.createdAt // a string: the JSON the browser receives
+```
+
+A form's next page receives its `flash` values and field errors through a
+cookie the redirect sets. `followRedirect` requests the redirect's
+`Location` as the browser would, sending that cookie. Post with a `Referer`,
+as a browser does, so a failed form goes back to it:
+
+```ts
+import { followRedirect, readPage, signedIn, testEnv } from '@popcomputer/web/testing'
+
+const env = testEnv(signedIn({ id: 'user-1' }), testBindings)
+const failed = await app.request(
+  '/projects',
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Referer: 'http://localhost/projects' },
+    body: JSON.stringify({ name: '' }),
+  },
+  env
+)
+const form = await readPage(await followRedirect(app, failed, env), 'Projects/Index')
+
+form.props.errors.name // 'This field is required'
 ```
 
 Replace a service that reaches another system, such as a mailer or a payment
@@ -1508,8 +1540,9 @@ export const paymentWebhook = action(Effect.gen(function* () {
   `shared` and compute them with `shareProps`, which runs only when a page
   renders.
 - **Public pages that read data**: the `cache` route option, with
-  `purges: true` on the routes that change their records and the table's name
-  in an index page's `tags`. Signed-in visitors render their own page, so the
+  `purges: true` on the routes that change their records, `purgeCache(...)`
+  for other records an action changes, and the table's name in an index
+  page's `tags`. Signed-in visitors render their own page, so the
   same route serves both.
 - **Work after the response**, such as a confirmation email:
   `background('order-email', mailer.send(...))`. Its failure is reported, not

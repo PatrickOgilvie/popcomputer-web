@@ -22,9 +22,11 @@ import {
   PAGE_CACHE_TAG,
   ResponseCachePurgeError,
   ResponseCacheService,
+  purgeCache,
+  recordCacheTag,
   type ResponseCachePurgeInput,
 } from '../../src/effect/response-cache.js'
-import { Redirect } from '../../src/effect/errors.js'
+import { Redirect, ValidationError } from '../../src/effect/errors.js'
 import { render } from '../../src/effect/responses.js'
 
 const recordingCacheLayer = () => {
@@ -668,6 +670,31 @@ describe('purges route option', () => {
       })
 
     expect(register).toThrow("Route '/posts' has purges: true")
+  })
+
+  test('purgeCache adds what the action changed to the route\'s purges', async () => {
+    const { purges, layer } = recordingCacheLayer()
+    const app = createApp()
+
+    effectRoutes(app, { services: () => layer })
+      .post(
+        '/offers/accept',
+        Effect.andThen(
+          purgeCache(recordCacheTag('listings', 'listing-1'), 'listings'),
+          Effect.succeed(new Redirect({ url: '/offers', status: 303 }))
+        ),
+        { purges: ['offers', 'listings'] }
+      )
+      .post(
+        '/offers/decline',
+        Effect.andThen(purgeCache('offers'), Effect.fail(new ValidationError({ errors: { reason: 'Give a reason.' } })))
+      )
+
+    await app.request('/offers/accept', { method: 'POST' })
+    await app.request('/offers/decline', { method: 'POST' })
+
+    // Each tag once, and nothing for the action that failed.
+    expect(purges).toEqual([{ tags: ['offers', 'listings', 'listings:listing-1'] }])
   })
 
   test('static purge tags are used verbatim', async () => {

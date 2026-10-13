@@ -100,6 +100,9 @@ TypeScript example here and in the README type-checks against the package.
 11. **Give `cache: false` to routes whose page reads something the framework
     cannot see,** such as an external `fetch()` or the current time. Pages that
     read bindings, headers or bound models are already rendered per request.
+    A route that changes records cached pages show purges them with
+    `purges: true`, and an action adds other records it changed with
+    `purgeCache(recordCacheTag('listings', id))`.
 12. **Test through the app.** `app.request(path, init, testEnv(layer,
     bindings))` from `@popcomputer/web/testing` runs the real route;
     `signedIn(user)` signs the request in, and `readPage(res, 'Name')` reads

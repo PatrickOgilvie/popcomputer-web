@@ -37,6 +37,8 @@ import {
   ResponseCachePurgeError,
   ResponseCachePurgeFailure,
   ResponseCacheService,
+  PendingPurges,
+  makePendingPurges,
   formatRecordTag,
   type RouteCacheOptions,
 } from './response-cache.js'
@@ -95,6 +97,7 @@ export type CoreServices =
   | BindingsService
   | BoundModels
   | ExecutionContextService
+  | PendingPurges
 
 /**
  * Every service the framework can provide to a route: the core services plus
@@ -195,9 +198,11 @@ export interface EffectRouteOptions {
   /**
    * After this route's effect succeeds (any Redirect, or a Response below
    * 400), purge these Workers Cache tags. `true` purges the record of each
-   * of the route's bindings, the tag every cached page that reads it carries
-   * (see recordCacheTag), and the table of the record it writes:
-   * PUT /projects/{project} purges `projects:{id}` and `projects`.
+   * of the route's model bindings, the tag every cached page that reads it
+   * carries (see recordCacheTag), and the table of its last binding:
+   * PUT /projects/{project} purges `projects:{id}` and `projects`. Records
+   * the action changes that the route does not name, it purges with
+   * `purgeCache(...tags)`.
    */
   purges?: true | readonly string[]
 }
@@ -683,7 +688,10 @@ export class EffectRouteBuilder<
         })
       )
 
-      let fullLayer: Layer.Layer<never, AppError, never> = Layer.provideMerge(boundModelsLayer, contextLayer)
+      let fullLayer: Layer.Layer<never, AppError, never> = Layer.provideMerge(
+        boundModelsLayer,
+        Layer.merge(contextLayer, Layer.succeed(PendingPurges, makePendingPurges()))
+      )
 
       for (const layer of layers) {
         fullLayer = Layer.provideMerge(layer, fullLayer)
@@ -692,7 +700,7 @@ export class EffectRouteBuilder<
       let handlerEffect: Effect.Effect<
         Response | Redirect,
         AppError | ResponseCachePurgeError,
-        R | ResponseCacheService | RouteRecords
+        R | ResponseCacheService | RouteRecords | PendingPurges
       > = effect
 
       // A cacheable page is tagged with the records its route read, so a
@@ -719,47 +727,48 @@ export class EffectRouteBuilder<
       // channel instead of leaving stale entries silently.
       const purges = options?.purges
 
-      if (purges) {
-        const writtenModel = modelBindings[modelBindings.length - 1]
-        const writtenTable = writtenModel ? [bindingTableName(writtenModel, configuredBindings, schema)] : []
+      const writtenModel = modelBindings[modelBindings.length - 1]
+      const writtenTable = writtenModel ? [bindingTableName(writtenModel, configuredBindings, schema)] : []
 
-        const purgeTags: Effect.Effect<readonly string[], BoundModelError, RouteRecords> = purges === true
+      const routePurges: Effect.Effect<readonly string[], BoundModelError, RouteRecords> =
+        purges === true
           ? Effect.flatMap(RouteRecords, (records) => records.tags).pipe(
               Effect.map((tags) => [...tags, ...writtenTable])
             )
-          : Effect.succeed(purges)
+          : Effect.succeed(purges ?? [])
 
-        handlerEffect = handlerEffect.pipe(
-          Effect.tap((result) => {
-            const succeeded =
-              result instanceof Redirect ||
-              (result instanceof Response && result.status < 400)
+      // The route's purges and any the action asked for with purgeCache run
+      // once, after the action succeeds.
+      handlerEffect = handlerEffect.pipe(
+        Effect.tap((result) => {
+          const succeeded =
+            result instanceof Redirect ||
+            (result instanceof Response && result.status < 400)
 
-            if (!succeeded) return Effect.void
+          if (!succeeded) return Effect.void
 
-            return Effect.flatMap(purgeTags, (tags) => {
-              if (tags.length === 0) return Effect.void
+          return Effect.gen(function* () {
+            const requested = yield* Effect.flatMap(PendingPurges, (pending) => pending.take)
+            const tags = [...new Set([...(yield* routePurges), ...requested])]
 
-              const preparedTags = prepareCachePurgeTags(tags)
+            if (tags.length === 0) return
 
-              if (Predicate.isTagged(preparedTags, 'invalid')) {
-                return Effect.fail(
-                  new ResponseCachePurgeError({
-                    input: { tags },
-                    cause: ResponseCachePurgeFailure.InvalidCacheTags({
-                      reason: preparedTags.reason,
-                    }),
-                  })
-                )
-              }
+            const preparedTags = prepareCachePurgeTags(tags)
 
-              return Effect.flatMap(ResponseCacheService, (cache) =>
-                cache.purge({ tags: preparedTags.tags })
-              )
-            })
+            if (Predicate.isTagged(preparedTags, 'invalid')) {
+              return yield* new ResponseCachePurgeError({
+                input: { tags },
+                cause: ResponseCachePurgeFailure.InvalidCacheTags({
+                  reason: preparedTags.reason,
+                }),
+              })
+            }
+
+            const cache = yield* ResponseCacheService
+            yield* cache.purge({ tags: preparedTags.tags })
           })
-        )
-      }
+        })
+      )
 
       // The route runtime owns every provided Layer until background work has
       // settled, including scoped services added with route.provide().
@@ -769,7 +778,7 @@ export class EffectRouteBuilder<
       // AppError. effectRoutes(app) assumes every framework service, so an
       // unconfigured one is still reported at runtime as a configuration error.
       const routeRuntime = ManagedRuntime.make(
-        fullLayer as Layer.Layer<R | ResponseCacheService | RouteRecords, AppError>
+        fullLayer as Layer.Layer<R | ResponseCacheService | RouteRecords | PendingPurges, AppError>
       )
 
       let response: Response
