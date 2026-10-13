@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The README's upgrade guide from 0.7 shows the 0.7 code each step replaces. It adds the steps it missed: imports from one entrypoint and the removed synonyms, the removed route validation options, and the CLI. It also lists the changes no type error points at, such as origin verification and upload families. The webhook pattern refuses through `httpError` and acknowledges with `noContent`.
+
 ## [0.8.0-next.5] - 2026-10-13
 
 Changes since 0.8.0-next.4.

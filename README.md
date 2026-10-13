@@ -2292,11 +2292,11 @@ export const paymentWebhook = action(Effect.gen(function* () {
   const signature = request.header('X-Signature') ?? ''
 
   if (!(yield* Effect.promise(() => verifySignature(Redacted.value(secret), body, signature)))) {
-    return yield* json({ error: 'Invalid signature' }, 401)
+    return yield* httpError(401, 'Invalid signature')
   }
 
   const event = yield* S.decodeUnknownEffect(S.fromJsonString(PaymentEvent))(body).pipe(
-    Effect.mapError(() => new HttpError({ status: 400, message: 'Malformed event' }))
+    Effect.catchTag('SchemaError', () => httpError(400, 'Malformed event'))
   )
 
   const paidAt = DateTime.toDateUtc(yield* DateTime.now)
@@ -2305,15 +2305,20 @@ export const paymentWebhook = action(Effect.gen(function* () {
     yield* dbMutation((db) => db.insert(webhookEvents).values(event))
     yield* dbMutation((db) => db.update(orders).set({ paidAt }).where(eq(orders.id, event.orderId)))
   })).pipe(
-    Effect.andThen(json({ received: true })),
+    Effect.andThen(noContent()),
     Effect.catchTag('DatabaseConstraintViolation', (violation) => Effect.gen(function* () {
       if (violation.constraint !== 'unique') return yield* violation
 
-      return yield* json({ received: true })
+      // A replay of an event already recorded.
+      return yield* noContent()
     }))
   )
 }))
 ```
+
+A refusal answers through `httpError`, so the provider gets the same JSON
+envelope as every other client, and an acknowledgement needs no body: any
+`2xx` tells the provider to stop retrying.
 
 ### User input in, files out
 
@@ -2499,59 +2504,321 @@ when the client does; export it so tests send the same `X-Inertia-Version`.
 ### Upgrading from 0.7
 
 These steps take an application on the 0.7.0 release to the 0.8.0
-pre-releases; skip any that name an API the application never used. Each
-pre-release has its own section in the changelog, so an application on one
-pre-release reads the sections newer than its installed version. The next release declares everything once, in `setupWeb`; the
-[changelog](CHANGELOG.md), shipped in the package as
-`node_modules/@popcomputer/web/CHANGELOG.md`, lists every change. In order:
+pre-releases. Each shows the 0.7 code it replaces; skip a step whose 0.7 code
+the application never had. The [changelog](CHANGELOG.md), shipped in the
+package as `node_modules/@popcomputer/web/CHANGELOG.md`, lists every change,
+with a section per pre-release, so an application already on a pre-release
+reads only the sections newer than its installed version.
 
-1. **Register the setup instead of augmenting.** Replace the
-   `WebDatabaseType`, `WebAuthType`, `WebBindingsType`, `WebAuthUserType`,
-   `WebRouteBindingsType` and `WebPagesType` augmentations with
-   `export const web = setupWeb(new Hono<Env>(), config)` and
-   `declare module '@popcomputer/web' { interface Register { web: typeof web } }`.
-   Declare the signed-in user in `auth.session`, the public user as the
-   `auth.share` schema, and `shared` and `flash` as schemas. A layer in
-   `services` that uses the database needs an explicit type.
-2. **Declare paths and tables.** Move route paths into `src/paths.ts`, pass it
-   as `setupWeb`'s `paths`, and build URLs with `redirect(paths.x, params)`
-   (always 303) and `href`. Name each binding's table:
-   `bindings: { project: schema.projects }`.
-3. **Use the new database operations.** `dbMutation(db, asTrusted(...),
-   (tx, values) => ...)` becomes `dbMutation((db) => ...)`; reads use
-   `dbQuery`; `dbTransaction` takes an Effect; on D1 use `dbBatch`.
-4. **Let failed forms go back.** Remove `errorComponent`: a failed form
-   redirects to its page with `errors`. Use `flash` for messages and
-   `invalid(...)` for domain errors on a field.
-5. **Move auth routes onto `routes`.** `effectAuthRoutes` and
-   `betterAuthFormAction` are replaced by ordinary actions that return
-   `betterAuthRedirect(...)`, and `betterAuthHandler` for Better Auth's API.
-6. **Move services.** `effect: { services }` is `services: { request }`, with
-   `services.app` for services built once; the KV data cache is
-   `kvCache(c.env.KV)` in `services.request`.
-7. **Check caching.** Cache tags name records (`{table}:{primary key}`), cached
-   responses vary on `Cookie`, and responses without `Cache-Control` get
-   `private, no-cache`.
-8. **Update tests** to `testEnv(layer, bindings, { database })`,
-   `signedIn(user)`, `readPage(res, 'Page')`, `followRedirect` and
-   `testClock()` from `@popcomputer/web/testing`. A field error in
-   `readPage(...).props.errors` is a message or an error bag's messages, and
-   `signedIn`'s default user is named `Test User`.
-9. **Remove handlers for failures that are gone.** `cacheInvalidate` and
-   `cacheInvalidatePrefix` no longer fail (they report a store failure), so
-   an `Effect.catchTag('CacheError', ...)` on them is a type error.
-10. **Check API clients' error responses.** A request that asks for no HTML
-    but sends an `Accept` header (`fetch`'s `*/*`) or an `Authorization`
-    header is now a JSON client: its failures are JSON, and a signed-out one
-    gets a 401 instead of a redirect to sign in. No type error points at this;
-    a test that expected an HTML error page or a redirect for such a request
-    now gets JSON.
-11. **Give a helper that reads a route model its requirement.** A helper
-    annotated `Effect.Effect<A, E, BoundModels>` that calls `bound('project')`
-    adds `RouteModel<'project'>`, and an action reading a model its route's
-    path does not bind is a `missingRouteModels` type error.
+Run `tsc --noEmit` after each step: the type errors name what is left. The
+changes no type error points at are listed after the steps.
 
-Run `tsc --noEmit` after each step: the type errors name what is left.
+**1. Import each name from its one entrypoint.** `@popcomputer/web/effect` no
+longer re-exports the validators, the data cache or the Better Auth
+integration, and synonyms are gone:
+
+```diff
+- import { requiredString, email } from '@popcomputer/web/effect'
+- import { cache } from '@popcomputer/web/effect'
+- import { betterAuthLogoutAction } from '@popcomputer/web/effect'
++ import { email, requiredString } from '@popcomputer/web/schema'
++ import { cache } from '@popcomputer/web/cache'
++ import { betterAuthLogoutAction } from '@popcomputer/web/auth'
+
+- yield* requireAuth()
++ yield* authorize()
+- const signedIn = yield* isAuthenticated
++ const signedIn = (yield* currentUser) !== null
+- const value = yield* validate(Schema, input)
++ const value = yield* validateUnknown(Schema, input)
+- description: optionalString,
++ description: nullableString,
+- import { S } from '@popcomputer/web/schema'
++ import { Schema as S } from 'effect'
+```
+
+The `Honertia*` aliases are gone too; [Migrating from `honertia`](#migrating-from-honertia)
+lists each replacement. Error codes start `WEB_` instead of `HON_`.
+
+**2. Register the setup instead of augmenting.** The types the augmentations
+restated now come from the values `setupWeb` takes, and `setupWeb`'s
+`routes` replaces `effectRoutes(app)`:
+
+```diff
+- // src/web-types.ts
+- declare module '@popcomputer/web/effect' {
+-   interface WebBindingsType { type: Bindings }
+-   interface WebDatabaseType { type: ReturnType<typeof createDb>; schema: typeof schema }
+-   interface WebAuthType { type: ReturnType<typeof createAuth> }
+-   interface WebRouteBindingsType { type: typeof routeBindings }
+- }
+-
+- const app = new Hono<Env>()
+- const application = setupWeb(app, { version, render, database, schema, bindings: routeBindings, auth })
+- export default app
++ // src/app.ts
++ export const web = setupWeb(new Hono<Env>(), { version, render, database, schema, bindings, pages, paths, auth })
++
++ declare module '@popcomputer/web' {
++   interface Register {
++     web: typeof web
++   }
++ }
++
++ export const { app, routes } = web
++ export default app
+```
+
+A layer passed to `services` that reads the database, `config` or `bound`
+states its type, as [Application services](#application-services) shows.
+
+**3. Declare the user, shared props and flash as schemas.** The signed-in
+user comes from the user table, and pages receive only the fields `share`
+names. Shared props are declared in the setup instead of an augmentation of
+`SharedProps`, and computed by `shareProps`:
+
+```diff
+  auth: {
+    client,
+-   session: AuthSession, // a hand-written copy of Better Auth's user and session
+-   share: ({ user }) => ({ id: user.id, name: user.name, image: user.image }),
++   session: betterAuthSession(tableSchema(schema.user)),
++   share: tableSchema(schema.user).mapFields(Struct.pick(['id', 'name', 'image'])),
+  },
++ shared: S.Struct({ unreadCount: S.Number }),
++ flash: S.Struct({ success: S.String }),
+
+- declare module '@popcomputer/web/react' {
+-   interface SharedProps { unreadCount: number }
+- }
+```
+
+The session token is `Redacted<string>`: read it with `Redacted.value`. A user
+field the application adds, such as a role, is a column, and Better Auth reads
+it from there: `additionalFields: betterAuthFields(schema.user, { role: { input: false } })`.
+
+**4. Declare paths, bindings and pages.** Paths move to `src/paths.ts`,
+bindings name their tables, and each page's props are a schema in
+`src/pages.ts`:
+
+```diff
+- effectRoutes(app).get('/projects/{project}', showProject, { name: 'projects.show' })
++ routes.get(paths.project, showProject, { name: 'projects.show' })
+
+- return yield* redirect(`/projects/${project.id}`, 303)
++ return yield* redirect(paths.project, { project: project.id })
+
+- <Link href={`/projects/${project.id}`}>
++ <Link href={href(paths.project, { project: project.id })}>
+
+- const routeBindings = { project: Project } // an Effect Schema of the row
++ bindings: { project: schema.projects },
+
+- const Show: WebPage<WithSharedProps<{ project: Project }>> = ({ project }) => ...
++ const Show: WebPage<'Projects/Show'> = ({ project }) => ...
+```
+
+`redirect` always answers 303; its status argument is gone.
+
+**5. Move services and the data cache.** `services.request` replaces
+`effect.services`, `services.app` holds services built once, and the data
+cache's store is provided rather than found in a binding named `KV`:
+
+```diff
+- effect: {
+-   services: (c) => auditLogFor(c.env.KV),
+- },
++ services: {
++   app: ClockLive,
++   request: (c) => Layer.merge(auditLogFor(c.env.KV), kvCache(c.env.KV)),
++ },
+```
+
+Read vars and secrets with `config.string('NAME')` and
+`config.redacted('KEY')`, whose names are checked against the bindings type.
+
+**6. Validate inside the action, and let failed forms go back.** The route
+options `body`, `query` and `validateBody` and `validatedBody<T>()` are gone;
+`errorComponent` is gone because a failed form now redirects back to the page
+it came from, which renders with all its props and the field errors:
+
+```diff
+- effectRoutes(app).post('/projects', createProject, { body: CreateProject })
+- const input = yield* validatedBody<CreateProject>()
++ routes.post(paths.projects, createProject)
++ const input = yield* validateRequest(CreateProject)
+
+- const input = yield* validateRequest(UpdateProject, { errorComponent: 'Projects/Edit' })
++ const input = yield* validateRequest(UpdateProject)
+
+- return yield* Effect.fail(new ValidationError({ errors: { amount: 'Too low.' }, component: 'Listings/Show' }))
++ return yield* invalid({ amount: 'Too low.' })
+
+- validateRequest(Filters, { request: { profile: 'laravel' } })
++ validateRequest(Filters, { request: { order: ['query', 'body'] } })
+```
+
+`flash('success', 'Saved.')` before a redirect replaces a message passed by
+hand to the next page.
+
+**7. Use the new database operations.** The callback receives the
+application's own Drizzle client, so Drizzle checks every column; `asTrusted`
+and the database argument are gone, and a transaction runs an Effect:
+
+```diff
+- const db = yield* DatabaseService
+- yield* dbMutation(db, asTrusted({ ...input, userId: auth.user.id }), (tx, values) =>
+-   tx.insert(projects).values(values)
+- )
++ yield* dbMutation((db) =>
++   db.insert(projects).values({ ...input, id: crypto.randomUUID(), userId: auth.user.id })
++ )
+
+- yield* dbTransaction(db, async (tx) => {
+-   await tx.delete(tasks).where(eq(tasks.projectId, project.id))
+-   await tx.delete(projects).where(eq(projects.id, project.id))
+- })
++ yield* dbTransaction(Effect.gen(function* () {
++   yield* dbMutation((db) => db.delete(tasks).where(eq(tasks.projectId, project.id)))
++   yield* dbMutation((db) => db.delete(projects).where(eq(projects.id, project.id)))
++ }))
+
+- Effect.catchTag('DatabaseMutationFailed', ...)
++ Effect.catchTag('DatabaseError', ...)
+```
+
+Reads use `dbQuery((db) => ...)`. On Cloudflare D1, where `dbTransaction` is
+now a type error, write with `dbBatch((db) => [...])`.
+
+**8. Move auth routes onto `routes`.** A sign-in action validates its form
+like any action and returns `betterAuthRedirect`; the pages are ordinary
+routes behind `RequireGuestLayer`:
+
+```diff
+- effectAuthRoutes(app, {
+-   loginComponent: 'Auth/Login',
+-   loginAction: betterAuthFormAction({
+-     schema: SignIn,
+-     errorComponent: 'Auth/Login',
+-     call: (auth, input, request) => auth.api.signInEmail({ body: input, headers: request.headers, asResponse: true }),
+-     errorMapper: (error) => ({ email: error.message }),
+-     redirectTo: '/projects',
+-   }),
+-   logoutAction: betterAuthLogoutAction({ redirectTo: '/login' }),
+- })
++ routes
++   .provide(RequireGuestLayer)
++   .get(paths.login, action(render('Auth/Login')))
++   .post(paths.login, signIn)
++ routes.post(paths.logout, betterAuthLogoutAction({ redirectTo: paths.login }))
++ routes.all(paths.authApi, betterAuthHandler) // only if browser code calls Better Auth directly
+```
+
+[Signing in and out](#signing-in-and-out) shows `signIn`. A signed-out
+visitor goes to `auth.signInPath` (default `/login`) with the page as
+`?redirect=`, which `intendedUrl(fallback)` returns to after signing in.
+
+**9. Name cache tags by the schema.** Tags name tables by their key in the
+schema, and records as `table:primaryKey`, so the tags a page carries and the
+tags a write purges match:
+
+```diff
+- effectRoutes(app).get('/plans', showPlans, { cache: { maxAge: 300, tags: ['plan_prices'] } })
++ routes.get(paths.plans, showPlans, { cache: { maxAge: 300, tags: ['planPrices'] } })
+
+- const responses = yield* ResponseCacheService
+- yield* responses.purge({ tags: [`project:${project.id}`] })
++ yield* purgeCache(recordCacheTag('projects', project.id))
+```
+
+`cacheInvalidate` and `cacheInvalidatePrefix` no longer fail, so remove an
+`Effect.catchTag('CacheError', ...)` on them.
+
+**10. Test through the application.** `describeRoute`, `createRouteTester`
+and `TestLayer` are gone: a test calls `app.request` with `testEnv`, signs in
+with `signedIn`, and uses a real database of the production family, PGlite or
+Miniflare's D1 (see [A database for tests](#a-database-for-tests)):
+
+```diff
+- const res = await app.request('/projects/project-1', {}, {
+-   ...bindings,
+-   __testLayer: Layer.merge(TestLayer.Auth.withUser({ id: 'user-1' }), TestLayer.Database.inMemory()),
+- })
++ const res = await app.request(
++   '/projects/project-1',
++   { headers: { 'X-Inertia': 'true' } },
++   testEnv(signedIn({ id: 'user-1' }), testBindings, { database: testDb })
++ )
++ const page = await readPage(res, 'Projects/Show')
+```
+
+A field error in `page.props.errors` is a message, or an error bag's
+messages, and `signedIn`'s default user is named `Test User`.
+
+**11. Replace the `popweb` CLI.** The package has no CLI:
+
+```diff
+- bunx popweb routes --app src/app.ts --json
++ routes.toJson()
+- bunx popweb check --app src/app.ts
++ bunx tsc --noEmit
+- bunx popweb db:migrate
++ bunx drizzle-kit migrate          # Postgres
++ bunx wrangler d1 migrations apply DB   # Cloudflare D1
+- bunx popweb generate:openapi --app src/app.ts
++ openApi(endpoints, info)          # from @popcomputer/web/endpoint
+```
+
+Delete `.popweb-applied.json`: drizzle-kit and Wrangler record applied
+migrations in the database itself. The generators have no replacement; write
+actions from the README's and `AGENTS.md`'s examples.
+
+**12. Give a helper that reads a route model its requirement.** A helper
+annotated `Effect.Effect<A, E, BoundModels>` that calls `bound('project')` adds
+`RouteModel<'project'>`, and an action reading a model its route's path does
+not bind is a `missingRouteModels` type error at the registration.
+
+```diff
+- const ownProject: Effect.Effect<Project, BoundModelError, BoundModels> = ...
++ const ownProject: Effect.Effect<Project, BoundModelError, BoundModels | RouteModel<'project'>> = ...
+```
+
+#### What no type error points at
+
+These compile unchanged and behave differently. Check each against the
+application and its tests:
+
+- **Cross-site writes are refused.** A `POST`, `PUT`, `PATCH` or `DELETE`
+  whose `Origin` (or `Referer`) names another origin gets a 403. A request
+  with neither header, such as a webhook, passes, and so does one with an
+  `Authorization` header. List a native app or another site that posts in
+  `security: { verifyOrigin: { allowedOrigins: ['https://admin.example'] } }`.
+- **Upload families leave out active content.** `upload({ types: ['image/*'] })`
+  no longer accepts SVG, and no family accepts HTML or XML; name
+  `'image/svg+xml'` to accept it. `file()` sends `X-Content-Type-Options:
+  nosniff`, and sandboxes such a file shown inline.
+- **API clients get JSON.** A request that asks for no HTML but sends an
+  `Accept` header (`fetch`'s `*/*`) or an `Authorization` header is a JSON
+  client: its failures are JSON, and a signed-out one gets a 401 instead of a
+  redirect to sign in. A test that expected an HTML error page or a redirect
+  for such a request now gets JSON.
+- **Models load when the action first calls `bound()`.** A route whose action
+  never calls `bound('project')` no longer answers 404 for a missing project,
+  and a `{param}` with no binding is a plain parameter the action reads with
+  `validateRequest`.
+- **Route parameters can't be overwritten.** A body or query field with the
+  same name as a route parameter and a different value fails validation; it
+  used to replace the parameter. Leave such fields out of forms.
+- **Every invalid field is reported,** not only the first, and a field that
+  is absent reads `This field is required` rather than `Missing key`.
+- **Caching is stricter.** Cached responses vary on `Cookie`, so a visitor
+  with any cookie renders afresh; a response without `Cache-Control` gets
+  `private, no-cache`; and `purges: true` on a route without a `{param}`
+  throws at registration.
+- **Production errors say less.** Production JSON errors no longer include
+  `fixes`, every 404 has the same message, and a client that matches error
+  codes reads `WEB_` instead of `HON_`. Expected 4xx failures are no longer
+  logged as errors.
 
 ### Upgrading from 0.6
 
