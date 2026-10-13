@@ -152,18 +152,29 @@ export interface KVNamespaceLike {
 }
 
 /**
- * Provide CacheService backed by a Workers KV namespace.
+ * Provide CacheService backed by a Workers KV namespace. KV keeps an entry
+ * at least 60 seconds; `cache()` still treats it as fresh only for its `ttl`.
  *
  * @example
  * setupWeb(app, { version, render, services: { request: (c) => kvCache(c.env.KV) } })
  */
+/** The shortest expiry Workers KV accepts. */
+const KV_MINIMUM_TTL_SECONDS = 60
+
 export function kvCache(kv: KVNamespaceLike): Layer.Layer<CacheService> {
   const attempt = <A>(reason: string, run: () => Promise<A>) =>
     Effect.tryPromise({ try: run, catch: (cause) => new CacheError({ reason, cause }) })
 
   const client: CacheClient = {
     get: (key) => attempt('Could not read from the cache.', () => kv.get(key)),
-    put: (key, value, options) => attempt('Could not write to the cache.', () => kv.put(key, value, options)),
+    // KV rejects an expiry under 60 seconds; cache() judges freshness from
+    // the entry's own time, so a shorter TTL is kept the minimum time.
+    put: (key, value, options) =>
+      attempt('Could not write to the cache.', () =>
+        kv.put(key, value, options?.expirationTtl === undefined
+          ? options
+          : { ...options, expirationTtl: Math.max(KV_MINIMUM_TTL_SECONDS, options.expirationTtl) })
+      ),
     delete: (key) => attempt('Could not delete from the cache.', () => kv.delete(key)),
     list: (options) => attempt('Could not list cache keys.', () => kv.list(options)),
   }

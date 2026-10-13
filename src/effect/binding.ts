@@ -330,7 +330,22 @@ export async function compileBindingPlan<Schema extends object>(
       )
     }
 
-    const parentPlan = plan[plan.length - 1]
+    // A binding is scoped to the binding before it, or to the earlier
+    // binding its `scope` names, such as a project's flag under an
+    // environment of that project.
+    const scopeKeys = Object.keys(definition.scope ?? {})
+
+    if (scopeKeys.length > 1) {
+      throw RouteConfigurationError.scopeNotInRoute(binding.param, scopeKeys.join(', '), plan.map((earlier) => earlier.param))
+    }
+
+    const named = scopeKeys[0]
+    const parentPlan = named === undefined ? plan[plan.length - 1] : plan.find((earlier) => earlier.param === named)
+
+    if (named !== undefined && parentPlan === undefined) {
+      throw RouteConfigurationError.scopeNotInRoute(binding.param, named, plan.map((earlier) => earlier.param))
+    }
+
     let parent: CompiledRouteBinding['parent']
 
     if (parentPlan) {

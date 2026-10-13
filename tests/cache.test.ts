@@ -11,6 +11,7 @@ import {
   cacheSet,
   cacheInvalidate,
   cacheInvalidatePrefix,
+  kvCache,
   type CacheClient,
 } from '../src/cache.js'
 import { ExecutionContextService, type ExecutionContextClient } from '../src/effect/index.js'
@@ -1230,5 +1231,42 @@ describe('cache', () => {
         expect(callCount).toBe(2) // Recomputed because schema changed
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
+  })
+})
+
+describe('kvCache', () => {
+  it('keeps an entry KV\'s minimum 60 seconds, and cache() still treats it as fresh only for its ttl', async () => {
+    const expirations: Array<number | undefined> = []
+    const values = new Map<string, string>()
+    const kv = {
+      get: async (key: string) => values.get(key) ?? null,
+      put: async (key: string, value: string, options?: { expirationTtl?: number }) => {
+        // Workers KV rejects shorter expiries: "Expiration TTL must be at least 60".
+        if (options?.expirationTtl !== undefined && options.expirationTtl < 60) {
+          throw new Error(`Invalid expiration_ttl of ${options.expirationTtl}`)
+        }
+        expirations.push(options?.expirationTtl)
+        values.set(key, value)
+      },
+      delete: async (key: string) => {
+        values.delete(key)
+      },
+      list: async () => ({ keys: [], list_complete: true }),
+    }
+    let computed = 0
+    const read = cache('flags:production', Effect.sync(() => ++computed), S.Number, { ttl: Duration.seconds(30) })
+
+    await Effect.gen(function* () {
+      yield* read
+      yield* read
+      yield* TestClock.adjust('31 seconds')
+      yield* read
+    }).pipe(
+      Effect.provide(Layer.mergeAll(kvCache(kv), makeTestExecutionContext().layer, TestClock.layer())),
+      Effect.runPromise
+    )
+
+    expect(expirations).toEqual([60, 60])
+    expect(computed).toBe(2)
   })
 })

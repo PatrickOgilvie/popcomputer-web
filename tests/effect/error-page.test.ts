@@ -63,6 +63,14 @@ describe('error page', () => {
     expect(await res.json()).toMatchObject({ body: { retryAfter: 60 } })
   })
 
+  test('a rate limit tells the client when to retry, as a header and in the body', async () => {
+    const res = await appFailingWith(HttpError.rateLimited(30)).request('/', api)
+
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('30')
+    expect(await res.json()).toMatchObject({ body: { retryAfter: 30 } })
+  })
+
   test('a JSON client gets the structured error', async () => {
     const res = await appFailingWith(new ForbiddenError({ message: 'Not authorized' })).request('/', api)
 

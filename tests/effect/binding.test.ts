@@ -21,6 +21,7 @@ import {
   decodeBoundRow,
   columnTypeToSchema,
   inferParamsSchema,
+  routeBinding,
   type ParsedBinding,
 } from '../../src/effect/binding.js'
 import { RouteConfigurationError } from '../../src/effect/errors.js'
@@ -310,6 +311,41 @@ describe('table bindings', () => {
 
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({ id: 'm1', handle: 'ada', role: 'owner' })
+  })
+})
+
+describe('binding scopes', () => {
+  const projects = sqliteTable('projects', { id: text('id').primaryKey() })
+  const environments = sqliteTable('environments', { id: text('id').primaryKey(), projectId: text('project_id').notNull() })
+  const flags = sqliteTable('flags', { id: text('id').primaryKey(), projectId: text('project_id').notNull(), key: text('key').notNull() })
+  const schema = { projects, environments, flags }
+  const route: ParsedBinding[] = [
+    { param: 'project', column: 'id' },
+    { param: 'environment', column: 'id' },
+    { param: 'flag', column: 'key' },
+  ]
+
+  test('scope a binding to any earlier binding of its route', async () => {
+    const plan = await compileBindingPlan(route, schema, {
+      project: projects,
+      environment: routeBinding(environments, { scope: { project: { foreignKey: 'projectId' } } }),
+      flag: routeBinding(flags, { scope: { project: { foreignKey: 'projectId' } } }),
+    })
+
+    expect(plan[2].parent?.param).toBe('project')
+  })
+
+  test('fail, naming the bindings it can scope to, when the scope names none of them', async () => {
+    await expect(
+      compileBindingPlan(route, schema, {
+        project: projects,
+        environment: routeBinding(environments, { scope: { project: { foreignKey: 'projectId' } } }),
+        flag: routeBinding(flags, { scope: { team: { foreignKey: 'projectId' } } }),
+      })
+    ).rejects.toMatchObject({
+      message: 'Route binding "flag" is scoped to "team", which is not one binding before it on this route.',
+      hint: 'Name one of the bindings before "flag" in its scope: "project", "environment".',
+    })
   })
 })
 

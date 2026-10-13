@@ -358,7 +358,8 @@ export class HttpError extends Schema.TaggedError<HttpError>()('HttpError', {
   }
 
   /**
-   * Create a rate limited error.
+   * Create a rate limited error: a 429 with `Retry-After`, in seconds, as a
+   * header and in the body.
    */
   static rateLimited(retryAfter: number): HttpError {
     return new HttpError({
@@ -366,6 +367,7 @@ export class HttpError extends Schema.TaggedError<HttpError>()('HttpError', {
       message: `Too many requests. Please try again in ${retryAfter} seconds.`,
       body: { retryAfter },
       code: ErrorCodes.HTTP_429_RATE_LIMITED,
+      headers: new Headers({ 'Retry-After': String(retryAfter) }),
     })
   }
 
@@ -646,6 +648,18 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
       hint: 'Install drizzle-orm in the app (bun add drizzle-orm). It is an optional peer of @popcomputer/web, needed only for route bindings.',
       cause,
       code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
+  /** Create an error for a binding scope that names no single earlier binding of its route. */
+  static scopeNotInRoute(binding: string, scope: string, earlier: readonly string[]): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" is scoped to "${scope}", which is not one binding before it on this route.`,
+      hint: earlier.length > 0
+        ? `Name one of the bindings before "${binding}" in its scope: ${earlier.map((name) => `"${name}"`).join(', ')}.`
+        : `"${binding}" is the route's first binding, so it has no parent to scope to: remove its scope.`,
+      binding,
+      code: ErrorCodes.RTE_603_RELATION_NOT_FOUND,
     })
   }
 

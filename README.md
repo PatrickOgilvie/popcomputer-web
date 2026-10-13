@@ -754,8 +754,11 @@ A route loads its models the first time the action calls `bound()`, so a guard
 or `authorize()` that runs first decides before any database lookup, and a
 signed-out visitor cannot tell an existing record from a missing one. A missing
 row fails `bound()` with `NotFoundError`, which renders a 404.
-Nested bindings must have a relationship discoverable from Drizzle metadata or
-an explicit scope:
+A nested binding is scoped to the binding before it, through a relationship
+discoverable from Drizzle metadata or an explicit scope. A scope can name any
+earlier binding of the route instead, such as a project's flag under one of
+the project's environments, `/projects/{project}/environments/{environment}/flags/{flag:key}`,
+with `scope: { project: { foreignKey: 'projectId' } }`:
 
 ```ts
 import * as schema from '../schema'

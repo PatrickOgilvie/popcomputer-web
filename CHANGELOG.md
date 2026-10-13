@@ -109,6 +109,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `kvCache` keeps an entry at least 60 seconds, the shortest expiry Workers KV accepts; `cache()` with a shorter `ttl` failed every write and never cached. `cache()` still treats an entry as fresh only for its `ttl`.
+- `HttpError.rateLimited(seconds)` sends `Retry-After` as a header as well as in the body.
+- A binding `scope` can name any earlier binding of its route, not only the one before it, and a scope naming no binding before it fails with an error listing the ones it can name; it was ignored, and the route failed with a hint to add the scope it had.
 - `WebPage` is a React function component (it returns React's `ReactNode`), so a page renders as JSX and resolves in `createInertiaApp`; its return type admitted any object, which React 19's types reject. `@types/react` is an optional peer dependency.
 - `PageName` is the registered page names as a plain type, so `const name: PageName = 'Missing'` is a type error and `{ [Name in PageName]: ... }` checks a map of every page. TypeScript took its keys through the registered pages' constraint, `Record<string, ...>`, which admitted any string.
 - `dbTransaction` is a type error on Cloudflare D1 when the database type is Drizzle's `DrizzleD1Database<typeof schema>`, which has no `$client` to recognize D1 by; D1 is also recognized by its run result.
