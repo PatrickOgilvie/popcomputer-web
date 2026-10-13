@@ -537,6 +537,37 @@ export function makePendingPurges(): PendingPurges['Service'] {
   })
 }
 
+/** The cache tags an action added to the response it caches. The route provides it per request. */
+export class PendingCacheTags extends Context.Service<
+  PendingCacheTags,
+  {
+    readonly add: (tags: readonly string[]) => Effect.Effect<void>
+    readonly take: Effect.Effect<readonly string[]>
+  }
+>()('@popcomputer/web/PendingCacheTags') {}
+
+/** An empty set of added cache tags, for one request. */
+export function makePendingCacheTags(): PendingCacheTags['Service'] {
+  const tags = new Set<string>()
+
+  return PendingCacheTags.of({
+    add: (added) => Effect.sync(() => added.forEach((tag) => tags.add(tag))),
+    take: Effect.sync(() => [...tags]),
+  })
+}
+
+/**
+ * Tag the response a route with the `cache` option stores with records the
+ * action read beyond its route's bindings, such as the translation a fallback
+ * page shows, so purging them refreshes it. A route without the `cache`
+ * option stores nothing, and the tags go nowhere.
+ *
+ * @example
+ * yield* tagCache(recordCacheTag('articles', fallback.id))
+ */
+export const tagCache = (...tags: readonly CacheTag[]): Effect.Effect<void, never, PendingCacheTags> =>
+  Effect.flatMap(PendingCacheTags, (pending) => pending.add(tags))
+
 /**
  * Purge cached responses with these tags once the action succeeds, with its
  * route's `purges`: what the action changed besides the records its route

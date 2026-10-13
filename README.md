@@ -667,7 +667,9 @@ export const createProject = action(
 ```
 
 `validateRequest` reads route params, query and body, and returns the decoded
-input with every key the schema does not declare removed. A key that two
+input with every key the schema does not declare removed. A body sent as JSON
+is read as JSON whatever its media type, as `fetch` sends a string as
+`text/plain`, and a form post's fields are nested. A key that two
 sources provide with different values fails validation, so a body field cannot
 replace a route parameter; pass `request: { order: ['body'] }` to read only the
 body.
@@ -775,13 +777,21 @@ loads, and a parameter name need not match its table: `bindings: { author:
 schema.users }` loads `{author}` from `users`. A JSON column, or a text column
 narrowed with `$type<Role>()`, is typed but not checked by its column: name an
 Effect Schema for the binding, such as `tableSchema(schema.contacts, { custom:
-CustomValues })`, whose overrides check those columns and derive the rest.
+CustomValues })`, whose overrides check those columns and derive the rest;
+the binding loads from the table the schema was built from.
 
 The package parses route parameters and database rows before exposing them.
 A route loads its models the first time the action calls `bound()`, so a guard
 or `authorize()` that runs first decides before any database lookup, and a
 signed-out visitor cannot tell an existing record from a missing one. A missing
-row fails `bound()` with `NotFoundError`, which renders a 404.
+row fails `bound()` with `NotFoundError`, which renders a 404. The route's
+models load together, so a missing one is a 404 whichever the action asks
+for. `{post}` looks the record up by the table's `id` column, or, for a table
+without one, its primary key; `{post:slug}` names the column. A page that
+answers when a record is missing, such as an article that falls back to
+another locale, takes that parameter as a plain parameter, with no binding,
+and queries with it, scoped by its bound parent, and tags its cached response
+with what it read using `tagCache`.
 A nested binding is scoped to the binding before it. Drizzle's metadata
 finds the relationship when the child's column references the parent's
 (`.references(() => projects.id)`) or a relation declares it, so
@@ -1197,13 +1207,13 @@ const sendReminder = (body: unknown) => Effect.log('reminder', body)
 export default {
   fetch: app.fetch,
   // Partial, so a test calls the same handler with testEnv's bindings.
-  scheduled: async (_controller: unknown, env: Partial<Bindings>, ctx: ExecutionContext) => {
+  scheduled: async (_controller: unknown, env: Partial<Bindings>, ctx?: ExecutionContext) => {
     await routes.run(forgetAbandonedOrders, env, ctx)
   },
   queue: async (
     batch: { readonly messages: ReadonlyArray<{ readonly body: unknown; ack(): void; retry(): void }> },
     env: Partial<Bindings>,
-    ctx: ExecutionContext
+    ctx?: ExecutionContext
   ) => {
     for (const message of batch.messages) {
       await routes.run(sendReminder(message.body), env, ctx).then(() => message.ack(), () => message.retry())
@@ -1213,8 +1223,8 @@ export default {
 ```
 
 A handler awaits `routes.run` rather than returning it, since the platform
-expects no value, and types the queue batch by the parts it uses, so a test
-passes plain objects. A test runs the job the same way, with `testEnv`'s
+expects no value, and types the queue batch by the parts it uses and its
+execution context as optional, so a test calls it with plain objects. A test runs the job the same way, with `testEnv`'s
 bindings, so its fakes, clock and database apply:
 `await routes.run(forgetAbandonedOrders, testEnv(time.layer, testBindings))`.
 
@@ -1264,7 +1274,9 @@ so server-only changes still appear.
 
 The framework can't see data a page gets another way, such as an external
 `fetch()` or the current time. Give those routes `cache: false`, or call
-`markPageDynamic(c)` from Hono middleware. `pageCache: false` in `setupWeb`
+`markPageDynamic(c)` from Hono middleware. `cache: 'no-store'` also tells
+browsers and every cache not to keep the response, for one only its link
+should show, such as a signed preview. `pageCache: false` in `setupWeb`
 turns page caching off.
 
 ### Time-based caching with Workers Cache
@@ -1339,6 +1351,14 @@ the action fails:
 
 ```ts
 yield* purgeCache(recordCacheTag('projects', 'project-1'), 'projects')
+```
+
+A cached page that reads records beyond its route's bindings, such as the
+translation a fallback shows, adds their tags to its response with
+`tagCache`, so writes that purge them refresh it:
+
+```ts
+yield* tagCache(recordCacheTag('projects', 'project-1'))
 ```
 
 `purgeCache` works the same in an Effect run by `routes.run`, such as a

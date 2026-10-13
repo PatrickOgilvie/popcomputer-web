@@ -872,18 +872,32 @@ describe('validateRequest', () => {
       query: () => ({}),
       queries: () => ({}),
       json: async () => { throw new Error('json parser should not be used') },
-      raw: () => new Request('http://localhost/'),
-      parseBody: async () => ({ name: 'from-parse-body' }),
+      raw: () => new Request('http://localhost/', { method: 'POST', body: '\x1e{"name":"a"}\n\x1e{"name":"b"}\n' }),
+      parseBody: async () => { throw new Error('form parser should not be used') },
       header: (name: string) => name.toLowerCase() === 'content-type' ? 'application/json-seq' : undefined,
     }
 
     const exit = await runWithRequestAsync(validateRequest(schema), request)
+    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()
 
-    expect(Exit.isSuccess(exit)).toBe(true)
+    expect(Option.isSome(failure) && failure.value instanceof ValidationError && failure.value.code)
+      .toBe(ErrorCodes.VAL_003_BODY_PARSE_FAILED)
+  })
 
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value.name).toBe('from-parse-body')
-    }
+  test('reads a body sent without a JSON media type, as fetch sends a string, as JSON', async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+    routes.post('/ingest', action(Effect.gen(function* () {
+      return yield* json(yield* validateRequest(S.Struct({ count: S.Number })))
+    })))
+
+    const plain = await app.request('/ingest', { method: 'POST', body: '{"count":3}', headers: { 'Content-Type': 'text/plain;charset=UTF-8' } })
+    const none = await app.request('/ingest', { method: 'POST', body: new Blob(['{"count":4}']) })
+    const garbled = await app.request('/ingest', { method: 'POST', body: 'count=5', headers: { 'Content-Type': 'text/plain', Accept: '*/*' } })
+
+    expect(await plain.json()).toEqual({ count: 3 })
+    expect(await none.json()).toEqual({ count: 4 })
+    expect(garbled.status).toBe(400)
   })
 })
 
@@ -924,11 +938,12 @@ describe('validateRequest through a route', () => {
     expect(await res.json()).toEqual({ id: 'project-1', name: 'Renamed' })
   })
 
-  test('a JSON body that is not an object is a validation error, not a crash', async () => {
-    for (const body of ['null', '[1, 2]', '"text"', '3']) {
+  test('a JSON body that is not an object is a bad request, not a crash, whose envelope agrees', async () => {
+    for (const body of ['null', '[1, 2]', '"text"', '3', '{"readings": [']) {
       const res = await post(body)
 
-      expect(res.status).toBe(422)
+      expect(res.status).toBe(400)
+      expect((await res.json()).httpStatus).toBe(400)
     }
   })
 })
@@ -940,6 +955,16 @@ describe('field messages a form shows', () => {
 
     return Option.isSome(failure) && failure.value instanceof ValidationError ? failure.value.errors : {}
   }
+
+  test('a tagged union\'s unknown kind is reported on its _tag, naming the kinds', async () => {
+    const Rule = S.Union([
+      S.TaggedStruct('Threshold', { above: S.Number }),
+      S.TaggedStruct('Absence', { minutes: S.Number }),
+    ])
+
+    expect(await errorsOf(S.Struct({ spec: Rule }), { spec: { _tag: 'Spike', above: 3 } }))
+      .toEqual({ 'spec._tag': 'Choose one of: Threshold, Absence' })
+  })
 
   test('a value outside a set of options names the options', async () => {
     expect(await errorsOf(S.Struct({ stage: S.Literals(['approver', 'finance']) }), { stage: 'ceo' }))

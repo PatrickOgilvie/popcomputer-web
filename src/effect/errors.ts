@@ -92,8 +92,9 @@ export class ValidationError extends Schema.TaggedError<ValidationError>()('Vali
   /** Verified response headers accumulated by an external provider. */
   headers: OptionalHeaders,
 }) implements StructuredErrorCapable {
+  /** 400 for a body that could not be parsed, 422 for input that did not validate. */
   get httpStatus(): number {
-    return 422
+    return this.code === ErrorCodes.VAL_003_BODY_PARSE_FAILED ? 400 : 422
   }
 
   toStructured(context: ErrorContext = emptyContext()): StructuredError {
@@ -636,9 +637,10 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
   /**
    * Create an error for missing table in schema.
    */
-  static tableNotFound(table: string): RouteConfigurationError {
+  static tableNotFound(table: string, available?: readonly string[]): RouteConfigurationError {
     return new RouteConfigurationError({
       message: `No table "${table}" found in schema for route model binding.`,
+      ...(available === undefined ? {} : { hint: `Name one of setupWeb's schema keys: ${available.map((key) => `"${key}"`).join(', ')}.` }),
       table,
       code: ErrorCodes.RTE_601_TABLE_NOT_FOUND,
     })

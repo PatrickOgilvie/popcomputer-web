@@ -46,6 +46,14 @@ export type TableSchemaFields<T extends Table, Overrides> = {
  * const PublicCourse = tableSchema(schema.courses).mapFields(Struct.pick(['id', 'title', 'slug']))
  * const Contact = tableSchema(schema.contacts, { custom: CustomValues })
  */
+/** The table each tableSchema was built from, so a route binding given the schema loads from it. */
+const schemaTables = new WeakMap<object, Table>()
+
+/** The table `tableSchema` built this schema from, if it did. */
+export function tableOfSchema(schema: object): Table | undefined {
+  return schemaTables.get(schema)
+}
+
 export function tableSchema<T extends Table, const Overrides extends ColumnOverrides<T> = {}>(
   table: T,
   overrides?: Overrides
@@ -74,7 +82,10 @@ export function tableSchema<T extends Table, const Overrides extends ColumnOverr
   // the table's $inferSelect types, or is the override the caller named; a
   // $type<...>() narrowing without an override, documented above, is the one
   // difference the database cannot check.
-  return S.Struct(fields) as unknown as S.Struct<TableSchemaFields<T, Overrides>>
+  const schema = S.Struct(fields) as unknown as S.Struct<TableSchemaFields<T, Overrides>>
+  schemaTables.set(schema, table)
+
+  return schema
 }
 
 function isColumn(value: unknown): value is ColumnShape {

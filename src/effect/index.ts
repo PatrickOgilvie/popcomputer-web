@@ -35,6 +35,8 @@ export {
   ResponseCachePurgeError,
   PendingPurges,
   purgeCache,
+  PendingCacheTags,
+  tagCache,
   PAGE_CACHE_TAG,
   recordCacheTag,
   type TableName,

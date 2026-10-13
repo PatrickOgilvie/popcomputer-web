@@ -44,6 +44,18 @@ function readableMessage(message: string): string {
   return /^Expected \{.*\} \| /.test(message) ? 'This value is not one of the accepted kinds' : message
 }
 
+/**
+ * The kinds of a tagged union a value matched none of, read from Effect's
+ * message for it: `Expected { readonly "_tag": "Threshold", ... } | ...`.
+ */
+function unionTags(message: string): ReadonlyArray<string> | undefined {
+  if (!/^Expected \{/.test(message)) return undefined
+
+  const tags = [...message.matchAll(/"_tag": "((?:[^"\\]|\\.)*)"/g)].map((match) => match[1])
+
+  return tags.length > 1 ? tags : undefined
+}
+
 type FormattedSchemaIssue = ReturnType<typeof formatSchemaIssue>['issues'][number]
 
 /** Request input before schema decoding: keys from params, query and body. */
@@ -200,6 +212,22 @@ function mergeRequestSources(
   return Effect.succeed(merged)
 }
 
+/** A form post's media type, urlencoded or multipart. */
+function isFormContentType(contentType: string): boolean {
+  return /^\s*(?:application\/x-www-form-urlencoded|multipart\/form-data)\b/i.test(contentType)
+}
+
+/**
+ * A body sent without a JSON or form media type, as `fetch` sends a string
+ * (`text/plain`) or a client sends one with none: read as JSON, an empty body
+ * as no fields. One that is not JSON fails as a body that could not be parsed.
+ */
+async function untypedBody(request: RequestContext): Promise<unknown> {
+  const text = await request.raw().clone().text()
+
+  return text.trim() === '' ? {} : JSON.parse(text)
+}
+
 /**
  * A form body's fields, nested: a field sent more than once under a `[]`
  * name is a list, and under any other name keeps the last value sent.
@@ -241,7 +269,7 @@ function getValidationDataWithOptions(
       const isJson = isJsonContentType(contentType)
 
       const parsed = yield* Effect.tryPromise(async () =>
-        isJson ? request.json() : formFields(await request.parseBody())
+        isJson ? request.json() : isFormContentType(contentType) ? formFields(await request.parseBody()) : untypedBody(request)
       ).pipe(
         Effect.mapError((error) =>
           createBodyParseValidationError(error, contentType)
@@ -314,13 +342,15 @@ export function formatSchemaErrorsWithDetails<Input>(
   const issues = formatSchemaIssue(error.issue).issues
 
   for (const issue of issues) {
-    const path = getFormattedIssuePath(issue)
+    // A tagged union's unknown kind belongs on its _tag, the field a form chooses it with.
+    const tags = unionTags(issue.message)
+    const path = tags === undefined ? getFormattedIssuePath(issue) : [...getFormattedIssuePath(issue), '_tag']
     const field = path.length > 0 ? path.map(String).join('.') : 'form'
 
     if (errors[field]) continue // First error wins
 
     const attribute = attributes[field] ?? field
-    const message = messages[field] ?? readableMessage(issue.message)
+    const message = messages[field] ?? (tags === undefined ? readableMessage(issue.message) : `Choose one of: ${tags.join(', ')}`)
 
     errors[field] = message.replace(/:attribute/g, attribute)
 
@@ -482,16 +512,17 @@ export function createBodyParseValidationError(
 function determineValidationCode(
   details: Record<string, FieldError>
 ): ErrorCode {
-  const hasMissingValues = Object.entries(details).some(([field, detail]) =>
-    field !== 'form' && (detail.value === undefined || detail.value === null)
-  )
+  // Required only when every invalid field is missing; a value of the wrong
+  // kind beside a missing one is a schema mismatch.
+  const missing = (field: string, detail: FieldError): boolean =>
+    field !== 'form' && (
+      detail.value === undefined || detail.value === null ||
+      detail.expected?.toLowerCase().includes('required') === true ||
+      detail.message?.toLowerCase().includes('required') === true
+    )
+  const entries = Object.entries(details)
 
-  const hasRequiredLanguage = Object.values(details).some(
-    d => d.expected?.toLowerCase().includes('required') ||
-         d.message?.toLowerCase().includes('required')
-  )
-
-  return (hasMissingValues || hasRequiredLanguage)
+  return entries.length > 0 && entries.every(([field, detail]) => missing(field, detail))
     ? ErrorCodes.VAL_001_FIELD_REQUIRED
     : ErrorCodes.VAL_004_SCHEMA_MISMATCH
 }

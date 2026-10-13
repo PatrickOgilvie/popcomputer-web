@@ -40,6 +40,8 @@ import {
   ResponseCacheService,
   PendingPurges,
   makePendingPurges,
+  PendingCacheTags,
+  makePendingCacheTags,
   type CacheTag,
   formatRecordTag,
   type RouteCacheOptions,
@@ -101,6 +103,7 @@ export type CoreServices =
   | BoundModels
   | ExecutionContextService
   | PendingPurges
+  | PendingCacheTags
 
 /**
  * Every service the framework can provide to a route: the core services plus
@@ -260,6 +263,8 @@ export interface EffectRouteOptions {
    *
    * `false` always renders this route fresh, for pages whose output changes
    * without the framework seeing it (external fetches, the current time).
+   * `'no-store'` also tells browsers and every cache not to keep the
+   * response, for one only its link should show, such as a signed preview.
    *
    * An object caches this route's responses for a fixed time via Cloudflare
    * Workers Cache instead, data reads included. Applied to successful
@@ -268,7 +273,7 @@ export interface EffectRouteOptions {
    * only visitors without cookies share them. Requires
    * `"cache": { "enabled": true }` in wrangler config.
    */
-  cache?: RouteCacheOptions | false
+  cache?: RouteCacheOptions | false | 'no-store'
   /**
    * After this route's effect succeeds (any Redirect, or a Response below
    * 400), purge these Workers Cache tags. `true` purges the record of each
@@ -891,7 +896,11 @@ export class EffectRouteBuilder<
 
       let fullLayer: Layer.Layer<never, AppError, never> = Layer.provideMerge(
         boundModelsLayer,
-        Layer.merge(contextLayer, Layer.succeed(PendingPurges, makePendingPurges()))
+        Layer.mergeAll(
+          contextLayer,
+          Layer.succeed(PendingPurges, makePendingPurges()),
+          Layer.succeed(PendingCacheTags, makePendingCacheTags())
+        )
       )
 
       for (const layer of layers) {
@@ -901,7 +910,7 @@ export class EffectRouteBuilder<
       let handlerEffect: Effect.Effect<
         Response | Redirect,
         AppError | ResponseCachePurgeError,
-        R | ResponseCacheService | RouteRecords | PendingPurges
+        R | ResponseCacheService | RouteRecords | PendingPurges | PendingCacheTags
       > = effect
 
       // A cacheable page is tagged with the records its route read, so a
@@ -909,15 +918,16 @@ export class EffectRouteBuilder<
       let recordTags: readonly string[] = []
       const cacheOption = options?.cache
 
-      if (cacheOption && modelBindings.length > 0 && BODYLESS_METHODS.has(c.req.method)) {
+      if (typeof cacheOption === 'object' && BODYLESS_METHODS.has(c.req.method)) {
         handlerEffect = handlerEffect.pipe(
           Effect.tap((result) =>
             result instanceof Response && result.status >= 200 && result.status < 300
-              ? Effect.flatMap(RouteRecords, (records) => records.tags).pipe(
-                  Effect.map((tags) => {
-                    recordTags = tags
-                  })
-                )
+              ? Effect.gen(function* () {
+                  const records = modelBindings.length > 0 ? yield* Effect.flatMap(RouteRecords, (route) => route.tags) : []
+                  const added = yield* Effect.flatMap(PendingCacheTags, (pending) => pending.take)
+
+                  recordTags = [...new Set([...records, ...added])]
+                })
               : Effect.void
           )
         )
@@ -985,7 +995,7 @@ export class EffectRouteBuilder<
       // AppError. effectRoutes(app) assumes every framework service, so an
       // unconfigured one is still reported at runtime as a configuration error.
       const routeRuntime = ManagedRuntime.make(
-        fullLayer as Layer.Layer<R | ResponseCacheService | RouteRecords | PendingPurges, AppError>
+        fullLayer as Layer.Layer<R | ResponseCacheService | RouteRecords | PendingPurges | PendingCacheTags, AppError>
       )
 
       let response: Response
@@ -996,7 +1006,14 @@ export class EffectRouteBuilder<
         await disposeRequestRuntime(c, routeRuntime)
       }
 
-      if (!options?.cache || !(response instanceof Response)) {
+      if (options?.cache === 'no-store' && response instanceof Response && !response.headers.has('Cache-Control')) {
+        const headers = new Headers(response.headers)
+        headers.set('Cache-Control', 'no-store')
+
+        return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+      }
+
+      if (typeof options?.cache !== 'object' || !(response instanceof Response)) {
         return response
       }
 

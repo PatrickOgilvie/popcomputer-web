@@ -227,15 +227,15 @@ export async function readErrorPage(response: Response): Promise<TestErrorPage> 
  * const error = await readError(res)
  * expect(error.errors).toEqual({ code: 'This field is required' })
  */
-export async function readError(response: Response): Promise<ErrorResponseBody>
+export async function readError(response: Response): Promise<TestErrorResponse>
 export async function readError<A, I>(
   response: Response,
   body: S.Codec<A, I, never, never>
-): Promise<ErrorResponseBody & { readonly body: A }>
+): Promise<TestErrorResponse & { readonly body: A }>
 export async function readError(
   response: Response,
   body?: S.Codec<unknown, unknown, never, never>
-): Promise<ErrorResponseBody> {
+): Promise<TestErrorResponse> {
   const contentType = response.headers.get('Content-Type') ?? ''
 
   if (response.status < 400 || !contentType.includes('application/json')) {
@@ -247,12 +247,17 @@ export async function readError(
 
   const json: unknown = await response.json()
 
-  return Effect.runPromise(
+  const envelope = await Effect.runPromise(
     S.decodeUnknownEffect(body === undefined ? ErrorResponse : errorResponseWith(body))(json).pipe(
       Effect.mapError((issue) => new Error(`The JSON error (${response.status}) does not match the envelope: ${issue.message}`))
     )
   )
+
+  return { ...envelope, errors: envelope.errors ?? {} }
 }
+
+/** The JSON error a test reads: the envelope, with `errors` empty when no field failed. */
+export type TestErrorResponse = ErrorResponseBody & { readonly errors: Readonly<Record<string, string>> }
 
 /**
  * Read a JSON response through the schema the action answered with

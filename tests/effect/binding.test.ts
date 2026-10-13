@@ -11,6 +11,7 @@ import { effectRoutes } from '../../src/effect/routing.js'
 import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import { uuid } from '../../src/effect/schema.js'
+import { tableSchema } from '../../src/effect/table-schema.js'
 import {
   parseBindings,
   toHonoPath,
@@ -1231,6 +1232,71 @@ describe('route model binding loads when the action asks', () => {
 
     return { app, queries }
   }
+
+  test('a binding given as tableSchema(table, overrides) loads from that table', async () => {
+    const rules = sqliteTable('alert_rules', {
+      id: text('id').primaryKey(),
+      spec: text('spec', { mode: 'json' }).notNull(),
+    })
+    const sqlite = new Database(':memory:')
+    sqlite.run('CREATE TABLE alert_rules (id TEXT PRIMARY KEY, spec TEXT NOT NULL)')
+    const db = drizzle(sqlite, { schema: { alertRules: rules } })
+    db.insert(rules).values({ id: 'r1', spec: { metric: 'temp', above: 30 } }).run()
+
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      database: () => db,
+      schema: { alertRules: rules },
+      bindings: { rule: tableSchema(rules, { spec: S.Struct({ metric: S.String, above: S.Number }) }) },
+    })
+    routes.get('/rules/{rule}', action(Effect.gen(function* () {
+      return yield* json(yield* bound('rule'))
+    })))
+
+    const res = await app.request('/rules/r1')
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ id: 'r1', spec: { metric: 'temp', above: 30 } })
+  })
+
+  test('a bare {param} looks up a table without an id column by its primary key', async () => {
+    const locales = sqliteTable('locales', { code: text('code').primaryKey(), name: text('name').notNull() })
+    const sqlite = new Database(':memory:')
+    sqlite.run('CREATE TABLE locales (code TEXT PRIMARY KEY, name TEXT NOT NULL)')
+    const db = drizzle(sqlite, { schema: { locales } })
+    db.insert(locales).values({ code: 'fr', name: 'Français' }).run()
+
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      database: () => db,
+      schema: { locales },
+      bindings: { locale: locales },
+    })
+    routes.get('/{locale}', action(Effect.gen(function* () {
+      return yield* json(yield* bound('locale'))
+    })))
+
+    const found = await app.request('/fr')
+    const missing = await app.request('/xx')
+
+    expect(await found.json()).toEqual({ code: 'fr', name: 'Français' })
+    expect(missing.status).toBe(404)
+  })
+
+  test('a binding naming a table the schema lacks fails when setupWeb is called', () => {
+    const rules = sqliteTable('alert_rules', { id: text('id').primaryKey() })
+
+    expect(() => setupWeb(new Hono(), {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      schema: { alertRules: rules },
+      bindings: { rule: routeBinding(S.Struct({ id: S.String }), { table: 'alertRule' }) },
+    })).toThrow('alertRule')
+  })
 
   test('a prefix\'s placeholders bind models for the routes under it', async () => {
     const { app } = createApp()

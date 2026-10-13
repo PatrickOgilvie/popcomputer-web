@@ -9,39 +9,48 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./effect": {
       "types": "./dist/effect/index.d.ts",
-      "import": "./dist/effect/index.js"
+      "import": "./dist/effect/index.js",
+      "default": "./dist/effect/index.js"
     },
     "./schema": {
       "types": "./dist/schema.d.ts",
-      "import": "./dist/schema.js"
+      "import": "./dist/schema.js",
+      "default": "./dist/schema.js"
     },
     "./auth": {
       "types": "./dist/auth.d.ts",
-      "import": "./dist/auth.js"
+      "import": "./dist/auth.js",
+      "default": "./dist/auth.js"
     },
     "./react": {
       "types": "./dist/react.d.ts",
-      "import": "./dist/react.js"
+      "import": "./dist/react.js",
+      "default": "./dist/react.js"
     },
     "./paths": {
       "types": "./dist/paths.d.ts",
-      "import": "./dist/paths.js"
+      "import": "./dist/paths.js",
+      "default": "./dist/paths.js"
     },
     "./drizzle": {
       "types": "./dist/drizzle.d.ts",
-      "import": "./dist/drizzle.js"
+      "import": "./dist/drizzle.js",
+      "default": "./dist/drizzle.js"
     },
     "./cache": {
       "types": "./dist/cache.d.ts",
-      "import": "./dist/cache.js"
+      "import": "./dist/cache.js",
+      "default": "./dist/cache.js"
     },
     "./testing": {
       "types": "./dist/testing.d.ts",
-      "import": "./dist/testing.js"
+      "import": "./dist/testing.js",
+      "default": "./dist/testing.js"
     }
   },
   "files": [

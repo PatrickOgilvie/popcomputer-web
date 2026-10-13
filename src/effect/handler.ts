@@ -188,7 +188,8 @@ export async function renderErrorResponse<E extends Env>(
 
   if (error instanceof ValidationError) {
     if (format === 'json') {
-      return finalize(c.json(formatter.json.format(structured), 422))
+      // SAFETY: a validation failure's status is 400 or 422, both contentful.
+      return finalize(c.json(formatter.json.format(structured), structured.httpStatus as ContentfulStatusCode))
     }
 
     // A form submission goes back to the form, whose page shows the errors.

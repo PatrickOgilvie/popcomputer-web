@@ -326,7 +326,7 @@ export function setupWeb<
   RoutePath<Paths>
 > {
   assertSetupConfig(config)
-  if (config.bindings !== undefined) assertBindingsConfig(config.bindings)
+  if (config.bindings !== undefined) assertBindingsConfig(config.bindings, config.schema)
   app.use('*', createSetupMiddleware(config))
   registerErrorHandlers(app, config.errors)
 

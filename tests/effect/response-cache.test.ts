@@ -24,6 +24,7 @@ import {
   ResponseCacheService,
   purgeCache,
   recordCacheTag,
+  tagCache,
   type ResponseCachePurgeInput,
 } from '../../src/effect/response-cache.js'
 import { Redirect, ValidationError } from '../../src/effect/errors.js'
@@ -419,6 +420,32 @@ describe('cache route option', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=300')
     expect(res.headers.get('Cache-Tag')).toBe('workspaces:ws-1,marketing')
+  })
+
+  test("'no-store' keeps a response out of every cache", async () => {
+    const app = createApp()
+
+    effectRoutes(app).get('/preview/draft', Effect.succeed(new Response('draft')), { cache: 'no-store' })
+
+    const res = await app.request('/preview/draft')
+
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
+    expect(res.headers.get('Cache-Tag')).toBeNull()
+  })
+
+  test('carries the tags an action adds for records it read beyond its bindings', async () => {
+    const app = createApp()
+
+    effectRoutes(app).get('/fr/hello', Effect.gen(function* () {
+      // The French translation is missing, so the page shows the English one.
+      yield* tagCache(recordCacheTag('articles', 'en-hello'), recordCacheTag('articles', 'fr-hello'))
+
+      return new Response('fallback')
+    }), { cache: { maxAge: 300 } })
+
+    const res = await app.request('/fr/hello')
+
+    expect(res.headers.get('Cache-Tag')).toBe('articles:en-hello,articles:fr-hello')
   })
 
   test('percent-encodes Cache-Tag characters Cloudflare cannot represent', async () => {

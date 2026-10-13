@@ -15,7 +15,7 @@ import {
 import type { Table } from 'drizzle-orm'
 import { ConfigurationError, NotFoundError, RouteConfigurationError } from './errors.js'
 import type { Registered } from './register.js'
-import { tableSchema } from './table-schema.js'
+import { tableOfSchema, tableSchema } from './table-schema.js'
 
 /**
  * Drizzle column interface for type inference.
@@ -115,13 +115,17 @@ function tableNameOf(table: RouteBindingTable): string {
  * binding, or a column a table does not have, fails at startup, naming the
  * fix, instead of failing every request to the routes that use it.
  */
-export function assertBindingsConfig(bindings: RouteBindingsConfig): void {
+export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: object): void {
   const names = Object.keys(bindings)
 
   for (const [name, config] of Object.entries(bindings)) {
     if (!isBindingDefinition(config)) continue
 
-    const source = config.schema
+    if (config.table !== undefined && schema !== undefined && !Object.hasOwn(schema, config.table)) {
+      throw RouteConfigurationError.tableNotFound(config.table, Object.keys(schema)).atStartup()
+    }
+
+    const source = bindingTableOf(config) ?? config.schema
 
     for (const [parent, scope] of Object.entries(config.scope ?? {})) {
       if (parent === name || !Object.hasOwn(bindings, parent)) {
@@ -134,7 +138,7 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig): void {
         }
       }
 
-      const parentSource = bindingSource(bindings[parent])
+      const parentSource = bindingTableOf(bindings[parent])
 
       if (isBindingTable(parentSource)) {
         for (const key of normalizeStringList(scope.references ?? 'id')) {
@@ -338,6 +342,20 @@ function bindingSource(config: RouteBindingConfig): RouteBindingTable | S.Codec<
   return isBindingDefinition(config) ? config.schema : config
 }
 
+/**
+ * The table a binding loads its rows from: the table it names, or the one a
+ * `tableSchema(table, overrides)` it names was built from.
+ */
+function bindingTableOf(config: RouteBindingConfig): RouteBindingTable | undefined {
+  const source = bindingSource(config)
+
+  if (isBindingTable(source)) return source
+
+  const table = tableOfSchema(source)
+
+  return isBindingTable(table) ? table : undefined
+}
+
 
 function normalizeStringList(value: string | readonly string[]): readonly string[] {
   return S.is(S.String)(value) ? [value] : value
@@ -385,16 +403,18 @@ export async function compileBindingPlan<Schema extends object>(
     const source = bindingSource(config)
 
     const tableName = bindingTableName(binding, configured, schema)
-    const table: unknown = isBindingTable(source)
-      ? source
+    const sourceTable = bindingTableOf(config)
+    const table: unknown = sourceTable !== undefined
+      ? sourceTable
       : Object.getOwnPropertyDescriptor(schema, tableName)?.value
 
     if (!(table instanceof Object)) {
       throw RouteConfigurationError.tableNotFound(tableName)
     }
 
+    const lookupColumn = lookupColumnOf(table, binding)
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-    const column = Object.getOwnPropertyDescriptor(table, binding.column)?.value as
+    const column = Object.getOwnPropertyDescriptor(table, lookupColumn)?.value as
       | DrizzleColumn
       | undefined
 
@@ -402,7 +422,7 @@ export async function compileBindingPlan<Schema extends object>(
       throw RouteConfigurationError.bindingColumnNotFound(
         binding.param,
         tableName,
-        binding.column
+        lookupColumn
       )
     }
 
@@ -455,10 +475,10 @@ export async function compileBindingPlan<Schema extends object>(
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
     plan.push({
       param: binding.param,
-      column: binding.column,
+      column: lookupColumn,
       tableName,
       table: table as Table,
-      primaryKey: await primaryKeyOf(table as Table, binding.column),
+      primaryKey: await primaryKeyOf(table as Table, lookupColumn),
       paramSchema: columnTypeToSchema(column.columnType),
       rowSchema: isBindingTable(source) ? tableSchema(source) : source,
       parent,
@@ -469,6 +489,30 @@ export async function compileBindingPlan<Schema extends object>(
 }
 
 /** The table's single primary key column, else the column the route looks rows up by. */
+/**
+ * The column a binding looks its record up by: the one its placeholder
+ * names, as `{post:slug}`, or for `{post}` the table's `id`, else, for a
+ * table without one, its single primary key column, such as a `code` key.
+ */
+function lookupColumnOf(table: object, binding: ParsedBinding): string {
+  if (binding.column !== 'id' || isColumnProperty(table, binding.column)) return binding.column
+
+  const primary = Object.keys(table).filter((key) => {
+    const column: unknown = Object.getOwnPropertyDescriptor(table, key)?.value
+
+    return isColumnProperty(table, key) && column instanceof Object && Reflect.get(column, 'primary') === true
+  })
+
+  return primary.length === 1 ? primary[0] : binding.column
+}
+
+/** Whether a table has a Drizzle column under this property key. */
+function isColumnProperty(table: object, key: string): boolean {
+  const column: unknown = Object.getOwnPropertyDescriptor(table, key)?.value
+
+  return column instanceof Object && 'columnType' in column
+}
+
 async function primaryKeyOf(table: Table, lookupColumn: string): Promise<string> {
   const { getTableColumns } = await loadDrizzle()
   const primary = Object.entries(getTableColumns(table) ?? {}).filter(([, column]) => column.primary)
@@ -491,9 +535,9 @@ export function bindingTableName(
 
   if (isBindingDefinition(config) && config.table !== undefined) return config.table
 
-  const source = bindingSource(config)
+  const source = bindingTableOf(config)
 
-  if (!isBindingTable(source)) return pluralize(binding.param)
+  if (source === undefined) return pluralize(binding.param)
 
   const key = schema
     ? Object.keys(schema).find((name) => Object.getOwnPropertyDescriptor(schema, name)?.value === source)
@@ -830,7 +874,7 @@ export function inferParamsSchema<Schema extends object>(
     }
 
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-    const column = Object.getOwnPropertyDescriptor(table, binding.column)?.value as
+    const column = Object.getOwnPropertyDescriptor(table, lookupColumnOf(table, binding))?.value as
       | DrizzleColumn
       | undefined
 

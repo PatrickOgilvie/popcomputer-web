@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tagCache(...tags)` tags a cached response with records the action read beyond its route's bindings, such as the translation a fallback page shows, so purging them refreshes it.
+- The route option `cache: 'no-store'` keeps a response out of every cache, browsers included, for a page only its link should show.
+- `readError(res).errors` is always present, empty when no field failed (`TestErrorResponse`).
+
 ### Fixed
 
+- A route binding given as `tableSchema(table, overrides)` loads from that table; it looked for a table named after the parameter and failed every request. A `routeBinding` `table` option naming no table of setupWeb's schema fails when setupWeb is called, listing the schema's keys.
+- `{param}` on a table without an `id` column looks the record up by the table's primary key, such as a `code` key, instead of failing every request.
+- The package's exports carry a `default` condition, so tools that load a schema file with `require`, such as drizzle-kit, can load one that imports the package.
+- A malformed body answers 400, as its envelope says, rather than 422; a failure is labelled `Required Field Missing` only when every invalid field is missing.
+- A body sent without a JSON media type, as `fetch` sends a string (`text/plain`), is read as JSON instead of as no fields; one that is not JSON is a 400.
+- A tagged union's unknown kind is reported on its `_tag` (`spec._tag: Choose one of: Threshold, Absence`), the field a form chooses it with.
 - A blank number or date input, which a form sends as an empty string, reads `This field is required`, as a missing one does, rather than `Expected a number`.
 - A JSON 401 for a request with a bearer token, or on a `jsonApi()` route, carries `WWW-Authenticate: Bearer`.
 - `invalidateCacheTags` takes `CacheTag`s, as the other tag APIs do.
