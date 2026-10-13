@@ -554,6 +554,14 @@ action has not handled, or `missingRouteModels: "project"` for an action that
 calls `bound('project')` on a path without `{project}`. `routes.provide(layer)`
 adds services for the routes registered through it.
 
+Routes that share a path prefix and a guard are grouped with
+`routes.prefix(...)`. The prefix's placeholders bind models for every route
+under it, so a guard layer provided on the group reads them with `bound()`,
+and each route under it is registered with its whole declared path. A path
+under a prefix that is not declared, or does not start with it, is a type
+error. [Roles belong to memberships](#roles-belong-to-memberships-read-by-a-guard)
+groups an organization's routes this way.
+
 `action` does not hide another execution model. It preserves the Effect's
 success, error, and requirement channels, while documenting that the program is
 an HTTP action.
@@ -2832,17 +2840,24 @@ export const changeRole = action(Effect.gen(function* () {
 }))
 ```
 
+The organization's routes share its path prefix and the guard, so they are
+grouped under `routes.prefix(...)`. Each is registered with its whole
+declared path, which must start with the prefix:
+
 ```ts
 import { changeRole } from '../actions/organizations/change-role'
 import { RequireMember } from '../memberships'
 
-routes.provide(RequireMember).put(paths.organizationMember, changeRole, { name: 'organizations.members.role' })
+routes
+  .prefix('/orgs/{organization:slug}')
+  .provide(RequireMember)
+  .put(paths.organizationMember, changeRole, { name: 'organizations.members.role' })
 ```
 
 `changeRole` reads `CurrentMember`, which only `RequireMember` provides, so
 registering it without the guard is a `missingServices` type error, and the
 guard reads `bound('organization')`, so its routes need `{organization}` in
-their path. A membership's role is an enum column, `text('role', { enum:
+their path or prefix. A membership's role is an enum column, `text('role', { enum:
 ['owner', 'admin', 'member'] })`, so a misspelled role is a type error in
 `requireRole` and in the update. A test seeds a membership for the user it
 signs in with `signedIn`, and checks a stranger gets 404 and a member 403.
