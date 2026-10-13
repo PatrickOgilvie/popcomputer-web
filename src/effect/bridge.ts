@@ -37,7 +37,7 @@ import {
 import { readTestLayer } from './test-env.js'
 import type { RouteBindingsConfig } from './binding.js'
 import type { PageSchemas } from './pages.js'
-import { observeEffectErrorEvent } from './error-observer.js'
+import { observeOrLog } from './error-observer.js'
 
 /**
  * Configuration for the Effect bridge.
@@ -189,13 +189,13 @@ function makeObservedBackground<A, E, R>(
   return effect.pipe(
     Effect.asVoid,
     Effect.catchCause((cause) =>
-      observeEffectErrorEvent({
+      observeOrLog({
         source: 'framework',
         handling: 'unhandled',
         kind: Option.isSome(Cause.findErrorOption(cause)) ? 'failure' : 'defect',
         error: Cause.squash(cause),
         metadata: { operation },
-      })
+      }, 'Background work failed')
     )
   )
 }
@@ -288,13 +288,13 @@ function createExternalPromiseTracker() {
       }
 
       for (const cause of failures.splice(0)) {
-        const observation = observeEffectErrorEvent({
+        const observation = observeOrLog({
           source: 'framework',
           handling: 'unhandled',
           kind: 'failure',
           error: cause,
           metadata: { operation: 'external-background' },
-        })
+        }, 'Background work failed')
 
         await (runtime
           ? runtime.runPromise(observation)

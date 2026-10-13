@@ -11,7 +11,7 @@
 import { Clock, Duration, Effect, Layer, Option, Schema } from 'effect'
 import { CacheService, ExecutionContextService, type CacheClient } from './effect/services.js'
 import { CacheError } from './effect/errors.js'
-import { observeEffectErrorEvent } from './effect/error-observer.js'
+import { observeOrLog } from './effect/error-observer.js'
 
 // ============================================================================
 // Types
@@ -109,13 +109,13 @@ const resolveKey = <V>(
 
 /** Report a store failure the cache recovered from. */
 const reportStoreFailure = (operation: string) => (error: CacheError | Schema.SchemaError) =>
-  observeEffectErrorEvent({
+  observeOrLog({
     source: 'framework',
     handling: 'handled',
     kind: 'failure',
     error,
     metadata: { operation },
-  })
+  }, 'Cache store failed; the value was computed instead')
 
 /** A failure to encode or decode an entry, as the CacheError explicit operations fail with. */
 const entryError = (reason: string) => (cause: Schema.SchemaError) =>

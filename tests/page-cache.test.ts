@@ -375,6 +375,8 @@ describe('testEnv with the page cache', () => {
     const guest = await get(app, '/', inertia(), production())
 
     expect(JSON.parse(member.body).props.auth.user).toMatchObject({ id: 'user-1' })
+    expect(member.status).toBe('BYPASS')
+    expect(member.res.headers.get('Cache-Control')).toBe('no-store')
     expect(JSON.parse(guest.body).props.auth.user).toBeNull()
   })
 })

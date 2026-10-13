@@ -31,6 +31,29 @@ export function observeEffectErrorEvent(
   }).pipe(Effect.ignoreCause)
 }
 
+/**
+ * Observe a failure the request's response does not show, such as failed
+ * background work or a cache store the cache recovered from. Without an
+ * observer it is logged through Effect's logger, so it is never silent: an
+ * unhandled failure as an error, a handled one as a warning.
+ */
+export function observeOrLog(
+  event: EffectErrorEvent,
+  message: string
+): Effect.Effect<void, never> {
+  return Effect.gen(function* () {
+    const maybeObserver = yield* Effect.serviceOption(EffectErrorObserverService)
+
+    if (Option.isSome(maybeObserver)) {
+      return yield* maybeObserver.value.observe(event)
+    }
+
+    const log = event.handling === 'unhandled' ? Effect.logError : Effect.logWarning
+
+    yield* log(message, event.error).pipe(Effect.annotateLogs({ ...event.metadata }))
+  }).pipe(Effect.ignoreCause)
+}
+
 export function reportEffectError(
   cause: unknown
 ): Effect.Effect<void, never>

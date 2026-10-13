@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 import { describe, expect, test } from 'bun:test'
-import { Context, Deferred, Effect, Layer } from 'effect'
+import { Context, Deferred, Effect, Layer, Logger } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { background } from '../../src/effect/background.js'
@@ -10,6 +10,7 @@ import {
   type EffectErrorEvent,
 } from '../../src/effect/error-observer.js'
 import { effectRoutes } from '../../src/effect/routing.js'
+import { testEnv } from '../../src/testing.js'
 
 class ScopedBackgroundResource extends Context.Service<
   ScopedBackgroundResource,
@@ -147,5 +148,25 @@ describe('background', () => {
     await Promise.allSettled(waitUntilPromises)
     expect(backgroundObservedReleasedResource).toBe(false)
     expect(released).toBe(true)
+  })
+
+  test('logs failed work through the Effect logger when no observer is installed', async () => {
+    const logs: Array<{ readonly level: string; readonly message: unknown }> = []
+    const recording = Logger.layer([
+      Logger.make((options) => logs.push({ level: options.logLevel, message: options.message })),
+    ])
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1.0.0', render: (page) => JSON.stringify(page) })
+
+    routes.post('/events', Effect.gen(function* () {
+      yield* background('record-activity', Effect.fail(new HttpError({ status: 500, message: 'activity table missing' })))
+
+      return new Response(null, { status: 202 })
+    }))
+
+    const response = await app.request('/events', { method: 'POST' }, testEnv(recording))
+
+    expect(response.status).toBe(202)
+    expect(logs).toContainEqual({ level: 'Error', message: ['Background work failed', expect.any(HttpError)] })
   })
 })

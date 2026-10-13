@@ -181,6 +181,15 @@ export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareH
 
     await next()
 
+    // A request signed in without a session cookie, as testEnv's signedIn
+    // signs it in, gets the signed-in policy once the user is known.
+    if (openWebContext(c).authUser !== undefined) {
+      markPrivate(c)
+      markResponse(c, 'BYPASS')
+
+      return
+    }
+
     if (!shouldStore(c, state)) {
       if (state.routeAllowsDefault && isPageResponse(c.res.headers)) {
         markResponse(c, 'DYNAMIC')

@@ -78,6 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A page rendered for a user signed in without a session cookie, as `testEnv(signedIn(...))` signs a test request in, gets the signed-in cache policy (`BYPASS`, `no-store`), so tests can check it.
+- Failed background work and cache store failures are logged through Effect's logger when no `EffectErrorObserverService` is installed, as errors and warnings respectively. They were silent.
 - `cache()` serves values that hold dates: a value is stored through its schema's JSON codec (`Schema.toCodecJson`), so it decodes back to itself. A `Date` came back as a string the schema rejected, so the value was computed on every call and the decode failure went only to the error observer. `cache`, `cacheGet` and `cacheSet` accept a schema of any encoded form (`CacheSchema<V>`).
 - An absent required field reports "This field is required", as an empty one does, instead of Effect's "Missing key".
 - Every 404 has the same message in production, so a response cannot tell a missing record from one the visitor may not see by the resource name in the message (`notFound('Team')` against a missing `{team}` binding).
