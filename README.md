@@ -931,7 +931,7 @@ Services an action needs beyond the framework's go in `setupWeb`'s
 
 ```ts
 // src/services.ts
-import { Config, Context, Effect, Layer } from 'effect'
+import { Config, Context, DateTime, Effect, Layer } from 'effect'
 import { config } from '@popcomputer/web/effect'
 
 export class Clock extends Context.Service<Clock, {
@@ -943,9 +943,12 @@ export class Clock extends Context.Service<Clock, {
 // here the TIME_ZONE var. A layer setupWeb takes states its type.
 export const ClockLive: Layer.Layer<Clock, Config.ConfigError> = Layer.effect(Clock, Effect.gen(function* () {
   const timeZone = yield* config.string('TIME_ZONE').pipe(Config.withDefault('UTC'))
+  // An unknown zone is a deployment mistake: the layer fails to build, naming it.
+  const zone = yield* DateTime.zoneMakeNamedEffect(timeZone).pipe(Effect.orDie)
 
   return Clock.of({
-    today: Effect.sync(() => new Date().toLocaleDateString('en-CA', { timeZone })),
+    // DateTime.now reads Effect's Clock, so testClock moves today as well.
+    today: Effect.map(DateTime.now, (now) => DateTime.formatIsoDate(DateTime.setZone(now, zone))),
     timeZone,
   })
 }))
