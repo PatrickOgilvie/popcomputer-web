@@ -5,7 +5,9 @@ API to use; the README explains the design and shows the full setup. Every
 TypeScript example here and in the README type-checks against the package.
 
 To use this file, point the application's own `AGENTS.md` or `CLAUDE.md` at
-`node_modules/@popcomputer/web/AGENTS.md`.
+`node_modules/@popcomputer/web/AGENTS.md`. Replace a `CLAUDE.md` a project
+template wrote, such as the one `bun init` writes for `Bun.serve` and
+`bun:sqlite`: its instructions contradict these.
 
 ## Rules
 
