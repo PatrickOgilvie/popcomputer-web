@@ -139,6 +139,43 @@ export function createGuestLayer(
 }
 
 /**
+ * The page a visitor was on their way to when a route sent them to sign in,
+ * as the sign-in page's `redirect` query parameter carries it, or `fallback`.
+ * A sign-in form posts from that page, so its `Referer` carries the parameter
+ * too. Only a path on this site is returned, so a crafted link cannot send a
+ * signed-in user elsewhere.
+ *
+ * @example
+ * const redirectTo = yield* intendedUrl('/dashboard')
+ * return yield* betterAuthRedirect((auth, request) => auth.api.signInEmail({ ... }), { redirectTo })
+ */
+export const intendedUrl = (fallback: string): Effect.Effect<string, never, RequestService> =>
+  Effect.gen(function* () {
+    const request = yield* RequestService
+    const requestUrl = new URL(request.url)
+    const referer = parseUrl(request.header('Referer'))
+    const fromReferer = referer?.origin === requestUrl.origin ? referer.searchParams.get('redirect') : null
+    const intended = requestUrl.searchParams.get('redirect') ?? fromReferer
+
+    return intended !== null && isLocalPath(intended) ? intended : fallback
+  })
+
+function parseUrl(value: string | undefined): URL | undefined {
+  if (value === undefined) return undefined
+
+  try {
+    return new URL(value)
+  } catch {
+    return undefined
+  }
+}
+
+/** A path on this site: not `//host` or `/\\host`, which browsers treat as other sites. */
+function isLocalPath(value: string): boolean {
+  return value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\') && !/[\u0000-\u001f]/.test(value)
+}
+
+/**
  * Get the current user if authenticated.
  */
 export const currentUser: Effect.Effect<AuthUser | null, never, never> =

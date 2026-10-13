@@ -178,4 +178,5 @@ export {
   RequireGuestLayer,
   createGuestLayer,
   currentUser,
+  intendedUrl,
 } from './auth.js'

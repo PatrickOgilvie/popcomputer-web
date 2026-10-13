@@ -212,7 +212,7 @@ export async function renderErrorResponse<E extends Env>(
     }
 
     return finalize(c.redirect(
-      error.redirectTo ?? openWebContext(c).signInPath ?? '/login',
+      error.redirectTo ?? signInUrl(c),
       c.req.header('X-Inertia') === 'true' ? 303 : 302
     ))
   }
@@ -250,6 +250,20 @@ export async function renderErrorResponse<E extends Env>(
 
   // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
   return finalize(c.json(formatter.json.format(structured), status as ContentfulStatusCode))
+}
+
+/**
+ * The sign-in page, carrying the page a visit was on its way to as
+ * `redirect`, for `intendedUrl` to return to after signing in.
+ */
+function signInUrl<E extends Env>(c: HonoContext<E>): string {
+  const signInPath = openWebContext(c).signInPath ?? '/login'
+
+  if (c.req.method.toUpperCase() !== 'GET') return signInPath
+
+  const intended = new URL(c.req.url)
+
+  return `${signInPath}?redirect=${encodeURIComponent(`${intended.pathname}${intended.search}`)}`
 }
 
 /** The same-origin page the request came from, or the home page. */

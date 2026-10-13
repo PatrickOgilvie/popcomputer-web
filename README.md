@@ -682,7 +682,7 @@ carrying the session cookie:
 ```ts
 // src/actions/auth.ts
 import { Effect, Schema as S } from 'effect'
-import { action, validateRequest } from '@popcomputer/web/effect'
+import { action, intendedUrl, validateRequest } from '@popcomputer/web/effect'
 import { betterAuthRedirect } from '@popcomputer/web/auth'
 import { email, requiredString } from '@popcomputer/web/schema'
 
@@ -691,11 +691,12 @@ const SignIn = S.Struct({ email, password: requiredString })
 export const signIn = action(
   Effect.gen(function* () {
     const input = yield* validateRequest(SignIn)
+    const redirectTo = yield* intendedUrl('/projects')
 
     return yield* betterAuthRedirect(
       (auth, request) =>
         auth.api.signInEmail({ body: input, headers: request.headers, asResponse: true }),
-      { redirectTo: '/projects', errors: (error) => ({ email: error.message }) }
+      { redirectTo, errors: (error) => ({ email: error.message }) }
     )
   })
 )
@@ -719,8 +720,10 @@ routes.provide(RequireAuthLayer).get('/dashboard', showDashboard)
 routes.post('/logout', betterAuthLogoutAction({ redirectTo: '/login' }))
 ```
 
-A rejection, such as a wrong password or a registered email, goes back to the
-form with the field errors `errors` returns; rate limits and Better Auth
+A signed-out visit to a guarded page goes to the sign-in path with the page as
+`?redirect=`, and `intendedUrl(fallback)` returns there after signing in; it
+returns only paths on this site. A rejection, such as a wrong password or a
+registered email, goes back to the form with the field errors `errors` returns; rate limits and Better Auth
 failures stay separate typed errors. Sign-up works the same way with
 `auth.api.signUpEmail`, after whatever else the action does with the input.
 

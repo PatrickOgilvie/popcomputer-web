@@ -89,7 +89,7 @@ describe('testEnv', () => {
     const res = await createApp().request('/me')
 
     expect(res.status).toBe(302)
-    expect(res.headers.get('location')).toBe('/login')
+    expect(res.headers.get('location')).toBe('/login?redirect=%2Fme')
   })
 
   test('pages share the signed-in user', async () => {

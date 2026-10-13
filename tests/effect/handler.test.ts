@@ -253,7 +253,7 @@ describe('Error Handling', () => {
       const res = await app.request('/')
 
       expect(res.status).toBe(302)
-      expect(res.headers.get('Location')).toBe('/login')
+      expect(res.headers.get('Location')).toBe('/login?redirect=%2F')
     })
 
     test('redirects to custom URL', async () => {

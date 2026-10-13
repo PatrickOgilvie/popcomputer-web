@@ -57,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A signed-out visit to a guarded page carries the page to the sign-in path as `?redirect=`, and `intendedUrl(fallback)` returns it after signing in, reading the parameter from the request or the sign-in page's `Referer`. Only paths on the same site are returned.
 - `testEnv(layer, bindings, { database })` gives a test request its own database in place of setupWeb's `database` factory: the database operations, route model binding and the Better Auth client all use it, such as an in-process PGlite database.
 - `applyMigrations(folder, run)` from `@popcomputer/web/testing` applies drizzle-kit's SQL migrations through any driver, such as Miniflare's D1 or PGlite.
 - `ValidationError` has an optional `redirectTo`: a failed form submission goes to that page with its field errors instead of back, such as a wizard's last step sending errors to an earlier one.

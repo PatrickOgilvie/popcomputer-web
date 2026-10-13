@@ -14,7 +14,7 @@ import { Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
-import { RequireAuthLayer, RequireGuestLayer } from '../../src/effect/auth.js'
+import { intendedUrl, RequireAuthLayer, RequireGuestLayer } from '../../src/effect/auth.js'
 import { betterAuthHandler, betterAuthLogoutAction, betterAuthRedirect } from '../../src/auth.js'
 import { render } from '../../src/effect/responses.js'
 import { requiredString } from '../../src/effect/schema.js'
@@ -57,10 +57,11 @@ const SignIn = S.Struct({ email: requiredString, password: requiredString })
 
 const signIn = action(Effect.gen(function* () {
   const input = yield* validateRequest(SignIn)
+  const redirectTo = yield* intendedUrl('/dashboard')
 
   return yield* betterAuthRedirect(
     (auth, request) => auth.api.signInEmail({ body: input, headers: request.headers, returnHeaders: true }),
-    { redirectTo: '/dashboard', errors: (error) => ({ email: error.message }) }
+    { redirectTo, errors: (error) => ({ email: error.message }) }
   )
 }))
 
@@ -113,7 +114,23 @@ describe('auth flow on routes', () => {
     const res = await createApp().request('/dashboard')
 
     expect(res.status).toBe(302)
-    expect(res.headers.get('Location')).toBe('/sign-in')
+    expect(res.headers.get('Location')).toBe('/sign-in?redirect=%2Fdashboard')
+  })
+
+  test('signing in returns to the page the visitor was sent away from', async () => {
+    const app = createApp()
+    const signInFrom = (referer: string) =>
+      app.request('/sign-in', {
+        method: 'POST',
+        headers: { ...page, 'Content-Type': 'application/json', Referer: referer },
+        body: JSON.stringify({ email: 'ada@example.com', password: 'correct horse' }),
+      })
+
+    const intended = await signInFrom('http://localhost/sign-in?redirect=%2Fdashboard%3Ftab%3Dbilling')
+    const offSite = await signInFrom('http://localhost/sign-in?redirect=%2F%2Fevil.example%2Fphish')
+
+    expect(intended.headers.get('Location')).toBe('/dashboard?tab=billing')
+    expect(offSite.headers.get('Location')).toBe('/dashboard')
   })
 
   test('signing in redirects with the session cookie Better Auth sets', async () => {
