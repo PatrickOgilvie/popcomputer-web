@@ -157,3 +157,51 @@ export function originRefusal<E extends Env>(c: Context<E>, config: VerifyOrigin
     ? undefined
     : 'This request came from another site, which may not change anything here.'
 }
+
+/** Which pages may frame the application's own: none, or only its own. */
+export interface SecurityHeadersConfig {
+  /**
+   * `'none'` (the default) lets no page frame the application, so another
+   * site cannot show it under a decoy to trick a visitor into clicking;
+   * `'same-origin'` lets the application frame its own pages.
+   */
+  readonly frames?: 'none' | 'same-origin'
+}
+
+/**
+ * Headers every response gets unless it sets its own: `nosniff`, a
+ * `Referrer-Policy` that still names the page a same-site form came from,
+ * which a failed form goes back to, and framing refused as `frames` says.
+ */
+export function securityHeaders<E extends Env>(config: SecurityHeadersConfig = {}): MiddlewareHandler<E> {
+  const sameOrigin = config.frames === 'same-origin'
+  const defaults: ReadonlyArray<readonly [string, string]> = [
+    ['X-Content-Type-Options', 'nosniff'],
+    ['Referrer-Policy', 'strict-origin-when-cross-origin'],
+    ['X-Frame-Options', sameOrigin ? 'SAMEORIGIN' : 'DENY'],
+  ]
+  const frameAncestors = sameOrigin ? "frame-ancestors 'self'" : "frame-ancestors 'none'"
+
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware uses native next() promises.
+  return async (c, next) => {
+    await next()
+
+    const missing = defaults.filter(([name]) => !c.res.headers.has(name))
+    const policy = c.res.headers.get('Content-Security-Policy')
+    const addFrames = policy === null || !/frame-ancestors/i.test(policy)
+
+    if (missing.length === 0 && !addFrames) return
+
+    const result = new Response(c.res.body, c.res)
+
+    for (const [name, value] of missing) result.headers.set(name, value)
+    if (addFrames) result.headers.set('Content-Security-Policy', policy === null ? frameAncestors : `${policy}; ${frameAncestors}`)
+
+    // Hono's setter copies the old response's headers onto the new one,
+    // which would undo a changed policy: clear it first.
+    // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
+    c.res = undefined
+    // oxlint-disable-next-line no-param-reassign -- as above.
+    c.res = result
+  }
+}

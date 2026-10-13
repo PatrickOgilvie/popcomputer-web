@@ -6,11 +6,12 @@
  */
 
 import { describe, test, expect } from 'bun:test'
+import { Effect } from 'effect'
 import { Hono } from 'hono'
 import { verifyOrigin } from '../src/security.js'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
-import { json } from '../src/effect/responses.js'
+import { json, render } from '../src/effect/responses.js'
 import { readError, readErrorPage } from '../src/testing.js'
 
 const createApp = (config = {}) => {
@@ -168,5 +169,46 @@ describe('setupWeb verifies origins by default', () => {
     const res = await appWith({ verifyOrigin: false }).request('/projects', { method: 'POST', headers: { Origin: 'https://evil.example' } })
 
     expect(res.status).toBe(200)
+  })
+})
+
+describe('security headers', () => {
+  const appWith = (security?: Parameters<typeof setupWeb>[1]['security']) => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page), security })
+
+    routes
+      .get('/page', action(render('Home')))
+      .get('/embed', action(Effect.succeed(new Response('ok', { headers: { 'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': "default-src 'none'" } }))))
+
+    return app
+  }
+
+  test('refuse framing, sniffing and cross-site referrers on every response by default', async () => {
+    const res = await appWith().request('/page')
+    const missing = await appWith().request('/nowhere')
+
+    for (const response of [res, missing]) {
+      expect(response.headers.get('X-Frame-Options')).toBe('DENY')
+      expect(response.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'none'")
+      expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
+      expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin')
+    }
+  })
+
+  test("keep a response's own headers, adding framing to its policy", async () => {
+    const res = await appWith().request('/embed')
+
+    expect(res.headers.get('X-Frame-Options')).toBe('SAMEORIGIN')
+    expect(res.headers.get('Content-Security-Policy')).toBe("default-src 'none'; frame-ancestors 'none'")
+  })
+
+  test('let the application frame its own pages, or send none of them', async () => {
+    const own = await appWith({ headers: { frames: 'same-origin' } }).request('/page')
+    const none = await appWith({ headers: false }).request('/page')
+
+    expect(own.headers.get('X-Frame-Options')).toBe('SAMEORIGIN')
+    expect(own.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'self'")
+    expect(none.headers.get('X-Frame-Options')).toBeNull()
   })
 })

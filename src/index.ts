@@ -40,7 +40,7 @@ export {
 } from './request-context.js'
 
 // Security middleware (opt-in CSRF defense-in-depth)
-export { verifyOrigin, type VerifyOriginConfig } from './security.js'
+export { securityHeaders, verifyOrigin, type SecurityHeadersConfig, type VerifyOriginConfig } from './security.js'
 
 // Default edge page cache
 export {

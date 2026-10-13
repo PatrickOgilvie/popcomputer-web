@@ -88,17 +88,32 @@ export async function applyMigrations(
   folder: string,
   run: (statement: string) => Promise<unknown>
 ): Promise<void> {
+  for (const statement of await readMigrations(folder)) await run(statement)
+}
+
+/**
+ * drizzle-kit's SQL migrations in `folder`, in file order, as statements,
+ * for a database that runs many at once: a fresh D1 database migrated in
+ * one batch takes one round trip rather than one per statement. Resolve the
+ * folder from the test module, so the tests run from any directory.
+ *
+ * @example
+ * const statements = await readMigrations(join(import.meta.dir, '../drizzle'))
+ * await d1.batch(statements.map((sql) => d1.prepare(sql)))
+ */
+export async function readMigrations(folder: string): Promise<ReadonlyArray<string>> {
   const { readdir, readFile } = await import('node:fs/promises')
   const { join } = await import('node:path')
   const files = (await readdir(folder)).filter((name) => name.endsWith('.sql')).sort()
+  const statements: string[] = []
 
   for (const file of files) {
-    const statements = (await readFile(join(folder, file), 'utf8')).split('--> statement-breakpoint')
-
-    for (const statement of statements) {
-      if (statement.trim()) await run(statement)
+    for (const statement of (await readFile(join(folder, file), 'utf8')).split('--> statement-breakpoint')) {
+      if (statement.trim()) statements.push(statement)
     }
   }
+
+  return statements
 }
 
 /** Whether the default test session fits the application's AuthUser session. */

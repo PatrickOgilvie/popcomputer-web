@@ -2530,8 +2530,9 @@ and constraint errors behave the same:
 - **Cloudflare D1**: Miniflare's real D1 runs under Bun. Create
   `new Miniflare({ modules: true, script: 'export default {}', d1Databases:
   ['DB'] })`, migrate `await miniflare.getD1Database('DB')` with
-  `applyMigrations('./drizzle', (sql) => d1.prepare(sql).run())`, and pass it
-  as the `DB` binding. `getKVNamespace` and `getR2Bucket` give the other
+  `applyMigrations('./drizzle', (sql) => d1.prepare(sql).run())`, or in one
+  round trip with `d1.batch((await readMigrations(folder)).map((sql) =>
+  d1.prepare(sql)))`, and pass it as the `DB` binding. `getKVNamespace` and `getR2Bucket` give the other
   bindings the same way; their types differ slightly from
   `@cloudflare/workers-types`', so provide a KV store to the data cache as
   `kvCache(kv)` in the test layer rather than as a binding, and type a binding
@@ -3067,6 +3068,16 @@ and so does one with an `Authorization` header, which a browser never adds to
 a cross-site request by itself. A native app or
 another site that posts to the application is listed in
 `security: { verifyOrigin: { allowedOrigins: ['https://admin.example'] } }`.
+
+Every response also gets, unless it sets its own, `X-Content-Type-Options:
+nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, which keeps the
+same-site `Referer` a failed form goes back to (Hono's `secureHeaders()`
+defaults to `no-referrer`, which sends every failed form to `/`), and framing
+refused, `X-Frame-Options: DENY` with `frame-ancestors 'none'` added to its
+`Content-Security-Policy`, so another site cannot frame a page under a decoy
+to trick a visitor into clicking. `security: { headers: { frames:
+'same-origin' } }` lets the application frame its own pages, and `headers:
+false` sends none of them.
 
 A body field named like one of the route's placeholders, such as `claim` on
 `PUT /claims/{claim}`, must carry the same value or the request fails

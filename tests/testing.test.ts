@@ -8,7 +8,7 @@ import { action } from '../src/effect/action.js'
 import { authorize, AuthUserService, DatabaseService } from '../src/effect/services.js'
 import { flash, json, notFound, redirect, render } from '../src/effect/responses.js'
 import { effectRoutes } from '../src/effect/routing.js'
-import { applyMigrations, readPage, signedIn, testClock, testEnv } from '../src/testing.js'
+import { applyMigrations, readMigrations, readPage, signedIn, testClock, testEnv } from '../src/testing.js'
 import { HttpError } from '../src/effect/errors.js'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -244,6 +244,7 @@ describe('the README route test', () => {
     ].join('\n--> statement-breakpoint\n'))
 
     const sqlite = new Database(':memory:')
+    expect(await readMigrations(migrations)).toHaveLength(2)
     await applyMigrations(migrations, async (statement) => sqlite.run(statement))
     const testDb = drizzle(sqlite, { schema: projectsSchema })
     const env = () => testEnv(signedIn({ id: 'user-1' }), testBindings, { database: testDb })

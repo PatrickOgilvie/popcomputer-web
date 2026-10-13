@@ -5,7 +5,7 @@ import type { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
 import type { Config, Layer, Schema as S } from 'effect'
 import { web } from './middleware.js'
-import { originRefusal, type VerifyOriginConfig } from './security.js'
+import { originRefusal, securityHeaders, type SecurityHeadersConfig, type VerifyOriginConfig } from './security.js'
 import type { WebConfig } from './types.js'
 import { loadUserMiddleware, shareAuthMiddleware } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
@@ -104,6 +104,16 @@ interface WebSetupOptions<E extends Env> extends WebConfig {
      * request costs no database or auth work.
      */
     verifyOrigin?: VerifyOriginConfig | false
+    /**
+     * Headers every response gets unless it sets its own, on by default:
+     * `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+     * strict-origin-when-cross-origin`, and framing refused
+     * (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), so another site
+     * cannot frame a page to trick a visitor into clicking. `{ frames:
+     * 'same-origin' }` lets the application frame its own pages; `false`
+     * sends none of them.
+     */
+    headers?: SecurityHeadersConfig | false
   }
 
   /** Error component and environment policy for the shared error boundary. */
@@ -474,7 +484,8 @@ function createSetupMiddleware<
   }
 
   const middlewares: MiddlewareHandler<E>[] = [
-    // Outermost, so it sees every response, including the page cache's own.
+    // Outermost, so they see every response, including the page cache's own.
+    ...(config.security?.headers === false ? [] : [securityHeaders<E>(config.security?.headers ?? {})]),
     privateByDefault<E>(),
     // A cached page is served before db/auth setup, session lookup or rendering.
     ...(config.pageCache === false
