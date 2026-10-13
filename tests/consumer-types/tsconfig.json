@@ -29,10 +29,12 @@
       "@popcomputer/web/paths": [
         "../../dist/paths.d.ts"
       ]
-    }
+    },
+    "jsx": "react-jsx"
   },
   "include": [
-    "*.ts"
+    "*.ts",
+    "*.tsx"
   ],
   "exclude": []
 }

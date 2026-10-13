@@ -38,7 +38,10 @@ type ConfiguredPages = RegisteredPages extends PageSchemas ? RegisteredPages : n
 export type PagesConfigured = [ConfiguredPages] extends [never] ? false : true
 
 /** The page component names `render` accepts: every registered page, or any name. */
-export type PageName = PagesConfigured extends true ? keyof ConfiguredPages & string : string
+// Keys of the registered pages themselves: TypeScript can take `keyof` of the
+// conditional ConfiguredPages through its constraint, Record<string, ...>,
+// which would admit any string.
+export type PageName = [ConfiguredPages] extends [never] ? string : Extract<keyof RegisteredPages, string>
 
 /** The props an action passes to `render(component, props)`. */
 export type PagePropsOf<Component extends string> = PagesConfigured extends true

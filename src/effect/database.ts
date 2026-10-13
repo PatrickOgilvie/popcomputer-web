@@ -13,6 +13,7 @@
  */
 
 import { Cause, Effect, Exit, Result, Schema as S } from 'effect'
+import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core'
 import type { SQLiteRaw } from 'drizzle-orm/sqlite-core/query-builders/raw'
 import { DatabaseService, type DatabaseType } from './services.js'
 import { DatabaseConstraintViolation, DatabaseError, ValidationError } from './errors.js'
@@ -231,11 +232,25 @@ type DriverClient = DatabaseType extends { $client: infer Client } ? Client : ne
  * batches statements but has no transactions. The SQLite drivers with
  * transactions (bun:sqlite, better-sqlite3, libsql) expose `transaction`.
  */
-type IsD1 = [DriverClient] extends [never]
+type IsD1 = IsD1Client extends true ? true : IsD1RunResult
+
+type IsD1Client = [DriverClient] extends [never]
   ? false
   : DriverClient extends { prepare: unknown; exec: unknown; batch: unknown }
     ? DriverClient extends { transaction: unknown } ? false : true
     : false
+
+/**
+ * Whether the database is Drizzle's D1 database by its run result, for a
+ * database type without `$client`, such as `DrizzleD1Database<typeof schema>`:
+ * D1's results carry `success` and `meta`, which libsql's and the others' do
+ * not. Unknown when Cloudflare's types are missing and the result is `any`.
+ */
+type IsD1RunResult = DatabaseType extends BaseSQLiteDatabase<'async', infer Run, infer _Full, infer _Schema>
+  ? 0 extends 1 & Run
+    ? false
+    : Run extends { readonly success: unknown; readonly meta: unknown } ? true : false
+  : false
 
 /**
  * The client `transaction(run)` passes to its callback, when the driver

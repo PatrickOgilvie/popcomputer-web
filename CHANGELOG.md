@@ -109,6 +109,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `WebPage` is a React function component (it returns React's `ReactNode`), so a page renders as JSX and resolves in `createInertiaApp`; its return type admitted any object, which React 19's types reject. `@types/react` is an optional peer dependency.
+- `PageName` is the registered page names as a plain type, so `const name: PageName = 'Missing'` is a type error and `{ [Name in PageName]: ... }` checks a map of every page. TypeScript took its keys through the registered pages' constraint, `Record<string, ...>`, which admitted any string.
+- `dbTransaction` is a type error on Cloudflare D1 when the database type is Drizzle's `DrizzleD1Database<typeof schema>`, which has no `$client` to recognize D1 by; D1 is also recognized by its run result.
 - A page visit with invalid query parameters renders the error page with the field errors as `errors`, as a form's page receives them; they were only in its message.
 - `readPage` names the error page's message when the response rendered it instead of the expected page, such as a binding a service could not read.
 - A route binding whose lookup column matches more than one row, such as a slug unique only within its organization, fails with `RouteConfigurationError` (`WEB_RTE_605_BINDING_AMBIGUOUS`) naming the fix, instead of loading whichever row came first.

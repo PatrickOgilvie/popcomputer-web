@@ -14,13 +14,13 @@
  * ```
  */
 
+import type { ReactNode } from 'react'
 import type { ClientPageProps, Jsonify, PageName } from './effect/pages.js'
 import type { DefaultPublicUser } from './effect/auth.js'
 import type { Registered } from './effect/register.js'
 
-type ReactRenderable = string | number | boolean | null | undefined | object
-
-type ComponentType<P> = (props: P) => ReactRenderable
+/** A React function component, so a page renders as JSX and resolves in createInertiaApp. */
+type ComponentType<P> = (props: P) => ReactNode
 
 type RegisteredPublicUser = Registered<'publicUser', DefaultPublicUser>
 type RegisteredShared = Registered<'shared', never>
