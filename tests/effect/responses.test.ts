@@ -175,6 +175,22 @@ describe('file', () => {
     expect(response.headers.get('Content-Disposition')).toBeNull()
     expect(await response.text()).toBe('<rss/>')
   })
+
+  test('keeps the browser to the declared type', async () => {
+    const response = await Effect.runPromise(file(new Uint8Array([1]), { contentType: 'application/pdf' }))
+
+    expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    expect(response.headers.get('Content-Security-Policy')).toBeNull()
+  })
+
+  test('shows a type a browser runs script in, such as an SVG, without script', async () => {
+    const inline = await Effect.runPromise(file('<svg/>', { contentType: 'image/svg+xml' }))
+    const download = await Effect.runPromise(file('<svg/>', { contentType: 'image/svg+xml', filename: 'logo.svg' }))
+
+    expect(inline.headers.get('Content-Security-Policy')).toBe('sandbox')
+    expect(download.headers.get('Content-Security-Policy')).toBeNull()
+    expect(download.headers.get('Content-Disposition')).toStartWith('attachment;')
+  })
 })
 
 describe('json', () => {

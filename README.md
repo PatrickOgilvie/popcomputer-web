@@ -28,7 +28,7 @@ export const showProject = action(
 - [Why this shape](#why-this-shape) · [Installation](#installation) · [Quick start](#quick-start)
 - Building: [Application services](#application-services) · [Validation and the database](#validation-and-the-database) · [Route model binding](#route-model-binding) · [Auth](#auth) · [Responses and failures](#responses-and-failures)
 - Running: [Caching and background work](#caching-and-background-work) · [Scheduled and queued work](#scheduled-and-queued-work) · [Page caching](#page-caching)
-- [Testing](#testing) · [Patterns from real applications](#patterns-from-real-applications)
+- [Testing](#testing) · [Patterns from real applications](#patterns-from-real-applications) · [User input in, files out](#user-input-in-files-out)
 - Reference: [Lower-level composition](#lower-level-composition) · [Version values](#version-values) · [Upgrading](#upgrading) · [Migrating from `honertia`](#migrating-from-honertia) · [Tradeoffs and current limits](#tradeoffs-and-current-limits)
 
 ## Why this shape
@@ -667,8 +667,10 @@ replace a route parameter; pass `request: { order: ['body'] }` to read only the
 body.
 
 A multipart form's files reach the schema as `File` values. Check them with
-`upload({ types: ['image/*'], maxBytes: 5_000_000 })`, or `nullableUpload(...)`
-when the file is optional; a file input left empty is no file. Headers and the
+`upload({ types: ['image/png', 'image/jpeg'], maxBytes: 5_000_000 })`, or
+`nullableUpload(...)` when the file is optional; a file input left empty is
+no file. [User input in, files out](#user-input-in-files-out) shows serving
+one back. Headers and the
 raw body, such as an `Idempotency-Key` or a webhook signature, are read from
 `RequestService`'s `header()` and `raw()`.
 
@@ -1823,6 +1825,49 @@ export const paymentWebhook = action(Effect.gen(function* () {
 }))
 ```
 
+### User input in, files out
+
+A filter form sent with GET carries every field, empty or not, so read each
+filter with `nullable(...)` or `nullableString`, which read an empty or absent
+field as `null`; `S.optional(coercedNumber)` rejects `?minAmount=`. Limits
+take the message the form shows, through Effect's checks. An upload names the
+types it accepts: a family such as `image/*` leaves out SVG, which a browser
+runs script in, and the type is the one the browser declares for the file:
+
+```ts
+import { Schema as S } from 'effect'
+import { coercedNumber, nullable, nullableString, requiredString, upload } from '@popcomputer/web/schema'
+
+const ClaimFilters = S.Struct({
+  stage: nullable(S.Literals(['approver', 'finance'])),
+  minAmount: nullable(coercedNumber),
+  search: nullableString,
+})
+
+const ReceiptForm = S.Struct({
+  description: requiredString.check(S.isMaxLength(200, { message: 'Keep it under 200 characters.' })),
+  receipt: upload({ types: ['image/png', 'image/jpeg', 'application/pdf'], maxBytes: 5_000_000 }),
+})
+```
+
+Serve an upload back with `file(bytes, { contentType, filename })`: the
+`filename` makes it a download, and `file` always sends
+`X-Content-Type-Options: nosniff`, so the browser keeps to the declared type,
+and shows an HTML, SVG or XML body without a file name only under
+`Content-Security-Policy: sandbox`. Check who may read the file before
+serving it, as for any record.
+
+`setupWeb` refuses a state-changing request whose `Origin` (or `Referer`)
+names another site with 403, beside the `SameSite` cookies Better Auth sets.
+A request without either header, such as a webhook, passes. A native app or
+another site that posts to the application is listed in
+`security: { verifyOrigin: { allowedOrigins: ['https://admin.example'] } }`.
+
+A body field named like one of the route's placeholders, such as `claim` on
+`PUT /claims/{claim}`, must carry the same value or the request fails
+validation, whether or not the schema reads it; leave such fields out of the
+form.
+
 ### Other patterns
 
 - **Several forms on one page**, such as approve and reject on each row of an
@@ -1858,9 +1903,9 @@ export const paymentWebhook = action(Effect.gen(function* () {
   `new ValidationError({ errors, redirectTo })` to send the visitor to that
   step.
 - **Cursor pagination**: decode the cursor and filters from the query with
-  `validateRequest` (`coercedNumber`, `S.optional(...)`), so a malformed
-  cursor is a 422 rather than a database error, and render the next cursor
-  as a prop.
+  `validateRequest` (`nullable(coercedNumber)`, `nullableString`), so a
+  malformed cursor is a 422 rather than a database error and an empty filter
+  is `null`, and render the next cursor as a prop.
 - **Counts in the header**, such as unread messages: declare them in
   `shared` and compute them with `shareProps`, which runs only when a page
   renders.

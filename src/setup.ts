@@ -107,15 +107,18 @@ interface WebSetupOptions<E extends Env, AppServices, RequestServices> extends W
    */
   middleware?: MiddlewareHandler<E>[]
 
-  /** Optional security hardening. */
+  /** Security hardening. */
   security?: {
     /**
-     * Enable CSRF defense-in-depth by verifying the `Origin`/`Referer` of
-     * state-changing requests. Opt-in — see {@link VerifyOriginConfig}.
-     * Runs before all other framework middleware so rejected requests
-     * short-circuit cheaply.
+     * CSRF defense in depth, on by default: a state-changing request whose
+     * `Origin` (or `Referer`) names another site is refused with 403. A
+     * request without either, such as a webhook or a server's, passes. List
+     * other origins allowed to post, such as a native app's, in
+     * `allowedOrigins` (see {@link VerifyOriginConfig}); `false` turns the
+     * check off. It runs before the other framework middleware, so a refused
+     * request costs no database or auth work.
      */
-    verifyOrigin?: VerifyOriginConfig
+    verifyOrigin?: VerifyOriginConfig | false
   }
 
   /** Error component and environment policy for the shared error boundary. */
@@ -412,9 +415,9 @@ function createSetupMiddleware<
     privateByDefault<E>(),
     // Origin verification runs first so cross-origin writes are rejected
     // before any per-request setup work (db/auth client creation) happens.
-    ...(config.security?.verifyOrigin
-      ? [verifyOrigin<E>(config.security.verifyOrigin)]
-      : []),
+    ...(config.security?.verifyOrigin === false
+      ? []
+      : [verifyOrigin<E>(config.security?.verifyOrigin ?? {})]),
     // A cached page is served before db/auth setup, session lookup or rendering.
     ...(config.pageCache === false
       ? []

@@ -63,7 +63,9 @@ TypeScript example here and in the README type-checks against the package.
 5. **Read request input only through `validateRequest(Schema)`.** Build schemas
    from `@popcomputer/web/schema` validators (`requiredString`,
    `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, ...), which
-   accept form posts as well as JSON, and `upload(...)` for files. A form that
+   accept form posts as well as JSON, `nullable(...)` for a filter a GET form
+   may send empty, and `upload({ types: [...] })` for files, served back with
+   `file(...)`. A form that
    fails validation goes back to the page it came from, which receives the
    field errors as `errors`; a JSON client gets a `422`. A key that route
    params, query and body provide with different values fails validation.

@@ -118,7 +118,8 @@ describe('a failed form submission', () => {
   })
 
   test('goes to the home page when the referring page is on another site', async () => {
-    const failed = await submit(createApp(), { name: '' }, { Referer: 'https://elsewhere.example/form' })
+    // A same-origin Origin passes origin verification; the Referer still names another site.
+    const failed = await submit(createApp(), { name: '' }, { Origin: 'http://localhost', Referer: 'https://elsewhere.example/form' })
 
     expect(failed.headers.get('Location')).toBe('/')
   })
@@ -267,7 +268,7 @@ describe('domain failures on a form', () => {
   })
 
   test('back() uses its fallback for another site\'s page', async () => {
-    const res = await offer(offersApp(), -1, { Referer: 'https://elsewhere.example/listings/1' })
+    const res = await offer(offersApp(), -1, { Origin: 'http://localhost', Referer: 'https://elsewhere.example/listings/1' })
 
     expect(res.headers.get('Location')).toBe('/listings')
   })

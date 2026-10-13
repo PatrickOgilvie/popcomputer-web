@@ -4,6 +4,7 @@
  * Utility functions for creating responses within Effect computations.
  */
 
+import { ACTIVE_CONTENT_TYPES } from './schema.js'
 import { wantsJson } from './negotiation.js'
 import { Cause, Context, Effect, Layer, Option, Schema as S, Stream } from 'effect'
 import { observeOrLog } from './error-observer.js'
@@ -188,9 +189,15 @@ export function file<E = never, R = never>(
   return Effect.gen(function* () {
     const headers = new Headers(options.headers)
     headers.set('Content-Type', options.contentType)
+    // The browser keeps to the declared type, so an upload declared as an
+    // image cannot be read as a page.
+    headers.set('X-Content-Type-Options', 'nosniff')
 
     if (options.filename !== undefined) {
       headers.set('Content-Disposition', contentDisposition(options.filename))
+    } else if (ACTIVE_CONTENT_TYPES.has(options.contentType.split(';', 1)[0].trim().toLowerCase()) && !headers.has('Content-Security-Policy')) {
+      // A page or SVG shown inline runs without script, forms or the origin.
+      headers.set('Content-Security-Policy', 'sandbox')
     }
 
     const content = Stream.isStream(body)

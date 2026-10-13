@@ -1063,7 +1063,12 @@ export const nullable = <InputSchema extends S.Constraint>(schema: InputSchema) 
 
 /** What an uploaded file may be. */
 export interface UploadOptions {
-  /** Accepted media types, such as `'image/png'`, or a family such as `'image/*'`. */
+  /**
+   * Accepted media types, such as `'image/png'`, or a family such as
+   * `'image/*'`. A family leaves out types a browser runs script in, such as
+   * `image/svg+xml`, which are accepted only when named. The type is the one
+   * the browser declares for the file.
+   */
   readonly types?: ReadonlyArray<string>
   /** The largest accepted size, in bytes. */
   readonly maxBytes?: number
@@ -1076,13 +1081,29 @@ const isEmptyFileInput = (value: unknown): boolean =>
 /** A media type without its parameters, lowercased: `text/plain;charset=utf-8` is `text/plain`. */
 const essence = (type: string): string => type.split(';', 1)[0].trim().toLowerCase()
 
+/**
+ * Media types a browser runs script in when it opens them, such as an SVG
+ * image. A family such as `image/*` accepts them only when they are named,
+ * since an uploaded file served back as one runs on the application's origin.
+ */
+export const ACTIVE_CONTENT_TYPES: ReadonlySet<string> = new Set([
+  'text/html',
+  'application/xhtml+xml',
+  'image/svg+xml',
+  'text/xml',
+  'application/xml',
+  'text/xsl',
+])
+
 const acceptsType = (types: ReadonlyArray<string>, type: string): boolean => {
   const sent = essence(type)
 
   return types.some((accepted) => {
     const expected = essence(accepted)
 
-    return expected.endsWith('/*') ? sent.startsWith(expected.slice(0, -1)) : sent === expected
+    return expected.endsWith('/*')
+      ? sent.startsWith(expected.slice(0, -1)) && !ACTIVE_CONTENT_TYPES.has(sent)
+      : sent === expected
   })
 }
 

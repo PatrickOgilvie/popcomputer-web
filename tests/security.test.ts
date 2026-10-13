@@ -2,12 +2,15 @@
 /**
  * Security Middleware Tests
  *
- * Covers the opt-in Origin verification used as CSRF defense-in-depth.
+ * Covers the Origin verification setupWeb installs as CSRF defense-in-depth.
  */
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { verifyOrigin } from '../src/security.js'
+import { setupWeb } from '../src/setup.js'
+import { action } from '../src/effect/action.js'
+import { json } from '../src/effect/responses.js'
 
 const createApp = (config = {}) => {
   const app = new Hono()
@@ -121,5 +124,29 @@ describe('verifyOrigin', () => {
     })
 
     expect(res.status).toBe(419)
+  })
+})
+
+describe('setupWeb verifies origins by default', () => {
+  const appWith = (security?: { verifyOrigin: false }) => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page), ...(security ? { security } : {}) })
+    routes.post('/projects', action(json({ created: true })))
+
+    return app
+  }
+
+  test('refuses a post from another site, and allows its own and one without an origin', async () => {
+    const app = appWith()
+
+    expect((await app.request('/projects', { method: 'POST', headers: { Origin: 'https://evil.example' } })).status).toBe(403)
+    expect((await app.request('/projects', { method: 'POST', headers: { Origin: 'http://localhost' } })).status).toBe(200)
+    expect((await app.request('/projects', { method: 'POST' })).status).toBe(200)
+  })
+
+  test('verifyOrigin: false turns the check off', async () => {
+    const res = await appWith({ verifyOrigin: false }).request('/projects', { method: 'POST', headers: { Origin: 'https://evil.example' } })
+
+    expect(res.status).toBe(200)
   })
 })

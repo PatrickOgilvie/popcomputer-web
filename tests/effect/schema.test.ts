@@ -920,8 +920,15 @@ describe('Uploads', () => {
     ['an empty file input', new File([], '', { type: 'application/octet-stream' }), 'Choose a file'],
     ['another type', new File(['x'], 'notes.txt', { type: 'text/plain' }), 'The file must be image/*'],
     ['a larger file', new File([new Uint8Array(2048)], 'big.png', { type: 'image/png' }), 'The file must be at most 1 KB'],
+    ['an SVG, which can carry script, for a family', new File(['<svg/>'], 'cover.svg', { type: 'image/svg+xml' }), 'The file must be image/*'],
   ])('rejects %s', (_name, cover, message) => {
     expect(String(S.decodeUnknownExit(Form)({ cover }))).toContain(message)
+  })
+
+  test('accepts an SVG when its type is named', () => {
+    const svg = new File(['<svg/>'], 'logo.svg', { type: 'image/svg+xml' })
+
+    expect(S.decodeUnknownExit(upload({ types: ['image/svg+xml'] }))(svg)._tag).toBe('Success')
   })
 
   test('reads an empty optional file input as no file', () => {

@@ -90,9 +90,9 @@ function originOf(url: string | undefined | null): string | null {
  * state-changing requests against an allowlist.
  *
  * This is defense-in-depth against CSRF for cookie-authenticated routes. It
- * pairs with `SameSite` session cookies rather than replacing them, and is
- * deliberately opt-in so API and native-app surfaces that do not send an
- * `Origin` header keep working (see {@link VerifyOriginConfig.requireOrigin}).
+ * pairs with `SameSite` session cookies rather than replacing them. setupWeb
+ * installs it by default; requests without an `Origin` header, such as API
+ * and native-app calls, keep working (see {@link VerifyOriginConfig.requireOrigin}).
  *
  * @example
  * // Enable via setupWeb
