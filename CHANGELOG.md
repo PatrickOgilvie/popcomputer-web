@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-next.3] - 2026-10-13
+
+Changes since 0.8.0-next.2.
+
 ### Added
 
 - `cookie(name, Schema, options)` declares an application cookie once: actions read it (`Option`), set it and clear it through the declaration, and the response carries what they set, beside flash, through a redirect.
