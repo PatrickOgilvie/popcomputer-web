@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-next.4] - 2026-10-13
+
+Changes since 0.8.0-next.3.
+
 ### Added
 
 - `constraintFieldErrors({ name: { field: message } })` shows a violation of a named constraint of any kind (a `CHECK`, an exclusion constraint, a trigger) as field errors.
