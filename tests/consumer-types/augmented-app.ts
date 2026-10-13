@@ -223,6 +223,9 @@ const projectAction = action(Effect.gen(function* () {
 web.routes.get(paths.project, projectAction)
 // @ts-expect-error /members/{member} does not bind a project
 web.routes.get(paths.member, projectAction)
+// A prefix binds its placeholders for the declared paths under it.
+web.routes.prefix('/projects/{project}').get(paths.project, projectAction)
+// @ts-expect-error A path the application does not declare is refused under a prefix too.
 web.routes.prefix('/projects/{project}').get('/settings', projectAction)
 
 // A guard layer that reads a model guards only routes that bind it.
@@ -281,6 +284,11 @@ const projectEndpoint = endpoint.get(paths.project, { success: S.Struct({ id: S.
 endpoint.get('/projets/{project}', {})
 web.routes.endpoint(action(projectEndpoint, ({ params }) => Effect.succeed({ id: params.project })))
 export const projectCall = call(projectEndpoint, { params: { project: 'p1' } })
+
+// A prefixed group registers the declared paths under its prefix, whole.
+web.routes.prefix('/members').get(paths.member, action(json({ ok: true })))
+// @ts-expect-error '/projects/{project}' is not under '/members'.
+web.routes.prefix('/members').get(paths.project, action(json({ ok: true })))
 
 // Registered pages type render and the React component.
 export const showProject = render('Projects/Show', { project: { id: 'p1', createdAt: new Date() } })

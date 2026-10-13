@@ -1804,8 +1804,8 @@ export const deleteProject = action(endpoints.deleteProject, ({ auth }) =>
 declares, with the route options other registrations take. A failure the
 contract does not declare is an `unhandledErrors` type error at the
 registration, as for any action, so the contract lists every failure a client
-can tell apart. Endpoints register on `routes` without `.prefix()`, since the
-contract's path is the whole path; group them with `.provide(...)`.
+can tell apart. Group endpoints with `.provide(...)`, or under a prefix their
+declared paths start with, `routes.prefix('/api/orgs/{org}')`.
 
 ```ts
 // src/api-routes.ts

@@ -619,8 +619,8 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
   /** Create an error for an endpoint registered on routes with a prefix. */
   static endpointUnderPrefix(path: string, prefix: string): RouteConfigurationError {
     return new RouteConfigurationError({
-      message: `The endpoint on ${path} is registered under the prefix '${prefix}', but an endpoint's path is the whole path its contract declares.`,
-      hint: 'Register endpoints on routes without .prefix(...); group them with .provide(...) or .jsonApi() instead.',
+      message: `The endpoint on ${path} is registered under the prefix '${prefix}', which its path does not start with.`,
+      hint: 'Register the endpoint on routes whose prefix its declared path starts with, or on routes without one.',
       code: ErrorCodes.CFG_305_INVALID_CONFIG,
     })
   }

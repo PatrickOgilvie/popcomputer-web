@@ -379,6 +379,19 @@ describe('EffectRouteBuilder', () => {
       expect(res.status).toBe(200)
     })
 
+    test('registers a whole declared path that starts with the prefix as it is', async () => {
+      const app = createApp()
+
+      effectRoutes(app)
+        .prefix('/orgs/{org}')
+        .get('/orgs/{org}/settings', Effect.succeed(new Response('Settings')))
+        .get('/orgs/{org}', Effect.succeed(new Response('Org home')))
+
+      expect(await (await app.request('/orgs/acme/settings')).text()).toBe('Settings')
+      expect(await (await app.request('/orgs/acme')).text()).toBe('Org home')
+      expect((await app.request('/orgs/acme/orgs/acme/settings')).status).toBe(404)
+    })
+
     test('handles root path with prefix', async () => {
       const app = createApp()
 

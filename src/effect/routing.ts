@@ -191,6 +191,14 @@ export interface QueueBatch {
   readonly messages: ReadonlyArray<QueueMessage>
 }
 
+/**
+ * The paths a prefixed group registers: the declared paths that start with
+ * the prefix, or any path when the application declares none.
+ */
+export type PathsUnder<Path extends string, Prefix extends string> = string extends Path
+  ? string
+  : Extract<Path, Prefix | `${Prefix}/${string}`>
+
 /** An Effect `routes.run` can run: one whose services the routes provide. */
 export type RunCheck<R, Services> = [ModelName<Exclude<R, Services>>] extends [never]
   ? [Exclude<R, Services>] extends [never]
@@ -647,14 +655,24 @@ export class EffectRouteBuilder<
   }
 
   /**
-   * Set path prefix for all routes in this builder. Routes registered under a
-   * prefix take paths relative to it, so declared paths no longer apply. The
-   * prefix's `{placeholders}` bind models for every route under it.
+   * Group routes under a path prefix. The prefix's `{placeholders}` bind
+   * models for every route under it, so a guard layer provided here can read
+   * them with `bound()`. In an application that declares its paths, the
+   * routes under the prefix are registered with their whole declared paths,
+   * which must start with it; without declared paths, a route's path may be
+   * relative to the prefix.
+   *
+   * @example
+   * routes.prefix('/orgs/{org}').provide(OrgMemberGuard)
+   *   .get(paths.orgSettings, showSettings)   // '/orgs/{org}/settings'
+   *   .get(paths.orgMembers, listMembers)     // '/orgs/{org}/members'
    */
-  prefix<const Prefix extends string>(path: Prefix): EffectRouteBuilder<E, Services | PathModels<Prefix>, string, Needs> {
+  prefix<const Prefix extends string>(
+    path: Prefix
+  ): EffectRouteBuilder<E, Services | PathModels<Prefix>, PathsUnder<Path, Prefix>, Needs> {
     const normalizedPath = path.replace(/\/$/, '')
 
-    return new EffectRouteBuilder<E, Services | PathModels<Prefix>, string, Needs>(
+    return new EffectRouteBuilder<E, Services | PathModels<Prefix>, PathsUnder<Path, Prefix>, Needs>(
       this.app,
       this.layers,
       this.pathPrefix + normalizedPath,
@@ -700,11 +718,12 @@ export class EffectRouteBuilder<
    * Resolve the full path.
    */
   private resolvePath(path: string): string {
-    if (this.pathPrefix) {
-      return path === '/' ? this.pathPrefix : `${this.pathPrefix}${path}`
-    }
+    if (!this.pathPrefix) return path
 
-    return path
+    // A declared path under the prefix is whole; another is relative to it.
+    if (path === this.pathPrefix || path.startsWith(`${this.pathPrefix}/`)) return path
+
+    return path === '/' ? this.pathPrefix : `${this.pathPrefix}${path}`
   }
 
   /**
@@ -1327,8 +1346,10 @@ export class EffectRouteBuilder<
     action: EndpointAction<Ep, Err, R> & RouteActionCheck<R | Needs, Err, Services | PathModels<Ep['path']>>,
     options?: EffectRouteOptions
   ): this {
-    if (this.pathPrefix !== '') {
-      throw RouteConfigurationError.endpointUnderPrefix(action.endpoint.path, this.pathPrefix).atStartup()
+    const path = action.endpoint.path
+
+    if (this.pathPrefix !== '' && path !== this.pathPrefix && !path.startsWith(`${this.pathPrefix}/`)) {
+      throw RouteConfigurationError.endpointUnderPrefix(path, this.pathPrefix).atStartup()
     }
 
     // SAFETY: RouteActionCheck rejects, at the call site, an action whose
