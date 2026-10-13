@@ -1295,17 +1295,18 @@ types track it as the Effect requirement `RouteModel<'project'>`, which only
 such a route provides. An action, or a guard layer, that reads a model its
 route does not bind fails to type-check where the route is registered, with
 `missingRouteModels: "project"`. A helper that reads a model states the
-requirement in its type, so every action that uses it carries it:
+requirement in its type, `BoundRequirements<'project'>`, so every action that
+uses it carries it:
 
 ```ts
-import type { BoundModelError, BoundModels, RouteModel } from '@popcomputer/web/effect'
+import type { BoundModelError, BoundRequirements } from '@popcomputer/web/effect'
 
 type Project = typeof projects.$inferSelect
 
 // The route's project, or a 404 for anyone but its owner.
 export const ownProject = (
   userId: string
-): Effect.Effect<Project, BoundModelError, BoundModels | RouteModel<'project'>> =>
+): Effect.Effect<Project, BoundModelError, BoundRequirements<'project'>> =>
   Effect.gen(function* () {
     const project = yield* bound('project')
 
@@ -3468,13 +3469,17 @@ routes behind `RequireGuestLayer`:
 visitor goes to `auth.signInPath` (default `/login`) with the page as
 `?redirect=`, which `intendedUrl(fallback)` returns to after signing in.
 
-**9. Name cache tags by the schema.** Tags name tables by their key in the
-schema, and records as `table:primaryKey`, so the tags a page carries and the
-tags a write purges match:
+**9. Name cache tags by the schema, and rename `cache: false`.** Tags name
+tables by their key in the schema, and records as `table:primaryKey`, so the
+tags a page carries and the tags a write purges match. A route that opted out
+of the page cache with `cache: false` says `cache: 'private'`:
 
 ```diff
 - effectRoutes(app).get('/plans', showPlans, { cache: { maxAge: 300, tags: ['plan_prices'] } })
 + routes.get(paths.plans, showPlans, { cache: { maxAge: 300, tags: ['planPrices'] } })
+
+- effectRoutes(app).get('/weather', showWeather, { cache: false })
++ routes.get(paths.weather, showWeather, { cache: 'private' })
 
 - const responses = yield* ResponseCacheService
 - yield* responses.purge({ tags: [`project:${project.id}`] })
@@ -3524,13 +3529,14 @@ migrations in the database itself. The generators have no replacement; write
 actions from the README's and `AGENTS.md`'s examples.
 
 **12. Give a helper that reads a route model its requirement.** A helper
-annotated `Effect.Effect<A, E, BoundModels>` that calls `bound('project')` adds
-`RouteModel<'project'>`, and an action reading a model its route's path does
-not bind is a `missingRouteModels` type error at the registration.
+annotated `Effect.Effect<A, E, BoundModels>` that calls `bound('project')`
+requires `BoundRequirements<'project'>` instead, and an action reading a model
+its route's path does not bind is a `missingRouteModels` type error at the
+registration.
 
 ```diff
 - const ownProject: Effect.Effect<Project, BoundModelError, BoundModels> = ...
-+ const ownProject: Effect.Effect<Project, BoundModelError, BoundModels | RouteModel<'project'>> = ...
++ const ownProject: Effect.Effect<Project, BoundModelError, BoundRequirements<'project'>> = ...
 ```
 
 #### What no type error points at

@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Each `testBrowser` sends its own client address (`CF-Connecting-IP`, `X-Forwarded-For`), so per-client rate limits count browsers apart.
 - `testBrowser(app, env).follow(res)` follows any redirect, keeping the cookies it set, including one a test requested with `app.request`. `followRedirect(app, res, env)` is removed: use `testBrowser(app, env).follow(res)`.
 
+- The README's helper that reads a route model is typed with `BoundRequirements<'project'>`, and the upgrade guide from 0.7 renames `cache: false` to `cache: 'private'` and uses `BoundRequirements` in its route model step.
 - The README documents `routes.prefix(...)` with declared paths: Quick start's step 4 says what a prefix binds and that each route under it takes its whole declared path, and the memberships pattern registers its routes under one.
 - The README's patterns show roles per organization in full. The role lives on a membership row, a guard layer reads it and provides it as a service, and an action states the role it needs. A visitor who is not a member gets 404, and a member without the role 403.
 - The README's route model binding section is split by question: what a model is, when it loads, how nested models are scoped, what a lookup column must name, plain parameters, and reading a model from a helper. The last has a type-checked helper whose type carries `RouteModel<'project'>`, and the section says how to lock a bound record in a transaction.
