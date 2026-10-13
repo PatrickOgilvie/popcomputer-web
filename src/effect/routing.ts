@@ -620,13 +620,18 @@ export class EffectRouteBuilder<
 
       const query: QueryBuilder = dbClient.select().from(binding.table).where(whereCondition)
 
-      // Execute the query - use .limit(1) for cross-database compatibility
-      // (PostgreSQL/MySQL don't have .get(), only SQLite does)
-      const results = await query.limit(1)
+      // Two rows at most: a lookup column that is not unique within the
+      // route's scope names no single record, so it fails instead of
+      // picking one. (.limit works on every dialect; only SQLite has .get().)
+      const results = await query.limit(2)
       const result = results[0]
 
       if (!result) {
         return { missing: binding.param }
+      }
+
+      if (results.length > 1) {
+        throw RouteConfigurationError.ambiguousBinding(binding.param, binding.tableName, binding.column)
       }
 
       // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.

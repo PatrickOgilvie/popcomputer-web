@@ -104,6 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A route binding whose lookup column matches more than one row, such as a slug unique only within its organization, fails with `RouteConfigurationError` (`WEB_RTE_605_BINDING_AMBIGUOUS`) naming the fix, instead of loading whichever row came first.
 - A database result typed `any` is an error type naming the fix (`UntypedDatabaseResult`), so `result.meta.changes` no longer type-checks unchecked. Drizzle's D1 result types name Cloudflare's global types, which are `any` without `@cloudflare/workers-types` in tsconfig's `types`.
 - `db.run(sql)` in a Cloudflare D1 `dbBatch` is a type error naming the query builder; Drizzle's D1 batch fails at runtime on it.
 - A `DatabaseError`'s message on development pages and in logs names the driver's reason, along its cause chain (Drizzle's failed query, then the driver's error), so a failed batch no longer reads only "Database batch failed and was rolled back." Production still replaces database messages with a generic one.

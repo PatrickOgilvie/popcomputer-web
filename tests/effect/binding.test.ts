@@ -313,6 +313,38 @@ describe('table bindings', () => {
   })
 })
 
+describe('ambiguous bindings', () => {
+  test('fail instead of picking one of several rows', async () => {
+    const events = sqliteTable('events', {
+      id: text('id').primaryKey(),
+      slug: text('slug').notNull(),
+    })
+    const sqlite = new Database(':memory:')
+    sqlite.run('CREATE TABLE events (id TEXT PRIMARY KEY, slug TEXT NOT NULL)')
+    const db = drizzle(sqlite, { schema: { events } })
+    db.insert(events).values([{ id: 'e1', slug: 'launch' }, { id: 'e2', slug: 'launch' }, { id: 'e3', slug: 'demo' }]).run()
+
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
+      database: () => db as never,
+      schema: { events },
+      bindings: { event: events },
+    })
+
+    routes.get('/e/{event:slug}', action(Effect.flatMap(bound('event'), (event) => json(event))))
+
+    const unique = await app.request('/e/demo', {}, { ENVIRONMENT: 'development' })
+    const ambiguous = await app.request('/e/launch', { headers: { Accept: 'application/json' } }, { ENVIRONMENT: 'development' })
+
+    expect(unique.status).toBe(200)
+    expect(ambiguous.status).toBe(500)
+    expect(await ambiguous.json()).toMatchObject({ code: 'WEB_RTE_605_BINDING_AMBIGUOUS' })
+  })
+})
+
 describe('toHonoPath', () => {
   describe('basic Laravel to Hono conversion', () => {
     test('converts single binding to Hono format', () => {

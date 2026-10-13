@@ -797,6 +797,12 @@ const routeBindings = {
 
 This fails closed when a child lookup cannot be safely scoped to its parent.
 
+A lookup column must name one record within the route's scope: a slug unique
+only within an organization belongs under it, as
+`/orgs/{organization:slug}/events/{event:slug}`. When the column matches more
+than one row, `bound()` fails (`WEB_RTE_605_BINDING_AMBIGUOUS`) instead of
+picking one.
+
 A placeholder without a parser in `bindings` is a plain parameter: the action
 reads it with `validateRequest`, as in `/teams/{team}/invites/{token}`, where
 `bound('team')` loads the team and `token` arrives with the request's input.

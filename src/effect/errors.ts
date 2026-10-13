@@ -649,6 +649,17 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     })
   }
 
+  /** Create an error for a binding whose lookup column matched more than one row. */
+  static ambiguousBinding(binding: string, table: string, column: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" matched more than one row of "${table}" by "${column}".`,
+      hint: `Look "${binding}" up by a unique column, scope it under the binding that makes "${column}" unique (/orgs/{org:slug}/events/{${binding}:${column}}), or make "${column}" unique.`,
+      binding,
+      table,
+      code: ErrorCodes.RTE_605_BINDING_AMBIGUOUS,
+    })
+  }
+
   /** Create an error when a persisted row fails its registered parser. */
   static invalidBoundRow(binding: string, table: string): RouteConfigurationError {
     return new RouteConfigurationError({

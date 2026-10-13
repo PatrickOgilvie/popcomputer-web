@@ -82,6 +82,7 @@ export const ErrorCodes = {
   RTE_601_TABLE_NOT_FOUND: 'WEB_RTE_601_TABLE_NOT_FOUND',
   RTE_603_RELATION_NOT_FOUND: 'WEB_RTE_603_RELATION_NOT_FOUND',
   RTE_604_BOUND_ROW_INVALID: 'WEB_RTE_604_BOUND_ROW_INVALID',
+  RTE_605_BINDING_AMBIGUOUS: 'WEB_RTE_605_BINDING_AMBIGUOUS',
 
   // Service Errors (SVC)
   SVC_700_SERVICE_UNAVAILABLE: 'WEB_SVC_700_SERVICE_UNAVAILABLE',
@@ -409,6 +410,17 @@ export const ErrorCatalog = {
     title: 'Bound Row Invalid',
     messageTemplate:
       'A row loaded for route binding "{binding}" did not satisfy its registered schema.',
+    httpStatus: 500,
+    defaultFixes: [],
+  },
+
+  [ErrorCodes.RTE_605_BINDING_AMBIGUOUS]: {
+    code: ErrorCodes.RTE_605_BINDING_AMBIGUOUS,
+    tag: 'RouteConfigurationError',
+    category: 'routing',
+    title: 'Route Binding Ambiguous',
+    messageTemplate:
+      'Route binding "{binding}" matched more than one row of "{table}".',
     httpStatus: 500,
     defaultFixes: [],
   },
