@@ -9,7 +9,7 @@ import type { Registered } from './register.js'
 /** Shown where the database is used when the application registers none. */
 interface DatabaseNotConfigured {
   readonly __error: 'No database is registered. Give setupWeb a database factory, and register setupWeb\'s result: declare module "@popcomputer/web" { interface Register { web: typeof web } }'
-  readonly __hint: 'See the README: Configure the application once.'
+  readonly __hint: 'If setupWeb has a database factory, another value in its configuration has a type error: TypeScript then infers none of its types. Fix the first error inside the setupWeb call.'
 }
 
 /** Shown where the Drizzle schema is used when the application registers none. */

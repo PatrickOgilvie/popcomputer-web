@@ -206,3 +206,8 @@ them with `Effect.catchTag`, or fail with `HttpError`). A type error at
 `render(...)` means the page or its props differ from `src/pages.ts`.
 `'web' implicitly has type 'any'` (TS7022) means a layer in `services` uses the
 database without a type annotation: annotate the layer, as rule 9 shows.
+Many errors naming `DatabaseNotConfigured`, or `(c) => never` at `database`,
+while `setupWeb` has a database factory, mean one value in its configuration
+has a type error, such as a page schema using a deleted import: TypeScript
+then infers none of the configuration's types. Fix the first error inside the
+`setupWeb` call.
