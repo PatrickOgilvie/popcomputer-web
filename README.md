@@ -851,17 +851,17 @@ and the lint rules name it where an action reaches for something else.
 | Go back to the page the request came from | `back(paths.projects)` | [Responses](#responses-and-failures) |
 | Send the visitor elsewhere from a helper or a guard | `redirectNow(paths.onboarding)` | [Responses](#responses-and-failures) |
 | Show a domain error beside a form field | `invalid({ amount: 'Too low.' })` | [Rules live in services](#rules-live-in-services-actions-decide-what-a-failure-means) |
-| Hand a message to the next page | `flash('success', 'Saved.')` | [Responses](#responses-and-failures) |
+| Hand a message to the next page | `flash('success', 'Saved.')` | [Flash and failed forms](#flash-messages-and-failed-forms) |
 | Answer a JSON API | an `endpoint` contract, implemented with `action(endpoint, handler)` | [JSON endpoints](#json-endpoints) |
-| Answer JSON from a page's action | `json(Schema, value)` or `jsonOrRender('Page', props)` | [Responses](#responses-and-failures) |
-| Answer a failure with a body a client reads | `httpError(status, message, Schema, body)` | [Responses](#responses-and-failures) |
+| Answer JSON from a page's action | `json(Schema, value)` or `jsonOrRender('Page', props)` | [JSON responses](#json-responses-declared-by-a-schema) |
+| Answer a failure with a body a client reads | `httpError(status, message, Schema, body)` | [Failures a client reads](#failures-a-client-reads) |
 | Hide a record the visitor may not see | `notFound('Project')` | [Route model binding](#route-model-binding) |
 | Refuse a visitor who can see the record | `authorize((auth) => rule)`, or `forbidden(message)` | [Auth](#auth) |
 | Serve a file or a download | `file(body, { contentType, filename })` | [User input in, files out](#user-input-in-files-out) |
-| Answer a poll that has nothing new | `ifChanged(etag, response)` | [Responses](#responses-and-failures) |
-| Add a header to every response of some routes | `responseHeader(name, value)` in a guard layer | [Responses](#responses-and-failures) |
-| Keep a value in the visitor's browser | `cookie(name, Schema, options)`, declared once | [Responses](#responses-and-failures) |
-| Answer a CORS preflight | `routes.options(path, action(noContent(headers)))` | [Responses](#responses-and-failures) |
+| Answer a poll that has nothing new | `ifChanged(etag, response)` | [Files, headers and polling](#files-headers-and-polling) |
+| Add a header to every response of some routes | `responseHeader(name, value)` in a guard layer | [Files, headers and polling](#files-headers-and-polling) |
+| Keep a value in the visitor's browser | `cookie(name, Schema, options)`, declared once | [Cookies](#cookies) |
+| Answer a CORS preflight | `routes.options(path, action(noContent(headers)))` | [Files, headers and polling](#files-headers-and-polling) |
 
 **Routes, models and pages**
 
@@ -1520,29 +1520,37 @@ endings, not statements to run in sequence:
 | Fail with `ForbiddenError` | `return yield* forbidden('You cannot edit this project')` |
 | Send a form back with field errors | `return yield* invalid({ name: 'That name is taken.' })` |
 
+### Flash messages and failed forms
+
 `yield* flash('success', 'Project saved.')` before any of them hands a value to
 the next page the user sees, as Inertia's page `flash` field: the page a
 redirect renders, or the page the same request renders.
 
 A form submission that fails validation, whether in `validateRequest` or as a
 `ValidationError` the action fails with, redirects back (303) to the page it
-came from: the path of its same-origin `Referer`, or `/` without one. A `ValidationError`
-with `redirectTo` goes to that page instead, such as a wizard's earlier step. That page renders with all of its own props and the field errors as
-`errors`; a form that names an Inertia error bag gets them under its name.
+came from: the path of its same-origin `Referer`, or `/` without one. A
+`ValidationError` with `redirectTo` goes to that page instead, such as a
+wizard's earlier step. That page renders with all of its own props and the
+field errors as `errors`; a form that names an Inertia error bag gets them
+under its name.
+
 Errors and flash values travel in a short-lived `HttpOnly` cookie that the
-next page to render reads and clears; a request that only redirects, such as
+next page to render reads and clears. A request that only redirects, such as
 a home page sending visitors to their dashboard, passes them on, so a failed
 form whose `Referer` was missing still shows its errors where it lands. The
-cookie is readable, not encrypted: never
-flash a secret, such as a new API key shown once; render the page with it
-from the action instead. A JSON client gets a 422 instead, and invalid
-query parameters on a page visit render the error page with 422, with the
-invalid fields as `errors`; `readErrorPage(res)` from `@popcomputer/web/testing`
-reads it in a test.
+cookie is readable, not encrypted: never flash a secret, such as a new API key
+shown once; render the page with it from the action instead.
+
+A JSON client gets a 422 instead of the redirect. Invalid query parameters on
+a page visit render the error page with 422, with the invalid fields as
+`errors`; `readErrorPage(res)` from `@popcomputer/web/testing` reads it in a
+test.
+
+### Cookies
 
 An application cookie, such as a guest's cart, is declared once with the
 schema of its value, and actions read, set and clear it through the
-declaration; the response carries what they set, beside flash, so a set
+declaration. The response carries what they set, beside flash, so a set
 cookie survives the redirect after a form:
 
 ```ts
@@ -1563,59 +1571,58 @@ export const addToCart = action(Effect.gen(function* () {
 A value the browser sends that the schema rejects reads as none, and setting
 one the schema rejects is a defect naming the cookie, so check limits first.
 A value whose JSON form is a string, such as a token, is stored as it is, so a
-cookie written by hand before reads the same. Reading a cookie renders the
-page afresh for each request, and a cached page whose path a cookie covers is
-rendered afresh for every visitor carrying it, so scope a cookie to the paths
-that read it: `path: '/r/{restaurant}/'` takes its placeholder from the route
-that sets it, and covers `/r/acme/cart` but not the menu at `/r/acme`.
+cookie written by hand before reads the same.
+
+Reading a cookie renders the page afresh for each request, and a cached page
+whose path a cookie covers is rendered afresh for every visitor carrying it,
+so scope a cookie to the paths that read it: `path: '/r/{restaurant}/'` takes
+its placeholder from the route that sets it, and covers `/r/acme/cart` but
+not the menu at `/r/acme`.
+
 Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS. An unsigned
 cookie holds whatever a visitor sends, so it suits a preference or a pointer
-the server checks; one the server must trust is declared with
+the server checks. One the server must trust is declared with
 `signed: { secret: 'COOKIE_SECRET' }`, naming the binding that holds the
 secret, and a value without a valid signature reads as none. A secret the
 bindings lack fails when the cookie is first read or set, so set a signed
 cookie before the writes it goes with.
-`betterAuthLogoutAction({ clear: [impersonationCookie] })` clears such cookies
-on sign-out. A cookie set
-before the action fails is still sent with the failure's response. A test
-reads the value a response set with `readCookie(res, cartCookie)` from
-`@popcomputer/web/testing`.
+
+`betterAuthLogoutAction({ clear: [impersonationCookie] })` clears such
+cookies on sign-out. A cookie set before the action fails is still sent with
+the failure's response. A test reads the value a response set with
+`readCookie(res, cartCookie)` from `@popcomputer/web/testing`.
+
+### Files, headers and polling
 
 `file(body, { contentType, filename })` answers with a file, such as an export
 or a feed: text, bytes, or an Effect `Stream` sent as it is produced. A
-`filename` offers it as a download. `json` and `text` take
-`{ status, headers }` as well as a status, and an `etag` naming the version of
-what they hold, such as a counter the writes bump: a client polling with
-`If-None-Match` gets `304 Not Modified` with no body until it changes,
+`filename` offers it as a download. [User input in, files out](#user-input-in-files-out)
+shows serving an upload back safely.
+
+`json` and `text` take `{ status, headers }` as well as a status, and an
+`etag` naming the version of what they hold, such as a counter the writes
+bump: a client polling with `If-None-Match` gets `304 Not Modified` with no
+body until it changes,
 ``json(KitchenOrders, orders, { etag: `orders-${version}` })``. When building
 the body costs a query, `ifChanged(etag, response)` answers the 304 before
 running the response's Effect at all.
 
-Typed failures, defects, Hono exceptions, and not-found responses share the
-configured error boundary. Use `EffectErrorObserverService` as the integration
-point for Sentry, PostHog, or another reporting system; observation does not
-change the failure channel.
+A guard layer adds a header to every response of its routes, failures
+included, with `responseHeader('Deprecation', 'true')`, as for an API's
+rate-limit headers. An `HttpError` adds its own `headers` to the response, as
+`HttpError.rateLimited(30)` adds `Retry-After`. `routes.options(path, action)`
+answers a CORS preflight, with `noContent(headers)` for its 204.
 
-A JSON client gets every failure in one envelope, whatever its status: a
-request that asks for JSON or sends a JSON body, or one that asks for no HTML
-while it sends an `Accept` header, as `fetch` does with `*/*`, or an
-`Authorization` header, as an API client with a bearer token does. Browsers ask
-for HTML on every visit and form post, so they get pages, a signed-out visitor
-goes to sign in, and a failed form goes back to the form. A signed-out JSON
-client gets a 401 instead. `prefersJson` and `jsonOrRender` decide the same
-way. An API whose clients may send neither header, such as a scanner that
-forgot its key, registers its routes on `routes.jsonApi()`, with their
-declared paths, `routes.jsonApi().provide(ApiKeyAuth).get(paths.apiInvoices, listInvoices)`:
-every request to them is a JSON client. An `HttpError` adds its `headers` to the response, as
-`HttpError.rateLimited(30)` adds `Retry-After`. A guard layer adds a header to
-every response of its routes, failures included, with
-`responseHeader('Deprecation', 'true')`, as for an API's rate-limit headers.
-`routes.options(path, action)` answers a CORS preflight, with `noContent(headers)`
-for its 204. An API that rejects query parameters it does not declare passes
-`validateRequest(Query, { request: { order: ['query'] }, parseOptions: {
-onExcessProperty: 'error' } })`; reading only the query keeps the route's own
-parameters from counting as excess. `Jsonify<typeof Schema.Type>` from
-`@popcomputer/web/effect` types a JSON response as React reads it.
+### JSON clients
+
+A JSON client gets every failure in one envelope, whatever its status. A
+request is a JSON client when it asks for JSON or sends a JSON body, or when
+it asks for no HTML while sending an `Accept` header, as `fetch` does with
+`*/*`, or an `Authorization` header, as an API client with a bearer token
+does. Browsers ask for HTML on every visit and form post, so they get pages,
+a signed-out visitor goes to sign in, and a failed form goes back to the
+form; a signed-out JSON client gets a 401 instead. `prefersJson` and
+`jsonOrRender` decide the same way.
 
 ```json
 {
@@ -1627,45 +1634,74 @@ parameters from counting as excess. `Jsonify<typeof Schema.Type>` from
 }
 ```
 
+An API whose clients may send neither header, such as a scanner that forgot
+its key, registers its routes on `routes.jsonApi()`, with their declared
+paths, `routes.jsonApi().provide(ApiKeyAuth).get(paths.apiInvoices, listInvoices)`:
+every request to them is a JSON client. An API that rejects query parameters
+it does not declare passes `validateRequest(Query, { request: { order:
+['query'] }, parseOptions: { onExcessProperty: 'error' } })`; reading only
+the query keeps the route's own parameters from counting as excess.
+
+### JSON responses declared by a schema
+
 A JSON API declares each endpoint as a contract, as
 [JSON endpoints](#json-endpoints) shows, and its actions return values the
 contract encodes. An ordinary action that answers JSON, such as a page's
 `jsonOrRender`, declares its response as an Effect Schema and answers with
 `json(Schema, value)`: the value is checked against the schema and encoded
-through its JSON form, so a `Date` leaves as an ISO string, and a test reads
-it back with `readJson(res, Schema)` from `@popcomputer/web/testing`. A client
-decodes it with the same schema,
-`S.decodeUnknownSync(S.toCodecJson(Schema))(await res.json())`, so the shape is
-declared once. A schema a client imports is bundled with it, so declare a
-response schema that a separate client decodes, such as a CLI's or an SDK's,
-apart from the Drizzle tables, unlike a page schema, which React reads only as
-a type: read its columns with `columnsOf(table, Schema)` and answer with
+through its JSON form, so a `Date` leaves as an ISO string. A test reads it
+back with `readJson(res, Schema)` from `@popcomputer/web/testing`, and a
+client decodes it with the same schema,
+`S.decodeUnknownSync(S.toCodecJson(Schema))(await res.json())`, so the shape
+is declared once. `Jsonify<typeof Schema.Type>` from
+`@popcomputer/web/effect` types a JSON response as React reads it.
+
+A schema a client imports is bundled with it. Declare a response schema that
+a separate client decodes, such as a CLI's or an SDK's, apart from the
+Drizzle tables, unlike a page schema, which React reads only as a type: read
+its columns with `columnsOf(table, Schema)` and answer with
 `json(Schema, rows)`, where a field whose column changes type fails to
 type-check. The same holds for a page answered with `jsonOrRender` that such
 a client decodes.
 
-`errors` names each invalid field's message, as a form's page receives them.
-`ErrorResponse` from `@popcomputer/web/schema` is the envelope's schema, which
-imports only `effect`, so a client decodes a failure with it; `readError(res)`
-from `@popcomputer/web/testing` reads it in a test. An `HttpError` with a body
-adds it as `body`. A body a client reads is declared by a schema, as a JSON
-response is: `httpError(409, 'Some lines are short of stock.',
-ShortOfStock, { lines })` checks and encodes it, a test reads it with
-`readError(res, ShortOfStock)`, and a client decodes the whole failure with
-`errorResponseWith(ShortOfStock)`. A body without a schema,
+### Failures a client reads
+
+The envelope's `errors` names each invalid field's message, as a form's page
+receives them. `ErrorResponse` from `@popcomputer/web/schema` is the
+envelope's schema, which imports only `effect`, so a client decodes a failure
+with it; `readError(res)` from `@popcomputer/web/testing` reads it in a test.
+
+An `HttpError` with a body adds it as `body`. A body a client reads is
+declared by a schema, as a JSON response is:
+`httpError(409, 'Some lines are short of stock.', ShortOfStock, { lines })`
+checks and encodes it, a test reads it with `readError(res, ShortOfStock)`,
+and a client decodes the whole failure with `errorResponseWith(ShortOfStock)`.
+A body without a schema,
 `httpError(409, 'Already checked in.', { code: 'ticket_already_used' })`,
-reaches the client as `{ ..., "httpStatus": 409, "body": { "code":
-"ticket_already_used" } }`. Answer a record the client may not see with `notFound(...)`,
-which is what a missing bound record answers, rather than an `httpError(404,
-...)` with a body of its own, so a client cannot tell which ids exist. Production replaces the message of a 5xx or an
-internal failure with a generic one. Test the envelope a client receives with
-`ENVIRONMENT: 'production'` in the test bindings.
+reaches the client as
+`{ ..., "httpStatus": 409, "body": { "code": "ticket_already_used" } }`.
+
+Answer a record the client may not see with `notFound(...)`, which is what a
+missing bound record answers, rather than an `httpError(404, ...)` with a body
+of its own, so a client cannot tell which ids exist. Production replaces the
+message of a 5xx or an internal failure with a generic one. Test the envelope
+a client receives with `ENVIRONMENT: 'production'` in the test bindings.
+
+### Reporting failures
+
+Typed failures, defects, Hono exceptions, and not-found responses share the
+configured error boundary. Use `EffectErrorObserverService` as the integration
+point for Sentry, PostHog, or another reporting system; observation does not
+change the failure channel.
+
+### The error page
 
 The error page is rendered by the boundary, after the action, so it receives
 `auth.user` and flash values but not the props `shareProps` computes; give
 its layout defaults for them. A value a guard layer `share()`s before the
 action does reach it, so a banner every page must show, such as "viewing as
-Ada", is shared there.
+Ada", is shared there. [Write the client](#5-write-the-client) shows the
+component.
 
 ## JSON endpoints
 
