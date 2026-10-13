@@ -1918,6 +1918,7 @@ The README's and AGENTS.md's examples pass them.
 | `no-provision-in-action` | `Effect.provide` in an action module | `services` in `setupWeb`, or `routes.provide(layer)` |
 | `require-background` | `waitUntil(...)` | `background('name', effect)` |
 | `no-validation-in-endpoint` | `validateRequest` or `json` in an endpoint's action | The handler's argument, and the returned value |
+| `prefer-checked-config` | Effect's `Config.String('NAME')` and its siblings in an application of the framework | `config.string('NAME')`, which checks the name against the Worker's bindings |
 | `no-auth-api-in-action` | `auth.api.signInEmail(...)` and Better Auth's other endpoints called from an action, which skips its rate limits | `betterAuthRedirect('signInEmail', { body }, ...)` or `betterAuthCall(...)` |
 
 A line that breaks a rule on purpose says why, as

@@ -31,6 +31,7 @@ import {
   noRawRequestInput,
   noRawResponseInAction,
   noValidationInEndpoint,
+  preferCheckedConfig,
   requireBackground,
 } from './actions.js'
 import {
@@ -62,6 +63,7 @@ export const rules: Readonly<Record<string, LintRule>> = {
   'require-background': requireBackground,
   'no-validation-in-endpoint': noValidationInEndpoint,
   'no-auth-api-in-action': noAuthApiInAction,
+  'prefer-checked-config': preferCheckedConfig,
 }
 
 /** The plugin Oxlint's `jsPlugins` or ESLint's `plugins` loads. */

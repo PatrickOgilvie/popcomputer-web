@@ -5,6 +5,7 @@ import {
   authorize,
   background,
   bound,
+  config,
   dbMutation,
   dbQuery,
   dbTransaction,
@@ -47,3 +48,5 @@ export const pinged = action(ping, ({ body }) => Effect.succeed({ ok: body.name 
 
 // Outside an action module's database operations, a delete with no where is a test's reset.
 export const reset = (db: { delete(table: unknown): Promise<void> }) => db.delete(tasks)
+
+export const readsConfig = config.redacted('STRIPE_KEY')

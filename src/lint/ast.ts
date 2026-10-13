@@ -175,6 +175,15 @@ export class Imports {
     return this.names.has(name)
   }
 
+  /** Whether the file imports anything from `source`. */
+  importsFrom(source: string): boolean {
+    for (const imported of this.names.values()) {
+      if (imported.source === source) return true
+    }
+
+    return false
+  }
+
   /** Whether the file imports `name` from any of `sources`. */
   has(sources: ReadonlySet<string>, name: string): boolean {
     for (const imported of this.names.values()) {

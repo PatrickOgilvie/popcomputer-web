@@ -195,7 +195,7 @@ export const noCatchAllInAction: LintRule = {
       CallExpression(node: CallExpression) {
         const name = imports.calledName(node, EFFECT, 'Effect')
 
-        if (name === undefined || !BROAD_RECOVERY.has(name)) return
+        if (!isActionModule(imports) || name === undefined || !BROAD_RECOVERY.has(name)) return
 
         const effect = recovered(node)
         let operation: string | undefined
@@ -216,7 +216,7 @@ export const noCatchAllInAction: LintRule = {
       MemberExpression(node: MemberExpression) {
         const parent = node.parent
 
-        if (parent === null || !isCall(parent) || !parent.arguments.includes(node)) return
+        if (!isActionModule(imports) || parent === null || !isCall(parent) || !parent.arguments.includes(node)) return
 
         const object = unwrap(node.object)
         const name = propertyName(node)
@@ -399,3 +399,59 @@ export const noAuthApiInAction: LintRule = {
     }
   },
 }
+
+/** Effect's Config constructors and the `config` member that checks the same binding's name. */
+const CHECKED_CONFIG: Readonly<Record<string, string>> = {
+  String: 'string',
+  Number: 'number',
+  Int: 'int',
+  Boolean: 'boolean',
+  Duration: 'duration',
+  Redacted: 'redacted',
+  URL: 'url',
+  Date: 'date',
+}
+
+export const preferCheckedConfig: LintRule = {
+  meta: {
+    type: 'suggestion',
+    docs: { description: "An application reads its bindings with config, which checks each name against the Worker's bindings." },
+    messages: {
+      config:
+        "Use config.{{member}}('{{name}}') from @popcomputer/web/effect: it reads the same binding as Config.{{constructor}}, and checks its name against the Worker's bindings, so a misspelled name is a type error rather than a ConfigError in production.",
+    },
+  },
+  create(context) {
+    const imports = new Imports()
+    const WEB = new Set(['@popcomputer/web', '@popcomputer/web/effect', '@popcomputer/web/auth', '@popcomputer/web/cache'])
+
+    return {
+      ImportDeclaration: (node: ImportDeclaration) => imports.add(node),
+      CallExpression(node: CallExpression) {
+        const callee = unwrap(node.callee)
+
+        if (!isMember(callee)) return
+
+        const object = unwrap(callee.object)
+        const constructor = propertyName(callee)
+        const imported = isIdentifier(object) ? imports.importedName(object, EFFECT_CONFIG) : undefined
+        const member = constructor === undefined ? undefined : CHECKED_CONFIG[constructor]
+
+        if (member === undefined || (imported !== 'Config' && imported !== '*')) return
+
+        // Only in an application of the framework, where `config` is available.
+        const usesWeb = [...WEB].some((source) => imports.importsFrom(source))
+        const argument = node.arguments[0]
+        const name = argument !== undefined && argument.type === 'Literal' && typeof (argument as { value?: unknown }).value === 'string'
+          ? String((argument as { value?: unknown }).value)
+          : 'NAME'
+
+        if (usesWeb && constructor !== undefined) {
+          context.report({ node, messageId: 'config', data: { member, name, constructor } })
+        }
+      },
+    }
+  },
+}
+
+const EFFECT_CONFIG = new Set(['effect', 'effect/Config'])
