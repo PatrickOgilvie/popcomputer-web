@@ -110,12 +110,42 @@ try {
   lintFindings = [`oxlint did not run: ${(lint.stderr || lint.stdout).split('\n')[0]}`]
 }
 
+// How the app uses the framework: route model binding for the records its
+// paths name, and the test helpers rather than hand-rolled stand-ins.
+const textOf = (patterns: ReadonlyArray<string>, exclude: (file: string) => boolean = () => false) =>
+  patterns
+    .flatMap((pattern) => [...new Bun.Glob(pattern).scanSync({ cwd: app })])
+    .filter((file) => !file.includes('node_modules') && !file.startsWith('exam/') && !exclude(file))
+    .map((file) => readFileSync(join(app, file), 'utf8'))
+    .join('\n')
+
+const isTest = (file: string) => /\.test\.tsx?$/.test(file) || /^tests?\//.test(file) || file === 'src/test-support.ts'
+const sourceText = textOf(['src/**/*.ts', 'src/**/*.tsx'], isTest)
+const testText = textOf(['src/**/*.ts', 'test/**/*.ts', 'tests/**/*.ts'], (file) => !isTest(file))
+const pathsText = existsSync(join(app, 'src/paths.ts')) ? readFileSync(join(app, 'src/paths.ts'), 'utf8') : sourceText
+
+const unique = (values: Iterable<string>) => [...new Set(values)].sort()
+const placeholders = unique([...pathsText.matchAll(/\{(\w+)(?::\w+)?\}/g)].map((match) => match[1]))
+const bound = unique([...sourceText.matchAll(/\bbound\(\s*['"](\w+)['"]/g)].map((match) => match[1]))
+const plain = placeholders.filter((name) => !bound.includes(name))
+const rawParams = (sourceText.match(/\.req\.param\(|\.param\(\s*['"]|\.params\(\)/g) ?? []).length
+const list = (names: ReadonlyArray<string>) => (names.length === 0 ? 'none' : names.join(', '))
+const uses = (pattern: RegExp) => (pattern.test(testText) ? 'yes' : 'no')
+
+const usage = [
+  `Route model binding: bound ${list(bound)}; plain parameters ${list(plain)}; raw parameter reads ${rawParams}.`,
+  `Test helpers: testOAuthProvider ${uses(/\btestOAuthProvider\(/)} (own fetch stand-in ${uses(/spyOn\(\s*globalThis\s*,\s*['"]fetch['"]|globalThis\.fetch\s*=/)}), ` +
+    `testD1 ${uses(/\btestD1\(/)} (own Miniflare ${uses(/new Miniflare\(/)}), testBrowser ${uses(/\btestBrowser\(/)}.`,
+]
+
 const lines = [
   `## ${exam}: ${app}`,
   '',
   `| Acceptance | Safety | Journal: types | lint | tests | Lint findings |`,
   `| --- | --- | --- | --- | --- | --- |`,
   `| ${score('acceptance')} | ${score('safety')} | ${steps('types')} | ${steps('lint')} | ${steps('test')} | ${lintFindings.length} |`,
+  '',
+  ...usage,
   '',
 ]
 

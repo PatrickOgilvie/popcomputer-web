@@ -305,7 +305,7 @@ export const web = setupWeb(new Hono<Env>(), {
   }),
   database: (c) => createDb(c.env.DATABASE_URL),
   schema,
-  bindings: { project: schema.projects, task: schema.tasks, organization: schema.organizations },
+  bindings: { project: schema.projects, task: schema.tasks, organization: schema.organizations, member: schema.memberships },
   pages,
   paths,
   auth: {
@@ -683,7 +683,7 @@ export const paths = {
   projectName: '/projects/{project}/name',
   projectBySlug: '/p/{project:slug}',
   organizationMembers: '/orgs/{organization:slug}/members',
-  organizationMember: '/orgs/{organization:slug}/members/{member}',
+  organizationMember: '/orgs/{organization:slug}/members/{member:userId}',
   task: '/projects/{project}/tasks/{task}',
   apiProjects: '/api/projects',
   apiProject: '/api/projects/{project}',
@@ -1452,6 +1452,13 @@ const routeBindings = {
 ```
 
 This fails closed when a child lookup cannot be safely scoped to its parent.
+
+A membership is a route model like any other: with `member: schema.memberships`
+among the bindings, `/orgs/{organization:slug}/members/{member:userId}` loads
+the organization's membership of the user the path names, by its `userId`
+column, and another organization's member is a 404. Bind every record a path
+names this way, rather than reading its id as a plain parameter and querying
+for it.
 
 ### A lookup names one record
 
@@ -3378,40 +3385,41 @@ export const requireRole = (...roles: ReadonlyArray<Membership['role']>) =>
   })
 ```
 
-An action states the role it needs, and scopes its write by the membership's
-organization rather than by anything the request sends:
+An action states the role it needs. The member it changes is a route model
+too: `{member:userId}` binds the organization's membership of the user the
+path names, so a member of another organization is a 404, and the write is
+scoped by the bound row rather than by anything the request sends:
 
 ```ts
 // src/actions/organizations/change-role.ts
 import { and, eq, ne } from 'drizzle-orm'
 import { Effect, Schema as S } from 'effect'
-import { action, back, bound, dbMutation, flash, notFound, validateRequest } from '@popcomputer/web/effect'
-import { requiredString } from '@popcomputer/web/schema'
+import { action, back, bound, dbMutation, flash, forbidden, validateRequest } from '@popcomputer/web/effect'
 import { requireRole } from '../../memberships'
 import { paths } from '../../paths'
 import { memberships } from '../../schema'
 
-// {member} is a plain parameter: the member's user id.
-const ChangeRole = S.Struct({ member: requiredString, role: S.Literals(['admin', 'member']) })
+const ChangeRole = S.Struct({ role: S.Literals(['admin', 'member']) })
 
 export const changeRole = action(Effect.gen(function* () {
-  const admin = yield* requireRole('owner', 'admin')
+  yield* requireRole('owner', 'admin')
   const organization = yield* bound('organization')
+  const member = yield* bound('member')
   const input = yield* validateRequest(ChangeRole)
 
   const [changed] = yield* dbMutation((db) =>
     db.update(memberships)
       .set({ role: input.role })
       .where(and(
-        eq(memberships.organizationId, admin.organizationId),
-        eq(memberships.userId, input.member),
+        eq(memberships.organizationId, member.organizationId),
+        eq(memberships.userId, member.userId),
         // An owner's role changes only by transferring ownership.
         ne(memberships.role, 'owner')
       ))
       .returning()
   )
 
-  if (changed === undefined) return yield* notFound('Member')
+  if (changed === undefined) return yield* forbidden("An owner's role changes only by transferring ownership.")
 
   yield* flash('success', 'Role changed.')
 

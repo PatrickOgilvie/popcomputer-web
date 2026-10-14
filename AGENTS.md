@@ -76,10 +76,13 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
 6. **Load route models with `{param}` placeholders and `bound('param')`.**
    Name each model's Drizzle table in `setupWeb`'s `bindings`
    (`bindings: { project: schema.projects }`); the model is the table's row,
-   checked against its columns. Never query by a bound route parameter
-   yourself (a plain parameter, such as an invitation token, or the id of a
-   record served from the data cache, is read with `validateRequest` and
-   looked up like any input);
+   checked against its columns. Bind every record a path names, nested ones
+   scoped to their parent, a membership by its user too
+   (`/orgs/{organization:slug}/members/{member:userId}` with
+   `bindings: { member: schema.memberships }`), and never read a record's id
+   from the path to query for it yourself (a plain parameter, such as an
+   invitation token, or the id of a record served from the data cache, is
+   read with `validateRequest` and looked up like any input);
    to lock a bound record inside `dbTransaction`, read it again by its id with
    `.for('update')`. On a route that needs a signed-in user, call
    `authorize()` before `bound()`: models load on the first `bound()` call,
