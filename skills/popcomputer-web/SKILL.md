@@ -10,9 +10,11 @@ These rules are the package's `AGENTS.md`. When the project has
 installed version. For a new application, follow the Quick start in
 `node_modules/@popcomputer/web/README.md`.
 
-A project that imports from `honertia` is on the framework's former package.
-Migrate it with the README's "Migrating from `honertia`" table before
-applying these rules.
+A project on an earlier release, or one that imports from `honertia`, the
+framework's former package, upgrades first: follow `UPGRADING.md`, in
+`node_modules/@popcomputer/web/` once 1.2.1 or later is installed and at
+https://github.com/PatrickOgilvie/popcomputer-web/blob/main/UPGRADING.md. It
+also moves the project's own code from Effect 3 to Effect 4.
 
 Rules for writing an application on `@popcomputer/web`. Each rule names the one
 API to use; the README explains the design and shows the full setup. Every

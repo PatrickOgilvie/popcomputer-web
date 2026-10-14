@@ -5,11 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.1] - 2026-10-14
 
 ### Changed
 
 - The upgrade guide is `UPGRADING.md`, shipped in the package. It takes an application on any earlier release, or on the `honertia` package, to the current one, and moves the application's own code from Effect 3 to Effect 4, which is most of an upgrade from `honertia`: what Effect publishes and how to search it, packages first, the renames met most, each checked against Effect 4.0's published types, and the changes no type error shows. It maps `honertia` 0.1's setup, routes and auth routes, and lists what changes without a type error. The README's "Upgrading" and "Migrating from `honertia`" sections point to it, and its examples are type-checked with the README's.
+- The `popcomputer-web` skill sends a project on an earlier release, or on `honertia`, to `UPGRADING.md` before its rules. It sent a `honertia` project to the README's migration table, which the guide replaces.
 
 ## [1.2.0] - 2026-10-14
 
