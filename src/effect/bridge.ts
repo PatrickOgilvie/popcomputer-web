@@ -525,7 +525,7 @@ function createPageRenderer<E extends Env>(
     pages: declared.pages,
     shared: declared.shared,
     flashed: declared.flash,
-    render: (component, props) => Promise.resolve(page.render(component, props)),
+    render: (component, props, options) => Promise.resolve(page.render(component, props, options)),
     share: (key, value) => page.share(key, value),
     flash: (key, value) => requestContext.flash?.set(key, value),
   }
@@ -741,13 +741,24 @@ export function effectBridge<E extends Env, CustomServices = never>(
         )
 
     const testLayer = readTestLayer(c.env)
+    const requestCtx = openWebContext(c)
+
+    // Built once, with the request's runtime, and recorded: the route gives
+    // the same services over its own layers, so a test's fake replaces the
+    // service a route provides as well.
+    const testServices: Layer.Layer<never> | undefined = testLayer === undefined
+      ? undefined
+      : Layer.effectContext(Layer.build(testLayer).pipe(
+          Effect.tap((services) => Effect.sync(() => {
+            requestCtx.testServices = services
+          }))
+        ))
 
     const runtime = ManagedRuntime.make(
-      testLayer === undefined ? appAndRequestLayer : Layer.merge(appAndRequestLayer, testLayer)
+      testServices === undefined ? appAndRequestLayer : Layer.merge(appAndRequestLayer, testServices)
     )
 
     // Store runtime and binding schema on the request context
-    const requestCtx = openWebContext(c)
     requestCtx.runtime = runtime
 
     // A user that testEnv signs in replaces the session for shared props and

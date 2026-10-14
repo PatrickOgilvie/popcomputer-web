@@ -50,12 +50,30 @@ export type PagePropsOf<Component extends string> = PagesConfigured extends true
     : never
   : PageProps
 
-/** `render`'s props argument: optional when the page needs none. */
-export type PagePropsArgument<Component extends string> = PagesConfigured extends true
+/**
+ * A prop value of a page without a registered schema: what JSON carries, in
+ * arrays and objects of any declared shape, interfaces included, but no
+ * functions.
+ */
+export type PagePropShape<Value> =
+  Value extends string | number | boolean | null | undefined | Date ? Value
+  : Value extends (...args: never) => unknown ? never
+  : Value extends ReadonlyArray<infer Element> ? ReadonlyArray<PagePropShape<Element>>
+  : Value extends object ? { readonly [Key in keyof Value]: PagePropShape<Value[Key]> }
+  : never
+
+/** The props of a page without a registered schema: an object whose values `PagePropShape` admits. */
+export type PagePropsShape<Props> = { readonly [Key in keyof Props]: PagePropShape<Props[Key]> }
+
+/**
+ * `render`'s props argument: optional when the page needs none. Without
+ * registered pages, `Props` is the props as given, checked by `PagePropsShape`.
+ */
+export type PagePropsArgument<Component extends string, Props = PageProps> = PagesConfigured extends true
   ? Record<never, never> extends PagePropsOf<Component>
     ? [props?: PagePropsOf<Component>]
     : [props: PagePropsOf<Component>]
-  : [props?: PageProps]
+  : [props?: Props]
 
 /**
  * A value as the client receives it after JSON encoding: dates and bigints
@@ -84,7 +102,7 @@ export function encodePageProps(
   props: object | undefined
 ): Effect.Effect<PageProps | undefined> {
   if (pages === undefined) {
-    // SAFETY: without a registry, render's signature accepts only PageProps.
+    // SAFETY: without a registry, render's signature accepts only props PagePropsShape admits, the values JSON carries.
     return Effect.succeed(props as PageProps | undefined)
   }
 

@@ -207,7 +207,10 @@ export const pages = {
 
 `render('Projects/Show', props)` accepts only a registered page and props
 matching its schema, and encodes the props as JSON through it, so `createdAt`
-reaches the browser as an ISO string. The React component takes its props from
+reaches the browser as an ISO string. A page answers 200, or the status its
+third argument gives: `render('Projects/Missing', {}, { status: 404 })`. An
+application without `pages` passes props of any declared shape, interfaces
+included, whose values JSON carries. The React component takes its props from
 the same schema:
 
 ```tsx
@@ -1129,7 +1132,7 @@ TypeScript give up on the types that later errors are about.
 | Where, and what it says | What it means | What to do |
 | --- | --- | --- |
 | A registration, `missingServices: "@popcomputer/web/Database"` | The action uses a service the setup does not provide | Configure it in `setupWeb` (`database`, `auth.client`, `services`), or `routes.provide(layer)` |
-| A registration, `unhandledErrors: "PaymentDeclined"` | The action can fail with an error the boundary cannot answer | Turn it into a response with `Effect.catchTag`: `invalid`, `notFound`, `httpError`, `flash` then `back` |
+| A registration, `unhandledErrors: "PaymentDeclined"` | The action can fail with an error the boundary cannot answer | Turn it into a response with `Effect.catchTag`: `invalid`, `notFound`, `httpError`, `flash` then `back`. A failure the action cannot answer, such as another system being down: pipe that call through `Effect.orDie`, which answers 500. A list cut off with `... 7 more ...` shows whole with `"noErrorTruncation": true` in `tsconfig.json` |
 | A registration, `missingRouteModels: "project"` | The action, or a guard it is registered under, calls `bound('project')`, and the path has no `{project}` | Register it on a path with the placeholder, or read the record by an id from `validateRequest` |
 | A registration or `action(...)`, `Effect<..., unknown, unknown>` or `missingServices: "unnamed service"` | An earlier type error inside the action made its type unknown | Fix the first error inside the action |
 | `render(...)`, props not assignable | The page's name or props differ from `src/pages.ts` | Change the props, or the page's schema |
@@ -1994,6 +1997,8 @@ endings, not statements to run in sequence:
 | Fail with `NotFoundError` | `return yield* notFound('Project', projectId)` |
 | Fail with `ForbiddenError` | `return yield* forbidden('You cannot edit this project')` |
 | Send a form back with field errors | `return yield* invalid({ name: 'That name is taken.' })` |
+| Render a page that reports a failure, with its status | `return yield* render('Signing/LinkInvalid', {}, { status: 404 })` |
+| Answer 500 for a failure the action cannot answer | `yield* crm.export(project.id).pipe(Effect.orDie)` |
 
 ### Flash messages and failed forms
 
@@ -2166,6 +2171,35 @@ missing bound record answers, rather than an `httpError(404, ...)` with a body
 of its own, so a client cannot tell which ids exist. Production replaces the
 message of a 5xx or an internal failure with a generic one. Test the envelope
 a client receives with `ENVIRONMENT: 'production'` in the test bindings.
+
+### Failures an action cannot answer
+
+Some failures have no answer the action can give: another system is down, a
+storage write failed. They are defects. Pipe the call that fails through
+`Effect.orDie`, and the request answers 500, with a generic message in
+production and the failure's tag on the development error page, and the error
+observer receives the failure itself, as `kind: 'defect'`:
+
+```ts
+class CrmUnavailable extends S.TaggedError<CrmUnavailable>()('CrmUnavailable', {}) {}
+
+/** Another system the application hands its projects to. */
+declare const crm: { readonly export: (projectId: string) => Effect.Effect<void, CrmUnavailable> }
+
+const exportProject = action(Effect.gen(function* () {
+  yield* authorize()
+  const project = yield* bound('project')
+
+  yield* crm.export(project.id).pipe(Effect.orDie)
+
+  return yield* redirect(paths.project, { project: project.id })
+}))
+```
+
+Never pipe `authorize()`, `bound()`, `validateRequest` or a database call
+through `Effect.orDie`: their failures are answers, a redirect to sign in, a
+404 or the form's errors, and the `no-catch-all-in-action` lint rule reports
+it.
 
 ### Reporting failures
 
@@ -2789,9 +2823,10 @@ export const projectTasks = action(Effect.gen(function* () {
 
 Test routes through the application itself. `app.request` runs the real
 middleware, route and action; `testEnv(layer, bindings)` builds the request
-env. Services in the layer replace the ones the request would otherwise get,
-and a layer a route registers with `.provide()` still takes precedence for
-that route.
+env. Services in the layer replace the ones the application gives, whether
+in `web.services(...)` or on a route with `routes.provide()`, so a test fakes
+a service that reaches another system wherever the application provides it.
+The layer is built once a request, so a fake that keeps state keeps one.
 
 `signedIn(user)` signs the request in without a session cookie. A user given
 only an `id` is named `Test User`; when the user table has columns of its

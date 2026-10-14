@@ -153,7 +153,7 @@ export type RouteActionCheck<R, Err, Services> = [ModelName<Exclude<R, Services>
       ? unknown
       : {
           readonly unhandledErrors: ErrorTag<Exclude<Err, AppError>>
-          readonly fix: "Handle these errors in the action (Effect.catchTag), declare them in the endpoint's errors, or fail with one of the package errors such as HttpError."
+          readonly fix: "Answer each one in the action (Effect.catchTag), declare it in the endpoint's errors, or, for a failure the action cannot answer, such as another system being down, pipe that call through Effect.orDie, which answers 500 and reports it."
         }
     : {
         readonly missingServices: ServiceKey<Exclude<R, Services>>
@@ -1094,6 +1094,14 @@ export class EffectRouteBuilder<
 
       for (const layer of layers) {
         fullLayer = Layer.provideMerge(layer, fullLayer)
+      }
+
+      // The services a test gives with testEnv replace the route's own, as
+      // they replace the request's: built once with the request, given last.
+      const testServices = openWebContext(c).testServices
+
+      if (testServices !== undefined) {
+        fullLayer = Layer.provideMerge(Layer.succeedContext(testServices), fullLayer)
       }
 
       let handlerEffect: Effect.Effect<

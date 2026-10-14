@@ -188,8 +188,10 @@ export function web(config: WebConfig): MiddlewareHandler {
           flash: flashed.flash,
         }
 
+        const status = options.status ?? 200
+
         if (isInertia) {
-          return c.json(page, 200, {
+          return c.json(page, status, {
             [HEADERS.INERTIA]: 'true',
             'Vary': HEADERS.INERTIA,
           })
@@ -204,7 +206,7 @@ export function web(config: WebConfig): MiddlewareHandler {
 
         const html = await config.render(page, c)
 
-        return c.html(html, 200, {
+        return c.html(html, status, {
           'Vary': HEADERS.INERTIA,
         })
       },

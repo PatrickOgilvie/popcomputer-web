@@ -2,7 +2,7 @@
 
 import type { ActiveSignInLimits } from './effect/sign-in-limits.js'
 import type { Context, Env, MiddlewareHandler } from 'hono'
-import type { Config, ManagedRuntime } from 'effect'
+import type { Config, Context as EffectContext, ManagedRuntime } from 'effect'
 import type {
   AuthType,
   AuthUser,
@@ -30,6 +30,11 @@ export interface WebRequestContext<E extends Env = Env> {
   auth?: AuthType
   /** loadUser() — present only when the request carries a valid session */
   authUser?: AuthUser
+  /**
+   * The services testEnv's layer built for this request, recorded when the
+   * request's runtime builds it, so a route gives them over its own layers.
+   */
+  testServices?: EffectContext.Context<never>
   /** web() middleware — renderer / shared props / errors instance */
   web?: WebInstance
   /** web() middleware — flash data from the previous request and for the next. */

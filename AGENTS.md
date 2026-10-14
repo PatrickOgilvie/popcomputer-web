@@ -56,6 +56,12 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
    failures are typed Effect failures:
    turn a domain error into a response with `Effect.catchTags`, such as
    `invalid({ amount: error.message })` to show it beside its form field. A
+   failure the action cannot answer, such as another system being down, is a
+   defect: pipe that call through `Effect.orDie`, which answers 500 and hands
+   the failure to the error observer; never over `authorize()`, `bound()`,
+   `validateRequest` or the database, whose failures are answers. Give a page
+   that reports a failure its status, `render('Signing/LinkInvalid', {},
+   { status: 404 })`. A
    handler that ends differently per branch branches inside `Effect.gen`,
    whose branches TypeScript combines. Do not `throw` in an action. An
    endpoint's action (rule 13) returns its success value instead.
@@ -188,7 +194,8 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
     from `testD1({ migrations: './drizzle' })`, stopped by
     `afterAll(() => databases.dispose())` in `bunfig.toml`'s preload. Replace a service
     that reaches another system with `Layer.succeed(Service, fake)` in the
-    layer, stand in for an OAuth provider with `testOAuthProvider({ ... })`
+    layer, wherever the application gives that service (`web.services` or
+    `routes.provide`), stand in for an OAuth provider with `testOAuthProvider({ ... })`
     and sign people in through it with `signIn(browser, path, person)`, and move time with `testClock()`, which works when rules read the
     time through Effect's `Clock` or `DateTime.now`; `time.settle(request)`
     runs a request whose retries wait on the clock.
@@ -296,8 +303,10 @@ disabling the rule, and when a line breaks one on purpose, say why in the
 disable comment. A type error
 at `routes.get(...)` names the problem: `missingServices` lists services the
 setup does not provide (configure them in `setupWeb`, or `routes.provide(layer)`),
-`unhandledErrors` lists failures that are not the package's errors (handle
-them with `Effect.catchTag`, or fail with `HttpError`), and
+`unhandledErrors` lists failures that are not the package's errors (answer
+them with `Effect.catchTag`, or pipe a call whose failure the action cannot
+answer through `Effect.orDie`; `"noErrorTruncation": true` in `tsconfig.json`
+shows every one), and
 `missingRouteModels` lists models the action or a provided guard reads with
 `bound()` that the route's path does not bind. A type error at
 `render(...)` means the page or its props differ from `src/pages.ts`.

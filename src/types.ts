@@ -1,6 +1,7 @@
 /** Public protocol and rendering types. */
 
 import type { Context } from 'hono'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 
 export type PagePropValue =
   | string
@@ -52,6 +53,11 @@ export interface WebConfig {
 export interface RenderOptions {
   clearHistory?: boolean
   encryptHistory?: boolean
+  /**
+   * The response's status, 200 unless given: 404 for a page that says what
+   * is missing, as a visit and as the Inertia page object alike.
+   */
+  status?: ContentfulStatusCode
 }
 
 export interface WebInstance {

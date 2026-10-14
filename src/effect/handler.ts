@@ -509,7 +509,7 @@ async function handleExit<E extends Env>(
       // Otherwise create a generic defect error
       const structured = createStructuredError(
         ErrorCodes.INT_801_EFFECT_DEFECT,
-        { reason: err instanceof Error ? err.message : String(err) },
+        { reason: describeDefect(err) },
         context
       )
 
@@ -566,4 +566,18 @@ async function handleExit<E extends Env>(
  */
 export function getStructuredFromThrown(error: Error): StructuredError | undefined {
   return structuredErrorsByCause.get(error)
+}
+
+/**
+ * A defect as a developer reads it on the development error page: a tagged
+ * failure an action turned into a defect with `Effect.orDie` by its tag, then
+ * its message, if any. Production shows none of it.
+ */
+function describeDefect(error: unknown): string {
+  const tag: unknown = error instanceof Object ? Reflect.get(error, '_tag') : undefined
+  const message = error instanceof Error ? error.message : ''
+
+  if (typeof tag === 'string') return message === '' ? tag : `${tag}: ${message}`
+
+  return error instanceof Error ? message || error.name : String(error)
 }

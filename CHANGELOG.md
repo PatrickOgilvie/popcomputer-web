@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Found by upgrading a real application, on the original `honertia` package and Effect 3, to 1.1.0.
+
+### Fixed
+
+- `testD1`'s `dispose()` removes the databases' files before it resolves. Miniflare removes its temporary directory on `dispose()` without waiting, and `bun test` exits as soon as the last `afterAll` resolves, so every run left one `miniflare-*` directory in the system's temporary directory: 4 MB for the template's tests, 90 MB for a larger application's, which filled a disk over a day of runs. `testD1` keeps its Miniflares' files in a directory of its own, `popweb-test-d1-*`, and removes it.
+- A service a test fakes in `testEnv`'s layer replaces the one a route gives with `routes.provide()`, as it replaces those `web.services(...)` gives. The route's layer took precedence, so a service only some routes need, given on those routes as AGENTS rule 9 says, could not be faked, and tests faked the other system at its HTTP boundary instead. The test layer is built once a request, so a fake that keeps state keeps one.
+- A defect's development error names it: an action's failure piped through `Effect.orDie`, such as a tagged `CrmUnavailable` with no message, read "An unhandled Effect defect occurred: " with nothing after it. It reads "... occurred: CrmUnavailable".
+
+### Added
+
+- `render(component, props, { status })` answers with a status, as a visit and as the Inertia page object: `render('Signing/LinkInvalid', {}, { status: 404 })` for a page that says what is missing. A page answered 200 always, so an action rendering a not-found page answered with a raw `Response`, which the lint rules refuse. `PageRenderOptions` types the options.
+- Without a page registry, `render` takes props of any declared shape, interfaces included, whose values JSON carries (`PagePropShape`), and still refuses functions. Props had to fit `PageProps`'s index signature, which no `interface` does: `Index signature for type 'string' is missing in type 'ClauseNode'`.
+
+### Changed
+
+- AGENTS rule 4 and the README say what a failure an action cannot answer becomes: a defect, by piping that call through `Effect.orDie`, which answers 500 and reports the failure; never over `authorize()`, `bound()`, `validateRequest` or the database. The `unhandledErrors` type error's fix says so too. Applications invented an `HttpError(500)` with the failure as its cause, and `Effect.orDie`, side by side.
+- "Reading the type errors" says that `"noErrorTruncation": true` shows the whole of an `unhandledErrors` list TypeScript cuts off with `... 7 more ...`.
+
 ## [1.1.0] - 2026-10-14
 
 ### Fixed

@@ -2,7 +2,7 @@
 
 import { Context, Effect, Option, type Redacted, type Schema as S } from 'effect'
 import { CacheError, UnauthorizedError, ForbiddenError } from './errors.js'
-import type { PageProps, PagePropValue } from '../types.js'
+import type { PageProps, PagePropValue, RenderOptions } from '../types.js'
 import type { DeclaredFields, PageSchemas } from './pages.js'
 import type { Registered } from './register.js'
 
@@ -133,7 +133,8 @@ export interface PageRenderer {
   readonly flashed?: DeclaredFields
   render<T extends PageProps>(
     component: string,
-    props?: T
+    props?: T,
+    options?: RenderOptions
   ): Promise<Response>
   share(key: string, value: PagePropValue): void
   /** Hand a value to the next page the user sees, as Inertia's page `flash`. */

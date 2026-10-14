@@ -115,6 +115,7 @@ export { background } from './background.js'
 export {
   redirect,
   render,
+  type PageRenderOptions,
   flash,
   json,
   text,

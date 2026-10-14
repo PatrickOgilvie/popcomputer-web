@@ -16,7 +16,7 @@ import {
 } from './services.js'
 import { Redirect, NotFoundError, ForbiddenError, HttpError, ValidationError } from './errors.js'
 import { sameOriginReferer } from './referer.js'
-import type { PagePropValue } from '../types.js'
+import type { PageProps, PagePropValue, RenderOptions } from '../types.js'
 import {
   encodeDeclaredField,
   encodePageProps,
@@ -24,6 +24,7 @@ import {
   type FlashValue,
   type PageName,
   type PagePropsArgument,
+  type PagePropsShape,
   type SharedKey,
   type SharedValue,
 } from './pages.js'
@@ -52,25 +53,53 @@ function fillPath(path: string, args: readonly unknown[]): string {
   return href(path, ...(args as PathArguments<string>))
 }
 
+/** How `render` answers, besides the page: its status. */
+export interface PageRenderOptions {
+  /** 200 unless given: 404 for a page that says what is missing. */
+  readonly status?: RenderOptions['status']
+}
+
 /**
  * Render a page component.
  *
  * Once the application registers its pages (setupWeb's `pages`), the
  * component must be a registered page and `props` must match its schema,
- * which encodes them as JSON for the client.
+ * which encodes them as JSON for the client. A page answers 200 unless the
+ * options give its status.
  *
  * @example
  * return yield* render('Projects/Show', { project, canEdit })
+ * return yield* render('Signing/LinkInvalid', {}, { status: 404 })
  */
-export function render<Component extends PageName>(
+export function render<Component extends PageName, Props extends PagePropsShape<Props> = PageProps>(
   component: Component,
-  ...args: PagePropsArgument<Component>
-): Effect.Effect<Response, never, PageService> {
-  return renderPage(component, args[0])
+  ...args: [...PagePropsArgument<Component, Props>, options?: PageRenderOptions]
+): Effect.Effect<Response, never, PageService>
+export function render(component: string, ...args: ReadonlyArray<unknown>): Effect.Effect<Response, never, PageService> {
+  const [props, options] = args
+
+  return renderPage(component, props instanceof Object ? props : undefined, pageRenderOptions(options))
+}
+
+/** The statuses a page can answer with: a response with a body, as Hono's `ContentfulStatusCode`. */
+function isPageStatus(status: unknown): status is NonNullable<PageRenderOptions['status']> {
+  return typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 &&
+    ![101, 204, 205, 304].includes(status)
+}
+
+/** The options `render`'s signature checked, read back from its arguments. */
+function pageRenderOptions(options: unknown): PageRenderOptions | undefined {
+  const status: unknown = options instanceof Object ? Reflect.get(options, 'status') : undefined
+
+  return isPageStatus(status) ? { status } : undefined
 }
 
 /** Render a page whose name and props `render`'s signature has checked. */
-function renderPage(component: string, props: object | undefined): Effect.Effect<Response, never, PageService> {
+function renderPage(
+  component: string,
+  props: object | undefined,
+  options?: PageRenderOptions
+): Effect.Effect<Response, never, PageService> {
   return Effect.gen(function* () {
     const page = yield* PageService
     const encoded = yield* encodePageProps(page.pages, component, props)
@@ -80,7 +109,7 @@ function renderPage(component: string, props: object | undefined): Effect.Effect
       yield* sharing.value.share
     }
 
-    return yield* Effect.promise(() => page.render(component, encoded))
+    return yield* Effect.promise(() => page.render(component, encoded, options))
   }).pipe(Effect.withSpan('Web.render', { attributes: { component } }))
 }
 
