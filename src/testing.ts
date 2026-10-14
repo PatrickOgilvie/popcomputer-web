@@ -145,7 +145,10 @@ export interface TestD1Options {
 export interface TestD1 {
   /** A newly created, migrated and empty D1 database, typed as the application's D1 binding. */
   fresh(): Promise<RegisteredD1>
-  /** Stop every Miniflare the databases run in, once every test file is done with them. */
+  /**
+   * Stop every Miniflare the databases run in, once every test file is done
+   * with them, and remove the databases' files, resolving once they are gone.
+   */
   dispose(): Promise<void>
 }
 
@@ -153,6 +156,62 @@ export interface TestD1 {
 interface MiniflareLike {
   getD1Database(name: string): Promise<TestD1Database>
   dispose(): Promise<void>
+}
+
+/** The environment variables `os.tmpdir()` reads, on every platform. */
+const TEMPORARY_DIRECTORY_VARIABLES = ['TMPDIR', 'TMP', 'TEMP'] as const
+
+/**
+ * Construct a Miniflare whose temporary files live under `directory`.
+ *
+ * Miniflare keeps its databases in a directory it names from `os.tmpdir()`
+ * when it is constructed, and its `dispose()` starts removing that directory
+ * without waiting: `bun test` exits as soon as the last `afterAll` resolves,
+ * which leaves the directory behind, tens of megabytes on every run.
+ * Constructed here, its directory is inside one `testD1` owns, and removes,
+ * waiting, on `dispose()`. The constructor is synchronous, so nothing else
+ * reads the variables while they point there.
+ */
+function constructIn<A>(directory: string, construct: () => A): A {
+  const previous = TEMPORARY_DIRECTORY_VARIABLES.map((name) => [name, process.env[name]] as const)
+
+  for (const name of TEMPORARY_DIRECTORY_VARIABLES) process.env[name] = directory
+
+  try {
+    return construct()
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
+}
+
+/** A new directory of the pool's own, under the system's temporary directory. */
+async function poolDirectory(): Promise<string> {
+  const { mkdtemp } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+
+  return mkdtemp(join(tmpdir(), 'popweb-test-d1-'))
+}
+
+/**
+ * Remove the pool's directory, resolving once it is gone. Miniflare is still
+ * removing its own directory inside it, unawaited, and a removal that finds
+ * entries vanishing under it can resolve leaving their parent: try again until
+ * nothing is left.
+ */
+async function removePoolDirectory(path: string): Promise<void> {
+  const { rm, stat } = await import('node:fs/promises')
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await rm(path, { recursive: true, force: true })
+
+    if (!(await stat(path).then(() => true, () => false))) return
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
 }
 
 async function loadMiniflare(): Promise<new (options: object) => MiniflareLike> {
@@ -186,14 +245,19 @@ export function testD1(options: TestD1Options): TestD1 {
   let current: { readonly miniflare: MiniflareLike; next: number } | undefined
   let miniflare: Promise<new (options: object) => MiniflareLike> | undefined
   let statements: Promise<ReadonlyArray<string>> | undefined
+  let directory: Promise<string> | undefined
 
   return {
     async fresh() {
       const Miniflare = await (miniflare ??= loadMiniflare())
+      const files = await (directory ??= poolDirectory())
 
       // From here to the next await nothing else runs, so each call takes its own database.
       if (current === undefined || current.next >= names.length) {
-        current = { miniflare: new Miniflare({ modules: true, script: 'export default {}', d1Databases: names }), next: 0 }
+        current = {
+          miniflare: constructIn(files, () => new Miniflare({ modules: true, script: 'export default {}', d1Databases: names })),
+          next: 0,
+        }
         started.push(current.miniflare)
       }
 
@@ -210,8 +274,12 @@ export function testD1(options: TestD1Options): TestD1 {
     },
     async dispose() {
       const stopping = started.splice(0)
+      const files = directory
       current = undefined
+      directory = undefined
       await Promise.all(stopping.map((running) => running.dispose()))
+
+      if (files !== undefined) await removePoolDirectory(await files)
     },
   }
 }
