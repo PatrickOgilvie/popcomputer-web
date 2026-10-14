@@ -162,6 +162,22 @@ describe('sign-in limits', () => {
     expect((await viaApi('correct horse')).status).toBe(429)
   })
 
+  test('a sign-in through an identity provider is not counted against the address', async () => {
+    const limiter = testRateLimiter({ limit: 1 })
+    const { app, env } = await createApp(limiter)
+    const office = testBrowser(app, env)
+    const start = () => office.request('/api/auth/sign-in/social', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'github', callbackURL: '/home' }),
+    })
+
+    const statuses = [(await start()).status, (await start()).status, (await start()).status]
+
+    expect(statuses).not.toContain(429)
+    expect(limiter.refused).toEqual([])
+  })
+
   test('a sweep from a Cron Trigger deletes the counts whose window has passed', async () => {
     const { app, env, time, rows, routes } = await createApp(testRateLimiter({ limit: 100 }))
     const scheduled = routes.scheduled(() => sweepSignInFailures)

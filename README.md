@@ -672,6 +672,8 @@ export const paths = {
   login: '/login',
   logout: '/logout',
   authApi: '/api/auth/*',
+  authCallback: '/api/auth/callback/{provider}',
+  loginWithAcme: '/login/acme',
   dashboard: '/dashboard',
   billing: '/billing',
   pricing: '/pricing',
@@ -1070,7 +1072,8 @@ and the lint rules name it where an action reaches for something else.
 | Call Better Auth for a result | `betterAuthCall('enableTwoFactor', { body }, { errors })` | [Signing in and out](#signing-in-and-out) |
 | Sign out | `betterAuthLogoutAction({ redirectTo, clear })` | [Signing in and out](#signing-in-and-out) |
 | Limit password guessing | `auth.signInLimits`, `sweepSignInFailures` | [Limiting password guessing](#limiting-password-guessing) |
-| Use a Better Auth plugin: organizations, two-factor, magic links, OAuth providers | its endpoints by name with `betterAuthRedirect` and `betterAuthCall`; `betterAuthHandler({ settable })` for callbacks | [Better Auth's plugins](#better-auths-plugins) |
+| Use a Better Auth plugin: organizations, two-factor, magic links | its endpoints by name with `betterAuthRedirect` and `betterAuthCall` | [Better Auth's plugins](#better-auths-plugins) |
+| Sign in through an OAuth provider, a company's own or GitHub's | `betterAuthRedirect('signInSocial', ...)`, and `betterAuthHandler()` on the callback alone | [Signing in with an OAuth provider](#signing-in-with-an-oauth-provider) |
 | Add a field to the user | a column on the user table, with `betterAuthFields` | [Auth](#auth) |
 | Authenticate an API key | a layer failing with `new UnauthorizedError({ message, challenge: 'Bearer' })` | [Caching an API](#caching-an-api-that-authenticates-each-request) |
 
@@ -1699,15 +1702,20 @@ and 303 on an Inertia visit, as Inertia requires; a test asserts the
 while signed out, as after a session expires, cannot be replayed, so
 `?redirect=` names the page the form was on, and a JSON client gets a 401.
 
-`betterAuthHandler()` forwards a request to Better Auth's own API, for
-browser code that calls it directly (Better Auth's client SDK) and for an
-OAuth provider's callback: `routes.all(paths.authApi, betterAuthHandler())`,
-with `authApi: '/api/auth/*'` among the paths. Register it only if the
-application needs it: it exposes every endpoint Better Auth and its plugins
-define, including sign-up and update-user, which write the user fields
-declared `input: true` without the application's actions checking them.
-Once the registered Better Auth declares such a field, TypeScript asks for
-the ones visitors may set there, `betterAuthHandler({ settable: ['timeZone'] })`,
+`betterAuthHandler()` forwards a request to Better Auth's own API. Register
+it on the paths the application needs Better Auth to answer itself, and no
+others: an OAuth provider's callback,
+`routes.get(paths.authCallback, betterAuthHandler())` with
+`authCallback: '/api/auth/callback/{provider}'`, as
+[Signing in with an OAuth provider](#signing-in-with-an-oauth-provider) shows.
+Browser code that calls Better Auth directly (its client SDK) needs all of it,
+`routes.all(paths.authApi, betterAuthHandler())` with
+`authApi: '/api/auth/*'`, which exposes every endpoint Better Auth and its
+plugins define past the application's guards: the organization plugin's
+role changes and deletions, and sign-up and update-user, which write the user
+fields declared `input: true` without the application's actions checking
+them. Once the registered Better Auth declares such a field, TypeScript asks
+for the ones visitors may set there, `betterAuthHandler({ settable: ['timeZone'] })`,
 and the handler refuses a request setting any other with a 400; `settable: []`
 keeps every field to the application's own forms.
 
@@ -1743,11 +1751,8 @@ other, typed from the registered client. Where they meet the application:
   `{ twoFactorRedirect: true }` rather than a session, so the sign-in's
   `redirectTo` is `(result) => 'twoFactorRedirect' in result ? paths.twoFactor : paths.dashboard`,
   and the code form's action calls `betterAuthRedirect('verifyTOTP', { body: input }, { redirectTo, errors })`.
-- An OAuth provider: a sign-in button posts to an action returning
-  `betterAuthRedirect('signInSocial', { body: { provider: 'github', callbackURL: paths.dashboard } }, { redirectTo: (result) => result.url ?? paths.login })`.
-  The provider is another site, so an Inertia visit gets the 409 and
-  `X-Inertia-Location` Inertia asks for, and loads it as a full page. The
-  provider returns to Better Auth's callback, which `betterAuthHandler()` serves.
+- An OAuth provider, a company's own or GitHub's: see
+  [Signing in with an OAuth provider](#signing-in-with-an-oauth-provider).
 - A magic link, or another link Better Auth emails: the action verifying its
   token, `betterAuthRedirect('magicLinkVerify', { query: input }, { redirectTo })`,
   fails as a rejection does once the link is used or expired, so it shows a
@@ -1755,10 +1760,124 @@ other, typed from the registered client. Where they meet the application:
 - Organizations: the plugin's `member` table is the membership a guard reads,
   as [Roles belong to memberships](#roles-belong-to-memberships-read-by-a-guard)
   shows, with the organization bound by its route:
-  `bindings: { organization: schema.organization }`.
+  `bindings: { organization: schema.organization }`. Check a role in the
+  guard or the action before calling the plugin's endpoint, so a member
+  without it gets a 403: the plugin's own refusal fails as a rejection does,
+  sending the form back with its message.
+- Writes that must happen together: Better Auth writes each row in its own
+  statement, which on D1 is never a transaction. The organization plugin's
+  `createOrganization` checks the slug is free, writes the organization, then
+  its owner's membership, so a failure between leaves an organization nobody
+  owns, and two requests for one slug end in a 500. On D1, write an
+  organization and its owner in one `dbBatch` of your own, into the plugin's
+  tables, and turn the plugin's off with `allowUserToCreateOrganization:
+  false`. Give the tables the constraints its checks stand in for (a unique
+  slug, one membership per person and organization, one pending invitation
+  per address), so a second, simultaneous request fails rather than writes a
+  duplicate.
 
 The package's own tests drive each of these through an application on every
 Better Auth release it supports.
+
+### Signing in with an OAuth provider
+
+A provider Better Auth knows, such as GitHub or Google, goes in
+`betterAuth({ socialProviders })`; any other OAuth 2.0 or OpenID Connect
+provider, such as a company's own, goes in the `genericOAuth` plugin. Either
+way, signing in is Better Auth's `signInSocial` with the provider's id, and
+the provider sends the browser back to Better Auth's callback,
+`/api/auth/callback/{provider}`:
+
+```ts
+// src/acme-auth.ts
+import { betterAuth } from 'better-auth'
+import { drizzleAdapter } from 'better-auth/adapters/drizzle'
+import { genericOAuth } from 'better-auth/plugins'
+import type { Database } from './db'
+import * as schema from './schema'
+
+export interface CreateAcmeAuthOptions {
+  readonly db: Database
+  readonly secret: string
+  readonly baseURL: string
+  readonly clientId: string
+  readonly clientSecret: string
+}
+
+export function createAcmeAuth(options: CreateAcmeAuthOptions) {
+  return betterAuth({
+    database: drizzleAdapter(options.db, { provider: 'pg', schema }),
+    secret: options.secret,
+    baseURL: options.baseURL,
+    plugins: [
+      genericOAuth({
+        config: [{
+          providerId: 'acme',
+          clientId: options.clientId,
+          clientSecret: options.clientSecret,
+          authorizationUrl: 'https://id.acme.example/oauth/authorize',
+          tokenUrl: 'https://id.acme.example/oauth/token',
+          userInfoUrl: 'https://id.acme.example/oauth/userinfo',
+          pkce: true,
+        }],
+      }),
+    ],
+    // A person is their account at the provider, not an email address: an
+    // account there reporting someone's email is refused, not given theirs.
+    account: { accountLinking: { disableImplicitLinking: true } },
+    // A refused sign-in lands on the application's page, with `?error=`.
+    onAPIError: { errorURL: '/login' },
+    // Better Auth allows three sign-ins from one address in ten seconds, and
+    // an office signs in through one address.
+    rateLimit: { enabled: true, storage: 'memory', customRules: { '/sign-in/social': { window: 60, max: 30 } } },
+  })
+}
+```
+
+A sign-in button posts to an action that starts the sign-in. The provider is
+another site, so the answer to an Inertia visit is the 409 and
+`X-Inertia-Location` Inertia asks for, and it loads the provider as a full
+page:
+
+```ts
+// src/actions/acme.ts
+import { action } from '@popcomputer/web/effect'
+import { betterAuthRedirect } from '@popcomputer/web/auth'
+import { paths } from '../paths'
+
+export const signInWithAcme = action(
+  betterAuthRedirect('signInSocial', {
+    body: { provider: 'acme', callbackURL: paths.projects, errorCallbackURL: paths.login },
+  }, { redirectTo: (result) => result.url ?? paths.login })
+)
+```
+
+Register it for guests, and Better Auth's handler on the callback alone, so
+no other endpoint of Better Auth's is reachable past the application's
+guards:
+
+```ts
+import { RequireGuestLayer } from '@popcomputer/web/effect'
+import { betterAuthHandler } from '@popcomputer/web/auth'
+import { signInWithAcme } from '../actions/acme'
+
+routes.provide(RequireGuestLayer).post(paths.loginWithAcme, signInWithAcme)
+routes.get(paths.authCallback, betterAuthHandler())
+```
+
+Better Auth checks the callback's `state` against a cookie it set in the
+browser that started the sign-in, so a sign-in finished in another browser
+is refused. `auth.signInLimits` does not count sign-ins through a provider
+against the client's address: they check no password here.
+
+A test stands in for the provider by answering `fetch` for its origin: it
+starts the sign-in through the application, issues a code for the person
+signing in, and requests the `redirect_uri` from the authorization URL with
+that code and the URL's `state`, as the provider would send the browser. Its
+token endpoint answers the code with an access token, and its user info
+endpoint answers the token with the person (`id`, `email`,
+`email_verified`, `name`); `spyOn(globalThis, 'fetch')` from `bun:test`
+replaces `fetch` for the test.
 
 ### Limiting password guessing
 

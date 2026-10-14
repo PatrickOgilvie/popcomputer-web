@@ -105,14 +105,24 @@ export function activeSignInLimits(config: SignInLimitsConfig, bindings: object)
   }
 }
 
-/** Better Auth's paths a client address is limited on: signing in and up, and every password and verification call. */
+/** Better Auth's paths a client address is limited on: signing in and up, and every password and verification call, except a sign-in through an identity provider. */
 const ADDRESS_LIMITED = [
   '/sign-in', '/sign-up', '/change-password', '/change-email', '/reset-password', '/request-password-reset',
   '/forget-password', '/send-verification-email', '/verify-email', '/email-otp', '/two-factor', '/magic-link', '/phone-number',
 ]
 
+/**
+ * Sign-ins that send the visitor to an identity provider, which checks the
+ * person and sends no email from here: an office signing in together through
+ * one address is not guessing anything.
+ */
+const PROVIDER_SIGN_INS = ['/sign-in/social', '/sign-in/oauth2', '/sign-in/sso']
+
+const under = (path: string, prefix: string): boolean => path === prefix || path.startsWith(`${prefix}/`)
+
 /** Whether Better Auth's endpoint at `path` is one whose calls are limited. */
-export const isLimitedPath = (path: string): boolean => ADDRESS_LIMITED.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
+export const isLimitedPath = (path: string): boolean =>
+  !PROVIDER_SIGN_INS.some((prefix) => under(path, prefix)) && ADDRESS_LIMITED.some((prefix) => under(path, prefix))
 
 /** Whether the endpoint at `path` signs an account in with a password, whose failures are counted. */
 export const isPasswordSignIn = (path: string): boolean => path === '/sign-in/email' || path === '/sign-in/username'

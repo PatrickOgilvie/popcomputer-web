@@ -115,10 +115,17 @@ TypeScript example here and in the README type-checks against the package.
    `routes.scheduled(() => sweepSignInFailures)`, and keep
    `betterAuth({ rateLimit: { enabled: true, storage: 'memory' } })`. Better
    Auth's plugins (organizations, two-factor, magic links, OAuth providers)
-   stay Better Auth's: call their endpoints by name the same way, and serve
-   OAuth callbacks and Better Auth's client SDK with
-   `routes.all(paths.authApi, betterAuthHandler({ settable }))`, naming the
-   `input: true` user fields visitors may set there. Make the application's
+   stay Better Auth's: call their endpoints by name the same way. Sign in
+   through an OAuth provider (`socialProviders`, or `genericOAuth` for a
+   company's own) with `betterAuthRedirect('signInSocial', ...)`, and serve
+   its callback alone, `routes.get(paths.authCallback, betterAuthHandler())`,
+   with `account: { accountLinking: { disableImplicitLinking: true } }` and
+   `onAPIError: { errorURL }` in `betterAuth`; register
+   `routes.all(paths.authApi, betterAuthHandler({ settable }))` only for
+   Better Auth's client SDK, naming the `input: true` user fields visitors may
+   set there. On D1, Better Auth writes each row in its own statement: write
+   rows that must exist together, such as an organization and its owner, in
+   your own `dbBatch`. Make the application's
    own record of a new member on their first visit, in a guard layer, since
    users from OAuth providers and magic links never pass through a sign-up
    action. A role a user
