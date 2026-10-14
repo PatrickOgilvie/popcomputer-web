@@ -11,8 +11,11 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getSchema } from 'better-auth/db'
 import { eq } from 'drizzle-orm'
+import { Redacted, Schema as S } from 'effect'
 import { getTableConfig as sqliteTableConfig } from 'drizzle-orm/sqlite-core'
 import { testBrowser, testEnv } from '../../src/testing.js'
+import { betterAuthSession } from '../../src/auth.js'
+import { tableSchema } from '../../src/schema.js'
 import { acmeProfiles, createAuth, createDatabase, newOutbox, schema, type CreateAuthOptions } from './fixture.js'
 import { app } from './app.js'
 
@@ -248,6 +251,37 @@ describe('signing in with another provider', () => {
 
     await me(visitor)
     expect(db.select().from(schema.profile).all()).toHaveLength(1)
+  })
+})
+
+describe('decoding the session', () => {
+  test("a nullable field Better Auth left unset decodes as null, as its memory adapter and stateless sessions leave it", async () => {
+    const decode = S.decodeUnknownPromise(betterAuthSession(tableSchema(schema.user), tableSchema(schema.session)))
+    const now = new Date()
+    const session = { id: 's', userId: 'u', token: 't', expiresAt: now, createdAt: now, updatedAt: now }
+    const user = { id: 'u', name: 'Grace', email: 'grace@acme.example', emailVerified: true, createdAt: now, updatedAt: now }
+
+    const decoded = await decode({ user: { ...user, image: undefined }, session })
+
+    expect(decoded.user.image).toBeNull()
+    expect(decoded.user.timeZone).toBeNull()
+    expect(decoded.session.activeOrganizationId).toBeNull()
+    expect(Redacted.value(decoded.session.token)).toBe('t')
+  })
+})
+
+describe("Better Auth's session cookie cache", () => {
+  test("a member whose user has fields Better Auth left unset is signed in from the cached session", async () => {
+    const { browser } = setup({ cookieCache: { enabled: true, maxAge: 300 } })
+    const visitor = browser()
+    acmeProfiles.set('code-cached', { id: 'acme-cached', email: 'cached@acme.example', name: 'Cache Member' })
+
+    const started = await visitor.request('/sign-in/acme', { method: 'POST' })
+    const state = new URL(started.headers.get('Location') ?? '').searchParams.get('state')
+    await visitor.request(`/api/auth/callback/acme?code=code-cached&state=${state}`)
+
+    expect(visitor.cookies.has('better-auth.session_data')).toBe(true)
+    expect((await me(visitor)).body).toMatchObject({ email: 'cached@acme.example' })
   })
 })
 

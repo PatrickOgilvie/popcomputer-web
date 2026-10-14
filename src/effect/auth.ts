@@ -417,9 +417,46 @@ export function betterAuthSession(
   session?: S.Struct<S.Struct.Fields>
 ): S.Struct<S.Struct.Fields> {
   return S.Struct({
-    user,
-    session: session === undefined ? BetterAuthSessionRecord : S.Struct({ ...session.fields, token: SessionToken }),
+    user: withAbsentNulls(structFields(user)) ?? user,
+    session: session === undefined ? BetterAuthSessionRecord : withAbsentNulls({ ...session.fields, token: SessionToken }),
   })
+}
+
+/**
+ * A struct whose nullable fields decode a missing or undefined value as null.
+ * Better Auth leaves a field it never set undefined, such as the image of a
+ * user an OAuth provider gave none, where it keeps the user without a
+ * database: its memory adapter and its stateless sessions. A row from a table
+ * has the column, null.
+ */
+function withAbsentNulls(fields: S.Struct.Fields): S.Struct<S.Struct.Fields>
+function withAbsentNulls(fields: S.Struct.Fields | undefined): S.Struct<S.Struct.Fields> | undefined
+function withAbsentNulls(fields: S.Struct.Fields | undefined): S.Struct<S.Struct.Fields> | undefined {
+  if (fields === undefined) return undefined
+
+  const decoded: { [name: string]: S.Struct.Fields[string] } = {}
+
+  for (const [name, field] of Object.entries(fields)) {
+    decoded[name] = S.is(S.toEncoded(field))(null) ? S.withDecodingDefault(Effect.succeed(null))(field) : field
+  }
+
+  return S.Struct(decoded)
+}
+
+/** A struct schema's fields, or none for another schema. */
+function structFields(schema: unknown): Record<string, S.Top> | undefined {
+  const fields: unknown = schema instanceof Object ? Reflect.get(schema, 'fields') : undefined
+
+  if (!(fields instanceof Object)) return undefined
+
+  const found: Record<string, S.Top> = {}
+
+  for (const [name, field] of Object.entries(fields)) {
+    if (!S.isSchema(field)) return undefined
+    found[name] = field
+  }
+
+  return found
 }
 
 // Better Auth's default user and session, which the signed-in user is unless
