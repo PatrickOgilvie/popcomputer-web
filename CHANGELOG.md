@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The upgrade guide is `UPGRADING.md`, shipped in the package. It takes an application on any earlier release, or on the `honertia` package, to the current one, and moves the application's own code from Effect 3 to Effect 4, which is most of an upgrade from `honertia`: what Effect publishes and how to search it, packages first, the renames met most, each checked against Effect 4.0's published types, and the changes no type error shows. It maps `honertia` 0.1's setup, routes and auth routes, and lists what changes without a type error. The README's "Upgrading" and "Migrating from `honertia`" sections point to it, and its examples are type-checked with the README's.
+
 ## [1.2.0] - 2026-10-14
 
 Found by upgrading a real application, on the original `honertia` package and Effect 3, to 1.1.0.
@@ -39,7 +45,7 @@ Found by upgrading a real application, on the original `honertia` package and Ef
 
 The first stable release. The `1.0.0-next` pre-releases below were never
 published to npm, so an application on 0.7.0 reads this section and each of
-theirs; the README's "Upgrading from 0.7" takes it there step by step.
+theirs; `UPGRADING.md` takes it there step by step.
 
 ### Added
 
@@ -300,7 +306,7 @@ version.
 - Structured error fixes are `{ description, code? }`: what to change, and code to write when there is some. The `id`, `type`, `confidence`, `automated`, `operations` and `postActions` fields are removed; their "automated" edits anchored on `setupWeb({`, which never matched `setupWeb(app, {`, and nothing applied them. Structured errors no longer carry `source` (never populated) or `docs` (every error linked to one README section that documents no codes), and the error page props no longer include `source` or `docsUrl`.
 - Production JSON error responses no longer include `fixes`, which described the application's setup to clients. Development responses and error pages still do.
 - Error codes the package never emitted are removed: `VAL_002_FIELD_INVALID`, `VAL_005_TYPE_COERCION_FAILED`, `AUTH_103_INVALID_CREDENTIALS`, `RES_201_ALREADY_EXISTS`, `RES_202_GONE`, `CFG_304_BINDINGS_NOT_CONFIGURED`, `DB_500_CONNECTION_FAILED` and `RTE_602_PARAM_VALIDATION`.
-- The `Honertia*` and `honertia*` aliases are removed: `setupHonertia` and its nested `honertia: { ... }` configuration, the `honertia` middleware and `c.var.honertia`, `honertiaContext`, `honertiaServices`, `HonertiaService`, `HonertiaRenderer`, `HonertiaConfig`, `HonertiaInstance`, `HonertiaPage`, `HonertiaRequestContext`, `HonertiaProvidedServices`, `HonertiaApplication`, `HonertiaSetupConfig`, `HonertiaFullConfig`, and the `HonertiaDatabaseType`, `HonertiaAuthType`, `HonertiaBindingsType`, `HonertiaAuthUserType` and `HonertiaRouteBindingsType` augmentation interfaces. The README's migration table lists each replacement.
+- The `Honertia*` and `honertia*` aliases are removed: `setupHonertia` and its nested `honertia: { ... }` configuration, the `honertia` middleware and `c.var.honertia`, `honertiaContext`, `honertiaServices`, `HonertiaService`, `HonertiaRenderer`, `HonertiaConfig`, `HonertiaInstance`, `HonertiaPage`, `HonertiaRequestContext`, `HonertiaProvidedServices`, `HonertiaApplication`, `HonertiaSetupConfig`, `HonertiaFullConfig`, and the `HonertiaDatabaseType`, `HonertiaAuthType`, `HonertiaBindingsType`, `HonertiaAuthUserType` and `HonertiaRouteBindingsType` augmentation interfaces. `UPGRADING.md` lists each replacement.
 - Names without a `Web*` replacement are renamed: `HonertiaConfigurationError` is `ConfigurationError` (`_tag: 'ConfigurationError'`), `HonertiaStructuredError` is `StructuredError`, `HEADERS.HONERTIA` is `HEADERS.INERTIA`, and error codes use the `WEB_` prefix instead of `HON_` (for example `WEB_VAL_001_FIELD_REQUIRED`). The unused `CFG_303_HONERTIA_NOT_CONFIGURED` code is removed.
 - Every export has one entrypoint. The root no longer re-exports `@popcomputer/web/effect`, `/effect` no longer re-exports the validators (import them from `/schema`), the KV cache (`cache`, `cacheGet`, `cacheSet`, `cacheInvalidate`, `cacheInvalidatePrefix`, `CacheError`, `CacheService`, `CacheClientError`: import them from `/cache`) or the Better Auth integration (`effectAuthRoutes`, `betterAuthFormAction`, `betterAuthLogoutAction`, `effectifyBetterAuth`, `loadUser`, `shareAuth`, `shareAuthMiddleware` and their types: import them from `/auth`), `/schema` no longer re-exports the validation helpers (import `validateRequest` and `asTrusted` from `/effect`), and `/auth` no longer re-exports services, errors and guards (import them from `/effect`). `PAGE_CACHE_TAG` is exported from `/effect` only.
 - Synonyms are removed in favour of one API each: `effectHandler`, `effect` and `handle` (register actions with `effectRoutes`); `requireAuth` (use `authorize()`); `requireGuest` and `isAuthenticated` (use `currentUser`); `validate` (use `validateUnknown`); `asValidated` (validation brands its own output; use `asTrusted` for server-derived values); `optionalString` (an alias of `nullableString`); the `S` re-export from `/schema` (import `Schema` from `effect`); and `getGlobalRegistry`, `resetGlobalRegistry` and `findAppRouteRegistry` (`effectRoutes` registers with the app's registry, which `setupWeb` returns).

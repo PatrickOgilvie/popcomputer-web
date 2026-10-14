@@ -1,5 +1,5 @@
 /**
- * Type-check every TypeScript code fence in README.md and AGENTS.md.
+ * Type-check every TypeScript code fence in README.md, AGENTS.md and UPGRADING.md.
  *
  * Agents copy these examples verbatim, so each one must compile against the
  * package as an application installs it: the declarations in `dist`, which
@@ -26,7 +26,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { rules as lintRules } from '../../src/lint/index.js'
 
 const repoRoot = join(import.meta.dir, '..', '..')
-const documents = ['README.md', 'AGENTS.md']
+const documents = ['README.md', 'AGENTS.md', 'UPGRADING.md']
 const stubAppDir = join(import.meta.dir, 'app')
 const outDir = join(import.meta.dir, '.generated')
 

@@ -299,7 +299,7 @@ has `errors.name` (a JSON request gets a `422`).
   `dbTransaction` and `dbBatch`.
 - `app.get(...)` or other routes on the Hono app; register on `routes`.
 - Names from the old `honertia` package (`setupHonertia`, `HonertiaService`,
-  `c.var.honertia`, ...): the README's migration table lists their
+  `c.var.honertia`, ...): `UPGRADING.md`'s table lists their
   replacements.
 
 ## Before finishing
