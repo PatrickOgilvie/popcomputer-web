@@ -72,3 +72,19 @@ describe("testEnv's layer replaces a service", () => {
     expect(builds).toBe(1)
   })
 })
+
+describe("web.services' request services", () => {
+  test('are asked for only when an action runs, not for a plain Hono route', async () => {
+    let asked = 0
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+      .services({ request: () => { asked += 1; return realCrm } })
+    app.get('/health', (c) => c.text('ok'))
+    routes.get('/organisations', listOrganisations)
+
+    expect((await app.request('/health')).status).toBe(200)
+    expect(asked).toBe(0)
+    expect(await organisations(app, Layer.empty)).toEqual(['from the real CRM'])
+    expect(asked).toBe(1)
+  })
+})

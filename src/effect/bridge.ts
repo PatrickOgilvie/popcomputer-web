@@ -638,9 +638,12 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     )
   }
 
-  // Merge custom services if provided
+  // The application's request services, built only when an action's runtime
+  // is: a request that runs no action, such as a plain Hono route, never calls
+  // web.services' `request(c)`, which may read bindings that route lacks.
   if (config?.services) {
-    const customServicesLayer = config.services(c).pipe(Layer.provide(configuration))
+    const services = config.services
+    const customServicesLayer = Layer.suspend(() => services(c)).pipe(Layer.provide(configuration))
     baseLayer = Layer.merge(baseLayer, customServicesLayer)
   }
 
