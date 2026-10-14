@@ -1344,4 +1344,37 @@ describe('kvCache', () => {
     expect(expirations).toEqual([60, 60])
     expect(computed).toBe(2)
   })
+
+  it("shares a namespace with other data, which it never reads, lists or deletes", async () => {
+    // The application's audit log in the same namespace, one entry named as a cache key is.
+    const values = new Map<string, string>([['audit:1', 'signed in'], ['user:1', 'audit of user 1']])
+    const kv = {
+      get: async (key: string) => values.get(key) ?? null,
+      put: async (key: string, value: string) => {
+        values.set(key, value)
+      },
+      delete: async (key: string) => {
+        values.delete(key)
+      },
+      list: async (options?: { prefix?: string }) => ({
+        keys: [...values.keys()].filter((name) => name.startsWith(options?.prefix ?? '')).map((name) => ({ name })),
+        list_complete: true,
+      }),
+    }
+    const run = <A>(effect: Effect.Effect<A, never, CacheService | ExecutionContextService>) =>
+      effect.pipe(Effect.provide(Layer.mergeAll(kvCache(kv), makeTestExecutionContext().layer, TestClock.layer())), Effect.runPromise)
+
+    const user = await run(cache('user:1', Effect.succeed({ id: '1', name: 'Ada', email: 'ada@example.com' }), UserSchema, { ttl: Duration.hours(1) }))
+
+    expect(user.name).toBe('Ada')
+    expect([...values.keys()].sort()).toEqual(['audit:1', 'popweb:cache:user:1', 'user:1'])
+
+    await run(cacheInvalidatePrefix('user:'))
+    expect([...values.keys()].sort()).toEqual(['audit:1', 'user:1'])
+
+    await run(cacheSet('flags', 1, S.Number, { ttl: Duration.hours(1) }).pipe(Effect.orDie))
+    await run(cacheInvalidatePrefix(''))
+    expect([...values.keys()].sort()).toEqual(['audit:1', 'user:1'])
+    expect(values.get('user:1')).toBe('audit of user 1')
+  })
 })

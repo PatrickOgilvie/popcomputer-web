@@ -2430,7 +2430,10 @@ The data cache keeps computed values in a store, checked against an Effect
 Schema when read. Provide a store with `kvCache` as a `request` layer of
 `web.services`; KV
 keeps an entry at least 60 seconds, its shortest expiry, and `cache` still
-treats it as fresh only for its `ttl`:
+treats it as fresh only for its `ttl`. `kvCache` keeps its keys under
+`popweb:cache:`, so its KV namespace can hold the application's other data,
+such as an audit log, which the cache never reads, lists or deletes, even
+for `cacheInvalidatePrefix('')`:
 
 ```ts
 import { kvCache } from '@popcomputer/web/cache'

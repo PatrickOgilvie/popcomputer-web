@@ -195,32 +195,49 @@ export interface KVNamespaceLike {
   }>
 }
 
+/** The shortest expiry Workers KV accepts. */
+const KV_MINIMUM_TTL_SECONDS = 60
+
 /**
- * Provide CacheService backed by a Workers KV namespace. KV keeps an entry
- * at least 60 seconds; `cache()` still treats it as fresh only for its `ttl`.
+ * Where the cache keeps its keys in a KV namespace. The namespace can hold
+ * other data, such as an audit log, which the cache never reads, lists or
+ * deletes: even `cacheInvalidatePrefix('')` reaches only the cache's keys.
+ */
+const KV_CACHE_PREFIX = 'popweb:cache:'
+
+/**
+ * Provide CacheService backed by a Workers KV namespace, keeping its keys
+ * under `popweb:cache:`, so the namespace can hold other data too. KV keeps
+ * an entry at least 60 seconds; `cache()` still treats it as fresh only for
+ * its `ttl`.
  *
  * @example
  * export const { app, routes } = web.services({ request: (c) => kvCache(c.env.KV) })
  */
-/** The shortest expiry Workers KV accepts. */
-const KV_MINIMUM_TTL_SECONDS = 60
-
 export function kvCache(kv: KVNamespaceLike): Layer.Layer<CacheService> {
   const attempt = <A>(reason: string, run: () => Promise<A>) =>
     Effect.tryPromise({ try: run, catch: (cause) => new CacheError({ reason, cause }) })
+  const stored = (key: string) => `${KV_CACHE_PREFIX}${key}`
 
   const client: CacheClient = {
-    get: (key) => attempt('Could not read from the cache.', () => kv.get(key)),
+    get: (key) => attempt('Could not read from the cache.', () => kv.get(stored(key))),
     // KV rejects an expiry under 60 seconds; cache() judges freshness from
     // the entry's own time, so a shorter TTL is kept the minimum time.
     put: (key, value, options) =>
       attempt('Could not write to the cache.', () =>
-        kv.put(key, value, options?.expirationTtl === undefined
+        kv.put(stored(key), value, options?.expirationTtl === undefined
           ? options
           : { ...options, expirationTtl: Math.max(KV_MINIMUM_TTL_SECONDS, options.expirationTtl) })
       ),
-    delete: (key) => attempt('Could not delete from the cache.', () => kv.delete(key)),
-    list: (options) => attempt('Could not list cache keys.', () => kv.list(options)),
+    delete: (key) => attempt('Could not delete from the cache.', () => kv.delete(stored(key))),
+    // Listed under the cache's prefix alone, and named as the cache names them.
+    list: (options) =>
+      attempt('Could not list cache keys.', () =>
+        kv.list({ ...options, prefix: stored(options?.prefix ?? '') }).then((page) => ({
+          ...page,
+          keys: page.keys.map((key) => ({ ...key, name: key.name.slice(KV_CACHE_PREFIX.length) })),
+        }))
+      ),
   }
 
   return Layer.succeed(CacheService, client)
