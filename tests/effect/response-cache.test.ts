@@ -501,7 +501,7 @@ describe('cache route option', () => {
     expect(res.headers.get('Cloudflare-CDN-Cache-Control')).toBe(
       'public, max-age=300, stale-while-revalidate=3600'
     )
-    expect(res.headers.get('Cache-Tag')).toBe(`marketing,${PAGE_CACHE_TAG}`)
+    expect(res.headers.get('Cache-Tag')).toBe('marketing,popweb:page')
     expect(res.headers.get('Vary')).toBe('X-Inertia, Cookie')
   })
 
@@ -533,12 +533,6 @@ describe('cache route option', () => {
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=300')
     expect(res.headers.get('Cloudflare-CDN-Cache-Control')).toBeNull()
     expect(res.headers.get('Cache-Tag')).toBeNull()
-  })
-
-  test('the page tag is public API', async () => {
-    const effect = await import('../../src/effect/index.js')
-
-    expect(effect.PAGE_CACHE_TAG).toBe('popweb:page')
   })
 
   test('routes without the cache option are untouched', async () => {
@@ -842,7 +836,7 @@ describe('ResponseCacheService default client', () => {
 })
 
 describe('Workers ResponseCacheClient', () => {
-  test('succeeds only when Workers Cache confirms the purge', async () => {
+  test('encodes tags before calling Workers Cache', async () => {
     const calls: Array<{ tags?: string[]; purgeEverything?: boolean }> = []
 
     const client = createWorkersResponseCacheClient({

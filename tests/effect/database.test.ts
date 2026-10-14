@@ -41,8 +41,15 @@ const pages = sqliteTable('pages', {
 type Method = 'run' | 'all' | 'values' | 'get'
 type TestDatabase = SqliteRemoteDatabase
 
-function openDatabase(): { db: TestDatabase; sqlite: Database; layer: Layer.Layer<DatabaseService> } {
+function openDatabase(): {
+  db: TestDatabase
+  sqlite: Database
+  layer: Layer.Layer<DatabaseService>
+  /** How many batches reached the driver. */
+  batches: () => number
+} {
   const sqlite = new Database(':memory:')
+  let batches = 0
   sqlite.run('PRAGMA foreign_keys = ON')
   sqlite.run('CREATE TABLE workspaces (id INTEGER PRIMARY KEY, name TEXT NOT NULL)')
   sqlite.run(`CREATE TABLE pages (
@@ -71,11 +78,14 @@ function openDatabase(): { db: TestDatabase; sqlite: Database; layer: Layer.Laye
   const db = drizzle(
     async (sql, params, method) => execute(sql, params, method),
     // A batch applies atomically, as on D1 and libsql.
-    async (queries) =>
-      sqlite.transaction(() => queries.map(({ sql, params, method }) => execute(sql, params, method)))()
+    async (queries) => {
+      batches += 1
+
+      return sqlite.transaction(() => queries.map(({ sql, params, method }) => execute(sql, params, method)))()
+    }
   )
 
-  return { db, sqlite, layer: Layer.succeed(DatabaseService, db) }
+  return { db, sqlite, layer: Layer.succeed(DatabaseService, db), batches: () => batches }
 }
 
 declare module '../../src/effect/register.js' {
@@ -539,20 +549,24 @@ describe('dbBatch', () => {
   })
 
   test('takes a list built at run time, and runs nothing for an empty one', async () => {
-    const { layer, sqlite } = openDatabase()
+    const { layer, sqlite, batches } = openDatabase()
     const slugs: ReadonlyArray<string> = ['a', 'b', 'c']
 
-    const results = await Effect.runPromise(
-      dbBatch((db) => slugs.map((slug) => db.insert(pages).values({ workspaceId: 1, slug, title: slug.toUpperCase() })))
-        .pipe(Effect.provide(layer))
-    )
     const none = await Effect.runPromise(
       dbBatch((db) => slugs.filter(() => false).map((slug) => db.insert(pages).values({ workspaceId: 1, slug, title: slug })))
         .pipe(Effect.provide(layer))
     )
 
-    expect(results).toHaveLength(3)
     expect(none).toEqual([])
+    expect(batches()).toBe(0)
+
+    const results = await Effect.runPromise(
+      dbBatch((db) => slugs.map((slug) => db.insert(pages).values({ workspaceId: 1, slug, title: slug.toUpperCase() })))
+        .pipe(Effect.provide(layer))
+    )
+
+    expect(results).toHaveLength(3)
+    expect(batches()).toBe(1)
     expect(countPages(sqlite)).toBe(3)
   })
 })

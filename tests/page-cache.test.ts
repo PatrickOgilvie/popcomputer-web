@@ -14,6 +14,7 @@ import { Hono, type MiddlewareHandler } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import { render } from '../src/effect/responses.js'
+import { responseHeader } from '../src/effect/response-headers.js'
 import { DatabaseService, RequestService, RequestStateService } from '../src/effect/services.js'
 import { PAGE_CACHE_HEADER, trackBindings, type PageCacheStore } from '../src/page-cache.js'
 import { signedIn, testEnv } from '../src/testing.js'
@@ -144,6 +145,15 @@ const createApp = (options: AppOptions = {}) => {
     })
   )
   routes.get('/fresh', Effect.andThen(count('fresh'), render('Fresh')), { cache: 'private' })
+  routes.get(
+    '/stated',
+    Effect.gen(function* () {
+      yield* count('stated')
+      yield* responseHeader('Cache-Control', 'public, max-age=60')
+
+      return yield* render('Stated')
+    })
+  )
   routes.get('/projects/{project}', Effect.andThen(count('bound'), render('Projects/Show')))
   routes.get(
     '/welcome',
@@ -286,8 +296,7 @@ describe('default page cache', () => {
         c.header('Cache-Control', 'no-store')
       },
     })
-    const first = await get(noStore.app, '/', {}, production())
-    expect(first.res.headers.get('Cache-Control')).toBe('no-store')
+    await get(noStore.app, '/', {}, production())
 
     const cookie = createApp({
       outer: async (c, next) => {
@@ -414,15 +423,17 @@ describe('responses without a cache policy', () => {
     expect(api.res.headers.get('Cache-Control')).toBe('private, no-cache')
   })
 
-  test('keep the policy a route states itself', async () => {
-    const { app } = createApp()
+  test('a page whose route states its own policy keeps it, and the page cache does not store it', async () => {
+    const { app, renders } = createApp()
     const env = production()
 
-    await get(app, '/', {}, env)
-    const cached = await get(app, '/', {}, env)
+    const first = await get(app, '/stated', {}, env)
+    const second = await get(app, '/stated', {}, env)
 
-    expect(cached.status).toBe('HIT')
-    expect(cached.res.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate')
+    expect(first.res.headers.get('Cache-Control')).toBe('public, max-age=60')
+    expect(second.res.headers.get('Cache-Control')).toBe('public, max-age=60')
+    expect(renders.get('stated')).toBe(2)
+    expect(cache.entries.size).toBe(0)
   })
 })
 

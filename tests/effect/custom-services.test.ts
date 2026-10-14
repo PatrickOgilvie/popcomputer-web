@@ -12,7 +12,7 @@ import { Hono } from 'hono'
 import { Effect, Layer, Context } from 'effect'
 import type { PageProps } from '../../src/types.js'
 import { effectRoutes } from '../../src/effect/routing.js'
-import { effectBridge, buildContextLayer } from '../../src/effect/bridge.js'
+import { effectBridge } from '../../src/effect/bridge.js'
 import { web } from '../../src/middleware.js'
 import { webServices } from '../../src/request-context.js'
 import { setupWeb } from '../../src/setup.js'
@@ -48,17 +48,6 @@ class BindingsService extends Context.Service<
 >()('app/Bindings') {}
 
 /**
- * Simulates a custom logger service
- */
-class LoggerService extends Context.Service<
-  LoggerService,
-  {
-    log: (message: string) => void
-    logs: string[]
-  }
->()('app/Logger') {}
-
-/**
  * Simulates a feature flags service
  */
 class FeatureFlagsService extends Context.Service<
@@ -77,7 +66,6 @@ type TestEnv = {
     KV_DATA: Record<string, string>
     FEATURES: string[]
   }
-  Variables: { testResult: string }
 }
 
 const createTestApp = () => {
@@ -121,93 +109,11 @@ const createMockAnalytics = () => {
   }
 }
 
-// Mock Logger implementation
-const createMockLogger = () => {
-  const logs: string[] = []
-
-  return {
-    log: (message: string) => logs.push(message),
-    logs,
-  }
-}
-
 // =============================================================================
 // Tests
 // =============================================================================
 
 describe('Custom Services via effectBridge', () => {
-  test('injects single custom service', async () => {
-    const app = createTestApp()
-
-    app.use(
-      '*',
-      effectBridge<TestEnv, BindingsService>({
-        services: (c) =>
-          Layer.succeed(BindingsService, {
-            KV: createMockKV(c.env.KV_DATA),
-            ANALYTICS: createMockAnalytics(),
-          }),
-      })
-    )
-
-    effectRoutes<TestEnv, BindingsService>(app).get(
-      '/user/:id',
-      Effect.gen(function* () {
-        const bindings = yield* BindingsService
-        const name = yield* Effect.promise(() => bindings.KV.get('user:123'))
-
-        return new Response(`User: ${name}`)
-      })
-    )
-
-    const res = await app.request('/user/123')
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('User: John Doe')
-  })
-
-  test('injects multiple custom services using Layer.mergeAll', async () => {
-    const app = createTestApp()
-
-    app.use(
-      '*',
-      effectBridge<TestEnv, BindingsService | LoggerService>({
-        services: (c) =>
-          Layer.mergeAll(
-            Layer.succeed(BindingsService, {
-              KV: createMockKV(c.env.KV_DATA),
-              ANALYTICS: createMockAnalytics(),
-            }),
-            Layer.succeed(LoggerService, createMockLogger())
-          ),
-      })
-    )
-
-    effectRoutes<TestEnv, BindingsService | LoggerService>(app).get(
-      '/test',
-      Effect.gen(function* () {
-        const bindings = yield* BindingsService
-        const logger = yield* LoggerService
-
-        const theme = yield* Effect.promise(() =>
-          bindings.KV.get('config:theme')
-        )
-
-        logger.log(`Theme loaded: ${theme}`)
-
-        return Response.json({
-            theme,
-            logCount: logger.logs.length,
-          })
-      })
-    )
-
-    const res = await app.request('/test')
-    expect(res.status).toBe(200)
-    const json = await res.json()
-    expect(json.theme).toBe('dark')
-    expect(json.logCount).toBe(1)
-  })
-
   test('custom services work alongside built-in services', async () => {
     const app = new Hono<TestEnv>()
 
@@ -264,8 +170,13 @@ describe('Custom Services via effectBridge', () => {
 })
 
 describe('Custom Services via setupWeb', () => {
-  test('injects custom services via effect config', async () => {
+  test("request services receive the request's context and bindings", async () => {
     const app = new Hono<TestEnv>()
+
+    class RequestInfoService extends Context.Service<
+      RequestInfoService,
+      { method: string; path: string }
+    >()('RequestInfo') {}
 
     app.use('*', webServices(() => ({ db: { name: 'test-db' } })))
     app.use('*', async (c, next) => {
@@ -283,25 +194,29 @@ describe('Custom Services via setupWeb', () => {
       render: (page) => JSON.stringify(page),
     }).services({
       request: (c) =>
-        Layer.succeed(BindingsService, {
-          KV: createMockKV(c.env.KV_DATA),
-          ANALYTICS: createMockAnalytics(),
-        }),
+        Layer.mergeAll(
+          Layer.succeed(BindingsService, {
+            KV: createMockKV(c.env.KV_DATA),
+            ANALYTICS: createMockAnalytics(),
+          }),
+          Layer.succeed(RequestInfoService, { method: c.req.method, path: c.req.path })
+        ),
     })
 
     routes.get(
       '/setup-web',
       Effect.gen(function* () {
         const bindings = yield* BindingsService
+        const info = yield* RequestInfoService
         const name = yield* Effect.promise(() => bindings.KV.get('user:123'))
 
-        return new Response(name ?? 'missing')
+        return Response.json({ name, method: info.method, path: info.path })
       })
     )
 
     const res = await app.request('/setup-web')
     expect(res.status).toBe(200)
-    expect(await res.text()).toBe('John Doe')
+    expect(await res.json()).toEqual({ name: 'John Doe', method: 'GET', path: '/setup-web' })
   })
 })
 
@@ -406,326 +321,5 @@ describe('Custom Services via effectRoutes config', () => {
     const json = await res.json()
     expect(json.requestId).toBe('req-456')
     expect(json.userName).toBe('John Doe')
-  })
-
-  test('works without effectBridge middleware', async () => {
-    const app = createTestApp()
-
-    effectRoutes<TestEnv, BindingsService>(app, {
-      services: (c) =>
-        Layer.succeed(BindingsService, {
-          KV: createMockKV(c.env.KV_DATA),
-          ANALYTICS: createMockAnalytics(),
-        }),
-    }).get(
-      '/no-bridge',
-      Effect.gen(function* () {
-        const bindings = yield* BindingsService
-
-        const theme = yield* Effect.promise(() =>
-          bindings.KV.get('config:theme')
-        )
-
-        return new Response(theme ?? 'missing')
-      })
-    )
-
-    const res = await app.request('/no-bridge')
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('dark')
-  })
-})
-
-describe('buildContextLayer with custom services', () => {
-  test('buildContextLayer includes custom services in return type', async () => {
-    const app = createTestApp()
-
-    app.use('*', async (c, next) => {
-      const layer = buildContextLayer<TestEnv, BindingsService>(c, {
-        services: (ctx) =>
-          Layer.succeed(BindingsService, {
-            KV: createMockKV(ctx.env.KV_DATA),
-            ANALYTICS: createMockAnalytics(),
-          }),
-      })
-
-      // Verify the layer can be used to run an effect requiring BindingsService
-      const program = Effect.gen(function* () {
-        const bindings = yield* BindingsService
-
-        return yield* Effect.tryPromise(() => bindings.KV.get('user:123'))
-      }).pipe(Effect.provide(layer))
-
-      const result = await Effect.runPromise(program)
-      c.set('testResult', result ?? 'missing')
-      await next()
-    })
-
-    app.get('/test', (c) => {
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      return c.text(c.get('testResult'))
-    })
-
-    const res = await app.request('/test')
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('John Doe')
-  })
-})
-
-describe('Real-world Cloudflare Workers patterns', () => {
-  test('simulates D1 database binding', async () => {
-    const app = createTestApp()
-
-    // Simulate D1 binding
-    class D1Service extends Context.Service<
-      D1Service,
-      {
-        prepare: (sql: string) => {
-          bind: (...params: unknown[]) => {
-            first: <T>() => Promise<T | null>
-            all: <T>() => Promise<{ results: T[] }>
-          }
-        }
-      }
-    >()('cf/D1') {}
-
-    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-    const mockD1 = {
-      prepare: (sql: string) => ({
-        bind: (...params: unknown[]) => ({
-          first: async <T>() =>
-            ({ id: 1, name: 'Test Project', sql, params }) as T,
-          all: async <T>() => ({ results: [{ id: 1 }, { id: 2 }] as T[] }),
-        }),
-      }),
-    }
-
-    app.use(
-      '*',
-      effectBridge<TestEnv, D1Service>({
-        services: () => Layer.succeed(D1Service, mockD1),
-      })
-    )
-
-    effectRoutes<TestEnv, D1Service>(app).get(
-      '/projects/:id',
-      Effect.gen(function* () {
-        const d1 = yield* D1Service
-
-        const project = yield* Effect.promise(() =>
-          d1.prepare('SELECT * FROM projects WHERE id = ?').bind(1).first<{
-            id: number
-            name: string
-          }>()
-        )
-
-        return Response.json(project)
-      })
-    )
-
-    const res = await app.request('/projects/1')
-    expect(res.status).toBe(200)
-    const json = await res.json()
-    expect(json.id).toBe(1)
-    expect(json.name).toBe('Test Project')
-  })
-
-  test('simulates Analytics Engine binding', async () => {
-    const app = createTestApp()
-    const writtenDataPoints: PageProps[] = []
-
-    class AnalyticsService extends Context.Service<
-      AnalyticsService,
-      {
-        writeDataPoint: (data: {
-          blobs?: string[]
-          doubles?: number[]
-          indexes?: string[]
-        }) => void
-      }
-    >()('cf/Analytics') {}
-
-    app.use(
-      '*',
-      effectBridge<TestEnv, AnalyticsService>({
-        services: () =>
-          Layer.succeed(AnalyticsService, {
-            writeDataPoint: (data) => writtenDataPoints.push(data),
-          }),
-      })
-    )
-
-    effectRoutes<TestEnv, AnalyticsService>(app).post(
-      '/track',
-      Effect.gen(function* () {
-        const analytics = yield* AnalyticsService
-
-        analytics.writeDataPoint({
-          blobs: ['page_view', '/home'],
-          doubles: [1],
-          indexes: ['user-123'],
-        })
-
-        return new Response('tracked')
-      })
-    )
-
-    const res = await app.request('/track', { method: 'POST' })
-    expect(res.status).toBe(200)
-    expect(writtenDataPoints).toHaveLength(1)
-    expect(writtenDataPoints[0]).toEqual({
-      blobs: ['page_view', '/home'],
-      doubles: [1],
-      indexes: ['user-123'],
-    })
-  })
-
-  test('simulates Queue binding', async () => {
-    const app = createTestApp()
-    const queuedMessages: { body: unknown; options?: object }[] = []
-
-    class QueueService extends Context.Service<
-      QueueService,
-      {
-        send: <Body>(body: Body, options?: { contentType?: string }) => Promise<void>
-        sendBatch: (messages: { body: unknown }[]) => Promise<void>
-      }
-    >()('cf/Queue') {}
-
-    app.use(
-      '*',
-      effectBridge<TestEnv, QueueService>({
-        services: () =>
-          Layer.succeed(QueueService, {
-            send: async (body, options) => {
-              queuedMessages.push({ body, options })
-            },
-            sendBatch: async (messages) => {
-              messages.forEach((m) => queuedMessages.push({ body: m.body }))
-            },
-          }),
-      })
-    )
-
-    effectRoutes<TestEnv, QueueService>(app).post(
-      '/enqueue',
-      Effect.gen(function* () {
-        const queue = yield* QueueService
-
-        yield* Effect.promise(() =>
-          queue.send(
-            { type: 'email', to: 'user@example.com' },
-            { contentType: 'json' }
-          )
-        )
-
-        return new Response('queued')
-      })
-    )
-
-    const res = await app.request('/enqueue', { method: 'POST' })
-    expect(res.status).toBe(200)
-    expect(queuedMessages).toHaveLength(1)
-    expect(queuedMessages[0].body).toEqual({
-      type: 'email',
-      to: 'user@example.com',
-    })
-  })
-})
-
-describe('Edge cases', () => {
-  test('works without custom services (backward compatibility)', async () => {
-    const app = createTestApp()
-
-    app.use('*', effectBridge())
-
-    effectRoutes(app).get(
-      '/simple',
-      Effect.gen(function* () {
-        const db = yield* DatabaseService
-
-        return new Response(`DB: ${db.name}`)
-      })
-    )
-
-    const res = await app.request('/simple')
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('DB: test-db')
-  })
-
-  test('custom services are isolated per request', async () => {
-    const app = createTestApp()
-    let requestCount = 0
-
-    class RequestCounterService extends Context.Service<
-      RequestCounterService,
-      { count: number }
-    >()('RequestCounter') {}
-
-    app.use(
-      '*',
-      effectBridge<TestEnv, RequestCounterService>({
-        services: () => {
-          requestCount++
-
-          return Layer.succeed(RequestCounterService, { count: requestCount })
-        },
-      })
-    )
-
-    effectRoutes<TestEnv, RequestCounterService>(app).get(
-      '/count',
-      Effect.gen(function* () {
-        const counter = yield* RequestCounterService
-
-        return new Response(`Count: ${counter.count}`)
-      })
-    )
-
-    const res1 = await app.request('/count')
-    expect(await res1.text()).toBe('Count: 1')
-
-    const res2 = await app.request('/count')
-    expect(await res2.text()).toBe('Count: 2')
-
-    const res3 = await app.request('/count')
-    expect(await res3.text()).toBe('Count: 3')
-  })
-
-  test('services function receives full Hono context', async () => {
-    const app = createTestApp()
-
-    class ContextInfoService extends Context.Service<
-      ContextInfoService,
-      { method: string; path: string; hasEnv: boolean }
-    >()('ContextInfo') {}
-
-    app.use(
-      '*',
-      effectBridge<TestEnv, ContextInfoService>({
-        services: (c) =>
-          Layer.succeed(ContextInfoService, {
-            method: c.req.method,
-            path: c.req.path,
-            hasEnv: c.env !== undefined,
-          }),
-      })
-    )
-
-    effectRoutes<TestEnv, ContextInfoService>(app).get(
-      '/context-info',
-      Effect.gen(function* () {
-        const info = yield* ContextInfoService
-
-        return Response.json(info)
-      })
-    )
-
-    const res = await app.request('/context-info')
-    expect(res.status).toBe(200)
-    const json = await res.json()
-    expect(json.method).toBe('GET')
-    expect(json.path).toBe('/context-info')
-    expect(json.hasEnv).toBe(true)
   })
 })

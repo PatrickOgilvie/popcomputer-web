@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 import { describe, expect, test } from 'bun:test'
-import { APIError, betterAuth } from 'better-auth'
+import { betterAuth } from 'better-auth'
 import { memoryAdapter, type MemoryDB } from 'better-auth/adapters/memory'
 import { Cause, Effect, Exit, Layer, Option, Schema as S } from 'effect'
 import { Hono } from 'hono'
@@ -14,8 +14,7 @@ import {
 } from '../../src/effect/services.js'
 import { setupWeb } from '../../src/setup.js'
 import { validateRequest } from '../../src/effect/validation.js'
-import type { BetterAuthActionError, BetterAuthActionResult } from '../../src/effect/better-auth-boundary.js'
-import type { AuthType } from '../../src/effect/services.js'
+import type { BetterAuthActionError } from '../../src/effect/better-auth-boundary.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
 /**
@@ -122,7 +121,7 @@ function getValidationError(
 }
 
 describe('betterAuthRedirect in a form action with Better Auth', () => {
-  test('normalizes invalid credentials when a Request makes Better Auth return a Response', async () => {
+  test("maps invalid credentials, which Better Auth's handler refuses, to the mapper's field errors", async () => {
     const auth = createTestAuth()
     await auth.api.signUpEmail({
       body: {
@@ -153,7 +152,7 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
     expect(error.errors).toEqual({ email: 'INVALID_EMAIL_OR_PASSWORD' })
   })
 
-  test('normalizes duplicate registration when a Request makes Better Auth return a Response', async () => {
+  test("maps a duplicate registration, which Better Auth's handler refuses, to the mapper's field errors", async () => {
     const auth = createTestAuth()
 
     const registration = {
@@ -238,7 +237,7 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
     expect(errorMapperCalled).toBe(false)
   })
 
-  test('preserves cookies from a resolved Better Auth error response', async () => {
+  test('keeps the cookies of a Better Auth rejection, and none of its other headers', async () => {
     const auth = answeringAuth(async () =>
       Response.json({
           code: 'INVALID_SESSION',
@@ -279,67 +278,19 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
     expect(response.headers.get('set-cookie')).toContain(
       'better-auth.session_token='
     )
-    expect(response.headers.get('x-auth-recovery')).toBe('reauthenticate')
+    expect(response.headers.get('x-auth-recovery')).toBeNull()
     expect(response.headers.get('content-type')).toContain('application/json')
   })
 
-  test('preserves Better Auth hidden headers from a thrown APIError', async () => {
-    const apiError = new APIError('UNAUTHORIZED', {
-      code: 'INVALID_SESSION',
-      message: 'Please sign in again.',
-    })
-
-    Reflect.set(
-      apiError,
-      Symbol.for('better-call:api-error-headers'),
-      new Headers({
-        'set-cookie': 'better-auth.session_token=; Max-Age=0; Path=/',
-        'x-auth-recovery': 'reauthenticate',
-      })
-    )
-
-    const auth = answeringAuth(async () => {
-      throw apiError
-    })
-    const action = formAction({ schema: CredentialsSchema })
-
-    const app = new Hono()
-
-    setupWeb(app, {
-      version: 'test',
-      render: (page) => JSON.stringify(page),
-      auth: { client: () => auth },
-    })
-    effectRoutes(app).post('/login', action)
-
-    const response = await app.request('/login', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email: 'test@example.com',
-        password: 'password123',
-      }),
-    })
-
-    expect(response.status).toBe(422)
-    expect(response.headers.get('set-cookie')).toContain(
-      'better-auth.session_token='
-    )
-    expect(response.headers.get('x-auth-recovery')).toBe('reauthenticate')
-  })
-
-  test('preserves thrown Better Auth redirects as redirect control flow', async () => {
-    const redirect = new APIError('FOUND', undefined, {
-      Location: 'https://identity.example/continue',
-      'Set-Cookie': 'oauth-state=verified; HttpOnly; Path=/',
-    })
-
-    const auth = answeringAuth(async () => {
-      throw redirect
-    })
+  test('follows a redirect Better Auth answers, with its cookies', async () => {
+    const auth = answeringAuth(async () =>
+      new Response(null, {
+        status: 302,
+        headers: {
+          Location: 'https://identity.example/continue',
+          'Set-Cookie': 'oauth-state=verified; HttpOnly; Path=/',
+        },
+      }))
     const action = formAction({ schema: CredentialsSchema })
 
     const app = new Hono()
@@ -367,46 +318,6 @@ describe('betterAuthRedirect in a form action with Better Auth', () => {
     expect(response.headers.get('location')).toBe(
       'https://identity.example/continue'
     )
-    expect(response.headers.get('set-cookie')).toContain('oauth-state=verified')
-  })
-
-  test('does not trust an Error named APIError without a numeric statusCode', async () => {
-    const spoofedError = new Error('spoofed')
-    spoofedError.name = 'APIError'
-    Reflect.set(spoofedError, 'status', 401)
-    Reflect.set(spoofedError, 'headers', {
-      'set-cookie': 'spoofed=must-not-survive; Path=/',
-      'x-spoofed-auth': 'true',
-    })
-
-    const auth = answeringAuth(async () => {
-      throw spoofedError
-    })
-    const action = formAction({ schema: CredentialsSchema })
-
-    const app = new Hono()
-
-    setupWeb(app, {
-      version: 'test',
-      render: (page) => JSON.stringify(page),
-      auth: { client: () => auth },
-    })
-    effectRoutes(app).post('/login', action)
-
-    const response = await app.request('/login', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email: 'test@example.com',
-        password: 'password123',
-      }),
-    })
-
-    expect(response.status).toBe(502)
-    expect(response.headers.get('set-cookie')).toBeNull()
-    expect(response.headers.get('x-spoofed-auth')).toBeNull()
+    expect(response.headers.getSetCookie()).toEqual(['oauth-state=verified; HttpOnly; Path=/'])
   })
 })

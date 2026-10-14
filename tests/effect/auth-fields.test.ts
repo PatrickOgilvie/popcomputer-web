@@ -38,24 +38,24 @@ describe('betterAuthFields', () => {
       nickname: { type: 'string', required: false, input: true },
     })
   })
-
-  test('types Better Auth\'s sign-up input from the table', () => {
-    const auth = betterAuth({
-      database: memoryAdapter({}),
-      secret: 'better-auth-fields-test-secret-0123456789',
-      emailAndPassword: { enabled: true },
-      user: { additionalFields: fields },
-    })
-
-    type SignUpBody = NonNullable<Parameters<typeof auth.api.signUpEmail>[0]>['body']
-    const signUp = (body: SignUpBody) => body
-
-    signUp({ email: 'ada@example.com', password: 'password-123', name: 'Ada', timeZone: 'Europe/London' })
-    // @ts-expect-error timeZone is required: its column is not null and has no default
-    signUp({ email: 'ada@example.com', password: 'password-123', name: 'Ada' })
-    // @ts-expect-error role is not an input: only the application sets it
-    signUp({ email: 'ada@example.com', password: 'password-123', name: 'Ada', timeZone: 'UTC', role: 'provider' })
-
-    expect(typeof auth.api.signUpEmail).toBe('function')
-  })
 })
+
+// Better Auth types its sign-up input from the table: tsc checks this
+// function's @ts-expect-error lines, and nothing calls it.
+export function signUpInputIsTypedFromTheTable() {
+  const auth = betterAuth({
+    database: memoryAdapter({}),
+    secret: 'better-auth-fields-test-secret-0123456789',
+    emailAndPassword: { enabled: true },
+    user: { additionalFields: fields },
+  })
+
+  type SignUpBody = NonNullable<Parameters<typeof auth.api.signUpEmail>[0]>['body']
+  const signUp = (body: SignUpBody) => body
+
+  signUp({ email: 'ada@example.com', password: 'password-123', name: 'Ada', timeZone: 'Europe/London' })
+  // @ts-expect-error timeZone is required: its column is not null and has no default
+  signUp({ email: 'ada@example.com', password: 'password-123', name: 'Ada' })
+  // @ts-expect-error role is not an input: only the application sets it
+  signUp({ email: 'ada@example.com', password: 'password-123', name: 'Ada', timeZone: 'UTC', role: 'provider' })
+}

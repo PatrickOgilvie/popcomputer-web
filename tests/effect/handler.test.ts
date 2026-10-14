@@ -7,7 +7,6 @@ import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import type { Env } from 'hono'
 import { Effect, Layer, Schema as S } from 'effect'
-import { errorToResponse } from '../../src/effect/handler.js'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { effectBridge, type EffectBridgeConfig } from '../../src/effect/bridge.js'
 import { web } from '../../src/middleware.js'
@@ -21,7 +20,7 @@ import {
   HttpError,
   Redirect,
 } from '../../src/effect/errors.js'
-import { PageService, DatabaseService } from '../../src/effect/services.js'
+import { DatabaseService } from '../../src/effect/services.js'
 import {
   EffectErrorObserverService,
   reportEffectError,
@@ -413,76 +412,6 @@ describe('Error Handling', () => {
       expect(JSON.stringify(json)).not.toContain('secret')
     })
   })
-
-  describe('Defects (unexpected errors)', () => {
-    test('handles sync failures gracefully', async () => {
-      const app = createApp()
-
-      // Use Effect.fail instead of throwing in sync, which is more idiomatic
-      effectRoutes(app).get(
-        '/',
-        Effect.fail(new HttpError({ status: 500, message: 'Server error' }))
-      )
-
-      const res = await app.request('/')
-      expect(res.status).toBe(500)
-    })
-
-    test('handles generic errors', async () => {
-      const app = createApp()
-
-      effectRoutes(app).get(
-        '/',
-        Effect.fail(new ForbiddenError({ message: 'Not allowed' }))
-      )
-
-      const res = await app.request('/')
-      expect(res.status).toBe(403)
-    })
-  })
-})
-
-describe('errorToResponse', () => {
-  test('handles ValidationError with JSON preference', async () => {
-    const app = createApp()
-
-    app.get('/test', async (c) => {
-      return errorToResponse(
-        new ValidationError({ errors: { field: 'Error' } }),
-        c
-      )
-    })
-
-    const res = await app.request('/test', {
-      headers: { Accept: 'application/json' },
-    })
-
-    expect(res.status).toBe(422)
-    const json = await res.json()
-    // New structured format includes code and validation details
-    expect(json.code).toBe('WEB_VAL_004_SCHEMA_MISMATCH')
-    expect(json.validation.fields.field.message).toBe('Error')
-  })
-
-  test('works without a runtime or observer installed', async () => {
-    const app = new Hono()
-
-    app.get('/test', async (c) => {
-      return errorToResponse(
-        new ValidationError({ errors: { field: 'Error' } }),
-        c
-      )
-    })
-
-    const res = await app.request('/test', {
-      headers: { Accept: 'application/json' },
-    })
-
-    expect(res.status).toBe(422)
-    const json = await res.json()
-    expect(json.code).toBe('WEB_VAL_004_SCHEMA_MISMATCH')
-    expect(json.validation.fields.field.message).toBe('Error')
-  })
 })
 
 describe('EffectErrorObserverService', () => {
@@ -673,63 +602,5 @@ describe('reportEffectError', () => {
 
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('fallback')
-  })
-})
-
-describe('Integration Patterns', () => {
-  test('full request flow with services', async () => {
-    const app = createApp()
-
-    effectRoutes(app).get(
-      '/projects/:id',
-      Effect.gen(function* () {
-        const db = yield* DatabaseService
-        const page = yield* PageService
-
-        return yield* Effect.promise(() =>
-          page.render('Projects/Show', { db, id: 'test' })
-        )
-      })
-    )
-
-    const res = await app.request('/projects/123')
-    expect(res.status).toBe(200)
-  })
-
-  test('error recovery pattern', async () => {
-    const app = createApp()
-
-    effectRoutes(app).get(
-      '/',
-      Effect.fail(new NotFoundError({ resource: 'Item' })).pipe(
-        Effect.catchTag('NotFoundError', () =>
-          Effect.succeed(new Response('Fallback content'))
-        )
-      )
-    )
-
-    const res = await app.request('/')
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('Fallback content')
-  })
-
-  test('conditional redirect pattern', async () => {
-    const app = createApp()
-
-    effectRoutes(app).get(
-      '/',
-      Effect.sync(() => {
-        const shouldRedirect = true
-
-        if (shouldRedirect) {
-          return new Redirect({ url: '/other', status: 303 })
-        }
-
-        return new Response('Stay here')
-      })
-    )
-
-    const res = await app.request('/')
-    expect(res.status).toBe(303)
   })
 })

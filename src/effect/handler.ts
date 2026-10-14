@@ -10,7 +10,6 @@ import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import {
   getEffectBridgeConfig,
-  getEffectRuntime,
   buildContextLayer,
   disposeRequestRuntime,
 } from './bridge.js'
@@ -354,18 +353,13 @@ function classifyMissingService(cause: unknown): ConfigurationError | null {
  * Observe an Effect error without changing request behavior.
  */
 // oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
-async function observeEffectError<E extends Env>(
-  c: HonoContext<E>,
+async function observeEffectError(
   event: EffectErrorEvent,
-  runtime?: ManagedRuntime.ManagedRuntime<never, unknown>
+  runtime: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<void> {
-  const activeRuntime = runtime ?? getEffectRuntime(c)
-
-  if (!activeRuntime) return
-
   // An unavailable route Layer is represented in the returned Exit in v4.
   // Observation must never replace the original request failure.
-  await activeRuntime.runPromiseExit(observeEffectErrorEvent(event))
+  await runtime.runPromiseExit(observeEffectErrorEvent(event))
 }
 
 /**
@@ -378,7 +372,7 @@ async function observeEffectError<E extends Env>(
 export async function errorToResponse<E extends Env>(
   error: AppError,
   c: HonoContext<E>,
-  runtime?: ManagedRuntime.ManagedRuntime<never, unknown>
+  runtime: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<Response> {
   if (error instanceof AuthRedirect) {
     return renderErrorResponse(error, c, openWebContext(c).errorBoundary)
@@ -392,7 +386,6 @@ export async function errorToResponse<E extends Env>(
   const structured = toStructuredError(error, captureErrorContext(c))
 
   await observeEffectError(
-    c,
     {
       source: 'framework',
       handling: 'unhandled',
@@ -450,7 +443,7 @@ export async function runEffectWithRuntime<
 async function handleExit<E extends Env>(
   exit: Exit.Exit<Response | Redirect, unknown>,
   c: HonoContext<E>,
-  runtime?: ManagedRuntime.ManagedRuntime<never, unknown>
+  runtime: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<Response> {
   const boundaryConfig = openWebContext(c).errorBoundary
 
@@ -494,7 +487,6 @@ async function handleExit<E extends Env>(
       if (isStructuredError(err)) {
         const structured = err.toStructured(context)
         await observeEffectError(
-          c,
           {
             source: 'framework',
             handling: 'unhandled',
@@ -518,7 +510,6 @@ async function handleExit<E extends Env>(
       )
 
       await observeEffectError(
-        c,
         {
           source: 'framework',
           handling: 'unhandled',
@@ -550,7 +541,6 @@ async function handleExit<E extends Env>(
   )
 
   await observeEffectError(
-    c,
     {
       source: 'framework',
       handling: 'unhandled',

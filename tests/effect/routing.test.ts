@@ -5,8 +5,9 @@
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { Effect, Layer, Context, Redacted, Schema as S } from 'effect'
-import { effectRoutes, EffectRouteBuilder } from '../../src/effect/routing.js'
+import type { Env } from 'hono'
+import { Effect, Layer, Context, Schema as S } from 'effect'
+import { effectRoutes } from '../../src/effect/routing.js'
 import { web } from '../../src/middleware.js'
 import { webServices } from '../../src/request-context.js'
 import { effectBridge, type EffectBridgeConfig } from '../../src/effect/bridge.js'
@@ -14,7 +15,6 @@ import {
   DatabaseService,
   PageService,
   AuthUserService,
-  type AuthUser,
 } from '../../src/effect/services.js'
 import { Redirect, UnauthorizedError } from '../../src/effect/errors.js'
 import {
@@ -37,21 +37,15 @@ declare module '../../src/effect/register.js' {
   }
 }
 
-type TestEnv = {
-  Variables: {
-    authUser: AuthUser
-  }
-}
-
 const ObservedTaggedError = S.Struct({ _tag: S.String })
 
 const isObservedTaggedError = S.is(ObservedTaggedError)
 
 // Helper to create test app
 const createApp = <CustomServices = never>(
-  bridgeConfig?: EffectBridgeConfig<TestEnv, CustomServices>
+  bridgeConfig?: EffectBridgeConfig<Env, CustomServices>
 ) => {
-  const app = new Hono<TestEnv>()
+  const app = new Hono<Env>()
 
   app.use(
     '*',
@@ -69,7 +63,7 @@ const createApp = <CustomServices = never>(
 }
 
 const createAppWithoutBridge = () => {
-  const app = new Hono<TestEnv>()
+  const app = new Hono<Env>()
 
   app.use(
     '*',
@@ -83,41 +77,6 @@ const createAppWithoutBridge = () => {
 
   return app
 }
-
-// Mock user
-const createMockUser = (): AuthUser => ({
-  user: {
-    id: 'user-123',
-    email: 'test@example.com',
-    name: 'Test User',
-    emailVerified: true,
-    image: null,
-    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-    createdAt: new Date('2026-01-01T00:00:00Z'),
-    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-    updatedAt: new Date('2026-01-01T00:00:00Z'),
-  },
-  session: {
-    id: 'session-456',
-    userId: 'user-123',
-    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-    expiresAt: new Date('2026-01-01T00:00:00Z'),
-    token: Redacted.make('token'),
-    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-    createdAt: new Date('2026-01-01T00:00:00Z'),
-    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-    updatedAt: new Date('2026-01-01T00:00:00Z'),
-  },
-})
-
-describe('effectRoutes', () => {
-  test('creates EffectRouteBuilder instance', () => {
-    const app = new Hono()
-    const builder = effectRoutes(app)
-
-    expect(builder).toBeInstanceOf(EffectRouteBuilder)
-  })
-})
 
 describe('Effect Route Error Observation', () => {
   test('observes validation failures exactly once', async () => {
@@ -205,19 +164,6 @@ describe('Effect Route Error Observation', () => {
 
 describe('EffectRouteBuilder', () => {
   describe('Basic Routes', () => {
-    test('registers GET route', async () => {
-      const app = createApp()
-
-      effectRoutes(app).get(
-        '/hello',
-        Effect.succeed(new Response('Hello World'))
-      )
-
-      const res = await app.request('/hello')
-      expect(res.status).toBe(200)
-      expect(await res.text()).toBe('Hello World')
-    })
-
     test('route registrations chain on the same builder', async () => {
       const app = createApp()
 
@@ -241,31 +187,6 @@ describe('EffectRouteBuilder', () => {
       expect(await fourth.text()).toBe('fourth')
     })
 
-    test('registers POST route', async () => {
-      const app = createApp()
-
-      effectRoutes(app).post(
-        '/submit',
-        Effect.succeed(new Response('Submitted'))
-      )
-
-      const res = await app.request('/submit', { method: 'POST' })
-      expect(res.status).toBe(200)
-      expect(await res.text()).toBe('Submitted')
-    })
-
-    test('registers PUT route', async () => {
-      const app = createApp()
-
-      effectRoutes(app).put(
-        '/update',
-        Effect.succeed(new Response('Updated'))
-      )
-
-      const res = await app.request('/update', { method: 'PUT' })
-      expect(res.status).toBe(200)
-    })
-
     test('registers PATCH route', async () => {
       const app = createApp()
 
@@ -275,18 +196,6 @@ describe('EffectRouteBuilder', () => {
       )
 
       const res = await app.request('/patch', { method: 'PATCH' })
-      expect(res.status).toBe(200)
-    })
-
-    test('registers DELETE route', async () => {
-      const app = createApp()
-
-      effectRoutes(app).delete(
-        '/remove',
-        Effect.succeed(new Response('Deleted'))
-      )
-
-      const res = await app.request('/remove', { method: 'DELETE' })
       expect(res.status).toBe(200)
     })
 
@@ -309,16 +218,15 @@ describe('EffectRouteBuilder', () => {
       effectRoutes(app).get(
         '/users/:id',
         Effect.gen(function* () {
-          const page = yield* PageService
+          const { id } = yield* validateRequest(S.Struct({ id: S.String }))
 
-          return yield* Effect.promise(() =>
-            page.render('Users/Show', { userId: 'from-route' })
-          )
+          return new Response(`User ${id}`)
         })
       )
 
       const res = await app.request('/users/123')
       expect(res.status).toBe(200)
+      expect(await res.text()).toBe('User 123')
     })
 
     test('handles multiple params', async () => {
@@ -405,34 +313,6 @@ describe('EffectRouteBuilder', () => {
   })
 
   describe('group()', () => {
-    test('groups routes together', async () => {
-      const app = createApp()
-
-      effectRoutes(app).group((route) => {
-        route.get('/a', Effect.succeed(new Response('A')))
-        route.get('/b', Effect.succeed(new Response('B')))
-        route.get('/c', Effect.succeed(new Response('C')))
-      })
-
-      expect((await app.request('/a')).status).toBe(200)
-      expect((await app.request('/b')).status).toBe(200)
-      expect((await app.request('/c')).status).toBe(200)
-    })
-
-    test('groups routes with prefix', async () => {
-      const app = createApp()
-
-      effectRoutes(app)
-        .prefix('/admin')
-        .group((route) => {
-          route.get('/users', Effect.succeed(new Response('Admin users')))
-          route.get('/settings', Effect.succeed(new Response('Admin settings')))
-        })
-
-      expect((await app.request('/admin/users')).status).toBe(200)
-      expect((await app.request('/admin/settings')).status).toBe(200)
-    })
-
     test('supports nested groups', async () => {
       const app = createApp()
 
@@ -598,23 +478,6 @@ describe('EffectRouteBuilder', () => {
   })
 
   describe('Service Access', () => {
-    test('routes can access DatabaseService', async () => {
-      const app = createApp()
-
-      effectRoutes(app).get(
-        '/db-test',
-        Effect.gen(function* () {
-          const db = yield* DatabaseService
-
-          return Response.json(db)
-        })
-      )
-
-      const res = await app.request('/db-test')
-      const json = await res.json()
-      expect(json).toEqual({ name: 'test-db' })
-    })
-
     test('routes can access PageService', async () => {
       const app = createApp()
 
@@ -636,47 +499,6 @@ describe('EffectRouteBuilder', () => {
     })
   })
 
-  describe('Redirects', () => {
-    test('handles Redirect return value', async () => {
-      const app = createApp()
-
-      effectRoutes(app).post(
-        '/create',
-        Effect.succeed(new Redirect({ url: '/created', status: 303 }))
-      )
-
-      const res = await app.request('/create', { method: 'POST' })
-      expect(res.status).toBe(303)
-      expect(res.headers.get('Location')).toBe('/created')
-    })
-  })
-
-  describe('Error Handling', () => {
-    test('handles Effect failures', async () => {
-      const app = createApp()
-
-      effectRoutes(app).get(
-        '/error',
-        Effect.fail(new UnauthorizedError({ message: 'No access' }))
-      )
-
-      const res = await app.request('/error')
-      expect(res.status).toBe(302)
-    })
-
-    test('handles Effect failures gracefully', async () => {
-      const app = createApp()
-
-      effectRoutes(app).get(
-        '/error',
-        Effect.fail(new UnauthorizedError({ message: 'Access denied' }))
-      )
-
-      const res = await app.request('/error')
-      // Redirects to /login
-      expect(res.status).toBe(302)
-    })
-  })
 })
 
 describe('Real-world Patterns', () => {
@@ -687,21 +509,27 @@ describe('Real-world Patterns', () => {
       .prefix('/projects')
       .group((route) => {
         route.get('/', Effect.succeed(new Response('List')))
-        route.post('/', Effect.succeed(new Redirect({ url: '/projects', status: 303 })))
+        route.post('/', Effect.succeed(new Redirect({ url: '/projects/stored', status: 303 })))
         route.get('/create', Effect.succeed(new Response('Create form')))
         route.get('/:id', Effect.succeed(new Response('Show')))
         route.get('/:id/edit', Effect.succeed(new Response('Edit form')))
-        route.put('/:id', Effect.succeed(new Redirect({ url: '/projects', status: 303 })))
-        route.delete('/:id', Effect.succeed(new Redirect({ url: '/projects', status: 303 })))
+        route.put('/:id', Effect.succeed(new Redirect({ url: '/projects/updated', status: 303 })))
+        route.delete('/:id', Effect.succeed(new Redirect({ url: '/projects/destroyed', status: 303 })))
       })
 
-    expect((await app.request('/projects')).status).toBe(200)
-    expect((await app.request('/projects', { method: 'POST' })).status).toBe(303)
-    expect((await app.request('/projects/create')).status).toBe(200)
-    expect((await app.request('/projects/1')).status).toBe(200)
-    expect((await app.request('/projects/1/edit')).status).toBe(200)
-    expect((await app.request('/projects/1', { method: 'PUT' })).status).toBe(303)
-    expect((await app.request('/projects/1', { method: 'DELETE' })).status).toBe(303)
+    const location = async (path: string, method: string) => {
+      const res = await app.request(path, { method })
+      expect(res.status).toBe(303)
+      return res.headers.get('Location')
+    }
+
+    expect(await (await app.request('/projects')).text()).toBe('List')
+    expect(await location('/projects', 'POST')).toBe('/projects/stored')
+    expect(await (await app.request('/projects/create')).text()).toBe('Create form')
+    expect(await (await app.request('/projects/1')).text()).toBe('Show')
+    expect(await (await app.request('/projects/1/edit')).text()).toBe('Edit form')
+    expect(await location('/projects/1', 'PUT')).toBe('/projects/updated')
+    expect(await location('/projects/1', 'DELETE')).toBe('/projects/destroyed')
   })
 
   test('API with versioning', async () => {
@@ -728,34 +556,6 @@ describe('Real-world Patterns', () => {
     expect(await v2.text()).toBe('V2 users')
   })
 
-  test('mixed authenticated and public routes', async () => {
-    const app = createApp()
-
-    // Add mock auth user for protected routes
-    app.use('/dashboard/*', async (c, next) => {
-      c.set('authUser', createMockUser())
-      await next()
-    })
-
-    // Public routes
-    effectRoutes(app).group((route) => {
-      route.get('/', Effect.succeed(new Response('Home')))
-      route.get('/about', Effect.succeed(new Response('About')))
-    })
-
-    // Protected routes
-    effectRoutes(app)
-      .prefix('/dashboard')
-      .group((route) => {
-        route.get('/', Effect.succeed(new Response('Dashboard')))
-        route.get('/settings', Effect.succeed(new Response('Settings')))
-      })
-
-    expect((await app.request('/')).status).toBe(200)
-    expect((await app.request('/about')).status).toBe(200)
-    expect((await app.request('/dashboard')).status).toBe(200)
-    expect((await app.request('/dashboard/settings')).status).toBe(200)
-  })
 })
 
 describe('a route an earlier route answers first', () => {

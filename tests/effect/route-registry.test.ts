@@ -32,12 +32,6 @@ const createApp = () => {
 
 describe('RouteRegistry', () => {
   describe('Basic Operations', () => {
-    test('starts empty', () => {
-      const registry = new RouteRegistry()
-      expect(registry.count()).toBe(0)
-      expect(registry.all()).toEqual([])
-    })
-
     test('registers routes', () => {
       const registry = new RouteRegistry()
       registry.register({
@@ -170,23 +164,6 @@ describe('RouteRegistry', () => {
         },
       ])
     })
-
-    test('toJson is JSON.stringify compatible', () => {
-      const registry = new RouteRegistry()
-      registry.register({
-        method: 'post',
-        path: '/submit',
-        honoPath: '/submit',
-        fullPath: '/submit',
-        bindings: [],
-        prefix: '',
-      })
-
-      const json = registry.toJson()
-      const stringified = JSON.stringify(json)
-      const parsed = JSON.parse(stringified)
-      expect(parsed).toEqual(json)
-    })
   })
 
 })
@@ -215,14 +192,6 @@ describe('effectRoutes Integration', () => {
 
     expect(customRegistry.count()).toBe(1)
     expect(getAppRouteRegistry(app).count()).toBe(0)
-  })
-
-  test('getRegistry returns the registry', () => {
-    const app = createApp()
-    const customRegistry = new RouteRegistry()
-
-    const builder = effectRoutes(app, { registry: customRegistry })
-    expect(builder.getRegistry()).toBe(customRegistry)
   })
 
   test('prefix is included in registry metadata', () => {

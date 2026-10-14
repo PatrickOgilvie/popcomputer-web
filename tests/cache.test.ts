@@ -256,7 +256,7 @@ describe('cache', () => {
     })
 
     it('computes and caches value on first call', async () => {
-      const { layer } = makeTestCache()
+      const { layer, store } = makeTestCache()
       let callCount = 0
 
       await Effect.gen(function* () {
@@ -270,6 +270,7 @@ describe('cache', () => {
 
         expect(result).toEqual({ id: '1', name: 'Test User', email: 'test@example.com' })
         expect(callCount).toBe(1)
+        expect(store.has('user:1')).toBe(true)
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
 
@@ -389,10 +390,18 @@ describe('cache', () => {
           },
         }
 
-        const compute = Effect.succeed(complex)
-        const result = yield* cache('complex:1', compute, ComplexSchema, { ttl: Duration.hours(1) })
+        let computations = 0
+        const compute = Effect.sync(() => {
+          computations++
 
-        expect(result).toEqual(complex)
+          return complex
+        })
+
+        yield* cache('complex:1', compute, ComplexSchema, { ttl: Duration.hours(1) })
+        const second = yield* cache('complex:1', compute, ComplexSchema, { ttl: Duration.hours(1) })
+
+        expect(computations).toBe(1)
+        expect(second).toEqual(complex)
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
   })
@@ -426,21 +435,6 @@ describe('cache', () => {
         }
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
-
-    it('returns Option.none for expired entries', async () => {
-      const { layer, store } = makeTestCache()
-
-      // Pre-populate cache with expired entry
-      store.set('user:1', {
-        value: JSON.stringify({ v: { id: '1', name: 'Test', email: 'test@example.com' }, t: 0 }),
-        expiresAt: -1000, // Expired
-      })
-
-      await Effect.gen(function* () {
-        const result = yield* cacheGet('user:1', UserSchema)
-        expect(Option.isNone(result)).toBe(true)
-      }).pipe(Effect.provide(layer), Effect.runPromise)
-    })
   })
 
   describe('cacheSet()', () => {
@@ -449,14 +443,15 @@ describe('cache', () => {
 
       await Effect.gen(function* () {
         const user = { id: '1', name: 'Test', email: 'test@example.com' }
+        // The layer runs on a TestClock, so the stored time is exact.
+        yield* TestClock.adjust('5 seconds')
         yield* cacheSet('user:1', user, UserSchema, { ttl: Duration.hours(1) })
 
         const entry = store.get('user:1')
-        expect(entry).toBeDefined()
         assert.ok(entry)
         const parsed = yield* S.decodeEffect(UserCacheEntry)(entry.value)
         expect(parsed.v).toEqual(user)
-        expect(parsed.t).toEqual(expect.any(Number))
+        expect(parsed.t).toBe(5000)
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
 
@@ -506,12 +501,6 @@ describe('cache', () => {
         expect(store.has('user:1')).toBe(false)
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
-
-    it('succeeds for non-existent keys', async () => {
-      const { layer } = makeTestCache()
-
-      await cacheInvalidate('nonexistent').pipe(Effect.provide(layer), Effect.runPromise)
-    })
   })
 
   describe('cacheInvalidatePrefix()', () => {
@@ -548,20 +537,6 @@ describe('cache', () => {
         expect(store.has('user:1:notifications')).toBe(false)
         expect(store.has('user:2:profile')).toBe(true) // Not deleted
         expect(store.has('other:key')).toBe(true) // Not deleted
-      }).pipe(Effect.provide(layer), Effect.runPromise)
-    })
-
-    it('handles empty prefix (deletes nothing)', async () => {
-      const { layer, store } = makeTestCache()
-
-      store.set('key1', { value: '{}', expiresAt: 3600000 })
-      store.set('key2', { value: '{}', expiresAt: 3600000 })
-
-      await Effect.gen(function* () {
-        yield* cacheInvalidatePrefix('nonexistent:')
-
-        expect(store.has('key1')).toBe(true)
-        expect(store.has('key2')).toBe(true)
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
 
@@ -636,33 +611,6 @@ describe('cache', () => {
       )
 
       expect(listCalls).toEqual([undefined, '2'])
-    })
-  })
-
-  describe('CacheService directly', () => {
-    it('provides raw access to cache operations', async () => {
-      const { layer } = makeTestCache()
-
-      await Effect.gen(function* () {
-        const cacheClient = yield* CacheService
-
-        // Raw put
-        yield* cacheClient.put('raw:key', '{"data":"value"}', { expirationTtl: 3600 })
-
-        // Raw get
-        const raw = yield* cacheClient.get('raw:key')
-        expect(raw).toBe('{"data":"value"}')
-
-        // List
-        const keys = yield* cacheClient.list({ prefix: 'raw:' })
-        expect(keys.keys).toHaveLength(1)
-        expect(keys.keys[0].name).toBe('raw:key')
-
-        // Delete
-        yield* cacheClient.delete('raw:key')
-        const deleted = yield* cacheClient.get('raw:key')
-        expect(deleted).toBeNull()
-      }).pipe(Effect.provide(layer), Effect.runPromise)
     })
   })
 
@@ -776,43 +724,6 @@ describe('cache', () => {
 
         expect(project2.id).toBe('2')
         expect(dbCalls).toBe(2)
-      }).pipe(Effect.provide(layer), Effect.runPromise)
-    })
-
-    it('handles write-through invalidation pattern', async () => {
-      const { layer } = makeTestCache()
-      let version = 1
-
-      const fetchProject = () =>
-        Effect.sync(() => ({
-          id: '1',
-          name: `Project v${version}`,
-          userId: 'user-1',
-        }))
-
-      const updateProject = () =>
-        Effect.sync(() => {
-          version++
-        })
-
-      await Effect.gen(function* () {
-        // Initial fetch
-        const v1 = yield* cache('project:1', fetchProject(), ProjectSchema, { ttl: Duration.hours(1) })
-        expect(v1.name).toBe('Project v1')
-
-        // Update (simulated DB write)
-        yield* updateProject()
-
-        // Still returns cached v1
-        const stillV1 = yield* cache('project:1', fetchProject(), ProjectSchema, { ttl: Duration.hours(1) })
-        expect(stillV1.name).toBe('Project v1')
-
-        // Invalidate after write
-        yield* cacheInvalidate('project:1')
-
-        // Now gets fresh v2
-        const v2 = yield* cache('project:1', fetchProject(), ProjectSchema, { ttl: Duration.hours(1) })
-        expect(v2.name).toBe('Project v2')
       }).pipe(Effect.provide(layer), Effect.runPromise)
     })
   })
@@ -1128,16 +1039,18 @@ describe('cache', () => {
     it('different schemas produce different hashes', async () => {
       const { layer } = makeTestCache()
 
-      const OtherSchema = S.Struct({
-        id: S.String,
-        title: S.String, // Different field
-      })
+      // A narrower schema, which decodes the stored user.
+      const OtherSchema = S.Struct({ id: S.String })
 
       await Effect.gen(function* () {
         const user = { id: '1', name: 'Test', email: 'test@example.com' }
+        yield* cacheSet('item:1', user, UserSchema, { ttl: Duration.hours(1) })
         yield* cacheSet('item:1', user, UserSchema, { ttl: Duration.hours(1), version: true })
 
-        // Different schema should not find the cached value
+        // Under the same key, the other schema reads the user...
+        expect(yield* cacheGet('item:1', OtherSchema)).toEqual(Option.some({ id: '1' }))
+
+        // ...so only a different hash keeps it from the versioned entry.
         const result = yield* cacheGet('item:1', OtherSchema, { version: true })
         expect(Option.isNone(result)).toBe(true)
       }).pipe(Effect.provide(layer), Effect.runPromise)

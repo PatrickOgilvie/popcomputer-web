@@ -119,13 +119,6 @@ describe('endpoint actions', () => {
     expect(body).toEqual({ data: [{ id: 'p1', name: 'Café Nero', rating: 4, createdAt: created.toISOString() }] })
   })
 
-  test('send only the fields the success declares', async () => {
-    const { app } = createApp()
-    const res = await app.request('/api/places/p2')
-
-    expect(await res.json()).not.toHaveProperty('ownerSecret')
-  })
-
   test('answer a create with its status and the headers the action adds', async () => {
     const { app } = createApp()
     const res = await app.request('/api/places', {

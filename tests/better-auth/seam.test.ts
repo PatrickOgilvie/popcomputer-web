@@ -12,7 +12,6 @@ import { join } from 'node:path'
 import { getSchema } from 'better-auth/db'
 import { eq } from 'drizzle-orm'
 import { Redacted, Schema as S } from 'effect'
-import { getTableConfig as sqliteTableConfig } from 'drizzle-orm/sqlite-core'
 import { testBrowser, testEnv } from '../../src/testing.js'
 import { betterAuthSession } from '../../src/auth.js'
 import { tableSchema } from '../../src/schema.js'
@@ -70,7 +69,6 @@ describe('tables', () => {
   test("the fixture's tables have every column the plugins' configuration needs", () => {
     const auth = createAuth({ db: createDatabase(), outbox: newOutbox() })
     const needed = getSchema(auth.options)
-    const tables = new Map(Object.values(schema).map((table) => [sqliteTableConfig(table).name, table]))
     const missing: string[] = []
 
     for (const [model, { fields }] of Object.entries(needed)) {
@@ -85,7 +83,6 @@ describe('tables', () => {
       }
     }
 
-    expect(tables.size).toBeGreaterThan(0)
     expect(missing).toEqual([])
   })
 })
@@ -126,7 +123,7 @@ describe('signing up, in and out', () => {
     expect((await api('/update-user', { name: 'Ada King' }, member)).status).toBe(200)
   })
 
-  test('a wrong password goes back to the form with the error on its field', async () => {
+  test("a wrong password is refused with Better Auth's message on the email field", async () => {
     const { browser } = setup()
     await signUp(browser(), 'ada@example.com')
     const visitor = browser()
@@ -138,7 +135,7 @@ describe('signing up, in and out', () => {
     })
 
     expect(res.status).toBe(422)
-    expect(await res.json()).toMatchObject({ errors: { email: expect.any(String) } })
+    expect((await res.json()).errors).toEqual({ email: 'Invalid email or password' })
   })
 
   test('signing out ends the session in the database and in the browser', async () => {

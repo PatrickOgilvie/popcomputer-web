@@ -49,6 +49,12 @@ function createApp() {
     .get('/claims/1/items', action(render('Claims/Items')))
     // Home sends visitors on, as a site whose home is a dashboard does.
     .get('/', action(redirect('/projects')))
+    // Flashes, then sends the visitor home, which redirects again.
+    .post('/projects/import', action(Effect.gen(function* () {
+      yield* flash('success', 'Imported 3 projects.')
+
+      return yield* redirect('/')
+    })))
     .post('/sessions', action(Effect.gen(function* () {
       yield* flash('success', 'Signed in.')
 
@@ -186,24 +192,16 @@ describe('flash', () => {
   })
 })
 
-describe('readErrorPage', () => {
-  test('reads the error page with the invalid fields', async () => {
-    const page = await readErrorPage(await createApp().request('/search?page=first', { headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } }))
-
-    expect(page.props.status).toBe(422)
-    expect(typeof page.props.errors.page).toBe('string')
-  })
-})
-
 describe('invalid query parameters on a page visit', () => {
-  test('render the error page with 422', async () => {
+  test('render the error page with 422, which readErrorPage reads with the invalid fields', async () => {
     const res = await createApp().request('/search?page=first', { headers: page })
 
     expect(res.status).toBe(422)
-    expect(await res.json()).toMatchObject({
-      component: 'Error',
-      props: { status: 422, errors: { page: expect.any(String) } },
-    })
+
+    const errorPage = await readErrorPage(res)
+    expect(errorPage.component).toBe('Error')
+    expect(errorPage.props.status).toBe(422)
+    expect(typeof errorPage.props.errors.page).toBe('string')
   })
 })
 
@@ -296,37 +294,34 @@ describe('flash through redirects', () => {
     expect(browser.cookies.has('popweb-flash')).toBe(false)
   })
 
-  test('flash values pass through a redirect, and show once', async () => {
+  test('flash values pass through a redirect that renders no page, and show once', async () => {
     const app = createApp()
     const browser = testBrowser(app)
-    browser.setCookie('popweb-flash', '')
-    const created = await browser.request('/projects', {
-      method: 'POST',
-      headers: { ...page, 'Content-Type': 'application/json', Referer: 'http://localhost/' },
-      body: JSON.stringify({ name: 'Apollo' }),
-    })
-    const index = await readPage(await browser.follow(created), 'Projects/Index')
+    // The import redirects to `/`, which redirects again to the projects page.
+    const imported = await browser.request('/projects/import', { method: 'POST', headers: page })
+    const home = await browser.follow(imported)
+
+    expect(home.status).toBe(303)
+    expect(home.headers.get('Location')).toBe('/projects')
+
+    const index = await readPage(await browser.follow(home), 'Projects/Index')
     const again = await readPage(await browser.request('/projects', { headers: page }), 'Projects/Index')
 
-    expect(index.flash).toEqual({ success: 'Created Apollo.' })
+    expect(index.flash).toEqual({ success: 'Imported 3 projects.' })
     expect(again.flash).toEqual({})
   })
 })
 
 describe('testBrowser.follow', () => {
-  test('carries a failed form\'s errors to the page it goes back to', async () => {
+  test('carries a failed form\'s errors, and flash, to the page the redirect renders', async () => {
     const app = createApp()
+    const browser = testBrowser(app)
     const failed = await submit(app, { name: '' })
-    const form = await readPage(await testBrowser(app).follow(failed), 'Projects/New')
+    const form = await readPage(await browser.follow(failed), 'Projects/New')
+    const created = await submit(app, { name: 'Apollo' })
+    const index = await readPage(await browser.follow(created), 'Projects/Index')
 
     expect(form.props.errors.name).toBe('This field is required')
-  })
-
-  test('carries flash to the page the redirect renders', async () => {
-    const app = createApp()
-    const created = await submit(app, { name: 'Apollo' })
-    const index = await readPage(await testBrowser(app).follow(created), 'Projects/Index')
-
     expect(index.flash).toEqual({ success: 'Created Apollo.' })
   })
 
@@ -345,7 +340,7 @@ describe('testBrowser.follow', () => {
     const app = createApp()
     const res = await app.request('/projects', { headers: page })
 
-    expect(testBrowser(app).follow(res)).rejects.toThrow('Expected a redirect')
+    await expect(testBrowser(app).follow(res)).rejects.toThrow('Expected a redirect')
   })
 })
 

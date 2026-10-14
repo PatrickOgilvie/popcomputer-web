@@ -95,10 +95,6 @@ describe('String Types', () => {
       expect(decode(trimmed, '  hello  ')).toBe('hello')
       expect(decode(trimmed, '\t\ntest\n\t')).toBe('test')
     })
-
-    test('handles already trimmed strings', () => {
-      expect(decode(trimmed, 'hello')).toBe('hello')
-    })
   })
 
   describe('nullableString', () => {
@@ -320,6 +316,8 @@ describe('Numeric Types', () => {
       const schema = digitsBetween(3, 5)
       expect(decode(schema, '123')).toBe('123')
       expect(decode(schema, '12345')).toBe('12345')
+      expect(decodeEither(schema, '12')._tag).toBe('Failure')
+      expect(decodeEither(schema, '123456')._tag).toBe('Failure')
     })
   })
 
@@ -462,6 +460,7 @@ describe('Date Types', () => {
       const timestamp = 1_704_067_200_000
       const result = decode(coercedDate, timestamp)
       expect(result).toBeInstanceOf(Date)
+      expect(result.getTime()).toBe(timestamp)
     })
 
     test('passes through dates', () => {
@@ -506,6 +505,7 @@ describe('Date Types', () => {
       const schema = afterOrEqual('2024-01-01')
       expect(decode(schema, '2024-01-01')).toBeInstanceOf(Date)
       expect(decode(schema, '2024-06-15')).toBeInstanceOf(Date)
+      expect(decodeEither(schema, '2023-12-31')._tag).toBe('Failure')
     })
   })
 
@@ -527,6 +527,7 @@ describe('Date Types', () => {
       const schema = beforeOrEqual('2024-12-31')
       expect(decode(schema, '2024-12-31')).toBeInstanceOf(Date)
       expect(decode(schema, '2024-01-01')).toBeInstanceOf(Date)
+      expect(decodeEither(schema, '2025-01-01')._tag).toBe('Failure')
     })
   })
 })
@@ -648,6 +649,7 @@ describe('Format Types', () => {
 
     test('validates non-empty emails', () => {
       expect(decode(nullableEmail, 'test@example.com')).toBe('test@example.com')
+      expect(decodeEither(nullableEmail, 'not-an-email')._tag).toBe('Failure')
     })
   })
 
@@ -669,6 +671,7 @@ describe('Format Types', () => {
 
     test('validates non-empty URLs', () => {
       expect(decode(nullableUrl, 'https://example.com')).toBe('https://example.com')
+      expect(decodeEither(nullableUrl, 'not-a-url')._tag).toBe('Failure')
     })
   })
 

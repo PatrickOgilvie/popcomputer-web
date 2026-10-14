@@ -217,7 +217,7 @@ export class NotFoundError extends Schema.TaggedError<NotFoundError>()('NotFound
   }
 
   get message(): string {
-    return this.id
+    return this.id !== undefined && this.id !== null
       ? `${this.resource} with id "${this.id}" was not found.`
       : `${this.resource} was not found.`
   }

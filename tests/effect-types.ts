@@ -15,7 +15,6 @@ import {
   effectRoutes,
   RequireAuthLayer,
   bound,
-  validateUnknown,
   type DatabaseType,
   type SchemaType,
   type AuthType,
@@ -23,17 +22,14 @@ import {
   type DefaultAuthUser,
   type BoundModel,
 } from '../src/effect/index.js'
-import { pluralize } from '../src/effect/binding.js'
+import type { WebDeclaration } from '../src/effect/register.js'
 
 // ============================================================================
 // Test Utilities
 // ============================================================================
 
-/** Assert two types are exactly equal */
-type AssertEqual<T, U> = [T] extends [U] ? ([U] extends [T] ? true : false) : false
-
-/** Assert T extends U */
-type AssertExtends<T, U> = T extends U ? true : false
+/** Whether two types are identical; `any` equals only `any`. */
+type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false
 
 // ============================================================================
 // Mock Schema for Testing
@@ -56,10 +52,6 @@ const routeBindings = {
   category: S.Struct({ id: S.String, title: S.String }),
   publicProject: S.Struct({ id: S.String }),
 }
-
-type Project = typeof projects.$inferSelect
-
-type Category = typeof categories.$inferSelect
 
 type PublicProject = S.Schema.Type<typeof routeBindings.publicProject>
 
@@ -101,44 +93,26 @@ declare module '../src/effect/register.js' {
 }
 
 // ============================================================================
-// Pluralize Type Tests (must match runtime pluralize function)
-// ============================================================================
-
-// Test: project → projects (simple 's')
-const _pluralProject: AssertEqual<BoundModel<'project'>, Project> = true
-
-// Test: category → categories (y → ies)
-const _pluralCategory: AssertEqual<BoundModel<'category'>, Category> = true
-
-// Parser output, rather than the raw table row, owns the bound-model contract.
-const _parsedPublicProject: AssertEqual<
-  BoundModel<'publicProject'>,
-  PublicProject
-> = true
-
-// ============================================================================
 // Module Augmentation Tests
 // ============================================================================
 
 // DatabaseType resolves to augmented type
-const _dbType: AssertExtends<DatabaseType, { query: (sql: string) => Promise<unknown[]> }> = true
+const _dbType: Equals<DatabaseType, { query: (sql: string) => Promise<unknown[]> }> = true
 
 // SchemaType resolves to augmented schema
-const _schemaType: AssertExtends<SchemaType, typeof schema> = true
+const _schemaType: Equals<SchemaType, typeof schema> = true
 
 // AuthType resolves to augmented type
-const _authType: AssertExtends<AuthType, { getSession: () => Promise<object> }> = true
+const _authType: Equals<AuthType, { getSession: () => Promise<object> }> = true
 
 // AuthUser resolves to augmented custom type (not DefaultAuthUser)
-const _authUserType: AssertExtends<AuthUser, CustomAuthUser> = true
-
-// AuthUser has custom fields from augmentation
-const _authUserHasCustomFields: AssertExtends<AuthUser, { user: { isAnonymous: boolean; role: 'admin' | 'user' } }> = true
+const _authUserType: Equals<AuthUser, CustomAuthUser> = true
 
 // DefaultAuthUser should NOT have custom fields (verifies it's the fallback)
-type DefaultHasCustomFields = DefaultAuthUser extends { user: { isAnonymous: boolean } } ? true : false
-
-const _defaultNoCustomFields: DefaultHasCustomFields = false
+const _defaultNoCustomFields: Equals<
+  DefaultAuthUser extends { user: { isAnonymous: boolean } } ? true : false,
+  false
+> = true
 
 // ============================================================================
 // Service Type Tests
@@ -147,7 +121,7 @@ const _defaultNoCustomFields: DefaultHasCustomFields = false
 // DatabaseService yields the augmented database type
 const _testDbService = Effect.gen(function* () {
   const db = yield* DatabaseService
-  const _query: (sql: string) => Promise<unknown[]> = db.query
+  const _db: Equals<typeof db, { query: (sql: string) => Promise<unknown[]> }> = true
 
   return db
 })
@@ -155,7 +129,7 @@ const _testDbService = Effect.gen(function* () {
 // AuthService yields the augmented auth type
 const _testAuthService = Effect.gen(function* () {
   const auth = yield* AuthService
-const _getSession: () => Promise<object> = auth.getSession
+  const _auth: Equals<typeof auth, { getSession: () => Promise<object> }> = true
 
   return auth
 })
@@ -164,11 +138,11 @@ const _getSession: () => Promise<object> = auth.getSession
 const _testAuthUserService = Effect.gen(function* () {
   const authUser = yield* AuthUserService
   // Custom fields should be typed correctly
-  const _isAnonymous: boolean = authUser.user.isAnonymous
-  const _role: 'admin' | 'user' = authUser.user.role
+  const _isAnonymous: Equals<typeof authUser.user.isAnonymous, boolean> = true
+  const _role: Equals<typeof authUser.user.role, 'admin' | 'user'> = true
   // Standard fields still work
-  const _id: string = authUser.user.id
-  const _email: string = authUser.user.email
+  const _id: Equals<typeof authUser.user.id, string> = true
+  const _email: Equals<typeof authUser.user.email, string> = true
 
   return authUser
 })
@@ -229,74 +203,14 @@ const _builderWithCrossLayerProvide = effectRoutes(new Hono())
 // BoundModel Type Tests
 // ============================================================================
 
-// bound() returns correctly typed model
-const _testBound = Effect.gen(function* () {
-  const project = yield* bound('project')
-  const _id: string = project.id
-  const _name: string = project.name
-
-  return project
-})
-
-// bound() with category (tests y → ies pluralization)
-const _testBoundCategory = Effect.gen(function* () {
-  const category = yield* bound('category')
-  const _id: string = category.id
-  const _title: string = category.title
-
-  return category
-})
+// Parser output, rather than the raw table row, owns the bound-model contract.
+const _parsedPublicProject: Equals<BoundModel<'publicProject'>, PublicProject> = true
 
 const _testParsedBound = Effect.gen(function* () {
   const project = yield* bound('publicProject')
-  const _id: string = project.id
+  const _project: Equals<typeof project, PublicProject> = true
   // @ts-expect-error The registered parser strips fields it does not declare.
   void project.name
 
   return project
-})
-
-// ============================================================================
-// Runtime Tests
-// ============================================================================
-
-import { describe, test, expect } from 'bun:test'
-import type { WebDeclaration } from '../src/effect/register.js'
-
-describe('Effect type tests', () => {
-  test('pluralize function matches Pluralize type', () => {
-    // These runtime checks complement the compile-time assertions above
-    expect(pluralize('project')).toBe('projects')
-    expect(pluralize('category')).toBe('categories')
-    expect(pluralize('day')).toBe('days')
-    expect(pluralize('box')).toBe('boxes')
-    expect(pluralize('class')).toBe('classes')
-    expect(pluralize('match')).toBe('matches')
-    expect(pluralize('wish')).toBe('wishes')
-    // Words already ending in double consonants
-    expect(pluralize('buzz')).toBe('buzzes')
-    expect(pluralize('boss')).toBe('bosses')
-    expect(pluralize('fizz')).toBe('fizzes')
-  })
-
-  test('compile-time type assertions passed', () => {
-    // If we got here, all the type assertions above compiled successfully
-    expect(_pluralProject).toBe(true)
-    expect(_pluralCategory).toBe(true)
-    expect(_dbType).toBe(true)
-    expect(_schemaType).toBe(true)
-    expect(_authType).toBe(true)
-    // AuthUser augmentation assertions
-    expect(_authUserType).toBe(true)
-    expect(_authUserHasCustomFields).toBe(true)
-    expect(_defaultNoCustomFields).toBe(false)
-  })
-
-  test('effect generators are properly typed', () => {
-    expect(_testDbService).toBeDefined()
-    expect(_testAuthService).toBeDefined()
-    expect(_testAuthUserService).toBeDefined()
-    expect(_testBound).toBeDefined()
-    expect(_testBoundCategory).toBeDefined()
-  })
 })

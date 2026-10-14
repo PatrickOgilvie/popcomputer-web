@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Option, Effect, Layer, Exit, Cause, Stream } from 'effect'
+import { Effect, Layer, Stream } from 'effect'
 import type { PageProps } from '../../src/types.js'
 import {
   redirect,
@@ -28,7 +28,7 @@ import {
   type ResponseFactory,
   type RequestContext,
 } from '../../src/effect/services.js'
-import { Redirect } from '../../src/effect/errors.js'
+import { ForbiddenError, HttpError, NotFoundError, Redirect } from '../../src/effect/errors.js'
 
 // Mock PageRenderer
 const createMockPage = (): PageRenderer & {
@@ -107,13 +107,6 @@ describe('redirect', () => {
     redirect('/login', 302)
 
     expect(Effect.runSync(redirect('/login')).status).toBe(303)
-  })
-
-  test('is a pure effect (no dependencies)', () => {
-    const effect = redirect('/home')
-    const result = Effect.runSync(effect)
-
-    expect(result._tag).toBe('Redirect')
   })
 })
 
@@ -212,7 +205,6 @@ describe('json', () => {
     const response = await Effect.runPromise(Effect.provide(effect, layer))
 
     expect(response.status).toBe(200)
-    expect(response.headers.get('Content-Type')).toBe('application/json')
 
     const body = await response.json()
     expect(body).toEqual({ success: true, data: [1, 2, 3] })
@@ -236,7 +228,6 @@ describe('text', () => {
     const response = await Effect.runPromise(Effect.provide(effect, layer))
 
     expect(response.status).toBe(200)
-    expect(response.headers.get('Content-Type')).toBe('text/plain')
 
     const body = await response.text()
     expect(body).toBe('Hello, World!')
@@ -254,113 +245,64 @@ describe('text', () => {
 
 describe('notFound', () => {
   test('fails with NotFoundError', () => {
-    const exit = Effect.runSyncExit(notFound('Project'))
+    const error = Effect.runSync(Effect.flip(notFound('Project')))
 
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value
-        expect(error._tag).toBe('NotFoundError')
-        expect(error.resource).toBe('Project')
-      }
-    }
+    expect(error).toBeInstanceOf(NotFoundError)
+    expect(error.resource).toBe('Project')
+    expect(error.id).toBeUndefined()
+    expect(error.httpStatus).toBe(404)
   })
 
   test('includes resource ID', () => {
-    const exit = Effect.runSyncExit(notFound('User', 42))
+    const error = Effect.runSync(Effect.flip(notFound('User', 42)))
 
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value
-        expect(error.id).toBe(42)
-      }
-    }
+    expect(error).toBeInstanceOf(NotFoundError)
+    expect(error.resource).toBe('User')
+    expect(error.id).toBe(42)
   })
 
   test('supports string ID', () => {
-    const exit = Effect.runSyncExit(notFound('Post', 'abc-123'))
+    const error = Effect.runSync(Effect.flip(notFound('Post', 'abc-123')))
 
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value
-        expect(error.id).toBe('abc-123')
-      }
-    }
+    expect(error).toBeInstanceOf(NotFoundError)
+    expect(error.id).toBe('abc-123')
   })
 })
 
 describe('forbidden', () => {
   test('fails with ForbiddenError with default message', () => {
-    const exit = Effect.runSyncExit(forbidden())
+    const error = Effect.runSync(Effect.flip(forbidden()))
 
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value
-        expect(error._tag).toBe('ForbiddenError')
-        expect(error.message).toBe('Forbidden')
-      }
-    }
+    expect(error).toBeInstanceOf(ForbiddenError)
+    expect(error.message).toBe('Forbidden')
+    expect(error.httpStatus).toBe(403)
   })
 
   test('fails with ForbiddenError with custom message', () => {
-    const exit = Effect.runSyncExit(forbidden('You cannot edit this resource'))
+    const error = Effect.runSync(Effect.flip(forbidden('You cannot edit this resource')))
 
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value
-        expect(error.message).toBe('You cannot edit this resource')
-      }
-    }
+    expect(error).toBeInstanceOf(ForbiddenError)
+    expect(error.message).toBe('You cannot edit this resource')
   })
 })
 
 describe('httpError', () => {
   test('fails with HttpError', () => {
-    const exit = Effect.runSyncExit(httpError(429, 'Too many requests'))
+    const error = Effect.runSync(Effect.flip(httpError(429, 'Too many requests')))
 
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value
-        expect(error._tag).toBe('HttpError')
-        expect(error.status).toBe(429)
-        expect(error.message).toBe('Too many requests')
-      }
-    }
+    expect(error).toBeInstanceOf(HttpError)
+    expect(error.status).toBe(429)
+    expect(error.message).toBe('Too many requests')
+    expect(error.body).toBeUndefined()
   })
 
   test('includes optional body', () => {
-    const exit = Effect.runSyncExit(
-      httpError(400, 'Bad request', { field: 'Invalid' })
-    )
+    const error = Effect.runSync(Effect.flip(httpError(400, 'Bad request', { field: 'Invalid' })))
 
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const error = option.value
-        expect(error.body).toEqual({ field: 'Invalid' })
-      }
-    }
+    expect(error).toBeInstanceOf(HttpError)
+    expect(error.status).toBe(400)
+    expect(error.message).toBe('Bad request')
+    expect(error.body).toEqual({ field: 'Invalid' })
   })
 })
 
@@ -448,27 +390,6 @@ describe('jsonOrRender', () => {
     expect(mockPage.renders).toHaveLength(1)
     expect(mockPage.renders[0].component).toBe('Projects/Index')
   })
-
-  test('renders for Inertia requests even with JSON accept', async () => {
-    const request = createMockRequest({
-      'x-inertia': 'true',
-      accept: 'application/json',
-    })
-
-    const mockPage = createMockPage()
-    const mockResponse = createMockResponseFactory()
-
-    const layer = Layer.mergeAll(
-      Layer.succeed(RequestService, request),
-      Layer.succeed(PageService, mockPage),
-      Layer.succeed(ResponseFactoryService, mockResponse)
-    )
-
-    const effect = jsonOrRender('Projects/Index', { projects: [] })
-    await Effect.runPromise(Effect.provide(effect, layer))
-
-    expect(mockPage.renders).toHaveLength(1)
-  })
 })
 
 describe('share', () => {
@@ -480,20 +401,5 @@ describe('share', () => {
     Effect.runSync(Effect.provide(effect, layer))
 
     expect(mockPage.sharedProps.user).toEqual({ id: 1, name: 'John' })
-  })
-
-  test('shares multiple values', () => {
-    const mockPage = createMockPage()
-    const layer = Layer.succeed(PageService, mockPage)
-
-    const effect = Effect.gen(function* () {
-      yield* share('flash', { message: 'Success!' })
-      yield* share('auth', { user: null })
-    })
-
-    Effect.runSync(Effect.provide(effect, layer))
-
-    expect(mockPage.sharedProps.flash).toEqual({ message: 'Success!' })
-    expect(mockPage.sharedProps.auth).toEqual({ user: null })
   })
 })

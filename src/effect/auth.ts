@@ -20,8 +20,8 @@ import {
 import { AuthRateLimitError, type AuthRedirect, type ValidationError } from './errors.js'
 import { accountOf, clientAddress, isPasswordSignIn, withinSignInLimits } from './sign-in-limits.js'
 import {
-  inspectBetterAuthActionResult,
-  runBetterAuthApiCall,
+  inspectBetterAuthResponse,
+  sendToBetterAuth,
   toAuthActionError,
   type BetterAuthActionError,
 } from './better-auth-boundary.js'
@@ -656,9 +656,9 @@ function callEndpoint(
 
     const response = yield* withinSignInLimits(
       attempt,
-      runBetterAuthApiCall(() => sendThroughHandler(auth, raw, name, input), { inspectResult: false })
+      sendToBetterAuth(() => sendThroughHandler(auth, raw, name, input))
     ).pipe(
-      Effect.flatMap(inspectBetterAuthActionResult),
+      Effect.flatMap(inspectBetterAuthResponse),
       Effect.mapError((failure) => failure instanceof AuthRateLimitError ? failure : toAuthActionError(failure, errors))
     )
 

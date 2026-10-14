@@ -57,6 +57,16 @@ describe('uploads', () => {
 
     expect(res.status).toBe(303)
     expect(res.headers.get('Location')).toBe('/posts/new')
+
+    // The same form, answered as JSON, names the field it refused.
+    const refused = await createApp().request('/posts', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      body: form(new File([], '')),
+    })
+
+    expect(refused.status).toBe(422)
+    expect(Object.keys((await refused.json()).errors)).toEqual(['cover'])
   })
 })
 

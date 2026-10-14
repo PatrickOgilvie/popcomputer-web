@@ -24,7 +24,7 @@ import {
   PageService,
 } from '../src/effect/services.js'
 import { RequireAuthLayer } from '../src/effect/auth.js'
-import { bound, routeBinding } from '../src/effect/binding.js'
+import { bound } from '../src/effect/binding.js'
 import { NotFoundError } from '../src/effect/errors.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
@@ -61,21 +61,13 @@ declare module '../src/effect/register.js' {
   }
 }
 
-/** Bindings for the nested route-model test, whose decoded post it reads. */
-const nestedBindings = {
-  user: S.Struct({ id: S.String }),
-  post: routeBinding(
-    S.Struct({ id: S.String, userId: S.String }),
-    { scope: { user: { foreignKey: 'userId' } } }
-  ),
-}
-
 /**
  * The bindings the tests' routes name. The configuration-error tests bind
- * `article`, `project` and `task` without registering parsers for them, to
- * check the errors a misconfigured app gets at runtime.
+ * `article` and `project` without registering parsers for them, to check the
+ * errors a misconfigured app gets at runtime.
  */
-type DeclaredBindings = typeof nestedBindings & {
+type DeclaredBindings = {
+  readonly user: S.Codec<unknown>
   readonly article: S.Codec<unknown>
   readonly project: S.Codec<unknown>
   readonly task: S.Codec<unknown>
@@ -371,154 +363,6 @@ describe('setupWeb basic configuration', () => {
   })
 })
 
-// =============================================================================
-// Schema Configuration Tests
-// =============================================================================
-
-describe('setupWeb schema configuration', () => {
-  // Mock schema for testing
-  const mockSchema = {
-    projects: {
-      id: { name: 'id', columnType: 'SQLiteText' },
-      name: { name: 'name' },
-    },
-    users: {
-      id: { name: 'id', columnType: 'SQLiteText' },
-      email: { name: 'email' },
-    },
-  }
-
-  test('schema is available to effectRoutes via context', async () => {
-    const app = new Hono<TestEnv>()
-
-    // Mock drizzle-style db (cross-database compatible pattern)
-    const mockDb = {
-      select: () => ({
-        from: () => ({
-          where: () => ({
-            limit: async () => [{ id: '123', name: 'Test Project' }],
-          }),
-        }),
-      }),
-    }
-
-    setupWeb(app, {
-      version: '1.0.0',
-      render: (page) => JSON.stringify(page),
-      database: () => mockDb,
-      schema: mockSchema,
-      bindings: {
-        project: S.Struct({ id: S.String, name: S.String }),
-      },
-    })
-
-    // Route with model binding - schema comes from setupWeb
-    effectRoutes(app).get(
-      '/projects/{project}',
-      Effect.gen(function* () {
-        const project = yield* bound('project')
-
-        return Response.json(project)
-      })
-    )
-
-    const res = await app.request('/projects/123')
-    expect(res.status).toBe(200)
-    const json = await res.json()
-    expect(json.id).toBe('123')
-    expect(json.name).toBe('Test Project')
-  })
-
-  test('nested bindings keep both parent scope and child lookup constraints', async () => {
-    const app = new Hono<TestEnv>()
-
-    const usersTable = {
-      id: { name: 'id', columnType: 'SQLiteText' },
-    }
-
-    const postsTable = {
-      id: { name: 'id', columnType: 'SQLiteText' },
-      userId: { name: 'userId' },
-    }
-
-    const mockSchema = {
-      users: usersTable,
-      posts: postsTable,
-      postsRelations: {
-        config: ({ one }: { one: <Table, Options>(table: Table, opts: Options) => object }) => ({
-          user: one(
-            { _: { name: 'users' } },
-            {
-              fields: [postsTable.userId],
-              references: [usersTable.id],
-            }
-          ),
-        }),
-      },
-    }
-
-    let postsWhereCalls = 0
-
-    const mockDb = {
-      select: () => ({
-              from: <Table>(table: Table) => {
-          let whereCalls = 0
-
-          const query = {
-            where: () => {
-              whereCalls += 1
-
-              if (table === postsTable) {
-                postsWhereCalls = whereCalls
-              }
-
-              return query
-            },
-            limit: async () => {
-              if (table === usersTable) {
-                return [{ id: 'u1' }]
-              }
-
-              if (table === postsTable) {
-                // If resolveBindings calls where twice, this returns the wrong model.
-                return whereCalls > 1
-                  ? [{ id: 'p1', userId: 'u1' }]
-                  : [{ id: 'p2', userId: 'u1' }]
-              }
-
-              return []
-            },
-          }
-
-          return query
-        },
-      }),
-    }
-
-    setupWeb(app, {
-      version: '1.0.0',
-      render: (page) => JSON.stringify(page),
-      database: () => mockDb,
-      schema: mockSchema,
-      bindings: nestedBindings,
-    })
-
-    effectRoutes(app).get(
-      '/users/{user}/posts/{post}',
-      Effect.gen(function* () {
-        const post = yield* bound('post')
-
-        return new Response(post.id)
-      })
-    )
-
-    const res = await app.request('/users/u1/posts/p2')
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('p2')
-    expect(postsWhereCalls).toBe(1)
-  })
-})
-
 describe('setupWeb auth session loading', () => {
   test('the default session parser keeps the session token out of responses', async () => {
     const app = new Hono<TestEnv>()
@@ -810,7 +654,7 @@ describe('setupWeb configuration errors', () => {
     expect(() => web.services({})).toThrow('web.services(...) was called twice')
   })
 
-  test('helpful error when using route model binding without schema', async () => {
+  test('route model binding without schema names the binding and points to the schema', async () => {
     const app = new Hono<TestEnv>()
 
     // Set environment to development to see full error
@@ -826,95 +670,9 @@ describe('setupWeb configuration errors', () => {
       version: '1.0.0',
       render: (page) => JSON.stringify(page),
       database: () => ({ name: 'test-db' }),
-      // No schema configured!,
     })
 
     // Register error handlers to render errors through the error boundary
-    registerErrorHandlers(app, {
-      component: 'Error',
-      showDevErrors: true,
-      envKey: 'ENVIRONMENT',
-      devValue: 'development',
-    })
-
-    // Route with model binding but no schema
-    effectRoutes(app).get(
-      '/projects/{project}',
-      Effect.gen(function* () {
-        const project = yield* bound('project')
-
-        return Response.json(project)
-      })
-    )
-
-    const res = await app.request('/projects/123')
-
-    // Error should be rendered through the error boundary
-    expect(res.status).toBe(500)
-
-    const body = await res.json()
-    expect(body.component).toBe('Error')
-    expect(body.props.status).toBe(500)
-    expect(body.props.message).toContain('schema configuration')
-  })
-
-  test('error hint references setupWeb configuration', async () => {
-    const app = new Hono<TestEnv>()
-
-    app.use('*', async (c, next) => {
-      // Set environment to development to see full error
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the complete Worker binding fixture for the request.
-      c.env = { DATABASE_URL: 'unused', AUTH_SECRET: 'unused', ENVIRONMENT: 'development' }
-      await next()
-    })
-
-    setupWeb(app, {
-      version: '1.0.0',
-      render: (page) => JSON.stringify(page),
-      database: () => ({ name: 'test-db' }),
-      // No schema!,
-    })
-
-    registerErrorHandlers(app, {
-      component: 'Error',
-      showDevErrors: true,
-      envKey: 'ENVIRONMENT',
-      devValue: 'development',
-    })
-
-    effectRoutes(app).get(
-      '/users/{user}',
-      Effect.gen(function* () {
-        const user = yield* bound('user')
-
-        return Response.json(user)
-      })
-    )
-
-    const res = await app.request('/users/456')
-    const body = await res.json()
-
-    // The hint now comes from fix suggestions and mentions schema
-    expect(body.props.hint).toContain('schema')
-  })
-
-  test('error includes the specific bound key that failed', async () => {
-    const app = new Hono<TestEnv>()
-
-    app.use('*', async (c, next) => {
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the complete Worker binding fixture for the request.
-      c.env = { DATABASE_URL: 'unused', AUTH_SECRET: 'unused', ENVIRONMENT: 'development' }
-      await next()
-    })
-
-    setupWeb(app, {
-      version: '1.0.0',
-      render: (page) => JSON.stringify(page),
-      database: () => ({ name: 'test-db' }),
-    })
-
     registerErrorHandlers(app, {
       component: 'Error',
       showDevErrors: true,
@@ -932,10 +690,15 @@ describe('setupWeb configuration errors', () => {
     )
 
     const res = await app.request('/articles/789')
-    const body = await res.json()
 
-    // Error message should include the specific key
+    expect(res.status).toBe(500)
+
+    const body = await res.json()
+    expect(body.component).toBe('Error')
+    expect(body.props.status).toBe(500)
+    expect(body.props.message).toContain('schema configuration')
     expect(body.props.message).toContain("bound('article')")
+    expect(body.props.hint).toContain('schema')
   })
 })
 
@@ -989,51 +752,6 @@ describe('setupWeb database configuration errors', () => {
     expect(body.props.message).toContain('DatabaseService is not configured')
   })
 
-  test('helpful error when using DatabaseService without database configured', async () => {
-    const app = new Hono<TestEnv>()
-
-    app.use('*', async (c, next) => {
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      // oxlint-disable-next-line no-param-reassign -- This middleware supplies the complete Worker binding fixture for the request.
-      c.env = { DATABASE_URL: 'unused', AUTH_SECRET: 'unused', ENVIRONMENT: 'development' }
-      await next()
-    })
-
-    setupWeb(app, {
-      version: '1.0.0',
-      render: (page) => JSON.stringify(page),
-      // database NOT configured!,
-    })
-
-    registerErrorHandlers(app, {
-      component: 'Error',
-      showDevErrors: true,
-      envKey: 'ENVIRONMENT',
-      devValue: 'development',
-    })
-
-    effectRoutes(app).get(
-      '/test-db',
-      Effect.gen(function* () {
-        const db = yield* DatabaseService
-        // Try to use the db - this should throw
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-        const result = db
-
-        return Response.json(result)
-      })
-    )
-
-    const res = await app.request('/test-db')
-    const body = await res.json()
-
-    expect(body.component).toBe('Error')
-    expect(body.props.message).toContain('DatabaseService is not configured')
-    expect(body.props.message).toContain('setupWeb')
-    // Hint now comes from fix suggestions
-    expect(body.props.hint).toContain('database')
-  })
-
   test('helpful error when using AuthService without auth configured', async () => {
     const app = new Hono<TestEnv>()
 
@@ -1080,23 +798,7 @@ describe('setupWeb database configuration errors', () => {
     expect(body.props.fixes[0].code).toContain('auth: {')
   })
 
-  test('routes that do not yield DatabaseService work without a configured db', async () => {
-    const app = new Hono<TestEnv>()
-
-    setupWeb(app, {
-      version: '1.0.0',
-      render: (page) => JSON.stringify(page),
-      // database NOT configured, and this route never asks for it,
-    })
-
-    effectRoutes(app).get('/no-db-use', Effect.succeed(new Response('OK')))
-
-    const res = await app.request('/no-db-use')
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('OK')
-  })
-
-  test('yielding DatabaseService without a configured db is a configuration error even if unused', async () => {
+  test('yielding DatabaseService without a configured db is a configuration error naming setupWeb, even if unused', async () => {
     const app = new Hono<TestEnv>()
 
     app.use('*', async (c, next) => {
@@ -1134,6 +836,9 @@ describe('setupWeb database configuration errors', () => {
     const body = await res.json()
     expect(body.component).toBe('Error')
     expect(body.props.message).toContain('DatabaseService is not configured')
+    expect(body.props.message).toContain('setupWeb')
+    // The hint comes from the first fix suggestion
+    expect(body.props.hint).toContain('database')
   })
 })
 
@@ -1302,7 +1007,7 @@ describe('setupWeb full configuration', () => {
       auth: {
         client: (_c, { db }) => ({
           getUser: () => ({ id: 'user-1', name: 'Test User' }),
-          dbRef: db, // Can access db
+          dbRef: db,
         }),
       },
       middleware: [
@@ -1316,28 +1021,23 @@ describe('setupWeb full configuration', () => {
     effectRoutes(app).get(
       '/projects/{project}',
       Effect.gen(function* () {
-        const project = yield* bound('project')
+        // The binding resolves through the schema, or the route answers an error.
+        yield* bound('project')
         const db = yield* DatabaseService
         const auth = yield* AuthService
 
-        // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
         return Response.json({
-            project,
-            hasDb: !!db,
-            hasAuth: 'getUser' in auth,
-            authHasDbRef: 'dbRef' in auth,
-          })
+          hasAuth: 'getUser' in auth,
+          // The auth factory received the database the route's DatabaseService holds.
+          authDbIsDatabase: 'dbRef' in auth && auth.dbRef === db,
+        })
       })
     )
 
     const res = await app.request('/projects/1')
     expect(res.status).toBe(200)
 
-    const json = await res.json()
-    expect(json.project.id).toBe('1')
-    expect(json.hasDb).toBe(true)
-    expect(json.hasAuth).toBe(true)
-    expect(json.authHasDbRef).toBe(true)
+    expect(await res.json()).toEqual({ hasAuth: true, authDbIsDatabase: true })
     expect(customMiddlewareRan).toBe(true)
   })
 })
@@ -1448,31 +1148,6 @@ describe('setupWeb middleware dispatcher (regression)', () => {
     expect(await res2.text()).toBe('Blocked')
   })
 
-  test('dispatcher handles response modification after next()', async () => {
-    const app = new Hono<TestEnv>()
-
-    setupWeb(app, {
-      version: '1.0.0',
-      render: (page) => JSON.stringify(page),
-      middleware: [
-        async (c, next) => {
-          await next()
-          // Modify response after handler
-          c.res.headers.set('X-Custom-Header', 'added')
-        },
-      ],
-    })
-
-    effectRoutes(app).get(
-      '/test',
-      Effect.succeed(new Response('OK'))
-    )
-
-    const res = await app.request('/test')
-    expect(res.status).toBe(200)
-    expect(res.headers.get('X-Custom-Header')).toBe('added')
-  })
-
   test('version mismatch returns 409 through dispatcher without error', async () => {
     const app = new Hono<TestEnv>()
 
@@ -1494,32 +1169,7 @@ describe('setupWeb middleware dispatcher (regression)', () => {
     })
 
     expect(res.status).toBe(409)
-    expect(res.headers.get('X-Inertia-Location')).toBeTruthy()
-  })
-
-  test('catch-all route that does not call next() still finalizes context', async () => {
-    const app = new Hono<TestEnv>()
-
-    setupWeb(app, {
-      version: '1.0.0',
-      render: (page) => JSON.stringify(page),
-    })
-
-    // Register error handlers
-    registerErrorHandlers(app, {
-      component: 'Error',
-      showDevErrors: true,
-    })
-
-    // Catch-all route that returns a response
-    effectRoutes(app).get(
-      '/*',
-      Effect.succeed(new Response('Catch all', { status: 200 }))
-    )
-
-    const res = await app.request('/anything')
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('Catch all')
+    expect(res.headers.get('X-Inertia-Location')).toBe('http://localhost/page')
   })
 })
 

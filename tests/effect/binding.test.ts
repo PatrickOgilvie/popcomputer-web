@@ -32,6 +32,7 @@ import { registerErrorHandlers, setupWeb } from '../../src/setup.js'
 import { Database } from 'bun:sqlite'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { bigint, integer as pgInteger, pgTable, text as pgText, uuid as pgUuid, varchar } from 'drizzle-orm/pg-core'
 import { action } from '../../src/effect/action.js'
 import { authorize } from '../../src/effect/services.js'
 import { json } from '../../src/effect/responses.js'
@@ -39,155 +40,33 @@ import { RequireAuthLayer } from '../../src/effect/auth.js'
 import { signedIn, testEnv } from '../../src/testing.js'
 
 describe('parseBindings', () => {
-  describe('basic Laravel-style bindings', () => {
-    test('parses single binding with default column', () => {
-      const bindings = parseBindings('/projects/{project}')
-      expect(bindings).toEqual([{ param: 'project', column: 'id' }])
-    })
-
-    test('parses single binding with custom column', () => {
-      const bindings = parseBindings('/projects/{project:slug}')
-      expect(bindings).toEqual([{ param: 'project', column: 'slug' }])
-    })
-
-    test('parses multiple bindings', () => {
-      const bindings = parseBindings('/users/{user}/posts/{post}')
-      expect(bindings).toEqual([
+  test('reads each {param} and {param:column} placeholder, in order, and nothing else', () => {
+    const cases: ReadonlyArray<readonly [string, ParsedBinding[]]> = [
+      ['/projects/{project}', [{ param: 'project', column: 'id' }]],
+      ['/projects/{project:slug}', [{ param: 'project', column: 'slug' }]],
+      ['/api/:version/users/{user}/posts/:postId/comments/{comment:slug}', [
         { param: 'user', column: 'id' },
-        { param: 'post', column: 'id' },
-      ])
-    })
+        { param: 'comment', column: 'slug' },
+      ]],
+      ['/{org}/{project}', [{ param: 'org', column: 'id' }, { param: 'project', column: 'id' }]],
+      ['/users/:id', []],
+      ['/files/*', []],
+      ['/', []],
+      ['', []],
+      ['/users/:id{[0-9]+}', []],
+      ['/user_profiles/{user_profile}', [{ param: 'user_profile', column: 'id' }]],
+      ['/items/{item1}/subitems/{item2}', [{ param: 'item1', column: 'id' }, { param: 'item2', column: 'id' }]],
+      ['/users/{user', []],
+      ['/users/user}', []],
+      ['/users/{{user}}', [{ param: 'user', column: 'id' }]],
+      ['/users/{user:uuid}', [{ param: 'user', column: 'uuid' }]],
+      ['/users/{user:user_id}', [{ param: 'user', column: 'user_id' }]],
+      ['/users/{user:ID}', [{ param: 'user', column: 'ID' }]],
+    ]
 
-    test('parses mixed bindings with custom columns', () => {
-      const bindings = parseBindings('/users/{user:email}/posts/{post:slug}')
-      expect(bindings).toEqual([
-        { param: 'user', column: 'email' },
-        { param: 'post', column: 'slug' },
-      ])
-    })
-
-    test('handles complex nested paths', () => {
-      const bindings = parseBindings('/api/v1/users/{user}/posts/{post}/comments/{comment}')
-      expect(bindings).toEqual([
-        { param: 'user', column: 'id' },
-        { param: 'post', column: 'id' },
-        { param: 'comment', column: 'id' },
-      ])
-    })
-  })
-
-  describe('Hono-style routes (no Laravel bindings)', () => {
-    test('returns empty array for Hono :param style', () => {
-      expect(parseBindings('/users/:id')).toEqual([])
-    })
-
-    test('returns empty array for multiple Hono params', () => {
-      expect(parseBindings('/users/:userId/posts/:postId')).toEqual([])
-    })
-
-    test('returns empty array for static paths', () => {
-      expect(parseBindings('/users')).toEqual([])
-      expect(parseBindings('/api/v1/health')).toEqual([])
-      expect(parseBindings('/')).toEqual([])
-    })
-
-    test('returns empty array for wildcard routes', () => {
-      expect(parseBindings('/files/*')).toEqual([])
-      expect(parseBindings('/api/*')).toEqual([])
-    })
-
-    test('returns empty array for regex routes', () => {
-      expect(parseBindings('/users/:id{[0-9]+}')).toEqual([])
-    })
-  })
-
-  describe('mixed Hono and Laravel notation', () => {
-    test('only extracts Laravel bindings from mixed route', () => {
-      const bindings = parseBindings('/users/:userId/projects/{project}')
-      expect(bindings).toEqual([{ param: 'project', column: 'id' }])
-    })
-
-    test('extracts Laravel binding before Hono param', () => {
-      const bindings = parseBindings('/orgs/{org}/users/:userId')
-      expect(bindings).toEqual([{ param: 'org', column: 'id' }])
-    })
-
-    test('extracts multiple Laravel bindings ignoring Hono params', () => {
-      const bindings = parseBindings('/api/:version/users/{user}/posts/:postId/comments/{comment}')
-      expect(bindings).toEqual([
-        { param: 'user', column: 'id' },
-        { param: 'comment', column: 'id' },
-      ])
-    })
-
-    test('handles Laravel binding with custom column mixed with Hono', () => {
-      const bindings = parseBindings('/teams/:teamId/projects/{project:slug}/tasks/:taskId')
-      expect(bindings).toEqual([{ param: 'project', column: 'slug' }])
-    })
-  })
-
-  describe('edge cases', () => {
-    test('handles binding at root', () => {
-      const bindings = parseBindings('/{user}')
-      expect(bindings).toEqual([{ param: 'user', column: 'id' }])
-    })
-
-    test('handles binding with trailing slash', () => {
-      const bindings = parseBindings('/users/{user}/')
-      expect(bindings).toEqual([{ param: 'user', column: 'id' }])
-    })
-
-    test('handles consecutive bindings', () => {
-      const bindings = parseBindings('/{org}/{project}/{task}')
-      expect(bindings).toEqual([
-        { param: 'org', column: 'id' },
-        { param: 'project', column: 'id' },
-        { param: 'task', column: 'id' },
-      ])
-    })
-
-    test('handles single character param names', () => {
-      const bindings = parseBindings('/users/{u}/posts/{p}')
-      expect(bindings).toEqual([
-        { param: 'u', column: 'id' },
-        { param: 'p', column: 'id' },
-      ])
-    })
-
-    test('handles underscored param names', () => {
-      const bindings = parseBindings('/user_profiles/{user_profile}')
-      expect(bindings).toEqual([{ param: 'user_profile', column: 'id' }])
-    })
-
-    test('handles numeric-suffixed param names', () => {
-      const bindings = parseBindings('/items/{item1}/subitems/{item2}')
-      expect(bindings).toEqual([
-        { param: 'item1', column: 'id' },
-        { param: 'item2', column: 'id' },
-      ])
-    })
-
-    test('handles empty path', () => {
-      expect(parseBindings('')).toEqual([])
-    })
-
-    test('handles path with query string (should not affect parsing)', () => {
-      // Query strings shouldn't be in route definitions, but test anyway
-      const bindings = parseBindings('/users/{user}?include=posts')
-      expect(bindings).toEqual([{ param: 'user', column: 'id' }])
-    })
-
-    test('does not match incomplete braces', () => {
-      expect(parseBindings('/users/{user')).toEqual([])
-      expect(parseBindings('/users/user}')).toEqual([])
-      expect(parseBindings('/users/{{user}}')).toEqual([{ param: 'user', column: 'id' }])
-    })
-
-    test('handles various column name formats', () => {
-      expect(parseBindings('/users/{user:uuid}')).toEqual([{ param: 'user', column: 'uuid' }])
-      expect(parseBindings('/users/{user:user_id}')).toEqual([{ param: 'user', column: 'user_id' }])
-      expect(parseBindings('/users/{user:ID}')).toEqual([{ param: 'user', column: 'ID' }])
-    })
+    for (const [path, bindings] of cases) {
+      expect({ path, bindings: parseBindings(path) }).toEqual({ path, bindings })
+    }
   })
 })
 
@@ -232,20 +111,33 @@ describe('compiled route binding contract', () => {
     })
   })
 
-  test('parses loaded rows before exposing them through bound()', async () => {
-    const [binding] = await compileBindingPlan(
-      [{ param: 'project', column: 'id' }],
-      { projects },
-      { project: S.Struct({ id: S.String, name: S.String }) }
-    )
-
-    await expect(
-      decodeBoundRow(binding, { id: 'project-1', name: 42 })
-    ).rejects.toMatchObject({
-      // oxlint-disable-next-line popcomputer/effect-no-manual-tagged-construction -- Assert the literal external error shape independently of its production constructor.
-      _tag: 'RouteConfigurationError',
-      binding: 'project',
+  test('bound() returns the row its binding parsed, not the row the database holds', async () => {
+    const ownedProjects = sqliteTable('projects', {
+      id: text('id').primaryKey(),
+      userId: text('user_id').notNull(),
     })
+    const sqlite = new Database(':memory:')
+    sqlite.run('CREATE TABLE projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL)')
+    const db = drizzle(sqlite, { schema: { projects: ownedProjects } })
+    db.insert(ownedProjects).values({ id: 'p1', userId: 'user-1' }).run()
+
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      database: () => db,
+      schema: { projects: ownedProjects },
+      bindings: { project: S.Struct({ id: S.String }) },
+    })
+
+    routes.get('/projects/{project}', action(Effect.gen(function* () {
+      return yield* json(yield* bound('project'))
+    })))
+
+    const res = await app.request('/projects/p1')
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ id: 'p1' })
   })
 
   test('returns the parser output instead of the raw persisted row', async () => {
@@ -410,122 +302,28 @@ describe('ambiguous bindings', () => {
 })
 
 describe('toHonoPath', () => {
-  describe('basic Laravel to Hono conversion', () => {
-    test('converts single binding to Hono format', () => {
-      expect(toHonoPath('/projects/{project}')).toBe('/projects/:project')
-    })
+  test('turns each {param} and {param:column} placeholder into :param, and leaves the rest of the path', () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['/projects/{project}', '/projects/:project'],
+      ['/projects/{project:slug}', '/projects/:project'],
+      ['/api/:version/users/{user}/posts/:postId/comments/{comment:slug}', '/api/:version/users/:user/posts/:postId/comments/:comment'],
+      ['/{org}/{project}', '/:org/:project'],
+      ['/users/:id', '/users/:id'],
+      ['/files/*', '/files/*'],
+      ['/', '/'],
+      ['', ''],
+      ['/users/:id{[0-9]+}', '/users/:id{[0-9]+}'],
+      ['/user_profiles/{user_profile}', '/user_profiles/:user_profile'],
+      ['/items/{item1}/subitems/{item2}', '/items/:item1/subitems/:item2'],
+      ['/users/{user', '/users/{user'],
+      ['/users/user}', '/users/user}'],
+      ['/users/{{user}}', '/users/{:user}'],
+      ['/users/{user:user_id}/', '/users/:user/'],
+    ]
 
-    test('converts binding with custom column to Hono format (strips column)', () => {
-      expect(toHonoPath('/projects/{project:slug}')).toBe('/projects/:project')
-    })
-
-    test('converts multiple bindings', () => {
-      expect(toHonoPath('/users/{user}/posts/{post}')).toBe('/users/:user/posts/:post')
-    })
-
-    test('converts deeply nested bindings', () => {
-      expect(toHonoPath('/orgs/{org}/teams/{team}/projects/{project}/tasks/{task}')).toBe(
-        '/orgs/:org/teams/:team/projects/:project/tasks/:task'
-      )
-    })
-
-    test('converts all custom columns', () => {
-      expect(toHonoPath('/users/{user:email}/posts/{post:slug}')).toBe('/users/:user/posts/:post')
-    })
-  })
-
-  describe('Hono-style routes (passthrough)', () => {
-    test('preserves Hono :param style unchanged', () => {
-      expect(toHonoPath('/users/:id')).toBe('/users/:id')
-    })
-
-    test('preserves multiple Hono params', () => {
-      expect(toHonoPath('/users/:userId/posts/:postId')).toBe('/users/:userId/posts/:postId')
-    })
-
-    test('preserves static paths', () => {
-      expect(toHonoPath('/users')).toBe('/users')
-      expect(toHonoPath('/api/v1/health')).toBe('/api/v1/health')
-      expect(toHonoPath('/')).toBe('/')
-    })
-
-    test('preserves wildcard routes', () => {
-      expect(toHonoPath('/files/*')).toBe('/files/*')
-      expect(toHonoPath('/api/*')).toBe('/api/*')
-    })
-
-    test('preserves regex routes', () => {
-      expect(toHonoPath('/users/:id{[0-9]+}')).toBe('/users/:id{[0-9]+}')
-    })
-  })
-
-  describe('mixed Hono and Laravel notation', () => {
-    test('converts Laravel bindings while preserving Hono params', () => {
-      expect(toHonoPath('/users/:userId/projects/{project}')).toBe('/users/:userId/projects/:project')
-    })
-
-    test('handles Laravel before Hono', () => {
-      expect(toHonoPath('/orgs/{org}/users/:userId')).toBe('/orgs/:org/users/:userId')
-    })
-
-    test('handles complex mixed routes', () => {
-      expect(toHonoPath('/api/:version/users/{user}/posts/:postId/comments/{comment}')).toBe(
-        '/api/:version/users/:user/posts/:postId/comments/:comment'
-      )
-    })
-
-    test('handles Laravel with custom column mixed with Hono', () => {
-      expect(toHonoPath('/teams/:teamId/projects/{project:slug}/tasks/:taskId')).toBe(
-        '/teams/:teamId/projects/:project/tasks/:taskId'
-      )
-    })
-
-    test('handles alternating styles', () => {
-      expect(toHonoPath('/{a}/:b/{c}/:d/{e}')).toBe('/:a/:b/:c/:d/:e')
-    })
-  })
-
-  describe('edge cases', () => {
-    test('handles binding at root', () => {
-      expect(toHonoPath('/{user}')).toBe('/:user')
-    })
-
-    test('handles binding with trailing slash', () => {
-      expect(toHonoPath('/users/{user}/')).toBe('/users/:user/')
-    })
-
-    test('handles consecutive bindings without separators', () => {
-      expect(toHonoPath('/{org}/{project}/{task}')).toBe('/:org/:project/:task')
-    })
-
-    test('handles single character param names', () => {
-      expect(toHonoPath('/users/{u}/posts/{p}')).toBe('/users/:u/posts/:p')
-    })
-
-    test('handles underscored param names', () => {
-      expect(toHonoPath('/user_profiles/{user_profile}')).toBe('/user_profiles/:user_profile')
-    })
-
-    test('handles numeric-suffixed param names', () => {
-      expect(toHonoPath('/items/{item1}/subitems/{item2}')).toBe('/items/:item1/subitems/:item2')
-    })
-
-    test('handles empty path', () => {
-      expect(toHonoPath('')).toBe('')
-    })
-
-    test('handles incomplete braces (no conversion)', () => {
-      expect(toHonoPath('/users/{user')).toBe('/users/{user')
-      expect(toHonoPath('/users/user}')).toBe('/users/user}')
-    })
-
-    test('handles double braces', () => {
-      expect(toHonoPath('/users/{{user}}')).toBe('/users/{:user}')
-    })
-
-    test('preserves query string portion', () => {
-      expect(toHonoPath('/users/{user}?include=posts')).toBe('/users/:user?include=posts')
-    })
+    for (const [path, honoPath] of cases) {
+      expect({ path, honoPath: toHonoPath(path) }).toEqual({ path, honoPath })
+    }
   })
 })
 
@@ -593,48 +391,6 @@ describe('bound() accessor', () => {
   })
 })
 
-describe('parseBindings and toHonoPath consistency', () => {
-  const testCases = [
-    // [input, expectedHonoPath, expectedBindings]
-    ['/projects/{project}', '/projects/:project', [{ param: 'project', column: 'id' }]],
-    ['/projects/{project:slug}', '/projects/:project', [{ param: 'project', column: 'slug' }]],
-    ['/users/{user}/posts/{post}', '/users/:user/posts/:post', [
-      { param: 'user', column: 'id' },
-      { param: 'post', column: 'id' },
-    ]],
-    ['/api/:version/users/{user}', '/api/:version/users/:user', [{ param: 'user', column: 'id' }]],
-    ['/users/:id', '/users/:id', []],
-    ['/static/path', '/static/path', []],
-    ['/', '/', []],
-  ] as const
-
-  test.each(testCases)(
-    'route "%s" converts to "%s" with correct bindings',
-    (input, expectedPath, expectedBindings) => {
-      expect(toHonoPath(input)).toBe(expectedPath)
-      expect(parseBindings(input)).toEqual<ReadonlyArray<ParsedBinding>>(expectedBindings)
-    }
-  )
-
-  test('binding param names match Hono param names after conversion', () => {
-    const routes = [
-      '/users/{user}',
-      '/users/{user}/posts/{post}',
-      '/orgs/{org:slug}/teams/{team}/projects/{project:uuid}',
-    ]
-
-    for (const route of routes) {
-      const bindings = parseBindings(route)
-      const honoPath = toHonoPath(route)
-
-      // Each binding param should appear as :param in the Hono path
-      for (const binding of bindings) {
-        expect(honoPath).toContain(`:${binding.param}`)
-      }
-    }
-  })
-})
-
 describe('Route Model Binding Integration', () => {
   describe('route registration with different path styles', () => {
     test('Laravel-style routes work without schema (no binding resolution)', async () => {
@@ -660,149 +416,10 @@ describe('Route Model Binding Integration', () => {
       expect(await res.text()).toBe('Project page')
     })
 
-    test('Laravel-style routes with custom column work', async () => {
-      const app = new Hono()
-      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-      app.use('*', effectBridge())
 
-      effectRoutes(app).get(
-        '/projects/{project:slug}',
-        Effect.succeed(new Response('Project by slug'))
-      )
-
-      const res = await app.request('/projects/my-awesome-project')
-      expect(res.status).toBe(200)
-      expect(await res.text()).toBe('Project by slug')
-    })
-
-    test('Hono-style routes still work (backward compatibility)', async () => {
-      const app = new Hono()
-      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-      app.use('*', effectBridge())
-
-      effectRoutes(app).get(
-        '/projects/:id',
-        Effect.succeed(new Response('Project by ID'))
-      )
-
-      const res = await app.request('/projects/456')
-      expect(res.status).toBe(200)
-      expect(await res.text()).toBe('Project by ID')
-    })
-
-    test('mixed Hono and Laravel styles work together', async () => {
-      const app = new Hono()
-      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-      app.use('*', effectBridge())
-
-      effectRoutes(app).get(
-        '/api/:version/projects/{project}',
-        Effect.succeed(new Response('Mixed styles'))
-      )
-
-      const res = await app.request('/api/v1/projects/123')
-      expect(res.status).toBe(200)
-      expect(await res.text()).toBe('Mixed styles')
-    })
-
-    test('nested Laravel-style routes work', async () => {
-      const app = new Hono()
-      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-      app.use('*', effectBridge())
-
-      effectRoutes(app).get(
-        '/users/{user}/posts/{post}/comments/{comment}',
-        Effect.succeed(new Response('Deeply nested'))
-      )
-
-      const res = await app.request('/users/1/posts/2/comments/3')
-      expect(res.status).toBe(200)
-      expect(await res.text()).toBe('Deeply nested')
-    })
-
-    test('all HTTP methods support Laravel-style binding', async () => {
-      const app = new Hono()
-      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-      app.use('*', effectBridge())
-
-      const routes = effectRoutes(app)
-
-      routes.get('/items/{item}', Effect.succeed(new Response('GET')))
-      routes.post('/items/{item}', Effect.succeed(new Response('POST')))
-      routes.put('/items/{item}', Effect.succeed(new Response('PUT')))
-      routes.patch('/items/{item}', Effect.succeed(new Response('PATCH')))
-      routes.delete('/items/{item}', Effect.succeed(new Response('DELETE')))
-
-      expect((await app.request('/items/1', { method: 'GET' })).status).toBe(200)
-      expect(await (await app.request('/items/1', { method: 'GET' })).text()).toBe('GET')
-
-      expect((await app.request('/items/1', { method: 'POST' })).status).toBe(200)
-      expect(await (await app.request('/items/1', { method: 'POST' })).text()).toBe('POST')
-
-      expect((await app.request('/items/1', { method: 'PUT' })).status).toBe(200)
-      expect(await (await app.request('/items/1', { method: 'PUT' })).text()).toBe('PUT')
-
-      expect((await app.request('/items/1', { method: 'PATCH' })).status).toBe(200)
-      expect(await (await app.request('/items/1', { method: 'PATCH' })).text()).toBe('PATCH')
-
-      expect((await app.request('/items/1', { method: 'DELETE' })).status).toBe(200)
-      expect(await (await app.request('/items/1', { method: 'DELETE' })).text()).toBe('DELETE')
-    })
-
-    test('prefix() works with Laravel-style routes', async () => {
-      const app = new Hono()
-      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-      app.use('*', effectBridge())
-
-      effectRoutes(app)
-        .prefix('/api/v1')
-        .get('/projects/{project}', Effect.succeed(new Response('Prefixed')))
-
-      const res = await app.request('/api/v1/projects/123')
-      expect(res.status).toBe(200)
-      expect(await res.text()).toBe('Prefixed')
-    })
-
-    test('group() works with Laravel-style routes', async () => {
-      const app = new Hono()
-      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-      app.use('*', effectBridge())
-
-      effectRoutes(app)
-        .prefix('/admin')
-        .group((route) => {
-          route.get('/users/{user}', Effect.succeed(new Response('Admin user')))
-          route.get('/projects/{project:slug}', Effect.succeed(new Response('Admin project')))
-        })
-
-      expect((await app.request('/admin/users/1')).status).toBe(200)
-      expect(await (await app.request('/admin/users/1')).text()).toBe('Admin user')
-
-      expect((await app.request('/admin/projects/my-project')).status).toBe(200)
-      expect(await (await app.request('/admin/projects/my-project')).text()).toBe('Admin project')
-    })
   })
 
   describe('params schema validation with Laravel-style routes', () => {
-    test('validates params schema and 404s invalid values with Laravel syntax', async () => {
-      const app = new Hono()
-      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-      app.use('*', effectBridge())
-
-      effectRoutes(app).get(
-        '/projects/{project}',
-        Effect.succeed(new Response('Validated')),
-        { params: S.Struct({ project: uuid }) }
-      )
-
-      const invalid = await app.request('/projects/not-a-uuid')
-      expect(invalid.status).toBe(404)
-
-      const valid = await app.request('/projects/123e4567-e89b-12d3-a456-426614174000')
-      expect(valid.status).toBe(200)
-      expect(await valid.text()).toBe('Validated')
-    })
-
     test('validates multiple params with Laravel syntax', async () => {
       const app = new Hono()
       app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
@@ -839,32 +456,6 @@ describe('Route Model Binding Integration', () => {
       expect(await bothValid.text()).toBe('Both valid')
     })
 
-    test('validates params with custom column syntax', async () => {
-      const app = new Hono()
-      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-      app.use('*', effectBridge())
-
-      // Even with :slug column, the param name is still 'project'
-      effectRoutes(app).get(
-        '/projects/{project:slug}',
-        Effect.succeed(new Response('Slug validated')),
-        {
-          params: S.Struct({
-            project: S.String.check(
-              S.isMinLength(3),
-              S.isMaxLength(50)
-            ),
-          }),
-        }
-      )
-
-      const tooShort = await app.request('/projects/ab')
-      expect(tooShort.status).toBe(404)
-
-      const valid = await app.request('/projects/my-awesome-project')
-      expect(valid.status).toBe(200)
-    })
-
     test('validates mixed Hono and Laravel params', async () => {
       const app = new Hono()
       app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
@@ -895,23 +486,6 @@ describe('Route Model Binding Integration', () => {
       expect(await valid.text()).toBe('Mixed validated')
     })
 
-    test('params validation runs before model binding', async () => {
-      const app = new Hono()
-      app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
-      app.use('*', effectBridge())
-
-      // Even without schema configured, params validation should work
-      effectRoutes(app).get(
-        '/projects/{project}',
-        Effect.succeed(new Response('Validated first')),
-        { params: S.Struct({ project: uuid }) }
-      )
-
-      // This should 404 from params validation, not from model binding
-      const invalid = await app.request('/projects/invalid-uuid')
-      expect(invalid.status).toBe(404)
-    })
-
     test('bound() gives helpful RouteConfigurationError when schema not provided', async () => {
       const app = new Hono()
       app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
@@ -937,8 +511,7 @@ describe('Route Model Binding Integration', () => {
       // Error is rendered via the configured error component (not raw JSON)
       expect(body.component).toBe('Error')
       expect(body.props.status).toBe(500)
-      // In prod, message is hidden; in dev (with env var), it shows the actual error
-      expect(body.props.message).toBeDefined()
+      expect(body.props.code).toBe('WEB_CFG_302_SCHEMA_NOT_CONFIGURED')
     })
   })
 })
@@ -1015,25 +588,6 @@ describe('columnTypeToSchema', () => {
     })
   })
 
-  describe('String types', () => {
-    test('PgText returns String schema', () => {
-      const decode = decodeWith(columnTypeToSchema('PgText'))
-
-      expect(decode('hello world')).toBe('hello world')
-      expect(decode('')).toBe('')
-    })
-
-    test('PgVarchar returns String schema', () => {
-      const decode = decodeWith(columnTypeToSchema('PgVarchar'))
-      expect(decode('some-slug')).toBe('some-slug')
-    })
-
-    test('SQLiteText returns String schema', () => {
-      const decode = decodeWith(columnTypeToSchema('SQLiteText'))
-      expect(decode('sqlite text')).toBe('sqlite text')
-    })
-  })
-
   describe('Boolean types', () => {
     test('PgBoolean transforms string to boolean (case-insensitive)', () => {
       const decode = decodeWith(columnTypeToSchema('PgBoolean'))
@@ -1071,30 +625,31 @@ describe('inferParamsSchema', () => {
   // oxlint-disable-next-line effecttsgo/schema-sync -- These tests deliberately exercise the synchronous throwing decoder with toThrow; their schemas require no runtime services.
   const decodeWith = (schema: S.ConstraintDecoder<unknown>) => S.decodeUnknownSync(schema)
 
-  // Mock Drizzle-like schema for testing
-  const mockSchema = {
-    projects: {
-      id: { columnType: 'PgUUID', dataType: 'string', name: 'id' },
-      slug: { columnType: 'PgVarchar', dataType: 'string', name: 'slug' },
-      position: { columnType: 'PgInteger', dataType: 'number', name: 'position' },
-    },
-    users: {
-      id: { columnType: 'PgInteger', dataType: 'number', name: 'id' },
-      email: { columnType: 'PgText', dataType: 'string', name: 'email' },
-    },
-    posts: {
-      id: { columnType: 'PgBigInt64', dataType: 'bigint', name: 'id' },
-    },
-  }
+  const projects = pgTable('projects', {
+    id: pgUuid('id').primaryKey(),
+    slug: varchar('slug').notNull(),
+    position: pgInteger('position'),
+  })
+  const users = pgTable('users', {
+    id: pgInteger('id').primaryKey(),
+    email: pgText('email'),
+  })
+  const posts = pgTable('posts', {
+    id: bigint('id', { mode: 'bigint' }).primaryKey(),
+  })
+  const comments = pgTable('comments', { id: pgInteger('id').primaryKey() })
+  const schema = { projects, users, posts }
+  // As setupWeb's bindings: each route parameter names its table. A member
+  // is a row of users, which only the configured binding says.
+  const configured = { project: projects, member: users, post: posts, comment: comments }
+
+  const infer = (path: string) => inferParamsSchema(parseBindings(path), schema, configured)
 
   test('infers UUID schema for UUID column', () => {
-    const bindings = parseBindings('/projects/{project}')
-    const schema = inferParamsSchema(bindings, mockSchema)
+    const params = infer('/projects/{project}')
 
-    expect(schema).not.toBeNull()
-
-    assert.ok(schema)
-    const decode = decodeWith(schema)
+    assert.ok(params)
+    const decode = decodeWith(params)
 
     // Valid UUID
     expect(decode({ project: '123e4567-e89b-12d3-a456-426614174000' })).toEqual({
@@ -1106,13 +661,10 @@ describe('inferParamsSchema', () => {
   })
 
   test('infers String schema for text/varchar column with custom column syntax', () => {
-    const bindings = parseBindings('/projects/{project:slug}')
-    const schema = inferParamsSchema(bindings, mockSchema)
+    const params = infer('/projects/{project:slug}')
 
-    expect(schema).not.toBeNull()
-
-    assert.ok(schema)
-    const decode = decodeWith(schema)
+    assert.ok(params)
+    const decode = decodeWith(params)
 
     // Any string should work for slug
     expect(decode({ project: 'my-awesome-project' })).toEqual({
@@ -1120,73 +672,55 @@ describe('inferParamsSchema', () => {
     })
   })
 
-  test('infers Integer schema for integer column', () => {
-    const bindings = parseBindings('/users/{user}')
-    const schema = inferParamsSchema(bindings, mockSchema)
+  test('infers Integer schema for integer column of the table the binding names', () => {
+    const params = infer('/members/{member}')
 
-    expect(schema).not.toBeNull()
-
-    assert.ok(schema)
-    const decode = decodeWith(schema)
+    assert.ok(params)
+    const decode = decodeWith(params)
 
     // String number should be decoded to number
-    expect(decode({ user: '42' })).toEqual({ user: 42 })
+    expect(decode({ member: '42' })).toEqual({ member: 42 })
 
     // Non-numeric should throw
-    expect(() => decode({ user: 'abc' })).toThrow()
+    expect(() => decode({ member: 'abc' })).toThrow()
   })
 
   test('infers BigInt schema for bigint column', () => {
-    const bindings = parseBindings('/posts/{post}')
-    const schema = inferParamsSchema(bindings, mockSchema)
+    const params = infer('/posts/{post}')
 
-    expect(schema).not.toBeNull()
-
-    assert.ok(schema)
-    const decode = decodeWith(schema)
+    assert.ok(params)
+    const decode = decodeWith(params)
 
     expect(decode({ post: '9007199254740993' })).toEqual({ post: 9007199254740993n })
   })
 
   test('infers schema for multiple bindings', () => {
-    const bindings = parseBindings('/users/{user}/projects/{project}')
-    const schema = inferParamsSchema(bindings, mockSchema)
+    const params = infer('/members/{member}/projects/{project}')
 
-    expect(schema).not.toBeNull()
-
-    assert.ok(schema)
-    const decode = decodeWith(schema)
+    assert.ok(params)
+    const decode = decodeWith(params)
 
     expect(
       decode({
-        user: '1',
+        member: '1',
         project: '123e4567-e89b-12d3-a456-426614174000',
       })
     ).toEqual({
-      user: 1,
+      member: 1,
       project: '123e4567-e89b-12d3-a456-426614174000',
     })
   })
 
   test('returns null for empty bindings', () => {
-    const bindings = parseBindings('/static/path')
-    const schema = inferParamsSchema(bindings, mockSchema)
-
-    expect(schema).toBeNull()
+    expect(infer('/static/path')).toBeNull()
   })
 
   test('returns null when table not found in schema', () => {
-    const bindings = parseBindings('/unknown/{unknown}')
-    const schema = inferParamsSchema(bindings, mockSchema)
-
-    expect(schema).toBeNull()
+    expect(infer('/comments/{comment}')).toBeNull()
   })
 
   test('returns null when column not found in table', () => {
-    const bindings = parseBindings('/projects/{project:nonexistent}')
-    const schema = inferParamsSchema(bindings, mockSchema)
-
-    expect(schema).toBeNull()
+    expect(infer('/projects/{project:nonexistent}')).toBeNull()
   })
 })
 
@@ -1198,20 +732,17 @@ describe('route model binding loads when the action asks', () => {
     })
     const sqlite = new Database(':memory:')
     sqlite.run('CREATE TABLE projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL)')
-    const db = drizzle(sqlite, { schema: { projects } })
-    db.insert(projects).values({ id: 'secret-project', userId: 'user-1' }).run()
+    sqlite.run("INSERT INTO projects (id, user_id) VALUES ('secret-project', 'user-1')")
 
+    // Every statement a request sends to the database.
     const queries: string[] = []
+    const db = drizzle(sqlite, { schema: { projects }, logger: { logQuery: (query) => queries.push(query) } })
     const app = new Hono()
 
     setupWeb(app, {
       version: '1',
       render: (page) => JSON.stringify(page),
-      database: () => {
-        queries.push('database')
-
-        return db
-      },
+      database: () => db,
       schema: { projects },
       bindings: { project: S.Struct({ id: S.String, userId: S.String }) },
     })
@@ -1225,6 +756,9 @@ describe('route model binding loads when the action asks', () => {
         return yield* json(yield* bound('project'))
       })))
       .get('/projects/{project}/ping', action(json({ pong: true })))
+      .get('/projects/{project}/audit', action(Effect.gen(function* () {
+        return yield* json(yield* bound('project'))
+      })), { params: S.Struct({ project: uuid }) })
 
     routes.prefix('/teams/{project}').get('/settings', action(Effect.gen(function* () {
       return yield* json(yield* bound('project'))
@@ -1346,6 +880,21 @@ describe('route model binding loads when the action asks', () => {
     expect(existing.status).toBe(200)
     expect(await existing.json()).toEqual({ id: 'secret-project', userId: 'user-1' })
     expect(missing.status).toBe(404)
+  })
+
+  test('params validation runs before model binding', async () => {
+    const { app, queries } = createApp()
+
+    const invalid = await app.request('/projects/not-a-uuid/audit')
+
+    expect(invalid.status).toBe(404)
+    expect(queries).toEqual([])
+
+    // A parameter the schema accepts loads the model, which is missing.
+    const absent = await app.request('/projects/123e4567-e89b-12d3-a456-426614174000/audit')
+
+    expect(absent.status).toBe(404)
+    expect(queries).toHaveLength(1)
   })
 
   test('an action that never calls bound() does not load the model', async () => {

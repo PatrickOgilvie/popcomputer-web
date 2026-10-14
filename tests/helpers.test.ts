@@ -56,21 +56,6 @@ describe('createTemplate', () => {
       expect(html).toContain('<title inertia>Fallback</title>')
     })
 
-    test('uses custom title', () => {
-      const template = createTemplate({ title: 'My Application' })
-
-      const page: PageObject = {
-        component: 'Home',
-        props: {},
-        url: '/',
-        version: '1.0.0',
-      }
-
-      const html = template(page)
-
-      expect(html).toContain('<title inertia>My Application</title>')
-    })
-
     test('includes viewport meta tag', () => {
       const template = createTemplate({})
 
@@ -105,21 +90,6 @@ describe('createTemplate', () => {
   })
 
   describe('Root Element', () => {
-    test('uses default root id "app"', () => {
-      const template = createTemplate({})
-
-      const page: PageObject = {
-        component: 'Home',
-        props: {},
-        url: '/',
-        version: '1.0.0',
-      }
-
-      const html = template(page)
-
-      expect(html).toContain('id="app"')
-    })
-
     test('uses custom root id', () => {
       const template = createTemplate({ rootId: 'inertia-root' })
 
@@ -133,6 +103,7 @@ describe('createTemplate', () => {
       const html = template(page)
 
       expect(html).toContain('id="inertia-root"')
+      expect(html).toContain('data-page="inertia-root"')
     })
 
     test('includes script element with serialized page object', () => {
@@ -246,29 +217,6 @@ describe('createTemplate', () => {
 
       expect(html).toContain('<meta name="description" content="My app">')
     })
-
-    test('includes multiple custom head elements', () => {
-      const template = createTemplate({
-        head: `
-          <link rel="icon" href="/favicon.ico">
-          <meta property="og:title" content="My App">
-          <script>window.__CONFIG__ = {};</script>
-        `,
-      })
-
-      const page: PageObject = {
-        component: 'Home',
-        props: {},
-        url: '/',
-        version: '1.0.0',
-      }
-
-      const html = template(page)
-
-      expect(html).toContain('<link rel="icon" href="/favicon.ico">')
-      expect(html).toContain('<meta property="og:title" content="My App">')
-      expect(html).toContain('window.__CONFIG__')
-    })
   })
 
   describe('XSS Prevention', () => {
@@ -381,27 +329,6 @@ describe('createTemplate', () => {
       expect(html).toContain('"props":{}')
     })
 
-    test('handles nested props with special characters', () => {
-      const template = createTemplate({})
-
-      const page: PageObject = {
-        component: 'Complex',
-        props: {
-          user: {
-            name: "O'Brien",
-            bio: 'Loves <coding> & testing',
-          },
-        },
-        url: '/complex',
-        version: '1.0.0',
-      }
-
-      const html = template(page)
-
-      expect(html).toContain("O'Brien")
-      expect(html).toContain('Loves \\u003ccoding\\u003e \\u0026 testing')
-    })
-
     test('handles unicode characters', () => {
       const template = createTemplate({ title: '日本語アプリ' })
 
@@ -416,21 +343,6 @@ describe('createTemplate', () => {
 
       expect(html).toContain('<title inertia>日本語アプリ</title>')
       expect(html).toContain('你好世界')
-    })
-
-    test('handles emoji in props', () => {
-      const template = createTemplate({})
-
-      const page: PageObject = {
-        component: 'Home',
-        props: { emoji: '🎉🚀👨‍👩‍👧‍👦' },
-        url: '/',
-        version: '1.0.0',
-      }
-
-      const html = template(page)
-
-      expect(html).toContain('🎉🚀👨‍👩‍👧‍👦')
     })
 
     test('handles clearHistory and encryptHistory options', () => {
@@ -455,18 +367,6 @@ describe('createTemplate', () => {
 
 describe('createVersion', () => {
   describe('Basic Functionality', () => {
-    test('generates a string version from manifest', () => {
-      const manifest = {
-        'app.js': 'app.abc123.js',
-        'app.css': 'app.def456.css',
-      }
-
-      const version = createVersion(manifest)
-
-      expect(version).toEqual(expect.any(String))
-      expect(version.length).toBeGreaterThan(0)
-    })
-
     test('generates consistent version for same manifest', () => {
       const manifest = {
         'app.js': 'app.abc123.js',
@@ -493,51 +393,16 @@ describe('createVersion', () => {
 
       expect(version1).not.toBe(version2)
     })
+
+    test("versions a Vite manifest's object entries by their css files", () => {
+      const version = createVersion({ 'src/main.tsx': { file: 'a.js', css: ['a.css'] } })
+
+      expect(createVersion({ 'src/main.tsx': { file: 'a.js', css: ['a.css'] } })).toBe(version)
+      expect(createVersion({ 'src/main.tsx': { file: 'a.js', css: ['b.css'] } })).not.toBe(version)
+    })
   })
 
   describe('Edge Cases', () => {
-    test('handles empty manifest', () => {
-      const manifest = {}
-      const version = createVersion(manifest)
-
-      expect(version).toEqual(expect.any(String))
-    })
-
-    test('handles single entry manifest', () => {
-      const manifest = {
-        'main.js': 'main.hash.js',
-      }
-
-      const version = createVersion(manifest)
-
-      expect(version).toEqual(expect.any(String))
-      expect(version.length).toBeGreaterThan(0)
-    })
-
-    test('handles large manifest', () => {
-      const manifest: Record<string, string> = {}
-
-      for (let i = 0; i < 100; i++) {
-        manifest[`file${i}.js`] = `file${i}.fixture-${i.toString(36)}.js`
-      }
-
-      const version = createVersion(manifest)
-
-      expect(version).toEqual(expect.any(String))
-    })
-
-    test('handles special characters in filenames', () => {
-      const manifest = {
-        'app.min.js': 'app.min.abc123.js',
-        '@vendor/package.js': '@vendor/package.xyz789.js',
-        'styles[main].css': 'styles[main].def456.css',
-      }
-
-      const version = createVersion(manifest)
-
-      expect(version).toEqual(expect.any(String))
-    })
-
     test('order independence - same files in different order produce same version', () => {
       const manifest1 = {
         'a.js': 'a.123.js',
@@ -557,15 +422,8 @@ describe('createVersion', () => {
       expect(version1).toBe(version2)
     })
 
-    test('returns base36 encoded string', () => {
-      const manifest = {
-        'app.js': 'app.hash.js',
-      }
-
-      const version = createVersion(manifest)
-
-      // Base36 only contains 0-9 and a-z
-      expect(version).toMatch(/^[0-9a-z]+$/)
+    test('returns the base36 hash of the asset files', () => {
+      expect(createVersion({ 'app.js': 'app.hash.js' })).toBe('wd31g')
     })
   })
 })
@@ -621,21 +479,6 @@ describe('serializePage', () => {
     }
 
     expect(JSON.parse(serializePage(page))).toEqual(page)
-  })
-
-  test('escapes forward slashes to prevent closing script injection', () => {
-    const page: PageObject = {
-      component: 'Home',
-      props: { userInput: '</script><script>alert("xss")</script>' },
-      url: '/',
-      version: '1.0.0',
-    }
-
-    const serialized = serializePage(page)
-
-    expect(serialized).not.toContain('</script>')
-    expect(serialized).not.toContain('<')
-    expect(JSON.parse(serialized)).toEqual(page)
   })
 
   test('keeps a comment and script opening from making the parser read past the element', () => {

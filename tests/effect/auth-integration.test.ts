@@ -2,10 +2,10 @@
 /**
  * Auth Flow Tests
  *
- * Sign-in, sign-out and Better Auth's own API are ordinary routes on the
- * `routes` setupWeb returns: guards come from `routes.provide`, a sign-in
- * action validates its form and calls `betterAuthRedirect`, and a signed-out
- * visitor goes to setupWeb's `auth.signInPath`.
+ * Signing in and up are ordinary routes on the `routes` setupWeb returns:
+ * guards come from `routes.provide`, a sign-in action validates its form and
+ * calls `betterAuthRedirect`, and a signed-out visitor goes to setupWeb's
+ * `auth.signInPath`.
  */
 
 import { describe, expect, test } from 'bun:test'
@@ -16,12 +16,11 @@ import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { intendedUrl, RequireAuthLayer, RequireGuestLayer } from '../../src/effect/auth.js'
-import { betterAuthCall, betterAuthHandler, betterAuthLogoutAction, betterAuthRedirect } from '../../src/auth.js'
+import { betterAuthCall, betterAuthRedirect } from '../../src/auth.js'
 import { json, render } from '../../src/effect/responses.js'
 import { requiredString } from '../../src/effect/schema.js'
 import { ValidationError } from '../../src/effect/errors.js'
 import { validateRequest } from '../../src/effect/validation.js'
-import { signedIn, testEnv } from '../../src/testing.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
 /** A Better Auth with email and password, in memory, limiting requests as `rateLimit` says. */
@@ -106,10 +105,6 @@ async function createApp(rateLimit?: { readonly enabled: boolean }) {
   routes
     .provide(RequireAuthLayer)
     .get('/dashboard', action(render('Dashboard')))
-
-  routes
-    .post('/sign-out', betterAuthLogoutAction())
-    .all('/api/auth/*', betterAuthHandler())
 
   return app
 }
@@ -210,28 +205,6 @@ describe('auth flow on routes', () => {
 
     expect(res.headers.get('Location')).toMatch(/^\/teams\/first-of-\w+/)
     expect(hasSession(res)).toBe(true)
-  })
-
-  test('a signed-in member visiting a guest page goes home', async () => {
-    const res = await (await createApp()).request('/sign-in', {}, testEnv(signedIn({ id: 'user-1' })))
-
-    expect(res.status).toBe(302)
-    expect(res.headers.get('Location')).toBe('/')
-  })
-
-  test('signing out clears the session and goes home', async () => {
-    const res = await (await createApp()).request('/sign-out', { method: 'POST', headers: page })
-
-    expect(res.status).toBe(303)
-    expect(res.headers.get('Location')).toBe('/')
-    expect(res.headers.getSetCookie().join()).toContain('better-auth.session_token=;')
-  })
-
-  test("betterAuthHandler forwards the request to Better Auth's API", async () => {
-    const res = await (await createApp()).request('/api/auth/get-session')
-
-    expect(res.status).toBe(200)
-    expect(await res.json()).toBeNull()
   })
 
   test("a sign-in form is rate limited as Better Auth's own route is", async () => {

@@ -6,8 +6,6 @@
 import { describe, test, expect } from 'bun:test'
 import { Option, Effect, Schema as S, Layer, Exit, Cause } from 'effect'
 import {
-  getValidationData,
-  formatSchemaErrors,
   validateUnknown,
   validateRequest,
 } from '../../src/effect/validation.js'
@@ -81,50 +79,12 @@ const runWithRequestAsync = <A, E>(
   return Effect.runPromiseExit(Effect.provide(effect, layer))
 }
 
-describe('getValidationData', () => {
-  test('extracts route params', async () => {
-    const request = createMockRequest({
-      params: { id: '123', slug: 'test-post' },
-    })
+const withRequest = <A, E>(
+  effect: Effect.Effect<A, E, RequestService>,
+  request: RequestContext
+) => Effect.provide(effect, Layer.succeed(RequestService, request))
 
-    const exit = await runWithRequestAsync(getValidationData, request)
-    expect(Exit.isSuccess(exit)).toBe(true)
-
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value.id).toBe('123')
-      expect(exit.value.slug).toBe('test-post')
-    }
-  })
-
-  test('extracts query params', async () => {
-    const request = createMockRequest({
-      query: { page: '1', limit: '10' },
-    })
-
-    const exit = await runWithRequestAsync(getValidationData, request)
-    expect(Exit.isSuccess(exit)).toBe(true)
-
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value.page).toBe('1')
-      expect(exit.value.limit).toBe('10')
-    }
-  })
-
-  test('extracts body for POST requests', async () => {
-    const request = createMockRequest({
-      method: 'POST',
-      body: { name: 'Test Project', description: 'A test' },
-    })
-
-    const exit = await runWithRequestAsync(getValidationData, request)
-    expect(Exit.isSuccess(exit)).toBe(true)
-
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value.name).toBe('Test Project')
-      expect(exit.value.description).toBe('A test')
-    }
-  })
-
+describe('validateRequest reads route params, query and body', () => {
   test('merges params, query, and body', async () => {
     const request = createMockRequest({
       method: 'POST',
@@ -133,14 +93,11 @@ describe('getValidationData', () => {
       body: { name: 'Test' },
     })
 
-    const exit = await runWithRequestAsync(getValidationData, request)
-    expect(Exit.isSuccess(exit)).toBe(true)
+    const input = await Effect.runPromise(
+      withRequest(validateRequest(S.Struct({ id: S.String, format: S.String, name: S.String })), request)
+    )
 
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value.id).toBe('123')
-      expect(exit.value.format).toBe('json')
-      expect(exit.value.name).toBe('Test')
-    }
+    expect(input).toEqual({ id: '123', format: 'json', name: 'Test' })
   })
 
   test('a key with different values in two sources fails validation', async () => {
@@ -151,12 +108,11 @@ describe('getValidationData', () => {
       body: { name: 'from-body' },
     })
 
-    const exit = await runWithRequestAsync(getValidationData, request)
-    const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()
-
-    expect(Option.isSome(error) && error.value.errors.name).toStartWith(
-      'Conflicting values for name from params'
+    const error = await Effect.runPromise(
+      Effect.flip(withRequest(validateRequest(S.Struct({ name: S.String })), request))
     )
+
+    expect(error.errors.name).toStartWith('Conflicting values for name from params')
   })
 
   test('does not extract body for GET requests', async () => {
@@ -166,153 +122,27 @@ describe('getValidationData', () => {
       body: { shouldNotAppear: true },
     })
 
-    const exit = await runWithRequestAsync(getValidationData, request)
-    expect(Exit.isSuccess(exit)).toBe(true)
-
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value.search).toBe('test')
-      expect(exit.value.shouldNotAppear).toBeUndefined()
-    }
-  })
-})
-
-describe('formatSchemaErrors', () => {
-  test('formats single field error', () => {
-    const schema = S.Struct({
-      name: S.String.check(S.isMinLength(1)),
-    })
-
-    const exit = Effect.runSyncExit(
-      S.decodeEffect(schema)({ name: '' })
+    const input = await Effect.runPromise(
+      withRequest(validateRequest(S.Struct({ search: S.String, shouldNotAppear: S.optional(S.Boolean) })), request)
     )
 
-    expect(Exit.isFailure(exit)).toBe(true)
-  })
-
-  test('formats errors with custom messages', () => {
-    const schema = S.Struct({
-      name: S.String.check(S.isMinLength(1)),
-    })
-
-    const exit = Effect.runSyncExit(
-      S.decodeEffect(schema)({ name: '' })
-    )
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const errors = formatSchemaErrors(option.value, {
-          name: 'Name is required',
-        })
-
-        expect(errors.name).toBe('Name is required')
-      }
-    }
-  })
-
-  test('formats errors with attribute substitution', () => {
-    const schema = S.Struct({
-      email: S.String.check(S.isMinLength(1)),
-    })
-
-    const exit = Effect.runSyncExit(
-      S.decodeEffect(schema)({ email: '' })
-    )
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const errors = formatSchemaErrors(
-          option.value,
-          { email: 'The :attribute field is required' },
-          { email: 'email address' }
-        )
-
-        expect(errors.email).toBe('The email address field is required')
-      }
-    }
-  })
-
-  test('handles nested field errors', () => {
-    const schema = S.Struct({
-      user: S.Struct({
-        name: S.String.check(S.isMinLength(1)),
-      }),
-    })
-
-    const exit = Effect.runSyncExit(
-      S.decodeEffect(schema)({ user: { name: '' } })
-    )
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const errors = formatSchemaErrors(option.value)
-        expect(errors['user.name']).toBeDefined()
-        expect(errors['user.name']).toContain('length of at least 1')
-      }
-    }
-  })
-
-  test('handles array index in field path', () => {
-    const schema = S.Struct({
-      tags: S.Array(S.String.check(S.isMinLength(1))),
-    })
-
-    const exit = Effect.runSyncExit(
-      S.decodeEffect(schema)({ tags: ['valid', ''] })
-    )
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const errors = formatSchemaErrors(option.value)
-        expect(errors['tags.1']).toBeDefined()
-        expect(errors['tags.1']).toContain('length of at least 1')
-      }
-    }
-  })
-
-  test('handles deeply nested field paths', () => {
-    const schema = S.Struct({
-      company: S.Struct({
-        address: S.Struct({
-          zip: S.String.check(S.isMinLength(5)),
-        }),
-      }),
-    })
-
-    const exit = Effect.runSyncExit(
-      S.decodeEffect(schema)({ company: { address: { zip: '123' } } })
-    )
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const errors = formatSchemaErrors(option.value)
-        expect(errors['company.address.zip']).toBeDefined()
-      }
-    }
+    expect(input).toEqual({ search: 'test' })
   })
 })
 
 describe('validateUnknown with typed input', () => {
-  test('validates valid data', () => {
+  test('validates valid data, decoding it', () => {
     const schema = S.Struct({
       name: S.String,
       age: S.Finite,
+      count: S.FiniteFromString,
     })
 
     const result = Effect.runSync(
-      validateUnknown(schema, { name: 'John', age: 30 })
+      validateUnknown(schema, { name: 'John', age: 30, count: '3' })
     )
 
-    expect(result).toEqual<typeof schema.Type>({ name: 'John', age: 30 })
+    expect(result).toEqual<typeof schema.Type>({ name: 'John', age: 30, count: 3 })
   })
 
   test('fails with ValidationError on invalid data', () => {
@@ -320,19 +150,10 @@ describe('validateUnknown with typed input', () => {
       name: S.String.check(S.isMinLength(3)),
     })
 
-    const exit = Effect.runSyncExit(validateUnknown(schema, { name: 'Jo' }))
+    const error = Effect.runSync(Effect.flip(validateUnknown(schema, { name: 'Jo' })))
 
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error._tag).toBe('ValidationError')
-        expect(error.errors).toBeDefined()
-      }
-    }
+    expect(error).toBeInstanceOf(ValidationError)
+    expect(error.errors).toEqual({ name: 'Expected a value with a length of at least 3' })
   })
 
   test('an absent field reads as required, as an empty one does', () => {
@@ -363,20 +184,13 @@ describe('validateUnknown with typed input', () => {
       email: S.String.check(S.isMinLength(1)),
     })
 
-    const exit = Effect.runSyncExit(
+    const error = Effect.runSync(Effect.flip(
       validateUnknown(schema, { email: '' }, {
         messages: { email: 'Please enter your email' },
       })
-    )
+    ))
 
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error.errors.email).toBe('Please enter your email')
-      }
-    }
+    expect(error.errors).toEqual({ email: 'Please enter your email' })
   })
 
   test('uses required-field error code for missing fields', () => {
@@ -384,32 +198,10 @@ describe('validateUnknown with typed input', () => {
       name: S.String,
     })
 
-    const exit = Effect.runSyncExit(validateUnknown(schema, {}))
+    const error = Effect.runSync(Effect.flip(validateUnknown(schema, {})))
 
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error.code).toBe(ErrorCodes.VAL_001_FIELD_REQUIRED)
-      }
-    }
-  })
-})
-
-describe('validateUnknown', () => {
-  test('validates unknown input', () => {
-    const schema = S.Struct({
-      id: S.String,
-      count: S.FiniteFromString,
-    })
-
-    const raw = { id: 'x', count: '3' }
-
-    const result = Effect.runSync(validateUnknown(schema, raw))
-    expect(result).toEqual<typeof schema.Type>({ id: 'x', count: 3 })
+    expect(error.code).toBe(ErrorCodes.VAL_001_FIELD_REQUIRED)
+    expect(error.errors).toEqual({ name: 'This field is required' })
   })
 })
 
@@ -477,19 +269,7 @@ describe('parseOptions', () => {
     }
   })
 
-  test('validate rejects excess properties with onExcessProperty error', () => {
-    const inputWithExtraField = { name: 'Test', extra: 'field' }
 
-    const exit = Effect.runSyncExit(
-      validateUnknown(
-        schema,
-        inputWithExtraField,
-        { parseOptions: { onExcessProperty: 'error' } }
-      )
-    )
-
-    expect(Exit.isFailure(exit)).toBe(true)
-  })
 })
 
 describe('validateRequest', () => {
@@ -524,17 +304,10 @@ describe('validateRequest', () => {
       body: { name: 'Jo' },
     })
 
-    const exit = await runWithRequestAsync(validateRequest(schema), request)
+    const error = await Effect.runPromise(Effect.flip(withRequest(validateRequest(schema), request)))
 
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        expect(option.value._tag).toBe('ValidationError')
-      }
-    }
+    expect(error).toBeInstanceOf(ValidationError)
+    expect(error.errors).toEqual({ name: 'Expected a value with a length of at least 3' })
   })
 
   test('passes options to validate', async () => {
@@ -547,21 +320,14 @@ describe('validateRequest', () => {
       body: { email: '' },
     })
 
-    const exit = await runWithRequestAsync(
+    const error = await Effect.runPromise(Effect.flip(withRequest(
       validateRequest(schema, {
         messages: { email: 'Email required' },
       }),
       request
-    )
+    )))
 
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error.errors.email).toBe('Email required')
-      }
-    }
+    expect(error.errors).toEqual({ email: 'Email required' })
   })
 
   test('uses attributes option for :attribute placeholder', async () => {
@@ -574,21 +340,14 @@ describe('validateRequest', () => {
       body: { email: '' },
     })
 
-    const exit = await runWithRequestAsync(
+    const error = await Effect.runPromise(Effect.flip(withRequest(
       validateRequest(schema, {
         attributes: { email: 'email address' },
       }),
       request
-    )
+    )))
 
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error.errors.email).toBe('The email address field is required')
-      }
-    }
+    expect(error.errors).toEqual({ email: 'The email address field is required' })
   })
 
   test('fails with ValidationError for malformed JSON body', async () => {
@@ -610,21 +369,12 @@ describe('validateRequest', () => {
       header: (name: string) => name.toLowerCase() === 'content-type' ? 'application/json' : undefined,
     }
 
-    const exit = await runWithRequestAsync(validateRequest(schema), request)
+    const error = await Effect.runPromise(Effect.flip(withRequest(validateRequest(schema), request)))
 
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error._tag).toBe('ValidationError')
-        expect(error.errors.form).toContain('Invalid JSON body.')
-        expect(error.errors.form).toContain('Ensure Content-Type is application/json')
-        expect(error.code).toBe(ErrorCodes.VAL_003_BODY_PARSE_FAILED)
-      }
-    }
+    expect(error).toBeInstanceOf(ValidationError)
+    expect(error.errors.form).toContain('Invalid JSON body.')
+    expect(error.errors.form).toContain('Ensure Content-Type is application/json')
+    expect(error.code).toBe(ErrorCodes.VAL_003_BODY_PARSE_FAILED)
   })
 
   test('handles complex nested schemas', async () => {
@@ -716,21 +466,12 @@ describe('validateRequest', () => {
       body: {},
     })
 
-    const exit = await runWithRequestAsync(
+    const error = await Effect.runPromise(Effect.flip(withRequest(
       validateRequest(schema, { request: { order: ['query', 'body'] } }),
       request
-    )
+    )))
 
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error.errors.id).toBeDefined()
-      }
-    }
+    expect(error.errors).toEqual({ id: 'This field is required' })
   })
 
   test('supports first-wins conflict handling with custom order', async () => {
@@ -801,7 +542,7 @@ describe('validateRequest', () => {
       body: { name: 'from-body' },
     })
 
-    const exit = await runWithRequestAsync(
+    const error = await Effect.runPromise(Effect.flip(withRequest(
       validateRequest(schema, {
         request: {
           order: ['params', 'body'],
@@ -809,19 +550,10 @@ describe('validateRequest', () => {
         },
       }),
       request
-    )
+    )))
 
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error.errors.name).toContain('Conflicting values')
-        expect(error.code).toBe(ErrorCodes.VAL_006_SOURCE_CONFLICT)
-      }
-    }
+    expect(error.errors.name).toContain('Conflicting values')
+    expect(error.code).toBe(ErrorCodes.VAL_006_SOURCE_CONFLICT)
   })
 
   test('treats +json content types as JSON parse failures', async () => {
@@ -842,19 +574,10 @@ describe('validateRequest', () => {
       header: (name: string) => name.toLowerCase() === 'content-type' ? 'application/vnd.api+json' : undefined,
     }
 
-    const exit = await runWithRequestAsync(validateRequest(schema), request)
+    const error = await Effect.runPromise(Effect.flip(withRequest(validateRequest(schema), request)))
 
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    if (Exit.isFailure(exit) && Cause.hasFails(exit.cause)) {
-      const option = Cause.findErrorOption(exit.cause)
-
-      if (Option.isSome(option)) {
-        const error = option.value
-        expect(error.errors.form).toContain('Invalid JSON body.')
-        expect(error.code).toBe(ErrorCodes.VAL_003_BODY_PARSE_FAILED)
-      }
-    }
+    expect(error.errors.form).toContain('Invalid JSON body.')
+    expect(error.code).toBe(ErrorCodes.VAL_003_BODY_PARSE_FAILED)
   })
 
   test('does not treat application/json-seq as standard JSON media type', async () => {
@@ -877,11 +600,11 @@ describe('validateRequest', () => {
       header: (name: string) => name.toLowerCase() === 'content-type' ? 'application/json-seq' : undefined,
     }
 
-    const exit = await runWithRequestAsync(validateRequest(schema), request)
-    const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()
+    const error = await Effect.runPromise(Effect.flip(withRequest(validateRequest(schema), request)))
 
-    expect(Option.isSome(failure) && failure.value instanceof ValidationError && failure.value.code)
-      .toBe(ErrorCodes.VAL_003_BODY_PARSE_FAILED)
+    expect(error.code).toBe(ErrorCodes.VAL_003_BODY_PARSE_FAILED)
+    // Read as an untyped body, not by the JSON parser, whose failure reads 'Invalid JSON body'.
+    expect(error.errors.form).toStartWith('Could not read the body as JSON')
   })
 
   test('reads a body sent without a JSON media type, as fetch sends a string, as JSON', async () => {

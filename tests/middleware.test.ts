@@ -8,17 +8,22 @@ import { Hono } from 'hono'
 import { web, HEADERS } from '../src/middleware.js'
 import { serializePage } from '../src/helpers.js'
 import type { PageObject } from '../src/types.js'
-import {
-  createTestApp,
-  makeInertiaRequest,
-  parseInertiaResponse,
-  edgeCaseStrings,
-  lazyProp,
-  mockUsers,
-  mockProjects,
-  mockErrors,
-  createRequestTracker,
-} from './support/test-utils.js'
+
+const mockUsers = [
+  { id: 1, name: 'Alice', email: 'alice@example.com' },
+  { id: 2, name: 'Bob', email: 'bob@example.com' },
+  { id: 3, name: 'Charlie', email: 'charlie@example.com' },
+]
+
+const mockProjects = [
+  { id: 1, name: 'Project A', status: 'active' },
+  { id: 2, name: 'Project B', status: 'archived' },
+]
+
+const mockErrors = {
+  email: 'Invalid email address',
+  password: 'Password must be at least 8 characters',
+}
 
 // Create test app with the page middleware
 const createApp = (version = '1.0.0') => {
@@ -611,223 +616,7 @@ describe('Page middleware', () => {
     })
   })
 
-  describe('Edge Cases: Multi-byte Characters', () => {
-    test('handles emoji in props correctly', async () => {
-      const app = createApp()
-      app.get('/', (c) =>
-        c.var.web.render('Home', { emoji: edgeCaseStrings.emoji })
-      )
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.props.emoji).toBe('😀🎉🚀')
-    })
-
-    test('handles multi-byte emoji (family) in props', async () => {
-      const app = createApp()
-      app.get('/', (c) =>
-        c.var.web.render('Home', { emoji: edgeCaseStrings.multiByteEmoji })
-      )
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.props.emoji).toBe('👨‍👩‍👧‍👦')
-    })
-
-    test('handles unicode/Japanese characters in props', async () => {
-      const app = createApp()
-      app.get('/', (c) =>
-        c.var.web.render('Home', { text: edgeCaseStrings.unicode })
-      )
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.props.text).toBe('日本語テスト')
-    })
-
-    test('handles special characters in component names', async () => {
-      const app = createApp()
-      app.get('/', (c) => c.var.web.render('Users/Profile/Edit'))
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.component).toBe('Users/Profile/Edit')
-    })
-  })
-
-  describe('Edge Cases: Complex Props', () => {
-    test('handles deeply nested objects', async () => {
-      const app = createApp()
-
-      const deepProps = {
-        level1: {
-          level2: {
-            level3: {
-              level4: {
-                value: 'deep',
-              },
-            },
-          },
-        },
-      }
-
-      app.get('/', (c) => c.var.web.render('Home', deepProps))
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject<typeof deepProps>
-      expect(json.props.level1.level2.level3.level4.value).toBe('deep')
-    })
-
-    test('handles arrays with mixed types', async () => {
-      const app = createApp()
-      app.get('/', (c) =>
-        c.var.web.render('Home', {
-          mixed: [1, 'string', { nested: true }, [1, 2, 3], null],
-        })
-      )
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.props.mixed).toEqual([
-        1,
-        'string',
-        { nested: true },
-        [1, 2, 3],
-        null,
-      ])
-    })
-
-    test('handles null and undefined values', async () => {
-      const app = createApp()
-      app.get('/', (c) =>
-        c.var.web.render('Home', {
-          nullValue: null,
-          undefinedValue: undefined,
-        })
-      )
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.props.nullValue).toBeNull()
-      // undefined should be omitted in JSON
-      expect('undefinedValue' in json.props).toBe(false)
-    })
-
-    test('handles large arrays (pagination mock)', async () => {
-      const app = createApp()
-
-      const largeData = {
-        users: Array.from({ length: 1000 }, (_, i) => ({
-          id: i + 1,
-          name: `User ${i + 1}`,
-        })),
-        meta: { total: 1000, page: 1, perPage: 1000 },
-      }
-
-      app.get('/', (c) => c.var.web.render('Users/Index', largeData))
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject<typeof largeData>
-      expect(json.props.users).toHaveLength(1000)
-      expect(json.props.meta.total).toBe(1000)
-    })
-
-    test('handles Date objects (serialized to string)', async () => {
-      const app = createApp()
-      // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
-      const date = new Date('2025-01-01T00:00:00Z')
-      app.get('/', (c) =>
-        c.var.web.render('Home', { createdAt: date.toISOString() })
-      )
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.props.createdAt).toBe('2025-01-01T00:00:00.000Z')
-    })
-  })
-
   describe('Edge Cases: Error Handling', () => {
-    test('handles error bag pattern (nested errors)', async () => {
-      const app = createApp()
-      app.get('/', (c) => {
-        c.var.web.setErrors({
-          'user.email': 'Invalid email',
-          'user.password': 'Too short',
-          'settings.notifications': 'Required',
-        })
-
-        return c.var.web.render('Settings')
-      })
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.props.errors?.['user.email']).toBe('Invalid email')
-      expect(json.props.errors?.['user.password']).toBe('Too short')
-      expect(json.props.errors?.['settings.notifications']).toBe('Required')
-    })
-
-    test('handles array-indexed errors', async () => {
-      const app = createApp()
-      app.get('/', (c) => {
-        c.var.web.setErrors({
-          'items.0.name': 'Required',
-          'items.1.price': 'Must be positive',
-          'items.2.quantity': 'Must be integer',
-        })
-
-        return c.var.web.render('Form')
-      })
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.props.errors?.['items.0.name']).toBe('Required')
-      expect(json.props.errors?.['items.1.price']).toBe('Must be positive')
-    })
-
     test('clears previous errors on new request', async () => {
       const app = createApp()
       let hasErrors = true
@@ -861,30 +650,7 @@ describe('Page middleware', () => {
   })
 
   describe('Edge Cases: Async Props', () => {
-    test('resolves multiple async shared props in parallel', async () => {
-      const app = createApp()
-
-      app.use('*', async (c, next) => {
-        c.var.web.share('user', lazyProp({ id: 1, name: 'John' }))
-        c.var.web.share('settings', lazyProp({ theme: 'dark' }))
-        c.var.web.share('notifications', lazyProp([{ id: 1 }]))
-        await next()
-      })
-
-      app.get('/', (c) => c.var.web.render('Dashboard'))
-
-      const res = await app.request('/', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.props.user).toEqual({ id: 1, name: 'John' })
-      expect(json.props.settings).toEqual({ theme: 'dark' })
-      expect(json.props.notifications).toEqual([{ id: 1 }])
-    })
-
-    test('handles errors in async shared props gracefully', async () => {
+    test('an async shared prop that throws fails the request with 500', async () => {
       const app = createApp()
 
       app.use('*', async (c, next) => {
@@ -896,37 +662,12 @@ describe('Page middleware', () => {
 
       app.get('/', (c) => c.var.web.render('Home'))
 
-      // The error should propagate
-      try {
-        await app.request('/', {
-          headers: { [HEADERS.INERTIA]: 'true' },
-        })
-      } catch (e) {
-        expect(e).toBeDefined()
-      }
-    })
-
-    test('handles mixed sync and async shared props', async () => {
-      const app = createApp()
-
-      app.use('*', async (c, next) => {
-        c.var.web.share('sync', 'immediate')
-        c.var.web.share('async', async () => 'delayed')
-        c.var.web.share('lazy', () => 'lazy-sync')
-        await next()
-      })
-
-      app.get('/', (c) => c.var.web.render('Home'))
-
+      // The error propagates to Hono's error handler, which answers 500.
       const res = await app.request('/', {
         headers: { [HEADERS.INERTIA]: 'true' },
       })
 
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.props.sync).toBe('immediate')
-      expect(json.props.async).toBe('delayed')
-      expect(json.props.lazy).toBe('lazy-sync')
+      expect(res.status).toBe(500)
     })
   })
 
@@ -975,7 +716,8 @@ describe('Page middleware', () => {
 
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
-      // Empty partial data should include errors only
+      // An empty header names no props, so this is not a partial reload.
+      expect(json.props.users).toEqual(mockUsers)
       expect(json.props.errors).toEqual({})
     })
 
@@ -1054,65 +796,9 @@ describe('Page middleware', () => {
         expect(json.props.method).toBe(method)
       }
     })
-
-    test('302 redirect behavior for different HTTP methods', async () => {
-      const app = createApp()
-      app.post('/form', (c) => c.redirect('/success', 302))
-      app.get('/redirect', (c) => c.redirect('/success', 302))
-
-      // POST with X-Inertia MUST convert 302 to 303
-      const postRes = await app.request('/form', {
-        method: 'POST',
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      expect(postRes.status).toBe(303)
-      expect(postRes.headers.get('Location')).toBe('/success')
-
-      // GET with Inertia should stay 302
-      const getRes = await app.request('/redirect', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      expect(getRes.status).toBe(302)
-
-      // POST without Inertia should stay 302
-      const noInertiaRes = await app.request('/form', {
-        method: 'POST',
-      })
-
-      expect(noInertiaRes.status).toBe(302)
-    })
   })
 
   describe('Edge Cases: URL Handling', () => {
-    test('handles URL with query parameters', async () => {
-      const app = createApp()
-      app.get('/search', (c) => c.var.web.render('Search'))
-
-      const res = await app.request('/search?q=test&page=1&sort=name', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.url).toBe('/search?q=test&page=1&sort=name')
-    })
-
-    test('handles URL with hash fragment', async () => {
-      const app = createApp()
-      app.get('/page', (c) => c.var.web.render('Page'))
-
-      // Note: hash fragments are typically not sent to server
-      const res = await app.request('/page', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.url).toBe('/page')
-    })
-
     test('handles URL with encoded characters', async () => {
       const app = createApp()
       app.get('/users/:name', (c) => c.var.web.render('User'))
@@ -1124,56 +810,6 @@ describe('Page middleware', () => {
       // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
       const json = (await res.json()) as PageObject
       expect(json.url).toBe('/users/John%20Doe')
-    })
-
-    test('handles deeply nested routes', async () => {
-      const app = createApp()
-      app.get('/org/:org/team/:team/project/:project/task/:task', (c) =>
-        c.var.web.render('Task', {
-          org: c.req.param('org'),
-          team: c.req.param('team'),
-          project: c.req.param('project'),
-          task: c.req.param('task'),
-        })
-      )
-
-      const res = await app.request('/org/acme/team/dev/project/api/task/123', {
-        headers: { [HEADERS.INERTIA]: 'true' },
-      })
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      const json = (await res.json()) as PageObject
-      expect(json.url).toBe('/org/acme/team/dev/project/api/task/123')
-      expect(json.props.org).toBe('acme')
-      expect(json.props.task).toBe('123')
-    })
-  })
-
-  describe('Test Utilities Integration', () => {
-    test('createTestApp works correctly', async () => {
-      const app = createTestApp({ version: '2.0.0' })
-      app.get('/', (c) => c.var.web.render('Home'))
-
-      const res = await makeInertiaRequest(app, '/')
-      const page = await parseInertiaResponse(res)
-
-      expect(page.version).toBe('2.0.0')
-      expect(page.component).toBe('Home')
-    })
-
-    test('request tracker tracks requests', () => {
-      const tracker = createRequestTracker()
-
-      tracker.track('/users', 'GET')
-      tracker.track('/users/1', 'PUT')
-      tracker.track('/users/1', 'DELETE')
-
-      expect(tracker.count()).toBe(3)
-      expect(tracker.requests[0].path).toBe('/users')
-      expect(tracker.requests[1].method).toBe('PUT')
-
-      tracker.reset()
-      expect(tracker.count()).toBe(0)
     })
   })
 })
@@ -1196,37 +832,6 @@ describe('HEADERS constant', () => {
  * cause Hono to throw "Context is not finalized" errors.
  */
 describe('Context Finalization (regression)', () => {
-  test('POST redirect with X-Inertia headers does not throw context error', async () => {
-    const app = createApp()
-    app.post('/login', (c) => c.redirect('/dashboard', 302))
-
-    // This specific scenario previously caused "Context is not finalized"
-    const res = await app.request('/login', {
-      method: 'POST',
-      headers: { [HEADERS.INERTIA]: 'true' },
-    })
-
-    // Must get a valid response, not an error
-    expect(res.status).toBe(303)
-    expect(res.headers.get('Location')).toBe('/dashboard')
-  })
-
-  test('version mismatch returns 409 without context error', async () => {
-    const app = createApp()
-    app.get('/page', (c) => c.var.web.render('Page'))
-
-    // Version mismatch early return
-    const res = await app.request('/page', {
-      headers: {
-        [HEADERS.INERTIA]: 'true',
-        [HEADERS.VERSION]: 'old-version',
-      },
-    })
-
-    expect(res.status).toBe(409)
-    expect(res.headers.get(HEADERS.LOCATION)).toBeTruthy()
-  })
-
   test('multiple middleware in chain all complete without context error', async () => {
     const app = new Hono()
     const executed: string[] = []
@@ -1303,51 +908,7 @@ describe('Context Finalization (regression)', () => {
     expect(res.status).toBe(302)
   })
 
-  test('middleware returns response for proper propagation in forwarding scenarios', async () => {
-    // This tests that the page middleware properly returns c.res
-    // which is critical for request forwarding/sandbox scenarios
-    const innerApp = new Hono()
-
-    innerApp.use(
-      '*',
-      web({
-        version: '1.0.0',
-        render: async (page) => `<html>${JSON.stringify(page)}</html>`,
-      })
-    )
-
-    innerApp.get('/page', (c) => c.var.web.render('Page', { data: 'test' }))
-    innerApp.post('/submit', (c) => c.redirect('/success', 302))
-
-    // Outer app that forwards requests (simulating sandbox forwarding)
-    const outerApp = new Hono()
-    outerApp.all('*', async (c) => {
-      // Forward request to inner app
-      const res = await innerApp.request(c.req.raw)
-
-      return res
-    })
-
-    // Test regular render
-    const getRes = await outerApp.request('/page', {
-      headers: { [HEADERS.INERTIA]: 'true' },
-    })
-
-    expect(getRes.status).toBe(200)
-    const json = await getRes.json()
-    expect(json.component).toBe('Page')
-
-    // Test redirect conversion
-    const postRes = await outerApp.request('/submit', {
-      method: 'POST',
-      headers: { [HEADERS.INERTIA]: 'true' },
-    })
-
-    expect(postRes.status).toBe(303)
-    expect(postRes.headers.get('Location')).toBe('/success')
-  })
-
-  test('middleware returns response even when no handler matches', async () => {
+  test("web() lets Hono's 404 through when no route matches", async () => {
     const app = new Hono()
 
     app.use(

@@ -300,16 +300,6 @@ function getValidationDataWithOptions(
 }
 
 /**
- * Extract validation data from the request.
- * Merges route params, query params, and body (body takes precedence).
- */
-export const getValidationData: Effect.Effect<
-  RequestData,
-  ValidationError,
-  RequestService
-> = getValidationDataWithOptions()
-
-/**
  * Result of formatting schema errors with details.
  */
 export interface FormattedSchemaErrors {
@@ -391,37 +381,6 @@ function extractSchemaType(message: string): string | undefined {
   }
 
   return undefined
-}
-
-/**
- * Format Effect Schema parse errors into field-level validation errors.
- * Simple version that returns only the error messages.
- */
-export interface ValidationMessages {
-  [field: string]: string
-}
-
-export function formatSchemaErrors(
-  error: S.SchemaError,
-  messages: Record<string, string> = {},
-  attributes: Record<string, string> = {}
-): ValidationMessages {
-  const errors: ValidationMessages = {}
-  const issues = formatSchemaIssue(error.issue).issues
-
-  for (const issue of issues) {
-    const path = getFormattedIssuePath(issue)
-    const field = path.length > 0 ? path.map(String).join('.') : 'form'
-
-    if (errors[field]) continue // First error wins
-
-    const attribute = attributes[field] ?? field
-    const message = messages[field] ?? issue.message
-
-    errors[field] = message.replace(/:attribute/g, attribute)
-  }
-
-  return errors
 }
 
 /**
