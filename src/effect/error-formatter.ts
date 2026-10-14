@@ -343,11 +343,15 @@ export interface FormatDetectionContext {
 const JSON_CLIENTS = ['claude-code', 'claude', 'anthropic', 'CLI', 'curl']
 
 /**
- * Whether a failure answers the request as JSON rather than a page: for an AI
- * agent or command-line client, by its User-Agent, and for a client that asks
- * for JSON (an Inertia visit never does).
+ * Whether a failure answers the request as JSON rather than a page: never for
+ * an Inertia visit; otherwise for an AI agent or command-line client, by its
+ * User-Agent, and for a client that asks for JSON.
  */
 export function answersErrorAsJson(request: FormatDetectionContext): boolean {
+  // An Inertia visit takes Inertia's page protocol whatever its User-Agent or
+  // Accept says: an agent driving the application in a browser sends both.
+  if (request.header('X-Inertia') === 'true') return false
+
   const userAgent = request.header('User-Agent') ?? ''
 
   return JSON_CLIENTS.some((client) => userAgent.includes(client)) || wantsJson((name) => request.header(name))
