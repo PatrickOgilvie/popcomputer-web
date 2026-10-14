@@ -8,7 +8,7 @@ import { action } from '../src/effect/action.js'
 import { authorize, AuthUserService, DatabaseService } from '../src/effect/services.js'
 import { flash, json, notFound, redirect, render } from '../src/effect/responses.js'
 import { effectRoutes } from '../src/effect/routing.js'
-import { applyMigrations, readMigrations, readPage, signedIn, testClock, testEnv } from '../src/testing.js'
+import { applyMigrations, readMigrations, readPage, signedIn, testBrowser, testClock, testEnv } from '../src/testing.js'
 import { HttpError } from '../src/effect/errors.js'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -426,3 +426,26 @@ describe('readPage', () => {
     )
   })
 })
+
+describe('testBrowser', () => {
+  test('drops a cookie as a browser does, whether its Max-Age is 0 or its Expires has passed', async () => {
+    const app = new Hono()
+      .get('/set', (c) => c.body(null, 204, { 'Set-Cookie': 'session=abc; Path=/' }))
+      .get('/expire', (c) => c.body(null, 204, { 'Set-Cookie': 'session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT' }))
+      .get('/zero', (c) => c.body(null, 204, { 'Set-Cookie': 'session=; Path=/; Max-Age=0' }))
+      .get('/later', (c) => c.body(null, 204, { 'Set-Cookie': 'session=kept; Path=/; Expires=Fri, 01 Jan 2100 00:00:00 GMT' }))
+    const browser = testBrowser(app)
+
+    await browser.request('/set')
+    await browser.request('/expire')
+    expect(browser.cookies.has('session')).toBe(false)
+
+    await browser.request('/set')
+    await browser.request('/zero')
+    expect(browser.cookies.has('session')).toBe(false)
+
+    await browser.request('/later')
+    expect(browser.cookies.get('session')).toBe('kept')
+  })
+})
+

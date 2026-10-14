@@ -1114,7 +1114,8 @@ and the lint rules name it where an action reaches for something else.
 | Make several requests as one visitor, or follow a redirect | `testBrowser(app, env)` and its `follow(res)` | [One visitor](#one-visitor-across-requests) |
 | Replace a service that reaches another system | `Layer.succeed(Service, fake)` in `testEnv`'s layer | [Fakes](#fakes-for-other-systems) |
 | Move time | `testClock()` | [Time](#time) |
-| Use the production database family | PGlite or Miniflare's D1, migrated with `applyMigrations` | [A database for tests](#a-database-for-tests) |
+| Use the production database family | PGlite, migrated with `applyMigrations`, or a D1 database of each test's own from `testD1` | [A database for tests](#a-database-for-tests) |
+| Sign in through an OAuth provider in a test | `testOAuthProvider({ ... })`, then `signIn(browser, path, person)` | [Signing in with an OAuth provider](#signing-in-with-an-oauth-provider) |
 | Run a Queue consumer | `testBatch(bodies)` | [Scheduled and queued work](#scheduled-and-queued-work) |
 
 ## Reading the type errors
@@ -1870,14 +1871,42 @@ browser that started the sign-in, so a sign-in finished in another browser
 is refused. `auth.signInLimits` does not count sign-ins through a provider
 against the client's address: they check no password here.
 
-A test stands in for the provider by answering `fetch` for its origin: it
-starts the sign-in through the application, issues a code for the person
-signing in, and requests the `redirect_uri` from the authorization URL with
-that code and the URL's `state`, as the provider would send the browser. Its
-token endpoint answers the code with an access token, and its user info
-endpoint answers the token with the person (`id`, `email`,
-`email_verified`, `name`); `spyOn(globalThis, 'fetch')` from `bun:test`
-replaces `fetch` for the test.
+A test stands in for the provider with `testOAuthProvider` from
+`@popcomputer/web/testing`, which answers the application's `fetch` requests
+to the provider's token and user info endpoints as the provider would,
+refusing what it would refuse: a code exchanged twice, or without the
+client's secret or the PKCE verifier its authorization named. `signIn` starts
+the sign-in through the application's route and returns the callback's
+answer, as the provider sends the browser back once the person has signed in
+there:
+
+```ts
+import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { testBrowser, testEnv, testOAuthProvider } from '@popcomputer/web/testing'
+
+const acme = testOAuthProvider({
+  authorizationUrl: 'https://id.acme.example/oauth/authorize',
+  tokenUrl: 'https://id.acme.example/oauth/token',
+  userInfoUrl: 'https://id.acme.example/oauth/userinfo',
+  client: { id: 'test-client', secret: 'test-secret' },
+})
+
+beforeEach(() => acme.install())
+afterEach(() => acme.restore())
+
+test('a person signs in with their Acme account', async () => {
+  const browser = testBrowser(app, testEnv(testBindings, { database: testDb }))
+  const res = await acme.signIn(browser, paths.loginWithAcme, { id: 'acme-1', email: 'ada@example.com', name: 'Ada' })
+
+  expect(res.headers.get('Location')).toBe(paths.projects)
+})
+```
+
+`authorization(response)` and `callback(authorization, person)` take the
+same steps one at a time, for a test of a sign-in finished in another
+browser, and `accessTokens` holds the tokens it issued, for a test that no
+page shows one. A person's `emailVerified: false` tests what an unverified
+email at the provider can reach.
 
 ### Limiting password guessing
 
@@ -2933,28 +2962,32 @@ and constraint errors behave the same:
   the code races; test locking against a real Postgres, passing a postgres.js
   Drizzle client as `database` the same way, in a test that runs when a
   database URL is set.
-- **Cloudflare D1**: Miniflare's real D1 runs under Bun. Create
-  `new Miniflare({ modules: true, script: 'export default {}', d1Databases:
-  ['DB'] })`, migrate `await miniflare.getD1Database('DB')` with
-  `applyMigrations('./drizzle', (sql) => d1.prepare(sql).run())`, or in one
-  round trip with `d1.batch((await readMigrations(folder)).map((sql) =>
-  d1.prepare(sql)))`, and pass it as the `DB` binding. `getKVNamespace` and `getR2Bucket` give the other
-  bindings the same way; their types differ slightly from
+- **Cloudflare D1**: Miniflare's real D1 runs under Bun, in process.
+  `testD1({ migrations: './drizzle' })` from `@popcomputer/web/testing` hands
+  out D1 databases, each newly created, migrated with drizzle-kit's
+  migrations in one batch, and empty, typed as the application's D1 binding:
+  `testEnv({ ...testBindings, DB: await databases.fresh() })`. Starting
+  Miniflare takes a moment, so one holds many databases and another starts
+  when they run out. Stop them once, after every test file, with
+  `afterAll(() => databases.dispose())` in a file `bunfig.toml`'s
+  `[test] preload` names: a Miniflare left running keeps its `workerd`
+  process alive after `bun test` exits, and Bun shares modules between test
+  files, so an `afterAll` in the module that creates the databases stops them
+  while other files still use them. Miniflare's `getKVNamespace` and
+  `getR2Bucket` give the other bindings; their types differ slightly from
   `@cloudflare/workers-types`', so provide a KV store to the data cache as
   `kvCache(kv)` in the test layer rather than as a binding, and type a binding
   an application service reads by the methods it calls (`KVNamespaceLike`
   from `@popcomputer/web/cache`, or a small interface of the R2 methods), so
   both objects fit.
 
-  Starting Miniflare takes a moment, so create one for the whole run, with as
-  many D1 databases as tests need a fresh one, `d1Databases: ['DB_1', 'DB_2',
-  ...]`, and hand each test its own, migrated, as its `DB` binding. Dispose of
-  it once, with `await miniflare.dispose()` in an `afterAll` of a file
-  `bunfig.toml`'s `preload` names: a Miniflare left running keeps its
-  `workerd` process alive after `bun test` exits, and Bun shares modules
-  between test files, so an `afterAll` in the module that creates it disposes
-  of it while other files still use it. A Miniflare each test file creates
-  for itself can use that file's `afterAll`.
+```ts
+// src/test-d1.ts
+import { testD1 } from '@popcomputer/web/testing'
+
+// Each test that asks gets a D1 database of its own.
+export const databases = testD1({ migrations: './drizzle' })
+```
 
 `bun:sqlite` is a synchronous driver: it can stand in for neither, since
 `dbTransaction` and `dbBatch` are type errors for it.

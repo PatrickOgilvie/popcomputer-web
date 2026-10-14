@@ -2,7 +2,7 @@
 /**
  * A Better Auth application as the README builds one, with the plugins
  * power users reach for: organizations, two-factor, magic links, an OAuth
- * provider, bearer tokens and admin. Its tables are the README's D1 tables
+ * provider (which tests stand in for), bearer tokens and admin. Its tables are the README's D1 tables
  * with the plugins' columns, on SQLite through Drizzle, as on D1.
  */
 
@@ -12,6 +12,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { admin, bearer, genericOAuth, magicLink, organization, twoFactor } from 'better-auth/plugins'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { betterAuthFields } from '../../src/auth.js'
+import { testOAuthProvider } from '../../src/testing.js'
 import { getTableConfig, index, integer, sqliteTable, text, type SQLiteTable } from 'drizzle-orm/sqlite-core'
 
 const createdAt = () => integer('created_at', { mode: 'timestamp_ms' }).notNull().$defaultFn(() => new Date())
@@ -184,8 +185,14 @@ export interface Outbox {
 
 export const newOutbox = (): Outbox => ({ magicLinks: [], invitations: [] })
 
-/** The profile a fake OAuth provider, Acme, hands back for each authorization code. */
-export const acmeProfiles = new Map<string, { readonly id: string; readonly email: string; readonly name: string }>()
+/** Acme, an OAuth provider the application signs people in with, which tests stand in for. */
+const ACME = {
+  authorizationUrl: 'https://acme.example/authorize',
+  tokenUrl: 'https://acme.example/token',
+  userInfoUrl: 'https://acme.example/userinfo',
+}
+
+export const acme = testOAuthProvider({ ...ACME, client: { id: 'acme-client', secret: 'acme-secret' } })
 
 export interface CreateAuthOptions {
   readonly db: TestDatabase
@@ -222,13 +229,8 @@ export function createAuth(options: CreateAuthOptions) {
           providerId: 'acme',
           clientId: 'acme-client',
           clientSecret: 'acme-secret',
-          authorizationUrl: 'https://acme.example/authorize',
-          getToken: async ({ code }) => ({ accessToken: code, tokenType: 'Bearer' }),
-          getUserInfo: async (tokens) => {
-            const found = acmeProfiles.get(tokens.accessToken ?? '')
-
-            return found === undefined ? null : { id: found.id, email: found.email, name: found.name, emailVerified: true }
-          },
+          ...ACME,
+          pkce: true,
         }],
       }),
     ],

@@ -179,9 +179,12 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
     visitor's cookies across requests, and `readPage(res, 'Name')` reads
     an `X-Inertia` response typed by the page registry. Test against the
     production database family: PGlite for Postgres (`testEnv`'s `database`),
-    Miniflare's D1 for D1, migrated with `applyMigrations`. Replace a service
+    migrated with `applyMigrations`, and for D1 a database of each test's own
+    from `testD1({ migrations: './drizzle' })`, stopped by
+    `afterAll(() => databases.dispose())` in `bunfig.toml`'s preload. Replace a service
     that reaches another system with `Layer.succeed(Service, fake)` in the
-    layer, and move time with `testClock()`, which works when rules read the
+    layer, stand in for an OAuth provider with `testOAuthProvider({ ... })`
+    and sign people in through it with `signIn(browser, path, person)`, and move time with `testClock()`, which works when rules read the
     time through Effect's `Clock` or `DateTime.now`; `time.settle(request)`
     runs a request whose retries wait on the clock.
 13. **Declare every JSON endpoint once, as a contract,** in `src/endpoints.ts`:

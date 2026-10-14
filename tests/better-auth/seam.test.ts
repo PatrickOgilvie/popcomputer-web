@@ -6,7 +6,7 @@
  * the peer range names only versions they passed against.
  */
 
-import { describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getSchema } from 'better-auth/db'
@@ -16,10 +16,13 @@ import { getTableConfig as sqliteTableConfig } from 'drizzle-orm/sqlite-core'
 import { testBrowser, testEnv } from '../../src/testing.js'
 import { betterAuthSession } from '../../src/auth.js'
 import { tableSchema } from '../../src/schema.js'
-import { acmeProfiles, createAuth, createDatabase, newOutbox, schema, type CreateAuthOptions } from './fixture.js'
+import { acme, createAuth, createDatabase, newOutbox, schema, type CreateAuthOptions } from './fixture.js'
 import { app } from './app.js'
 
 const repoRoot = join(import.meta.dir, '..', '..')
+
+beforeEach(() => acme.install())
+afterEach(() => acme.restore())
 const SESSION = 'better-auth.session_token'
 
 function setup(session?: CreateAuthOptions['session']) {
@@ -235,15 +238,13 @@ describe('signing in with another provider', () => {
   test("the provider's callback signs the visitor in, and their first visit makes the application's own record", async () => {
     const { browser, db } = setup()
     const visitor = browser()
-    acmeProfiles.set('code-grace', { id: 'acme-1', email: 'grace@acme.example', name: 'Grace Hopper' })
 
     const started = await visitor.request('/sign-in/acme', { method: 'POST' })
-    const authorize = new URL(started.headers.get('Location') ?? '')
 
     expect(started.status).toBe(303)
-    expect(authorize.origin).toBe('https://acme.example')
 
-    const callback = await visitor.request(`/api/auth/callback/acme?code=code-grace&state=${authorize.searchParams.get('state')}`)
+    // The provider refuses the code unless the exchange carries the client's secret and PKCE verifier.
+    const callback = await visitor.request(acme.callback(acme.authorization(started), { id: 'acme-1', email: 'grace@acme.example', name: 'Grace Hopper' }))
 
     expect(callback.headers.get('Location')).toBe('/dashboard')
     expect((await me(visitor)).body).toMatchObject({ email: 'grace@acme.example' })
@@ -271,14 +272,11 @@ describe('decoding the session', () => {
 })
 
 describe("Better Auth's session cookie cache", () => {
-  test("a member whose user has fields Better Auth left unset is signed in from the cached session", async () => {
+  test('a member is signed in from the session Better Auth keeps in a cookie', async () => {
     const { browser } = setup({ cookieCache: { enabled: true, maxAge: 300 } })
     const visitor = browser()
-    acmeProfiles.set('code-cached', { id: 'acme-cached', email: 'cached@acme.example', name: 'Cache Member' })
 
-    const started = await visitor.request('/sign-in/acme', { method: 'POST' })
-    const state = new URL(started.headers.get('Location') ?? '').searchParams.get('state')
-    await visitor.request(`/api/auth/callback/acme?code=code-cached&state=${state}`)
+    await acme.signIn(visitor, '/sign-in/acme', { id: 'acme-cached', email: 'cached@acme.example', name: 'Cache Member' })
 
     expect(visitor.cookies.has('better-auth.session_data')).toBe(true)
     expect((await me(visitor)).body).toMatchObject({ email: 'cached@acme.example' })

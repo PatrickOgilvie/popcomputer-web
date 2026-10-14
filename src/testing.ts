@@ -19,6 +19,8 @@ import type { PageName } from './effect/pages.js'
 import type { ErrorPageProps, FlashData, PagePropsFor } from './react.js'
 import { ErrorResponse, errorResponseWith, type ErrorResponseBody } from './effect/error-response.js'
 
+export { testOAuthProvider, type TestOAuthPerson, type TestOAuthProvider, type TestOAuthProviderOptions } from './test-oauth.js'
+
 type RegisteredBindings = Registered<'bindings', never>
 
 /**
@@ -114,6 +116,104 @@ export async function readMigrations(folder: string): Promise<ReadonlyArray<stri
   }
 
   return statements
+}
+
+/** A D1 database, as `testD1` migrates it. */
+export interface TestD1Database {
+  prepare(query: string): unknown
+  batch(statements: ReadonlyArray<unknown>): Promise<unknown>
+}
+
+/** The types of the bindings that are D1 databases. */
+type D1BindingsOf<Bindings> = {
+  [Name in keyof Bindings]-?: NonNullable<Bindings[Name]> extends { prepare(...args: never[]): unknown; batch(...args: never[]): unknown; exec(...args: never[]): unknown }
+    ? NonNullable<Bindings[Name]>
+    : never
+}[keyof Bindings]
+
+/** The application's D1 binding, by its declared type, which `testD1` hands a test: a D1 database's parts when none is registered. */
+type RegisteredD1 = [D1BindingsOf<RegisteredBindings>] extends [never] ? TestD1Database : D1BindingsOf<RegisteredBindings>
+
+export interface TestD1Options {
+  /** drizzle-kit's migrations folder, applied to each database, relative to where `bun test` runs. */
+  readonly migrations: string
+  /** How many databases one Miniflare holds before another starts. Default 64. */
+  readonly perMiniflare?: number
+}
+
+/** Fresh D1 databases for tests, each in a Miniflare that `dispose()` stops. */
+export interface TestD1 {
+  /** A newly created, migrated and empty D1 database, typed as the application's D1 binding. */
+  fresh(): Promise<RegisteredD1>
+  /** Stop every Miniflare the databases run in, once every test file is done with them. */
+  dispose(): Promise<void>
+}
+
+/** The parts of Miniflare `testD1` starts databases with. */
+interface MiniflareLike {
+  getD1Database(name: string): Promise<TestD1Database>
+  dispose(): Promise<void>
+}
+
+async function loadMiniflare(): Promise<new (options: object) => MiniflareLike> {
+  try {
+    const { Miniflare } = await import('miniflare')
+
+    return Miniflare
+  } catch (cause) {
+    throw new Error('testD1 runs D1 in Miniflare, in process: add it to the devDependencies, `bun add -d miniflare`.', { cause })
+  }
+}
+
+/**
+ * Fresh, migrated Cloudflare D1 databases for tests, on Miniflare's real D1
+ * in process. Starting Miniflare takes a moment, so one holds many databases,
+ * and another starts when they run out. Stop them once, after every test file,
+ * from a file `bunfig.toml`'s `[test] preload` names: a Miniflare left running
+ * keeps its `workerd` process alive after `bun test` exits.
+ *
+ * @example
+ * // src/test-support.ts
+ * export const databases = testD1({ migrations: './drizzle' })
+ * export const freshEnv = async () => testEnv({ ...testBindings, DB: await databases.fresh() })
+ *
+ * // test/preload.ts
+ * afterAll(() => databases.dispose())
+ */
+export function testD1(options: TestD1Options): TestD1 {
+  const names = Array.from({ length: options.perMiniflare ?? 64 }, (_, index) => `TEST_D1_${index}`)
+  const started: MiniflareLike[] = []
+  let current: { readonly miniflare: MiniflareLike; next: number } | undefined
+  let miniflare: Promise<new (options: object) => MiniflareLike> | undefined
+  let statements: Promise<ReadonlyArray<string>> | undefined
+
+  return {
+    async fresh() {
+      const Miniflare = await (miniflare ??= loadMiniflare())
+
+      // From here to the next await nothing else runs, so each call takes its own database.
+      if (current === undefined || current.next >= names.length) {
+        current = { miniflare: new Miniflare({ modules: true, script: 'export default {}', d1Databases: names }), next: 0 }
+        started.push(current.miniflare)
+      }
+
+      const name = names[current.next] ?? names[0] ?? 'TEST_D1_0'
+      current.next += 1
+
+      const database = await current.miniflare.getD1Database(name)
+      const migrations = await (statements ??= readMigrations(options.migrations))
+
+      if (migrations.length > 0) await database.batch(migrations.map((sql) => database.prepare(sql)))
+
+      // SAFETY: Miniflare's D1 is Cloudflare's, which the application's D1 binding declares.
+      return database as RegisteredD1
+    },
+    async dispose() {
+      const stopping = started.splice(0)
+      current = undefined
+      await Promise.all(stopping.map((running) => running.dispose()))
+    },
+  }
 }
 
 /** Whether the default test session fits the application's AuthUser session. */
@@ -392,7 +492,12 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
 
       if (separator < 0 || name === '') continue
 
-      if (attributes.some((part) => /^\s*max-age=0\s*$/i.test(part))) {
+      // A browser drops a cookie whose Max-Age is 0, or whose Expires has passed.
+      const expires = attributes.map((part) => part.trim()).find((part) => /^expires=/i.test(part))?.slice(8)
+      // oxlint-disable-next-line effecttsgo/global-date -- A browser expires cookies by its wall clock, outside Effect's clock.
+      const expired = expires !== undefined && Date.parse(expires) <= Date.now()
+
+      if (expired || attributes.some((part) => /^\s*max-age=0\s*$/i.test(part))) {
         jar.delete(name)
       } else {
         jar.set(name, { value: pair.slice(separator + 1).trim(), path })
