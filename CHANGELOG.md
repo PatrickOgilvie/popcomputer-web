@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A page loaded during a deploy reloads instead of staying blank. For a few seconds after `wrangler deploy`, the previous version can still answer at some edge locations, with a page naming the previous build's scripts, which the new deploy no longer serves; web.popcomputer.com rendered blank this way right after its 1.0 deploy. `createTemplate` inlines a script first in every page's head that reloads the page when one of the template's own scripts or stylesheets, now marked `data-popweb-asset`, fails to load, or a chunk Vite loads does (`vite:preloadError`): at once, then after 2 and 4 seconds, and no more than three times a minute in a tab, so it never loops. A script the application adds through `head` never reloads the page.
+
+### Added
+
+- `TEMPLATE_SCRIPT_HASH` from `@popcomputer/web` is the `Content-Security-Policy` source that allows the script `createTemplate` inlines, for an application that sends its own `script-src`.
+
 ## [1.0.0] - 2026-10-14
 
 The first stable release. The `1.0.0-next` pre-releases below were never

@@ -21,6 +21,33 @@ export interface TemplateOptions {
   rootId?: string
 }
 
+/**
+ * The script `createTemplate` puts first in every page's head.
+ *
+ * A deploy replaces the application's built scripts and stylesheets, whose
+ * names carry their content's hash. For a few seconds after `wrangler
+ * deploy`, the previous version can still answer at some edge locations,
+ * with a page naming the previous build's files, which the new deploy no
+ * longer serves: without them the page stays blank. The script reloads the
+ * page when one of the template's own scripts or stylesheets
+ * (`data-popweb-asset`) fails to load, or a chunk Vite loads does
+ * (`vite:preloadError`), so the next request gets the new deploy's page. It
+ * reloads at once, then after 2 and 4 seconds, and no more than three times
+ * a minute in a tab, so a file missing for another reason never reloads the
+ * page in a loop; where it cannot count, in a browser without
+ * `sessionStorage`, it never reloads.
+ */
+export const ASSET_RELOAD_SCRIPT =
+  "(()=>{let pending=false;const reload=()=>{if(pending)return true;try{const now=Date.now();const stored=JSON.parse(sessionStorage.getItem('popweb:reloads')||'[]');const recent=Array.isArray(stored)?stored.filter((at)=>now-at<60000):[];if(recent.length>=3)return false;sessionStorage.setItem('popweb:reloads',JSON.stringify([...recent,now]));setTimeout(()=>location.reload(),recent.length*2000);return pending=true}catch{return false}};addEventListener('vite:preloadError',(event)=>{if(reload())event.preventDefault()});addEventListener('error',(event)=>{if(event.target instanceof Element&&event.target.hasAttribute('data-popweb-asset'))reload()},true)})()"
+
+/**
+ * The Content-Security-Policy source that allows the script `createTemplate`
+ * inlines in every page: an application that sends its own `script-src` adds
+ * it, as in `script-src 'self' ${TEMPLATE_SCRIPT_HASH}`. Without it, the
+ * browser refuses the script and a page loaded during a deploy stays blank.
+ */
+export const TEMPLATE_SCRIPT_HASH = "'sha256-IDbte3Rzc2LSWWO5xmHTv9h/7f/zz8VToylr2k7C4Sg='"
+
 /** The characters escaped in page data, as JSON's own `\\u` escapes, which `JSON.parse` reads back. */
 const SCRIPT_UNSAFE: Readonly<Record<string, string>> = {
   '<': '\\u003c',
@@ -100,12 +127,13 @@ export function createTemplate(
       rootId = 'app',
     } = resolvedOptions
 
+    // Marked, so the inlined script reloads the page when one fails to load.
     const scriptTags = scripts
-      .map(src => `<script type="module" src="${escapeHtml(src)}"></script>`)
+      .map(src => `<script type="module" src="${escapeHtml(src)}" data-popweb-asset></script>`)
       .join('\n    ')
 
     const styleTags = styles
-      .map(href => `<link rel="stylesheet" href="${escapeHtml(href)}">`)
+      .map(href => `<link rel="stylesheet" href="${escapeHtml(href)}" data-popweb-asset>`)
       .join('\n    ')
 
     const pageJson = serializePage(page)
@@ -115,6 +143,7 @@ export function createTemplate(
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script>${ASSET_RELOAD_SCRIPT}</script>
     <title inertia>${escapeHtml(title)}</title>
     ${styleTags}
     ${head}

@@ -66,5 +66,6 @@ export {
   createTemplate,
   createVersion,
   vite,
+  TEMPLATE_SCRIPT_HASH,
   type ViteDevServer,
 } from './helpers.js'

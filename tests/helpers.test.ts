@@ -142,10 +142,10 @@ describe('createTemplate', () => {
       const html = template(page)
 
       expect(html).toContain(
-        '<script type="module" src="/assets/app.js"></script>'
+        '<script type="module" src="/assets/app.js" data-popweb-asset></script>'
       )
       expect(html).toContain(
-        '<script type="module" src="/assets/vendor.js"></script>'
+        '<script type="module" src="/assets/vendor.js" data-popweb-asset></script>'
       )
     })
 
@@ -163,9 +163,9 @@ describe('createTemplate', () => {
 
       const html = template(page)
 
-      expect(html).toContain('<link rel="stylesheet" href="/assets/app.css">')
+      expect(html).toContain('<link rel="stylesheet" href="/assets/app.css" data-popweb-asset>')
       expect(html).toContain(
-        '<link rel="stylesheet" href="/assets/vendor.css">'
+        '<link rel="stylesheet" href="/assets/vendor.css" data-popweb-asset>'
       )
     })
 
@@ -237,7 +237,8 @@ describe('createTemplate', () => {
       expect(html).not.toContain('</script><script>alert("xss")')
       expect(html).toContain('\\u003c/script\\u003e')
       expect(html.match(/<script data-page="app" type="application\/json">/g)).toHaveLength(1)
-      expect(html.match(/<\/script>/g)).toHaveLength(1)
+      // The inlined script's and the page data's: none from the props.
+      expect(html.match(/<\/script>/g)).toHaveLength(2)
     })
 
     test('writes & as a JSON escape, never an HTML entity, inside the script payload', () => {
