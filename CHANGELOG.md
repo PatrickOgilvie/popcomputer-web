@@ -5,13 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.2] - 2026-10-14
 
 Found by upgrading a second application, on 0.4.0, to 1.2.1.
 
 ### Fixed
 
 - A failure answers an Inertia visit with Inertia's page protocol whatever its User-Agent says. A visit from a browser or agent whose User-Agent names a command-line or AI client (`curl`, `claude`, `CLI`), such as Claude's own browser, got a JSON error, which an Inertia client cannot read: a failed form now goes back to its page and an error renders the error page, as for any visit. Requests without `X-Inertia` from those clients still get JSON.
+- Signing out of a Better Auth loaded on first use ends its session. An application that wraps Better Auth to keep it out of a Worker's startup gives endpoints with no `path`, so `betterAuthLogoutAction` could not find `signOut`, swallowed the error and only cleared the cookies: the session stayed valid in the database. It now uses Better Auth's sign-out path, and a `setupWeb` without a Better Auth instance fails loudly instead. `betterAuthRedirect` and `betterAuthCall`, which take any endpoint, say the wrapper is why they cannot send it, where they blamed a missing plugin.
+- `web.services`' `request(c)` is called only when an action's runtime is built. It was called on every request, plain Hono routes included, so an application whose services read bindings or platform APIs did that work for every media file, redirect and `robots.txt`, and a test of such a route had to give bindings it never used.
+
+### Changed
+
+- `UPGRADING.md` covers what upgrading a 0.4 application found: Better Auth 1.7.0 to 1.7.2's required `account.issuer`, which 1.7.3 and later never write, so every sign-up fails until it is relaxed (with a rebuild for SQLite and D1); `effectAuthRoutes`' `/api/auth/*` handler for 0.x applications; server code that edits the template must find `<title inertia>`; packages that peer on Effect, and patches against their old versions; `pageCache: false`; 0.x's middleware form of `setupWeb`; session-derived values a `share` function added; `renderWithErrors`, `setErrors`, `betterAuthFormAction` and `buildContextLayer`; and keeping a test's own small application.
+- The README says which User-Agents get JSON errors, how code outside an action recognises Better Auth's `APIError` without importing it, and what works through a wrapper that loads Better Auth on first use. AGENTS rule 7 says to give `auth.client` Better Auth's instance.
 
 ## [1.2.1] - 2026-10-14
 
