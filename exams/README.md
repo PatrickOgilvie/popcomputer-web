@@ -58,8 +58,12 @@ or the test wrong. Fix the exam, and note it, rather than the score.
 | `clinic` | Patients book appointment slots that staff open; Inertia pages and forms | D1 |
 | `expenses` | Employees log expenses and managers decide them; a JSON API with idempotent creates and an OpenAPI description | Postgres (PGlite) |
 | `shop` | Staff list products with photos; customers order from stock and pay through a signed, retried webhook | D1 |
+| `studios` | People sign in only through the company's OAuth provider, set up private studios, invite colleagues with roles and keep client briefs; built for Better Auth's plugins | D1 |
 
-Each exam's safety suite also checks that guessing a password is cut short.
+Each exam with passwords also checks in its safety suite that guessing one is
+cut short. `studios` has none: its safety suite checks sign-in instead, a
+sign-in finished in another browser and an unverified email at the provider,
+with the reviewer standing in for the provider by answering `fetch`.
 
 ## Scores
 
