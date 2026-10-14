@@ -1,12 +1,12 @@
-# Upgrading to @popcomputer/web 1.2.2
+# Upgrading to @popcomputer/web 1.2.3
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.2.2.
+`honertia` package it was renamed from, to 1.2.3.
 
-1.1.0, 1.2.0 and 1.2.2 change nothing that an application written for 1.0.0
-needs to change, and the `1.0.0-next` pre-releases were never published to
-npm. So the path is one jump: make the 1.0.0 changes below, install 1.2.2, and
-you are done.
+1.1.0, 1.2.0, 1.2.2 and 1.2.3 change nothing that an application written
+for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
+published to npm. So the path is one jump: make the 1.0.0 changes below,
+install 1.2.3, and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -42,7 +42,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.2.2 needs:
+- **Check the peer dependencies.** 1.2.3 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -56,12 +56,12 @@ you installed:
   Hono releases before 4.10 fail to type-check the package, and Hono 5 and
   Drizzle 1.0 are outside the ranges.
 
-- **Install 1.2.2** with the peers your application uses, removing `honertia`
+- **Install 1.2.3** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.2.2 effect@^4.0.0
+  bun add @popcomputer/web@^1.2.3 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.30.0 <1.0.0'  # if you use Drizzle
   ```
@@ -979,8 +979,32 @@ application and its tests.
 **Errors**
 
 - **Production errors say less.** Production JSON errors no longer include
-  `fixes`, every 404 has the same message, and a client that matches error
-  codes reads `WEB_` instead of `HON_`.
+  `docs` or `fixes`, and a client that matches error codes reads `WEB_`
+  instead of `HON_`.
+- **Every 404 has the same message in production:** "Nothing was found at
+  this address.", whatever `notFound(...)` or `httpError(404, message)`
+  said, so a response cannot tell a missing record from one the visitor may
+  not see. A page that shows the server's message for a failed `fetch`, such
+  as a form that says which agency is no longer listed, now shows that
+  sentence instead. Development keeps the message, so the application's own
+  tests still pass and only production changes; test with
+  `ENVIRONMENT: 'production'` in the bindings to see what a client gets.
+  Give each 404 whose message a page shows a body that carries it, which
+  production keeps:
+
+  ```ts
+  import { Schema as S } from 'effect'
+  import { httpError } from '@popcomputer/web/effect'
+
+  const ShownMessage = S.Struct({ message: S.String })
+
+  /** A 404 whose message a page shows, kept in the body in production. */
+  export const notFoundShown = (message: string) =>
+    httpError(404, message, ShownMessage, { message })
+  ```
+
+  The page reads the envelope's `body.message` before its `message`. A 404
+  no page shows needs nothing.
 - **Expected 4xx failures are no longer logged as errors** by the framework,
   but `EffectErrorObserverService` still receives them. An observer that
   reports everything should skip them.
@@ -992,10 +1016,10 @@ application and its tests.
 
 ## From 1.0 to 1.2
 
-Nothing to change. Install 1.2.2:
+Nothing to change. Install 1.2.3:
 
 ```bash
-bun add @popcomputer/web@^1.2.2
+bun add @popcomputer/web@^1.2.3
 ```
 
 What 1.1.0 brought:
@@ -1041,6 +1065,15 @@ What 1.2.2 brings:
 - **`web.services`' `request(c)` runs only when an action does,** not for
   every request: a plain Hono route, such as a media file or a redirect, no
   longer builds the application's services.
+
+What 1.2.3 brings:
+
+- **A sign-in keeps its new session** when the browser still held a session
+  the database no longer had (revoked elsewhere, or by a password reset), or
+  one Better Auth was extending. The old session's expiry or renewal was
+  written after the new session's cookie, so a sign-in through Better Auth's
+  handler, or an action returning Better Auth's cookies, looked accepted and
+  the next page was signed out, or still the previous user.
 
 ## Tooling after the upgrade
 
@@ -1097,7 +1130,7 @@ What 1.2.2 brings:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.2.2`.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.2.3`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
 - [ ] `bun test` passes, with tests on `testEnv`, `signedIn` and `readPage`.
@@ -1118,8 +1151,8 @@ What 1.2.2 brings:
 - [ ] `.popweb-applied.json` and any `popweb` scripts are gone.
 - [ ] You have checked each item in
   [Changes no type error points at](#changes-no-type-error-points-at)
-  against your application, especially cross-site writes, uploads and
-  framing.
+  against your application, especially cross-site writes, uploads,
+  framing and the 404 messages a page shows.
 - [ ] A preview deploy works before production.
 
 ## A worked example

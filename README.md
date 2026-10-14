@@ -2185,8 +2185,11 @@ reaches the client as
 Answer a record the client may not see with `notFound(...)`, which is what a
 missing bound record answers, rather than an `httpError(404, ...)` with a body
 of its own, so a client cannot tell which ids exist. Production replaces the
-message of a 5xx or an internal failure with a generic one. Test the envelope
-a client receives with `ENVIRONMENT: 'production'` in the test bindings.
+message of a 5xx or an internal failure with a generic one, and gives every
+404 the same message: a 404 whose message a page shows carries it in a body,
+`httpError(404, message, Schema, { message })`, which production keeps. Test
+the envelope a client receives with `ENVIRONMENT: 'production'` in the test
+bindings.
 
 ### Failures an action cannot answer
 

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `UPGRADING.md` warns that every production 404 has the same message, whatever `notFound(...)` or `httpError(404, message)` said: a page that shows a failed request's message shows "Nothing was found at this address." instead, and only in production. A 404 whose message a page shows carries it in a body, `httpError(404, message, Schema, { message })`, which production keeps. Found by comparing an upgraded application with its 0.4 version. The README says the same where it lists what production replaces, and the guide installs 1.2.3.
+- The documentation check type-checks and lints examples indented inside list items, which it skipped.
+
 ## [1.2.3] - 2026-10-14
 
 Found by benchmarking that application, upgraded, against its 0.4 version in a browser.

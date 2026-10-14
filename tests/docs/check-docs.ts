@@ -63,13 +63,14 @@ const TS_LANGS = new Set(['ts', 'tsx', 'typescript'])
 function readFences(document: string, markdown: string): Fence[] {
   const fences: Fence[] = []
   const lines = markdown.split('\n')
-  let current: { lang: string; startLine: number; lines: string[] } | undefined
+  let current: { lang: string; indent: string; startLine: number; lines: string[] } | undefined
 
   lines.forEach((line, index) => {
-    const fence = /^```(\w*)\s*$/.exec(line)
+    // A fence may be indented, as one inside a list item is; its code is read without the indent.
+    const fence = /^( *)```(\w*)\s*$/.exec(line)
 
     if (!fence) {
-      current?.lines.push(line)
+      current?.lines.push(line.startsWith(current.indent) ? line.slice(current.indent.length) : line)
       return
     }
 
@@ -81,7 +82,7 @@ function readFences(document: string, markdown: string): Fence[] {
       return
     }
 
-    current = { lang: fence[1], startLine: index + 2, lines: [] }
+    current = { lang: fence[2] ?? '', indent: fence[1] ?? '', startLine: index + 2, lines: [] }
   })
 
   return fences
