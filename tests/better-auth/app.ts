@@ -17,11 +17,13 @@ import { json, notFound, redirect, render } from '../../src/effect/responses.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { betterAuthCall, betterAuthHandler, betterAuthLogoutAction, betterAuthRedirect, betterAuthSession } from '../../src/auth.js'
 import { currentPassword, email, password, requiredString, tableSchema } from '../../src/schema.js'
-import { createAuth, schema, type CreateAuthOptions, type Outbox, type TestDatabase } from './fixture.js'
+import { createAuth, loadedOnFirstUse, schema, type CreateAuthOptions, type Outbox, type TestDatabase } from './fixture.js'
 
 export interface Bindings {
   readonly OUTBOX: Outbox
   readonly SESSION?: CreateAuthOptions['session']
+  /** Load Better Auth on first use, as an application keeping it out of Worker startup does. */
+  readonly LAZY?: boolean
 }
 
 export const paths = {
@@ -57,7 +59,11 @@ export const web = setupWeb(new Hono<{ Bindings: Bindings }>(), {
   paths,
   bindings: { organization: schema.organization },
   auth: {
-    client: (c, { db }) => createAuth({ db, outbox: c.env.OUTBOX, session: c.env.SESSION }),
+    client: (c, { db }) => {
+      const create = () => createAuth({ db, outbox: c.env.OUTBOX, session: c.env.SESSION })
+
+      return c.env.LAZY === true ? loadedOnFirstUse(create) : create()
+    },
     session: betterAuthSession(tableSchema(schema.user), tableSchema(schema.session)),
     signInPath: paths.signIn,
     homePath: paths.dashboard,

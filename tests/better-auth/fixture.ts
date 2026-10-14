@@ -238,3 +238,22 @@ export function createAuth(options: CreateAuthOptions) {
 }
 
 export type TestAuth = ReturnType<typeof createAuth>
+
+/**
+ * Better Auth loaded on first use, as an application wraps it to keep it out
+ * of a Worker's startup: `auth.api`'s endpoints are functions that load it,
+ * without the endpoints' own properties, such as their `path`.
+ */
+export function loadedOnFirstUse(load: () => TestAuth): TestAuth {
+  let instance: TestAuth | undefined
+  const auth = () => (instance ??= load())
+  const api = new Proxy({}, {
+    // `then` stays undefined, or `await auth.api` would treat it as a promise.
+    get: (_target, name) => name === 'then'
+      ? undefined
+      : (...args: ReadonlyArray<unknown>) => Reflect.apply(Reflect.get(auth().api, name), auth().api, args),
+  })
+
+  // SAFETY: the wrapper answers every endpoint and request as the instance does; it lacks only the endpoints' own properties, which is the case under test.
+  return { api, handler: (request: Request) => auth().handler(request) } as unknown as TestAuth
+}

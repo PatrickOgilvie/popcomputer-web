@@ -151,6 +151,30 @@ describe('signing up, in and out', () => {
     expect((await me(visitor)).status).toBe(401)
   })
 
+  test('signing out of a Better Auth loaded on first use ends the session in the database too', async () => {
+    const { db, outbox, browser } = setup()
+    const visitor = browser()
+    await signUp(visitor, 'ada@example.com')
+    const lazily = testBrowser(app, testEnv({ OUTBOX: outbox, LAZY: true }, { database: db }))
+    lazily.setCookie(SESSION, visitor.cookies.get(SESSION) ?? '')
+
+    const res = await lazily.request('/sign-out', { method: 'POST' })
+
+    expect(res.status).toBe(303)
+    // Better Auth's own cookie, which only its sign-out sends.
+    expect(res.headers.getSetCookie().some((cookie) => cookie.startsWith(`${SESSION}=`) && /max-age=0/i.test(cookie))).toBe(true)
+    expect(db.select().from(schema.session).all()).toEqual([])
+  })
+
+  test('a Better Auth loaded on first use says why an endpoint called by name cannot be sent', async () => {
+    const lazily = testBrowser(app, testEnv({ OUTBOX: newOutbox(), LAZY: true }, { database: createDatabase() }))
+
+    const res = await signUp(lazily, 'ada@example.com')
+
+    expect(res.status).toBe(500)
+    expect(await res.text()).toContain('auth.api.signUpEmail has no path')
+  })
+
   test('a session Better Auth extends sends the browser its renewed cookie', async () => {
     // updateAge 0: every request extends the session, as one a day apart does.
     const { browser } = setup({ updateAge: 0 })

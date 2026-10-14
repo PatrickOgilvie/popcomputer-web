@@ -560,16 +560,30 @@ function isBetterAuthInstance(auth: unknown): auth is BetterAuthInstance {
   return auth instanceof Object && Reflect.get(auth, 'api') instanceof Object && Reflect.get(auth, 'handler') instanceof Function
 }
 
+/**
+ * Better Auth's own endpoints the framework calls by itself, by their path
+ * under its base path, for an `auth.api` that does not say: a wrapper that
+ * loads Better Auth on first use, to keep it out of a Worker's startup, gives
+ * functions with no `path`.
+ */
+const CORE_ENDPOINT_PATHS: Readonly<Record<string, string>> = { signOut: '/sign-out' }
+
 /** An endpoint on `auth.api`, by name, and its path under Better Auth's base path. */
 function endpointOf(auth: BetterAuthInstance, name: string): { readonly endpoint: object; readonly path: string } {
   const endpoint: unknown = Reflect.get(auth.api, name)
   const path: unknown = endpoint instanceof Object ? Reflect.get(endpoint, 'path') : undefined
 
-  if (!(endpoint instanceof Object) || typeof path !== 'string') {
-    throw new Error(`Better Auth has no endpoint named '${name}' on auth.api; a plugin's endpoint needs the plugin in betterAuth({ plugins }).`)
+  if (endpoint instanceof Object && typeof path === 'string') return { endpoint, path }
+
+  const corePath = CORE_ENDPOINT_PATHS[name]
+
+  if (endpoint instanceof Function && corePath !== undefined) return { endpoint, path: corePath }
+
+  if (endpoint instanceof Function) {
+    throw new Error(`auth.api.${name} has no path, so it cannot be sent through Better Auth's handler: setupWeb's auth.client returned a wrapper, such as one that loads Better Auth on first use, rather than Better Auth's instance. Return the instance, or call its handler yourself.`)
   }
 
-  return { endpoint, path }
+  throw new Error(`Better Auth has no endpoint named '${name}' on auth.api; a plugin's endpoint needs the plugin in betterAuth({ plugins }).`)
 }
 
 /** The headers of the request that reach Better Auth: its cookies, client address and origin, not its body's. */
@@ -937,6 +951,12 @@ export function betterAuthLogoutAction<const Path extends string = '/'>(
       }
     }
 
+    if (!isBetterAuthInstance(auth)) {
+      return yield* Effect.die(new Error('Better Auth is not configured: setupWeb has no auth.client, or it returned something that is not a Better Auth instance.'))
+    }
+
+    // Signing out through Better Auth ends the session in the database. When
+    // Better Auth cannot be reached, the cookies below still sign the browser out.
     const answered = yield* Effect.tryPromise(() => sendThroughHandler(auth, request.raw(), 'signOut', {})).pipe(
       Effect.orElseSucceed(() => undefined)
     )
