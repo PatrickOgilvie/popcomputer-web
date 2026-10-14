@@ -121,7 +121,9 @@ TypeScript example here and in the README type-checks against the package.
    from `@popcomputer/web/auth`, which sends the call through Better Auth's
    handler so the limits apply; call Better Auth for a result the action
    uses with `betterAuthCall(endpoint, { body })`. Never call `auth.api` from
-   an action: it skips them. Limit password guessing with `setupWeb`'s
+   an action: it skips them. Both find the endpoint on Better Auth's
+   instance, so give `auth.client` the instance, not a wrapper that loads
+   Better Auth on first use. Limit password guessing with `setupWeb`'s
    `auth.signInLimits: { limiter: 'SIGN_IN_LIMITER', table: schema.rateLimit }`
    (a Workers Rate Limiting binding, and Better Auth's `rateLimit` table for
    each account's failures), sweep the table with

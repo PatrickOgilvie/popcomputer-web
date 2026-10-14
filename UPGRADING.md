@@ -1,12 +1,12 @@
-# Upgrading to @popcomputer/web 1.2.0
+# Upgrading to @popcomputer/web 1.2.2
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.2.0.
+`honertia` package it was renamed from, to 1.2.2.
 
-1.1.0 and 1.2.0 change nothing that an application written for 1.0.0 needs to
-change, and the `1.0.0-next` pre-releases were never published to npm. So the
-path is one jump: make the 1.0.0 changes below, install 1.2.0, and you are
-done.
+1.1.0, 1.2.0 and 1.2.2 change nothing that an application written for 1.0.0
+needs to change, and the `1.0.0-next` pre-releases were never published to
+npm. So the path is one jump: make the 1.0.0 changes below, install 1.2.2, and
+you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -42,7 +42,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.2.0 needs:
+- **Check the peer dependencies.** 1.2.2 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -56,12 +56,12 @@ you installed:
   Hono releases before 4.10 fail to type-check the package, and Hono 5 and
   Drizzle 1.0 are outside the ranges.
 
-- **Install 1.2.0** with the peers your application uses, removing `honertia`
+- **Install 1.2.2** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.2.0 effect@^4.0.0
+  bun add @popcomputer/web@^1.2.2 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.30.0 <1.0.0'  # if you use Drizzle
   ```
@@ -350,9 +350,20 @@ server, can stay on the Hono app: register it before passing the app to
   accepts `4.0.0-rc.*` pre-releases, and apply Effect's own pre-release
   renames (for example `SchemaTransformation.transformOrFail` became
   `transformEffect`, and `Schema.isLengthBetween` became `isBetweenLength`).
+  Every package that peers on Effect moves with it: a release built against
+  the pre-releases may import modules stable Effect no longer has.
+  `@popcomputer/structured-chat` 0.13 and `@popcomputer/document-graph` 0.11
+  are the first on stable Effect 4. A patch the application keeps against one
+  of those packages' old versions (`patchedDependencies`) does not apply to
+  the new one: carry it forward or drop it.
 - `createTemplate` renders `<title inertia>`, so `<Head title>` replaces the
   template title. Remove any client-side code that deleted the template's
-  title.
+  title. Server code that edits the rendered document as a string, such as
+  one that turned `<title>` into `<title inertia>` or wrote each page's title
+  into it, must look for `<title inertia>`: one that requires `<title>` fails
+  on every page. The document's other landmarks are `<meta charset="utf-8">`,
+  the viewport `<meta>`, the empty `<div id="app"></div>` that follows the
+  page's `<script data-page="app" type="application/json">`, and `</head>`.
 - `vite.script()` and `vite.hmrHead()` accept a dev server origin as well as a
   port, for a local proxy that serves Vite under its own hostname:
 
@@ -389,6 +400,9 @@ three things:
 - Middleware that sets `Cache-Control` on every response, such as a blanket
   `no-store`, stops pages from being cached. Set it only when a response has
   no `Cache-Control` yet.
+- An application with caching of its own, such as its own `Cache-Control`
+  policy or its own use of Cloudflare's Cache API, can keep it and turn the
+  page cache off: `pageCache: false` in `setupWeb`.
 
 Workers builds no longer need `drizzle-orm` installed when the application
 has no route model binding.
@@ -474,6 +488,10 @@ The types the module augmentations restated now come from the values
 Delete the augmentation file. An application with services of its own takes
 its routes from `web.services(...)` instead (step 5).
 
+0.x also took the setup as middleware, `app.use('*', setupWeb({ ... }))`, and
+the error boundary from `registerErrorHandlers(app, options)`. `setupWeb`
+takes the Hono app as its first argument, and those options are its `errors`.
+
 ### 3. Declare the user, shared props and flash as schemas
 
 The signed-in user comes from the user table, and pages receive only the
@@ -504,6 +522,12 @@ from there:
 `additionalFields: betterAuthFields(schema.user, { role: { input: false } })`.
 When a Better Auth plugin adds session fields, pass the session table too:
 `betterAuthSession(tableSchema(schema.user), tableSchema(schema.session))`.
+
+A 0.x `share` function could add values from the session, such as whether an
+administrator is impersonating the user. `share` now encodes the user's record
+alone, so share such a value as its own prop: declare it in `shared` and
+compute it with `shareProps`, whose Effect reads the session through
+`currentUser`.
 
 ### 4. Declare paths, bindings and pages
 
@@ -590,6 +614,18 @@ back to the page its route names: `routes.post(path, action, { form: paths.page 
 Use `flash('success', 'Saved.')` before a redirect instead of passing a
 message to the next page by hand.
 
+`renderWithErrors(component, errors, props)` and `PageService`'s `setErrors`
+are gone. To render a page again in place with its errors, as they did, pass
+the errors as a prop: the renderer merges an `errors` prop with flashed ones.
+
+```diff
+- return yield* renderWithErrors('Join/New', { websiteUrl: 'Enter a website.' }, props)
++ return yield* render('Join/New', { ...props, errors: { websiteUrl: 'Enter a website.' } })
+```
+
+`RequestService`'s `json()` takes no type argument: decode the `unknown` it
+returns.
+
 ### 7. Use the new database operations
 
 The callback receives the application's own Drizzle client, so Drizzle checks
@@ -652,8 +688,14 @@ A sign-in action validates its form like any action and returns
 +   .get(paths.login, action(render('Auth/Login')))
 +   .post(paths.login, signIn)
 + routes.post(paths.logout, betterAuthLogoutAction({ redirectTo: paths.login }))
-+ routes.all(paths.authApi, betterAuthHandler()) // only if browser code or an OAuth provider calls Better Auth
++ routes.all(paths.authApi, betterAuthHandler()) // effectAuthRoutes registered this for you
 ```
+
+- **`effectAuthRoutes` registered Better Auth's handler at `/api/auth/*`**
+  without saying so. Keep it, as above, if anything calls Better Auth there:
+  its client SDK, an OAuth provider's callback, an MCP client, a payment
+  provider's webhook, or a plugin's own pages. Without it they answer 404,
+  and no type error says so.
 
 - `signIn` returns
   `betterAuthRedirect('signInEmail', { body: input }, { redirectTo, errors })`.
@@ -664,6 +706,14 @@ A sign-in action validates its form like any action and returns
 - Never call `auth.api` from an action: it skips Better Auth's rate limits
   and origin checks. Call an endpoint whose result you need with
   `betterAuthCall(endpoint, { body })`.
+- `betterAuthFormAction` is gone. A form whose `call` sent a request to
+  Better Auth's handler by path, with fields of its own such as the MCP
+  plugin's `oauth_query`, can keep that call in an action: validate the form,
+  send it, and answer with a 303 carrying the cookies Better Auth set, or
+  `invalid(errors)` for a refusal. `betterAuthRedirect` and `betterAuthCall`
+  call an endpoint by its name on Better Auth's instance, so an application
+  whose `auth.client` returns a wrapper that loads Better Auth on first use
+  keeps its own calls; `betterAuthLogoutAction` works through such a wrapper.
 - A signed-out visitor goes to `auth.signInPath` (default `/login`) with the
   page as `?redirect=`, which `intendedUrl(fallback)` returns to after
   signing in. A signed-in visitor on a guest page goes to `auth.homePath`.
@@ -716,6 +766,28 @@ A field error in `page.props.errors` is a message, or an error bag's
 messages, and `signedIn`'s default user is named `Test User`. An application
 whose `auth.session` adds required fields, such as a role, passes them to
 `signedIn`.
+
+A 0.x test that built a small application of its own, with only the routes
+under test and stand-ins for the services they use, can stay one rather than
+move onto the real application. `setupWeb` returns its `routes`, and the
+stand-ins move to `.services`:
+
+```diff
+- const app = new Hono<Env>()
+- app.use('*', setupWeb({ version: 'test', render, effect: { services: () => fakes } }))
+- effectRoutes<Env, Services>(app).post('/api/contact', createContactMessage)
+- registerErrorHandlers(app, { showDevErrors: false })
++ const { app, routes } = setupWeb(new Hono<Env>(), {
++   version: 'test',
++   render,
++   errors: { showDevErrors: false },
++ }).services({ request: () => fakes })
++ routes.post('/api/contact', createContactMessage)
+```
+
+`buildContextLayer`, which gave an Effect a request's services outside a
+route, is gone: give the Effect the services it reads, or run it with
+`routes.run(effect, env)`, which gives it those an action has.
 
 Moving tests onto the real application brings up:
 
@@ -801,7 +873,10 @@ application and its tests.
 - **API clients get JSON.** A request that asks for no HTML but sends an
   `Accept` header (`fetch`'s `*/*`) or an `Authorization` header is a JSON
   client: its failures are JSON, and a signed-out one gets a 401 instead of a
-  redirect to sign in.
+  redirect to sign in. So is a request whose User-Agent names a command-line
+  or AI client (`curl`, `claude`, `CLI`): a page checked with `curl` answers
+  JSON, and a signed-out one a 401. An Inertia visit always gets Inertia's
+  page protocol.
 - **Route parameters can't be overwritten.** A body or query field with the
   same name as a route parameter and a different value fails validation. It
   used to replace the parameter.
@@ -880,6 +955,26 @@ application and its tests.
   from an action. Code outside an action calls Better Auth's own `auth.api`.
 - **Better Auth must be 1.7.7 or a later 1.7.x,** the releases the
   framework's Better Auth tests pass against. It used to accept every 1.x.
+- **A database that ran Better Auth 1.7.0 through 1.7.2 has a required
+  `account.issuer` that 1.7.3 and later never write.** Every sign-up and
+  account link then fails, and Better Auth refuses to start: `Required columns
+  Better Auth never writes: account.issuer`. Check with
+  `SELECT * FROM account LIMIT 0` (use your table's name). If the column is
+  there, relax it before deploying 1.7.7, as Better Auth's
+  [1.7 upgrade guide](https://www.better-auth.com/docs/guides/1-7-upgrade-guide)
+  says, and drop the unique index on `issuer` and `accountId`. SQLite and D1
+  cannot drop `NOT NULL` in place, so rebuild the table in a migration:
+
+  ```sql
+  CREATE TABLE account_next (/* the same columns in the same order, with issuer TEXT */);
+  INSERT INTO account_next SELECT * FROM account;
+  DROP TABLE account;
+  ALTER TABLE account_next RENAME TO account;
+  -- Recreate the table's other indexes, leaving out the one on issuer.
+  ```
+
+  Make the column optional in the Drizzle schema too. Dropping it is
+  separate cleanup.
 
 **Errors**
 
@@ -897,10 +992,10 @@ application and its tests.
 
 ## From 1.0 to 1.2
 
-Nothing to change. Install 1.2.0:
+Nothing to change. Install 1.2.2:
 
 ```bash
-bun add @popcomputer/web@^1.2.0
+bun add @popcomputer/web@^1.2.2
 ```
 
 What 1.1.0 brought:
@@ -933,6 +1028,19 @@ What 1.2.0 brings:
 - **One way to answer 500.** A failure an action cannot answer, such as
   another system being down, goes through `Effect.orDie` on that call, and the
   development error page names it.
+
+What 1.2.2 brings:
+
+- **An Inertia visit gets Inertia's page protocol whatever its User-Agent
+  says.** A browser or agent whose User-Agent names `claude`, `curl` or
+  `CLI` got JSON errors an Inertia client cannot read.
+- **Signing out of a Better Auth loaded on first use ends the session.** An
+  application that wraps Better Auth to keep it out of a Worker's startup
+  only had its cookies cleared; `betterAuthRedirect` and `betterAuthCall` now
+  say why they cannot call through such a wrapper.
+- **`web.services`' `request(c)` runs only when an action does,** not for
+  every request: a plain Hono route, such as a media file or a redirect, no
+  longer builds the application's services.
 
 ## Tooling after the upgrade
 
@@ -989,7 +1097,7 @@ What 1.2.0 brings:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.2.0`.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.2.2`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
 - [ ] `bun test` passes, with tests on `testEnv`, `signedIn` and `readPage`.

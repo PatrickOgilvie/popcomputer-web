@@ -654,7 +654,19 @@ origin checks and plugins' hooks apply. An action reads the signed-in user
 with `authorize()` or `currentUser`, never with a `getSession` call. Code
 outside an action, such as a Durable Object reading the session from the
 headers a request handed it, calls Better Auth's own `auth.api`, as Better
-Auth documents.
+Auth documents. A refusal it throws is Better Auth's `APIError`, which code
+can recognise without importing it: its `name` is `'APIError'`, its
+`statusCode` the HTTP status and its `body.code` the reason, such as
+`USER_ALREADY_EXISTS`.
+
+An application that loads Better Auth on first use, to keep it out of a
+Worker's startup, gives `auth.client` a wrapper whose endpoints load it.
+Signing out with `betterAuthLogoutAction` works through such a wrapper.
+`betterAuthRedirect` and `betterAuthCall` find the endpoint's path on Better
+Auth's instance, so through a wrapper they fail and say why: send those forms
+to Better Auth's handler yourself, by path, or give `auth.client` the
+instance. Importing anything from `better-auth` into a module the Worker
+loads at startup, `APIError` included, loads Better Auth with it.
 
 `setupWeb` installs the middleware stack and shared error boundary on the app
 and returns `{ app, routes }`. For manual Hono composition, see
@@ -1224,7 +1236,8 @@ name is a type error: it reads the Worker's bindings in both kinds of service
 and in actions, and `config.redacted('PAYMENT_WEBHOOK_SECRET')` reads a
 secret. A missing binding fails the request with a configuration error that
 names it in development. The `request` layer is built for each request from
-its context and bindings. Anything holding a request's I/O, such as a D1, KV or
+its context and bindings, when the request runs an action: a plain Hono
+route never calls `request(c)`. Anything holding a request's I/O, such as a D1, KV or
 Hyperdrive binding, belongs in `request`: Workers forbid using it from
 another request. A request service replaces an application service with the
 same tag. For services only some routes need, use `routes.provide(layer)`.
@@ -2104,10 +2117,13 @@ A JSON client gets every failure in one envelope, whatever its status. A
 request is a JSON client when it asks for JSON or sends a JSON body, or when
 it asks for no HTML while sending an `Accept` header, as `fetch` does with
 `*/*`, or an `Authorization` header, as an API client with a bearer token
-does. Browsers ask for HTML on every visit and form post, so they get pages,
+does. So is a request whose User-Agent names a command-line or AI client
+(`curl`, `claude`, `CLI`), such as an agent checking a page with `curl`.
+Browsers ask for HTML on every visit and form post, so they get pages,
 a signed-out visitor goes to sign in, and a failed form goes back to the
-form; a signed-out JSON client gets a 401 instead. `prefersJson` and
-`jsonOrRender` decide the same way.
+form; a signed-out JSON client gets a 401 instead. An Inertia visit
+(`X-Inertia: true`) always gets Inertia's page protocol, whatever its
+User-Agent or `Accept`. `prefersJson` and `jsonOrRender` decide the same way.
 
 ```json
 {
