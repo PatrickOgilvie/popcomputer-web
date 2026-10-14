@@ -264,14 +264,18 @@ function signInUrl<E extends Env>(c: HonoContext<E>): string {
   const url = new URL(c.req.url)
   const intended = c.req.method.toUpperCase() === 'GET'
     ? `${url.pathname}${url.search}`
-    : sameOriginReferer(c.req.header('Referer'), c.req.url)
+    : sameOriginReferer(c.req.header('Referer'), c.req.url) ?? openWebContext(c).formPage
 
   return intended === undefined ? signInPath : `${signInPath}?redirect=${encodeURIComponent(intended)}`
 }
 
-/** The same-origin page the request came from, or the home page. */
+/**
+ * The same-origin page the request came from, else the page its route's form
+ * is on (its `form` option, or its own path when that path has a page), else
+ * the home page.
+ */
 function previousUrl<E extends Env>(c: HonoContext<E>): string {
-  return sameOriginReferer(c.req.header('Referer'), c.req.url) ?? '/'
+  return sameOriginReferer(c.req.header('Referer'), c.req.url) ?? openWebContext(c).formPage ?? '/'
 }
 
 function appendVerifiedErrorHeaders(

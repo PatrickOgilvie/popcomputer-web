@@ -37,6 +37,11 @@ function createApp() {
 
       return yield* redirect('/projects')
     })))
+    .post('/quick-add', action(Effect.gen(function* () {
+      yield* validateRequest(S.Struct({ name: requiredString }))
+
+      return yield* redirect('/projects')
+    })))
     .post('/notes', action(Effect.gen(function* () {
       yield* flash('saved', true)
 
@@ -125,11 +130,11 @@ describe('a failed form submission', () => {
     expect(Object.keys((await form.json()).props.errors.createProject)).toEqual(['name'])
   })
 
-  test('goes to the home page when the referring page is on another site', async () => {
+  test("ignores a referring page on another site, and goes back to the form's own page", async () => {
     // A same-origin Origin passes origin verification; the Referer still names another site.
     const failed = await submit(createApp(), { name: '' }, { Origin: 'http://localhost', Referer: 'https://elsewhere.example/form' })
 
-    expect(failed.headers.get('Location')).toBe('/')
+    expect(failed.headers.get('Location')).toBe('/projects')
   })
 
   test('leaves the errors for the visit when Inertia prefetches the page', async () => {
@@ -278,8 +283,8 @@ describe('flash through redirects', () => {
   test("a failed form's errors pass through a redirect that renders no page", async () => {
     const app = createApp()
     const browser = testBrowser(app)
-    // Without a Referer, the form goes back to `/`, which redirects again.
-    const failed = await browser.request('/projects', {
+    // Without a Referer, a form whose route has no page and names none goes back to `/`, which redirects again.
+    const failed = await browser.request('/quick-add', {
       method: 'POST',
       headers: { ...page, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: '' }),

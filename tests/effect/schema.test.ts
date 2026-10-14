@@ -599,6 +599,12 @@ describe('Array Types', () => {
 
 describe('Enum/In Rules', () => {
   describe('inArray', () => {
+    test('decodes to the union of its values, written without `as const`', () => {
+      const role: 'member' | 'admin' = S.decodeUnknownSync(inArray(['member', 'admin']))('admin')
+
+      expect(role).toBe('admin')
+    })
+
     test('validates value is in list', () => {
       const schema = inArray(['active', 'pending', 'completed'] as const)
       expect(decode(schema, 'active')).toBe('active')

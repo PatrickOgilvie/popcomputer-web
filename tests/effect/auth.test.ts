@@ -7,6 +7,7 @@ import { describe, test, expect } from 'bun:test'
 import { Effect, Layer, Redacted, Schema as S } from 'effect'
 import type { PageProps } from '../../src/types.js'
 import {
+  betterAuthHandler,
   betterAuthRedirect,
   betterAuthLogoutAction,
   RequireAuthLayer,
@@ -362,6 +363,26 @@ describe('betterAuthRedirect', () => {
     expect(error).toBeInstanceOf(AuthRateLimitError)
     expect(error).toMatchObject({ retryAfterSeconds: 37 })
     expect(errorMapperCalled).toBe(false)
+  })
+})
+
+describe('betterAuthHandler', () => {
+  test("answers Better Auth's own server error as a failure of the authentication service, without its body", async () => {
+    const error = await Effect.runPromise(Effect.flip(
+      answeredBy(async () => new Response('Internal Server Error: stack trace', { status: 500 }), betterAuthHandler())
+    ))
+
+    expect(error).toBeInstanceOf(HttpError)
+    expect(error).toMatchObject({ status: 502, message: 'Authentication service failed.' })
+  })
+
+  test("passes Better Auth's answer to a request it refused on to its client", async () => {
+    const response = await Effect.runPromise(
+      answeredBy(async () => Response.json({ code: 'INVALID_TOKEN' }, { status: 401 }), betterAuthHandler())
+    )
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toEqual({ code: 'INVALID_TOKEN' })
   })
 })
 

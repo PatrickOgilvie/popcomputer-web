@@ -409,10 +409,11 @@ export function createAuth(options: CreateAuthOptions) {
     secret: options.secret,
     baseURL: options.baseURL,
     emailAndPassword: { enabled: true },
-    // Signing in, up and every password call are limited by setupWeb's
-    // auth.signInLimits. Better Auth's own limits, on by default only when
-    // NODE_ENV is 'production', stay on in memory for its other endpoints,
-    // writing nothing.
+    // setupWeb's auth.signInLimits limits signing in, up and every password
+    // call by address and account. Better Auth's own limits stay on too, in
+    // each isolate's memory, writing nothing: three sign-ins or sign-ups
+    // from one address in ten seconds, and its other endpoints. They are on
+    // by default only when NODE_ENV is 'production', which a Worker's is not.
     rateLimit: { enabled: true, storage: 'memory' },
     advanced: {
       ...options.advanced,
@@ -1878,6 +1879,20 @@ browser that started the sign-in, so a sign-in finished in another browser
 is refused. `auth.signInLimits` does not count sign-ins through a provider
 against the client's address: they check no password here.
 
+A refused sign-in lands on `errorURL` with Better Auth's code as `?error=`,
+which the sign-in page turns into words: `state_mismatch` (finished in
+another browser, or too late), `account_not_linked` (an account here already
+has that email), `unable_to_get_user_info`, and any code the application's
+own hooks throw. Decide what an email the provider has not verified may do:
+with implicit linking off, an account created from one holds that address
+against its real owner. To refuse one, throw from
+`databaseHooks.user.create.before`, as
+`throw new APIError('FORBIDDEN', { message: 'Your email is not verified.', code: 'email_not_verified' })`
+with `APIError` from `better-auth/api`; returning `false` fails the sign-in
+without a code. A person's name and email are the provider's at their first
+sign-in and stay so unless the provider's config sets `overrideUserInfo:
+true`, which fails a later sign-in whose email another account here holds.
+
 A test stands in for the provider with `testOAuthProvider` from
 `@popcomputer/web/testing`, which answers the application's `fetch` requests
 to the provider's token and user info endpoints as the provider would,
@@ -1988,7 +2003,12 @@ redirect renders, or the page the same request renders.
 
 A form submission that fails validation, whether in `validateRequest` or as a
 `ValidationError` the action fails with, redirects back (303) to the page it
-came from: the path of its same-origin `Referer`, or `/` without one. A
+came from: the path of its same-origin `Referer`. A request without one, as a
+test's that posts without visiting the form first, goes to the page its route
+names with `form`, its placeholders filled from the route's own,
+`routes.post(paths.bookSlot, bookSlot, { form: paths.slots })`; a route whose
+path also has a page, such as `POST /slots` beside `GET /slots`, goes back to
+that page without naming it; and any other goes to `/`. A
 `ValidationError` with `redirectTo` goes to that page instead, such as a
 wizard's earlier step. That page renders with all of its own props and the
 field errors as `errors`; a form that names an Inertia error bag gets them
@@ -2973,7 +2993,7 @@ and constraint errors behave the same:
   Drizzle client as `database` the same way, in a test that runs when a
   database URL is set.
 - **Cloudflare D1**: Miniflare's real D1 runs under Bun, in process.
-  `testD1({ migrations: './drizzle' })` from `@popcomputer/web/testing` hands
+  `testD1({ migrations })` from `@popcomputer/web/testing` hands
   out D1 databases, each newly created, migrated with drizzle-kit's
   migrations in one batch, and empty, typed as the application's D1 binding:
   `testEnv({ ...testBindings, DB: await databases.fresh() })`. Starting
@@ -2993,10 +3013,11 @@ and constraint errors behave the same:
 
 ```ts
 // src/test-d1.ts
+import { join } from 'node:path'
 import { testD1 } from '@popcomputer/web/testing'
 
 // Each test that asks gets a D1 database of its own.
-export const databases = testD1({ migrations: './drizzle' })
+export const databases = testD1({ migrations: join(import.meta.dir, '../drizzle') })
 ```
 
 `bun:sqlite` is a synchronous driver: it can stand in for neither, since

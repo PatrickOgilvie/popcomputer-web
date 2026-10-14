@@ -67,6 +67,11 @@ export interface WebRequestContext<E extends Env = Env> {
   pageCache?: PageCacheState
   /** routes.jsonApi() — every request to the route is a JSON client. */
   jsonApi?: boolean
+  /**
+   * The route's registration: the page its form is on, which a failed form
+   * goes back to when the request names no page of this site as its Referer.
+   */
+  formPage?: string
   /** Application cookies an action set, which web() writes on the response. */
   responseCookies?: string[]
   /** Headers an action or layer added with responseHeader, which web() writes on the response. */

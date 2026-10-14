@@ -264,6 +264,15 @@ const appsWithRunner = new WeakSet<object>()
 export type RouteAction<R, Err, Services, Needs = never> = Effect.Effect<Response | Redirect, Err, R> &
   RouteActionCheck<R | Needs, Err, Services>
 
+/** A route path with its placeholders filled from the request's parameters: `{project}` and `{project:slug}` by `project`. */
+function fillPlaceholders(path: string, params: Readonly<Record<string, string>>): string {
+  return path.replace(/\{(\w+)(?::\w+)?\}/g, (placeholder, name: string) => {
+    const value = params[name]
+
+    return value === undefined ? placeholder : encodeURIComponent(value)
+  })
+}
+
 /**
  * The action as the route runs it. RouteActionCheck rejects, at the call
  * site, any action whose failures are not AppError, so registered actions
@@ -275,6 +284,22 @@ function checkedAction<R, Err, Services, Needs>(
   // SAFETY: see above; an action with other failures does not compile.
   return action as Effect.Effect<Response | Redirect, AppError, R>
 }
+
+/**
+ * A declared path whose placeholders the route's own path provides: a page
+ * the route's form can be on.
+ */
+export type FormPage<RoutePath extends string, Paths extends string> = Paths extends unknown
+  ? [PathParamName<Paths>] extends [never]
+    ? Paths
+    : [Exclude<PathParamName<Paths>, PathParamName<RoutePath>>] extends [never]
+      ? Paths
+      : never
+  : never
+
+/** A route's options, with its form's page one of the declared paths its placeholders fill. */
+export type RouteOptionsFor<RoutePath extends string, Paths extends string> =
+  Omit<EffectRouteOptions, 'form'> & { readonly form?: FormPage<RoutePath, Paths> }
 
 /**
  * Route-level configuration options.
@@ -294,6 +319,19 @@ export interface EffectRouteOptions {
    * ```
    */
   params?: S.Codec<unknown, unknown, never, never>
+  /**
+   * The page this route's form is on, which a failed form goes back to when
+   * the request names no page of this site as its Referer, as a test that
+   * posts without visiting the page first does. Its placeholders come from
+   * this route's own. Without it, a route whose path also has a page (a
+   * GET route) goes back to that page, and any other goes home.
+   *
+   * @example
+   * ```typescript
+   * routes.post(paths.bookSlot, bookSlot, { form: paths.slots })
+   * ```
+   */
+  form?: string
   /**
    * Named route for reverse routing and test helpers.
    *
@@ -880,10 +918,24 @@ export class EffectRouteBuilder<
   private createHandler<R>(
     effect: Effect.Effect<Response | Redirect, AppError, R>,
     bindings: ParsedBinding[],
-    options?: EffectRouteOptions
+    options?: EffectRouteOptions,
+    routePath?: string,
+    fullPath?: string
   ): MiddlewareHandler<E> {
     const layers = this.layers
     const bridgeConfig = this.bridgeConfig
+    const registry = this.registry
+    // The page this route's form is on: its `form` option, else its own path
+    // when a page is registered there, which the first request looks up once
+    // every route is registered.
+    let formPage: string | null | undefined = options?.form
+    const formPageOf = (): string | null => {
+      formPage ??= routePath !== undefined && registry.all().some((route) => route.method === 'get' && route.fullPath === fullPath)
+        ? routePath
+        : null
+
+      return formPage
+    }
     let bindingPlanPromise: Promise<readonly CompiledRouteBinding[]> | undefined
     // Dev-only observability for an ineffective `cache` option:
     // once per route (this handler closure), not once per request.
@@ -900,6 +952,9 @@ export class EffectRouteBuilder<
       setEffectBridgeConfig(c, bridgeConfig)
 
       if (answersJson) openWebContext(c).jsonApi = true
+
+      const page = c.req.method === 'GET' ? null : formPageOf()
+      if (page !== null) openWebContext(c).formPage = fillPlaceholders(page, c.req.param())
 
       if (allowsDefaultPageCache) {
         allowDefaultPageCache(c)
@@ -1235,7 +1290,7 @@ export class EffectRouteBuilder<
     this.registry.register(metadata)
 
     // Register with Hono - apply middlewares before the Effect handler
-    const handler = this.createHandler(effect, bindings, options)
+    const handler = this.createHandler(effect, bindings, options, routePath, fullPath)
 
     if (this.middlewares.length > 0) {
       // SAFETY: The method is selected from the finite Hono routing-method union and every supplied handler uses the builder's Env.
@@ -1258,7 +1313,7 @@ export class EffectRouteBuilder<
   get<const P extends Path, R, Err>(
     path: P,
     effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
-    options?: EffectRouteOptions
+    options?: RouteOptionsFor<P, Path>
   ): this {
     this.registerRoute('get', path, checkedAction(effect), options)
 
@@ -1269,7 +1324,7 @@ export class EffectRouteBuilder<
   post<const P extends Path, R, Err>(
     path: P,
     effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
-    options?: EffectRouteOptions
+    options?: RouteOptionsFor<P, Path>
   ): this {
     this.registerRoute('post', path, checkedAction(effect), options)
 
@@ -1280,7 +1335,7 @@ export class EffectRouteBuilder<
   put<const P extends Path, R, Err>(
     path: P,
     effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
-    options?: EffectRouteOptions
+    options?: RouteOptionsFor<P, Path>
   ): this {
     this.registerRoute('put', path, checkedAction(effect), options)
 
@@ -1291,7 +1346,7 @@ export class EffectRouteBuilder<
   patch<const P extends Path, R, Err>(
     path: P,
     effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
-    options?: EffectRouteOptions
+    options?: RouteOptionsFor<P, Path>
   ): this {
     this.registerRoute('patch', path, checkedAction(effect), options)
 
@@ -1302,7 +1357,7 @@ export class EffectRouteBuilder<
   delete<const P extends Path, R, Err>(
     path: P,
     effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
-    options?: EffectRouteOptions
+    options?: RouteOptionsFor<P, Path>
   ): this {
     this.registerRoute('delete', path, checkedAction(effect), options)
 
@@ -1316,7 +1371,7 @@ export class EffectRouteBuilder<
   options<const P extends Path, R, Err>(
     path: P,
     effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
-    options?: EffectRouteOptions
+    options?: RouteOptionsFor<P, Path>
   ): this {
     this.registerRoute('options', path, checkedAction(effect), options)
 
@@ -1327,7 +1382,7 @@ export class EffectRouteBuilder<
   all<const P extends Path, R, Err>(
     path: P,
     effect: RouteAction<R, Err, Services | PathModels<P>, Needs>,
-    options?: EffectRouteOptions
+    options?: RouteOptionsFor<P, Path>
   ): this {
     this.registerRoute('all', path, checkedAction(effect), options)
 

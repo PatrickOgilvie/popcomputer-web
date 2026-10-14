@@ -69,7 +69,9 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
    onExcessProperty: 'error' }`), `nullable(...)` for a filter a GET form
    may send empty, and `upload({ types: [...] })` for files, served back with
    `file(...)`. A form that
-   fails validation goes back to the page it came from, which receives the
+   fails validation goes back to the page it came from (its Referer; without
+   one, the page its route names, `routes.post(path, action, { form:
+   paths.page })`, or its own path's page), which receives the
    field errors as `errors`; a JSON client gets a `422`. A key that route
    params, query and body provide with different values fails validation.
    Read headers and a raw body (a webhook signature) with `RequestService`.

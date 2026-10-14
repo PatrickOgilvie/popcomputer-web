@@ -853,13 +853,21 @@ export function betterAuthHandler(
       }
     }
 
-    return yield* withinSignInLimits(
+    const response = yield* withinSignInLimits(
       { path, address: clientAddress(raw.headers), account: isPasswordSignIn(path) ? accountOf(body) : undefined },
       Effect.tryPromise({
         try: (): Promise<Response> => Promise.resolve(auth.handler(raw)),
         catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
       })
     )
+
+    // Better Auth's own server error is the application's to answer, with its
+    // error page or JSON envelope, as a failure of the authentication service.
+    if (response.status >= 500) {
+      return yield* new HttpError({ status: 502, message: 'Authentication service failed.', cause: response })
+    }
+
+    return response
   })
 }
 

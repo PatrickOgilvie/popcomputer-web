@@ -34,7 +34,8 @@ tests run against any implementation.
    check, the lint rules and the tests in `.journal.jsonl`.
 2. Tell the builder to build for a real business, and that a reviewer will
    test the pinned surface. Do not tell it what the hidden tests check, and
-   keep it out of this repository.
+   keep it out of this repository, without naming the repository's path:
+   two builders given the path compared its `AGENTS.md` with the package's.
 3. Grade each application:
 
    ```bash
@@ -42,8 +43,11 @@ tests run against any implementation.
    ```
 
    The scorecard gives acceptance and safety scores, how many runs each check
-   took and how many failed, the framework's lint findings, and each failed
-   test.
+   took and how many failed, the framework's lint findings, each failed test,
+   and how the app uses the framework: which placeholders it loads with
+   `bound()` and which it reads as plain parameters, raw parameter reads, and
+   whether its tests use `testOAuthProvider`, `testD1` and `testBrowser` or
+   stand-ins of their own. A builder is told none of these.
 
 Run two builders per exam: agents vary, and a failure both make is the
 framework's or the docs', not one agent's.
@@ -72,6 +76,7 @@ with the reviewer standing in for the provider by answering `fetch`.
 | 13 | 0.8.0-next.5 | 21/21, 21/21 (22/22 each with the throttle test added after) | 18/18, 18/18 (18/19 each: no throttle) | — | — |
 | 14 | 1.0.0-next.6 | 22/22 | 19/19 | 21/21, 21/21 | — |
 | 15 | after 1.0.0-next.6 | — | — | — | 25/25, 25/25 |
+| 16 | after 1.0.0-next.6 | 22/22, 22/22 | — | — | 25/25, 25/25 |
 
 Triage notes: in round 14 the expenses OpenAPI test required the document to
 describe exactly the four expense paths; a builder that also described its
@@ -82,3 +87,9 @@ In round 15 the studios test of a brief posted with another studio's id
 required the brief to land in the studio that posted it; one builder's app
 refused the form, as the framework refuses a field that contradicts the
 route, which is as safe. The test now accepts either.
+
+In round 16, every app loaded each record its paths name with `bound()`,
+except studios' `{member}`, which both studios builders read as a plain
+parameter as the README's memberships example then did; the example now
+binds it (`{member:userId}`). Every app used `testD1`, and both studios apps
+`testOAuthProvider`, unprompted, where round 15's had written their own.

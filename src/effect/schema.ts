@@ -670,7 +670,7 @@ export const multipleOf = (value: number, message?: string) =>
 /**
  * Validates that a value is one of the allowed values.
  */
-export const inArray = <T extends readonly string[]>(values: T, message?: string) => {
+export const inArray = <const T extends readonly string[]>(values: T, message?: string) => {
   const allowedValues = new Set<string>(values)
   const isAllowed = (value: string): value is T[number] => allowedValues.has(value)
 
@@ -1001,13 +1001,6 @@ export const maxItems = <InputSchema extends S.Constraint>(
 // =============================================================================
 
 /**
- * A password a visitor chooses, as signing up or changing it asks for one:
- * at least `min` characters (8 unless given), and the other rules given.
- * It is kept exactly as typed. Sign a visitor in with `currentPassword`,
- * which checks no rules: the password's strength was checked when it was
- * chosen.
- */
-/**
  * A password as the visitor typed it, to sign in with or to confirm a
  * change: required, and kept exactly as typed, spaces included, so it
  * matches the password `password(...)` accepted when it was chosen.
@@ -1017,6 +1010,13 @@ export const currentPassword = S.String.check(
   S.makeFilter((value: string) => value !== '', { message: 'This field is required' })
 )
 
+/**
+ * A password a visitor chooses, as signing up or changing it asks for one:
+ * at least `min` characters (8 unless given), and the other rules given.
+ * It is kept exactly as typed. Sign a visitor in with `currentPassword`,
+ * which checks no rules: the password's strength was checked when it was
+ * chosen.
+ */
 export function password(options: {
   min?: number
   max?: number
