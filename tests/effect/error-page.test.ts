@@ -90,4 +90,19 @@ describe('error page', () => {
 
     expect(await read(team)).toEqual(await read(bound))
   })
+
+  test('a production Cloudflare Pages deployment, which sets CF_PAGES_BRANCH, hides a failure\'s message', async () => {
+    const app = appFailingWith(HttpError.internal('db://user:secret@host'))
+    const res = await app.request('/', api, { CF_PAGES_BRANCH: 'main' })
+
+    expect(res.status).toBe(500)
+    expect((await res.json()).message).toBe('An error occurred. Please try again later.')
+  })
+
+  test('a development environment shows it', async () => {
+    const app = appFailingWith(HttpError.internal('db://user:secret@host'))
+    const res = await app.request('/', api, { ENVIRONMENT: 'development' })
+
+    expect((await res.json()).message).toContain('secret')
+  })
 })

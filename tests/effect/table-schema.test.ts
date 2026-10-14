@@ -70,8 +70,9 @@ describe('tableSchema overrides', () => {
     expect(decode({ id: 'c1', custom: { tier: 'gold', seats: 3 } })._tag).toBe('Success')
     expect(decode({ id: 'c1', custom: { tier: true } })._tag).toBe('Failure')
 
+    // The column's type is the named schema's, which tsc checks.
     const contact: typeof Contact.Type = { id: 'c1', custom: { tier: 'gold' } }
-    expect(contact.custom.tier).toBe('gold')
+    void contact
   })
 })
 

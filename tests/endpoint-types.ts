@@ -12,7 +12,8 @@ import { bound, type BoundModelError, type BoundRequirements } from '../src/effe
 import { call, endpoint, type EndpointInput } from '../src/endpoint.js'
 import { coercedNumber, requiredString } from '../src/effect/schema.js'
 
-type AssertEqual<T, U> = [T] extends [U] ? ([U] extends [T] ? true : false) : false
+// Strict: `any` on either side is not equal to anything else.
+type AssertEqual<T, U> = (<V>() => V extends T ? 1 : 2) extends <V>() => V extends U ? 1 : 2 ? true : false
 
 const Place = S.Struct({ id: S.String, name: S.String })
 

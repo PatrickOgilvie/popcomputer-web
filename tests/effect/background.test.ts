@@ -10,6 +10,7 @@ import {
   type EffectErrorEvent,
 } from '../../src/effect/error-observer.js'
 import { effectRoutes } from '../../src/effect/routing.js'
+import { ExecutionContextService } from '../../src/effect/services.js'
 import { testEnv } from '../../src/testing.js'
 
 class ScopedBackgroundResource extends Context.Service<
@@ -65,6 +66,47 @@ describe('background', () => {
     expect(events).toHaveLength(1)
     expect(events[0].metadata).toEqual({ operation: 'analytics.record-signup' })
     expect(events[0].handling).toBe('unhandled')
+  })
+
+  test("keeps a promise handed to waitUntil alive, and observes its failure", async () => {
+    const events: EffectErrorEvent[] = []
+    const waitUntilPromises: Promise<unknown>[] = []
+    const app = new Hono()
+
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+    }).services({
+      request: () =>
+        Layer.succeed(EffectErrorObserverService, {
+          observe: (event) => Effect.sync(() => events.push(event)),
+        }),
+    })
+
+    effectRoutes(app).post(
+      '/events',
+      Effect.gen(function* () {
+        const execution = yield* ExecutionContextService
+        execution.waitUntil(Promise.reject(new Error('webhook delivery failed')))
+
+        return new Response(null, { status: 202 })
+      })
+    )
+
+    const response = await app.fetch(
+      new Request('http://localhost/events', { method: 'POST' }),
+      {},
+      {
+        waitUntil: (promise: Promise<unknown>) => waitUntilPromises.push(promise),
+        passThroughOnException: () => {},
+        props: {},
+      }
+    )
+
+    expect(response.status).toBe(202)
+    expect(waitUntilPromises.length).toBeGreaterThan(0)
+    await Promise.allSettled(waitUntilPromises)
+    expect(events.map((event) => event.metadata)).toEqual([{ operation: 'external-background' }])
   })
 
   test('runs safely before completion when no Worker execution context exists', async () => {

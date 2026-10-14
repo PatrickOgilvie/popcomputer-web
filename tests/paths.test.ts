@@ -30,18 +30,17 @@ describe('href', () => {
   test('takes no parameters for a path without placeholders', () => {
     expect(href(paths.projects)).toBe('/projects')
   })
-
-  test('types parameters from the path', () => {
-    // @ts-expect-error a path with placeholders needs its parameters
-    href(paths.project)
-    // @ts-expect-error `project` is the placeholder, not `id`
-    href(paths.project, { id: 'p1' })
-    // @ts-expect-error both placeholders are required
-    href(paths.page, { workspace: 'acme' })
-
-    expect(true).toBe(true)
-  })
 })
+
+// Checked by `bun run test:types`, never run: href types parameters from the path.
+export function hrefTypesParameters() {
+  // @ts-expect-error a path with placeholders needs its parameters
+  href(paths.project)
+  // @ts-expect-error `project` is the placeholder, not `id`
+  href(paths.project, { id: 'p1' })
+  // @ts-expect-error both placeholders are required
+  href(paths.page, { workspace: 'acme' })
+}
 
 describe('redirect', () => {
   test('redirects with 303 to a filled route path', async () => {

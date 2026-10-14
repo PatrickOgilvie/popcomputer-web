@@ -331,11 +331,6 @@ export class InertiaErrorFormatter implements ErrorFormatter {
 }
 
 /**
- * Output format types.
- */
-export type OutputFormat = 'json' | 'terminal' | 'inertia'
-
-/**
  * Request context for format detection.
  */
 export interface FormatDetectionContext {
@@ -344,67 +339,16 @@ export interface FormatDetectionContext {
   url: string
 }
 
+/** User-Agents of AI agents and command-line clients, which read errors as JSON. */
+const JSON_CLIENTS = ['claude-code', 'claude', 'anthropic', 'CLI', 'curl']
+
 /**
- * Detect the appropriate output format based on request headers and environment.
- *
- * Detection priority:
- * 1. AI/CLI User-Agents (claude-code, curl) → 'json'
- * 2. Accept: application/json header → 'json'
- * 3. X-Inertia: true header → 'inertia'
- * 4. Content-Type: application/json → 'json'
- * 5. Development environment → 'terminal'
- * 6. Production browser requests → 'inertia'
- *
- * @param request - Request context with header accessor, method, and URL.
- * @param env - Environment variables for detecting dev/prod mode.
- * @returns The detected output format: 'json', 'terminal', or 'inertia'.
- *
- * @example
- * ```ts
- * const format = detectOutputFormat(
- *   { header: (n) => c.req.header(n), method: c.req.method, url: c.req.url },
- *   c.env
- * )
- * ```
+ * Whether a failure answers the request as JSON rather than a page: for an AI
+ * agent or command-line client, by its User-Agent, and for a client that asks
+ * for JSON (an Inertia visit never does).
  */
-export function detectOutputFormat<Environment>(
-  request: FormatDetectionContext,
-  env?: Environment
-): OutputFormat {
-  // Check for AI/CLI User-Agent
+export function answersErrorAsJson(request: FormatDetectionContext): boolean {
   const userAgent = request.header('User-Agent') ?? ''
 
-  if (
-    userAgent.includes('claude-code') ||
-    userAgent.includes('claude') ||
-    userAgent.includes('anthropic') ||
-    userAgent.includes('CLI') ||
-    userAgent.includes('curl')
-  ) {
-    return 'json'
-  }
-
-  if (wantsJson((name) => request.header(name))) {
-    return 'json'
-  }
-
-  if (request.header('X-Inertia') === 'true') {
-    return 'inertia'
-  }
-
-  // Development mode defaults to terminal-style logging.
-  // Must be explicitly signalled — CF_PAGES_BRANCH is intentionally excluded
-  // because it is present on production Pages deployments too.
-  const environment = env instanceof Object ? env : {}
-
-  const isDev =
-    Object.getOwnPropertyDescriptor(environment, 'ENVIRONMENT')?.value === 'development' ||
-    Object.getOwnPropertyDescriptor(environment, 'NODE_ENV')?.value === 'development'
-
-  if (isDev) {
-    return 'terminal'
-  }
-
-  // Production browser requests get Inertia format
-  return 'inertia'
+  return JSON_CLIENTS.some((client) => userAgent.includes(client)) || wantsJson((name) => request.header(name))
 }

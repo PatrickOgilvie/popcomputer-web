@@ -7,13 +7,13 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { Effect, Schema as S } from 'effect'
+import { Effect, Layer, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
 import { jsonOrRender, render } from '../src/effect/responses.js'
 import type { PagePropsFor, WebPage } from '../src/react.js'
-import { readPage } from '../src/testing.js'
+import { readPage, testEnv } from '../src/testing.js'
 import { coercedNumber, nullable, nullableDate, nullableString } from '../src/effect/schema.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
@@ -92,24 +92,24 @@ describe('render with registered pages', () => {
   })
 
   test('is a defect naming the page when props do not encode', async () => {
-    const res = await createApp().request('/broken', { headers: { Accept: 'application/json' } })
+    const res = await createApp().request('/broken', { headers: { Accept: 'application/json' } }, testEnv(Layer.empty))
 
     expect(res.status).toBe(500)
-  })
-
-  test('accepts only registered pages and their props', () => {
-    // @ts-expect-error 'Projects/Missing' is not a registered page
-    render('Projects/Missing', {})
-    // @ts-expect-error canEdit is required
-    render('Projects/Show', { project: apollo })
-    // @ts-expect-error a page with props needs them
-    render('Projects/Show')
-    // @ts-expect-error createdAt is a Date on the server
-    render('Projects/Show', { project: { ...apollo, createdAt: '2026-01-02' }, canEdit: true })
-
-    expect(true).toBe(true)
+    expect((await res.json()).message).toContain("page 'Projects/Show'")
   })
 })
+
+// Checked by `bun run test:types`, never run: render accepts only registered pages and their props.
+export function renderTakesRegisteredPages() {
+  // @ts-expect-error 'Projects/Missing' is not a registered page
+  render('Projects/Missing', {})
+  // @ts-expect-error canEdit is required
+  render('Projects/Show', { project: apollo })
+  // @ts-expect-error a page with props needs them
+  render('Projects/Show')
+  // @ts-expect-error createdAt is a Date on the server
+  render('Projects/Show', { project: { ...apollo, createdAt: '2026-01-02' }, canEdit: true })
+}
 
 describe('jsonOrRender with registered pages', () => {
   test('answers JSON clients with the encoded props, varying on Accept', async () => {
@@ -130,19 +130,18 @@ describe('jsonOrRender with registered pages', () => {
   })
 })
 
-describe('WebPage', () => {
-  test('types a component with the JSON form of its page props', () => {
-    type ShowProps = Parameters<WebPage<'Projects/Show'>>[0]
+// Checked by `bun run test:types`, never run: WebPage types a component with the JSON form of its page props.
+export function webPageTypesJsonProps() {
+  type ShowProps = Parameters<WebPage<'Projects/Show'>>[0]
 
-    expectType<Equals<ShowProps['project'], { readonly id: string; readonly name: string; readonly createdAt: string }>>()
-    expectType<Equals<ShowProps['canEdit'], boolean>>()
-    expectType<Equals<PagePropsFor<'Projects/Index'>['projects'], ReadonlyArray<ShowProps['project']>>>()
+  expectType<Equals<ShowProps['project'], { readonly id: string; readonly name: string; readonly createdAt: string }>>()
+  expectType<Equals<ShowProps['canEdit'], boolean>>()
+  expectType<Equals<PagePropsFor<'Projects/Index'>['projects'], ReadonlyArray<ShowProps['project']>>>()
 
-    const Show: WebPage<'Projects/Show'> = ({ project, errors }) => `${project.name} ${Object.keys(errors).length}`
+  const Show: WebPage<'Projects/Show'> = ({ project, errors }) => `${project.name} ${Object.keys(errors).length}`
 
-    expect(Show({ project: { id: 'p1', name: 'Apollo', createdAt: '2026-01-02' }, canEdit: true, auth: { user: null }, errors: {} })).toBe('Apollo 0')
-  })
-})
+  return Show
+}
 
 describe('readPage', () => {
   test('reads a rendered page typed by the registry', async () => {

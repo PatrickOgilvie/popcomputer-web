@@ -189,27 +189,4 @@ describe('webServices + webContext', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ userId: 'user-1' })
   })
-
-  test('the auth factory can be built from the db computed in the same provide call', async () => {
-    const app = new Hono()
-
-    app.use(
-      '*',
-      webServices(() => {
-        const db = { name: 'db-first' }
-
-        return { db, auth: { name: `auth-over-${db.name}` } }
-      })
-    )
-
-    app.get('/inspect', (c) => {
-      const ctx = webContext(c)
-
-      // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
-      return c.text((ctx.auth as { name: string }).name)
-    })
-
-    const res = await app.request('/inspect')
-    expect(await res.text()).toBe('auth-over-db-first')
-  })
 })

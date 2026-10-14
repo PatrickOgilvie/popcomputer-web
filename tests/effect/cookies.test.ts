@@ -37,6 +37,10 @@ function createApp() {
 
       return yield* json({ cart: Option.getOrNull(cart) })
     })))
+    // Outside the cart cookie's path, where a browser does not send it.
+    .get('/elsewhere/cart', action(Effect.gen(function* () {
+      return yield* json({ cart: Option.getOrNull(yield* cartCookie.read) })
+    })))
     .post('/r/{restaurant}/visit', action(Effect.gen(function* () {
       yield* guestCookie.set('tok-123')
 
@@ -177,6 +181,7 @@ describe('testBrowser', () => {
     expect(await (await browser.request('/r/cart')).json()).toEqual({ cart: { id: 'cart-1', items: 2 } })
 
     // The cart cookie covers /r only.
+    expect(await (await browser.request('/elsewhere/cart')).json()).toEqual({ cart: null })
     expect(browser.cookies.has('cart')).toBe(true)
     await browser.request('/r/cart', { method: 'DELETE' })
     expect(browser.cookies.has('cart')).toBe(false)

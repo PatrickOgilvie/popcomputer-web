@@ -12,7 +12,6 @@ import {
   JsonErrorFormatter,
   InertiaErrorFormatter,
   getClientSafeMessage,
-  detectOutputFormat,
 } from '../../src/effect/error-formatter.js'
 import { createStructuredError, ErrorCodes } from '../../src/effect/error-catalog.js'
 import { HttpError, ValidationError } from '../../src/effect/errors.js'
@@ -62,8 +61,12 @@ describe('getClientSafeMessage', () => {
     expect(getClientSafeMessage(error, true)).toContain('secret')
   })
 
-  test('scrubs sensitive-category messages in production', () => {
-    expect(getClientSafeMessage(internalError(), false)).toBe(SAFE_GENERIC)
+  test('scrubs sensitive-category messages in production, whatever their status', () => {
+    // A constraint violation answers 409, so only its database category hides the constraint's name.
+    const constraint = createStructuredError(ErrorCodes.DB_502_CONSTRAINT_VIOLATION, { constraint: 'users_email_key' }, {})
+
+    expect(constraint.httpStatus).toBe(409)
+    expect(getClientSafeMessage(constraint, false)).toBe(SAFE_GENERIC)
   })
 
   test('passes through non-sensitive messages in production', () => {
@@ -79,23 +82,6 @@ describe('getClientSafeMessage', () => {
 })
 
 describe('JsonErrorFormatter safeMessages', () => {
-  test('leaks raw internal message when safeMessages is off (dev)', () => {
-    const out = new JsonErrorFormatter({ safeMessages: false }).format(
-      internalError()
-    )
-
-    expect(out.message).toContain('secret')
-  })
-
-  test('scrubs raw internal message when safeMessages is on (prod)', () => {
-    const out = new JsonErrorFormatter({ safeMessages: true }).format(
-      internalError()
-    )
-
-    expect(out.message).toBe(SAFE_GENERIC)
-    expect(JSON.stringify(out)).not.toContain('secret')
-  })
-
   test('still surfaces validation messages in prod (not sensitive)', () => {
     const error = validationError()
 
@@ -186,26 +172,6 @@ describe('InertiaErrorFormatter parity', () => {
   })
 })
 
-describe('detectOutputFormat dev heuristic', () => {
-  const req = (headers: Record<string, string> = {}) => ({
-    header: (name: string) => headers[name.toLowerCase()] ?? headers[name],
-    method: 'GET',
-    url: 'https://example.com/',
-  })
-
-  test('CF_PAGES_BRANCH alone does not enable development/terminal output', () => {
-    // A production Pages deployment sets CF_PAGES_BRANCH; it must not be
-    // treated as development (which would leak verbose terminal errors).
-    expect(detectOutputFormat(req(), { CF_PAGES_BRANCH: 'main' })).toBe('inertia')
-  })
-
-  test('explicit ENVIRONMENT=development enables terminal output', () => {
-    expect(detectOutputFormat(req(), { ENVIRONMENT: 'development' })).toBe(
-      'terminal'
-    )
-  })
-})
-
 describe('JsonErrorFormatter message safety', () => {
   test('scrubs sensitive messages and omits fixes in the production projection', () => {
     const output = new JsonErrorFormatter({ safeMessages: true, includeFixes: false }).format(
@@ -214,13 +180,11 @@ describe('JsonErrorFormatter message safety', () => {
     const serialized = JSON.stringify(output)
 
     expect(serialized).not.toContain('secret')
-    expect(serialized).toContain(SAFE_GENERIC)
+    expect(output.message).toBe(SAFE_GENERIC)
     expect(output.fixes).toBeUndefined()
   })
 
   test('keeps the real message in development', () => {
-    const serialized = JSON.stringify(new JsonErrorFormatter().format(internalError()))
-
-    expect(serialized).toContain('secret')
+    expect(new JsonErrorFormatter().format(internalError()).message).toContain('secret')
   })
 })

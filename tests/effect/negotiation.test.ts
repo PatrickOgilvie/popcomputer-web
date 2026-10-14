@@ -65,6 +65,7 @@ describe('an API route answers clients that do not ask for JSON with JSON', () =
     const res = await app.request('/api/me', { headers: { Accept: 'text/html' } }, env)
 
     expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toBe('/login?redirect=%2Fapi%2Fme')
   })
 })
 
@@ -117,5 +118,6 @@ describe('routes.jsonApi()', () => {
     const res = await app.request('/account', {}, env)
 
     expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toBe('/login?redirect=%2Faccount')
   })
 })

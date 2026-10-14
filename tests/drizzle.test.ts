@@ -82,13 +82,12 @@ describe('rowOf', () => {
 
     expect(db.select({ jobId: candidates.jobId }).from(candidates).all()).toEqual([{ jobId: 'open-job' }])
   })
-
-  test('names only the table\'s columns', () => {
-    // @ts-expect-error jobID is not a column of candidates
-    rowOf(candidates, { id: 'c1', jobID: 'open-job', email: 'a@example.com' })
-    // @ts-expect-error email is required
-    rowOf(candidates, { id: 'c1', jobId: 'open-job' })
-
-    expect(true).toBe(true)
-  })
 })
+
+// Checked by `bun run test:types`, never run: rowOf names only the table's columns.
+export function rowOfNamesOnlyColumns() {
+  // @ts-expect-error jobID is not a column of candidates
+  rowOf(candidates, { id: 'c1', jobID: 'open-job', email: 'a@example.com' })
+  // @ts-expect-error email is required
+  rowOf(candidates, { id: 'c1', jobId: 'open-job' })
+}

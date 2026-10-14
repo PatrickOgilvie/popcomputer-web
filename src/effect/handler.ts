@@ -30,7 +30,7 @@ import {
 import { createStructuredError, ErrorCodes } from './error-catalog.js'
 import { captureErrorContext } from './error-context.js'
 import {
-  detectOutputFormat,
+  answersErrorAsJson,
   JsonErrorFormatter,
   InertiaErrorFormatter,
   TerminalErrorFormatter,
@@ -167,9 +167,7 @@ export async function renderErrorResponse<E extends Env>(
   const context = captureErrorContext(c)
   const isDev = isDevelopment(c, config)
 
-  const format = openWebContext(c).jsonApi === true
-    ? 'json'
-    : detectOutputFormat(createFormatDetectionContext(c), c.env)
+  const format = openWebContext(c).jsonApi === true || answersErrorAsJson(createFormatDetectionContext(c)) ? 'json' : 'page'
 
   const structured = error instanceof Error
     ? getStructuredFromThrown(error) ?? toStructuredError(error, context)
