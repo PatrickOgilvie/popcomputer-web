@@ -331,11 +331,11 @@ export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): Middl
     // Better Auth answers with the cookies the lookup sets: the session's,
     // renewed when it extends the session, or expired when the session is
     // gone. They reach the response, so the browser's cookie lives as long
-    // as the session.
+    // as the session, unless the response sets the session itself.
     const { session, cookies } = sessionLookup(looked)
 
     if (cookies.length > 0) {
-      requestCtx.responseCookies = [...(requestCtx.responseCookies ?? []), ...cookies]
+      requestCtx.sessionLookupCookies = [...(requestCtx.sessionLookupCookies ?? []), ...cookies]
     }
 
     if (session) {

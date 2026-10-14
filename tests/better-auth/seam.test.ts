@@ -198,6 +198,50 @@ describe('signing up, in and out', () => {
     expect(status).toBe(401)
     expect(visitor.cookies.has(SESSION)).toBe(false)
   })
+
+  test('signing in again after the session was revoked elsewhere keeps the new session', async () => {
+    const { browser, db } = setup()
+    const visitor = browser()
+    await signUp(visitor, 'ada@example.com')
+    db.delete(schema.session).run()
+
+    const res = await signIn(visitor, 'ada@example.com')
+
+    expect(res.status).toBe(303)
+    expect((await me(visitor)).body).toMatchObject({ email: 'ada@example.com' })
+  })
+
+  test("signing in through Better Auth's API after the session was revoked elsewhere keeps the new session", async () => {
+    const { browser, db } = setup()
+    const visitor = browser()
+    await signUp(visitor, 'ada@example.com')
+    db.delete(schema.session).run()
+
+    const res = await visitor.request('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+      body: JSON.stringify({ email: 'ada@example.com', password: 'correct horse battery' }),
+    })
+
+    expect(res.status).toBe(200)
+    expect((await me(visitor)).body).toMatchObject({ email: 'ada@example.com' })
+  })
+
+  test("signing in as someone else through Better Auth's API while the session is being extended keeps the new session", async () => {
+    // updateAge 0: every request extends the session, as one a day old does.
+    const { browser } = setup({ updateAge: 0 })
+    await signUp(browser(), 'grace@example.com', 'Grace Hopper')
+    const visitor = browser()
+    await signUp(visitor, 'ada@example.com')
+
+    await visitor.request('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+      body: JSON.stringify({ email: 'grace@example.com', password: 'correct horse battery' }),
+    })
+
+    expect((await me(visitor)).body).toMatchObject({ email: 'grace@example.com' })
+  })
 })
 
 describe('two-factor', () => {

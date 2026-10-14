@@ -254,8 +254,12 @@ export function web(config: WebConfig): MiddlewareHandler {
       c.res = new Response(null, { status: 409, headers })
     }
 
+    const context = openWebContext(c)
     const committed = c.res
-      ? withResponseHeaders(withResponseCookies(flash.commit(c.res), openWebContext(c).responseCookies), openWebContext(c).responseHeaders)
+      ? withResponseHeaders(
+          withSessionLookupCookies(withResponseCookies(flash.commit(c.res), context.responseCookies), context.sessionLookupCookies),
+          context.responseHeaders
+        )
       : undefined
 
     if (committed !== undefined && committed !== c.res) {
@@ -284,6 +288,26 @@ function withResponseCookies(response: Response, cookies: readonly string[] | un
   for (const cookie of cookies) headers.append('Set-Cookie', cookie)
 
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
+/**
+ * The response with the cookies the session lookup set, but for those the
+ * response sets itself: a sign-in's new session outlives the old session's
+ * renewal, or the expiry of one revoked elsewhere, which a browser applies
+ * after it when written later.
+ */
+function withSessionLookupCookies(response: Response, cookies: readonly string[] | undefined): Response {
+  if (cookies === undefined || cookies.length === 0) return response
+
+  const set = new Set(response.headers.getSetCookie().map(cookieName))
+  const kept = cookies.filter((cookie) => !set.has(cookieName(cookie)))
+
+  return withResponseCookies(response, kept)
+}
+
+/** A Set-Cookie header's cookie name. */
+function cookieName(setCookie: string): string {
+  return setCookie.slice(0, setCookie.indexOf('=')).trim()
 }
 
 /** The response with the headers an action or layer added with responseHeader. */

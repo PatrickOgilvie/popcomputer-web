@@ -79,6 +79,12 @@ export interface WebRequestContext<E extends Env = Env> {
   formPage?: string
   /** Application cookies an action set, which web() writes on the response. */
   responseCookies?: string[]
+  /**
+   * The cookies Better Auth's session lookup set, renewing the session or
+   * clearing a revoked one, which web() writes unless the response sets the
+   * same cookie, as a sign-in does.
+   */
+  sessionLookupCookies?: string[]
   /** Headers an action or layer added with responseHeader, which web() writes on the response. */
   responseHeaders?: ReadonlyArray<readonly [string, string]>
 }
