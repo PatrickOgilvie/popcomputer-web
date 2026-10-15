@@ -1,12 +1,12 @@
-# Upgrading to @popcomputer/web 1.2.3
+# Upgrading to @popcomputer/web 1.2.4
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.2.3.
+`honertia` package it was renamed from, to 1.2.4.
 
-1.1.0, 1.2.0, 1.2.2 and 1.2.3 change nothing that an application written
+1.1.0, 1.2.0, 1.2.2, 1.2.3 and 1.2.4 change nothing that an application written
 for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
 published to npm. So the path is one jump: make the 1.0.0 changes below,
-install 1.2.3, and you are done.
+install 1.2.4, and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -42,7 +42,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.2.3 needs:
+- **Check the peer dependencies.** 1.2.4 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -56,12 +56,12 @@ you installed:
   Hono releases before 4.10 fail to type-check the package, and Hono 5 and
   Drizzle 1.0 are outside the ranges.
 
-- **Install 1.2.3** with the peers your application uses, removing `honertia`
+- **Install 1.2.4** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.2.3 effect@^4.0.0
+  bun add @popcomputer/web@^1.2.4 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.30.0 <1.0.0'  # if you use Drizzle
   ```
@@ -1016,10 +1016,10 @@ application and its tests.
 
 ## From 1.0 to 1.2
 
-Nothing to change. Install 1.2.3:
+Nothing to change. Install 1.2.4:
 
 ```bash
-bun add @popcomputer/web@^1.2.3
+bun add @popcomputer/web@^1.2.4
 ```
 
 What 1.1.0 brought:
@@ -1130,7 +1130,7 @@ What 1.2.3 brings:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.2.3`.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.2.4`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
 - [ ] `bun test` passes, with tests on `testEnv`, `signedIn` and `readPage`.
