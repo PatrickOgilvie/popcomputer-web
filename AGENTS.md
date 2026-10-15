@@ -5,9 +5,10 @@ API to use; the README explains the design and shows the full setup. Every
 TypeScript example here and in the README type-checks against the package.
 
 To use this file, point the application's own `AGENTS.md` or `CLAUDE.md` at
-`node_modules/@popcomputer/web/AGENTS.md`. Replace a `CLAUDE.md` a project
-template wrote, such as the one `bun init` writes for `Bun.serve` and
-`bun:sqlite`: its instructions contradict these.
+`node_modules/@popcomputer/web/AGENTS.md`. Replace a `CLAUDE.md` written for
+another setup, such as the one `bun init` writes for `Bun.serve` and
+`bun:sqlite`: its instructions contradict these. Keep one that already points
+here, as the demo's does.
 
 ## Rules
 
@@ -193,7 +194,7 @@ template wrote, such as the one `bun init` writes for `Bun.serve` and
     an `X-Inertia` response typed by the page registry. Test against the
     production database family: PGlite for Postgres (`testEnv`'s `database`),
     migrated with `applyMigrations`, and for D1 a database of each test's own
-    from `testD1({ migrations: './drizzle' })`, stopped by
+    from `testD1({ migrations: './migrations' })`, the folder wrangler applies, stopped by
     `afterAll(() => databases.dispose())` in `bunfig.toml`'s preload. Replace a service
     that reaches another system with `Layer.succeed(Service, fake)` in the
     layer, wherever the application gives that service (`web.services` or

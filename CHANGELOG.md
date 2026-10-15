@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `UPGRADING.md` warns that every production 404 has the same message, whatever `notFound(...)` or `httpError(404, message)` said: a page that shows a failed request's message shows "Nothing was found at this address." instead, and only in production. A 404 whose message a page shows carries it in a body, `httpError(404, message, Schema, { message })`, which production keeps. Found by comparing an upgraded application with its 0.4 version. The README says the same where it lists what production replaces, and the guide installs 1.2.3.
 - The documentation check type-checks and lints examples indented inside list items, which it skipped.
 - The README's installation starts an application from the demo, `bun create PatrickOgilvie/popcomputer-web-demo my-app`.
+- `AGENTS.md`, the skill and the README point `testD1` at `./migrations`, the folder wrangler applies D1 migrations from and the demo keeps them in, where they said `./drizzle`, drizzle-kit's default. The README says to set `migrations_dir` and drizzle-kit's `out` to the same folder. Found by three agent runs of the setup prompt on web.popcomputer.com.
+- The README's installation says a new application needs Node.js 24, Bun and portless as a service, and links to the demo's one-time setup.
+- `AGENTS.md` and the skill say to replace only a `CLAUDE.md` written for another setup, and to keep one that points here, as the demo's does: an agent read "a `CLAUDE.md` a project template wrote" as the demo's own.
 
 ## [1.2.3] - 2026-10-14
 

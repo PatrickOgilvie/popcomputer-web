@@ -66,6 +66,11 @@ from a Cloudflare Worker, with D1, Better Auth and tests, ready to deploy:
 bun create PatrickOgilvie/popcomputer-web-demo my-app
 ```
 
+It needs Node.js 24, Bun, and portless running as a service, which the demo's
+README sets up
+[once per computer](https://github.com/PatrickOgilvie/popcomputer-web-demo#once-per-computer).
+Then `bun run dev` in `my-app` serves it at `https://my-app.localhost`.
+
 To add the package to an application of your own:
 
 ```bash
@@ -3059,7 +3064,10 @@ and constraint errors behave the same:
 - **Cloudflare D1**: Miniflare's real D1 runs under Bun, in process.
   `testD1({ migrations })` from `@popcomputer/web/testing` hands
   out D1 databases, each newly created, migrated with drizzle-kit's
-  migrations in one batch, and empty, typed as the application's D1 binding:
+  migrations in one batch, and empty. Point it at the folder wrangler applies
+  migrations from, `wrangler.jsonc`'s `migrations_dir` (`migrations` unless it
+  says otherwise), with drizzle-kit's `out` set to the same folder. The
+  databases are typed as the application's D1 binding:
   `testEnv({ ...testBindings, DB: await databases.fresh() })`. Starting
   Miniflare takes a moment, so one holds many databases and another starts
   when they run out. Stop them once, after every test file, with
@@ -3081,7 +3089,7 @@ import { join } from 'node:path'
 import { testD1 } from '@popcomputer/web/testing'
 
 // Each test that asks gets a D1 database of its own.
-export const databases = testD1({ migrations: join(import.meta.dir, '../drizzle') })
+export const databases = testD1({ migrations: join(import.meta.dir, '../migrations') })
 ```
 
 `bun:sqlite` is a synchronous driver: it can stand in for neither, since

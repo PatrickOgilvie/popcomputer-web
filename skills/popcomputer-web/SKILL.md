@@ -204,7 +204,7 @@ TypeScript example here and in the README type-checks against the package.
     an `X-Inertia` response typed by the page registry. Test against the
     production database family: PGlite for Postgres (`testEnv`'s `database`),
     migrated with `applyMigrations`, and for D1 a database of each test's own
-    from `testD1({ migrations: './drizzle' })`, stopped by
+    from `testD1({ migrations: './migrations' })`, the folder wrangler applies, stopped by
     `afterAll(() => databases.dispose())` in `bunfig.toml`'s preload. Replace a service
     that reaches another system with `Layer.succeed(Service, fake)` in the
     layer, wherever the application gives that service (`web.services` or
