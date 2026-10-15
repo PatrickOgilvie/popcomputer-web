@@ -58,6 +58,16 @@ export const showProject = action(
 
 ## Installation
 
+To start from a complete application, create one from the
+[demo](https://github.com/PatrickOgilvie/popcomputer-web-demo): React pages
+from a Cloudflare Worker, with D1, Better Auth and tests, ready to deploy:
+
+```bash
+bun create PatrickOgilvie/popcomputer-web-demo my-app
+```
+
+To add the package to an application of your own:
+
 ```bash
 bun add @popcomputer/web effect hono
 ```
