@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The README's installation asks for Node.js 22 or later, better 24, as the demo and web.popcomputer.com's setup prompt do: Wrangler needs 22, and portless is built for 24. It said 24.
+
 ## [1.2.4] - 2026-10-15
 
 Documentation only: nothing an application on 1.2.3 needs to change. Found by agent runs of the setup prompt on web.popcomputer.com, and by comparing an upgraded application with its 0.4 version.

@@ -66,8 +66,8 @@ from a Cloudflare Worker, with D1, Better Auth and tests, ready to deploy:
 bun create PatrickOgilvie/popcomputer-web-demo my-app
 ```
 
-It needs Node.js 24, Bun, and portless running as a service, which the demo's
-README sets up
+It needs Node.js 22 or later (better 24, which portless is built for), Bun,
+and portless running as a service, which the demo's README sets up
 [once per computer](https://github.com/PatrickOgilvie/popcomputer-web-demo#once-per-computer).
 Then `bun run dev` in `my-app` serves it at `https://my-app.localhost`.
 
