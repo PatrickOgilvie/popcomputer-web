@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
 /**
  * The seam between the framework and Better Auth, driven through an
- * application written as the README says: every documented call, and the
+ * application written as docs/ says: every documented call, and the
  * plugins applications reach for. These tests gate every Better Auth upgrade:
  * the peer range names only versions they passed against.
  */

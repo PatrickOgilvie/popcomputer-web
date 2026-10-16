@@ -12,7 +12,9 @@ The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
 you installed:
 
-- [`README.md`](README.md): the design and the full setup
+- [`README.md`](README.md): the design, and an index of `docs/`
+- [`docs/`](docs/): one short file per task, such as
+  [`docs/which-api.md`](docs/which-api.md), which names the API for each task
 - [`CHANGELOG.md`](CHANGELOG.md): a section per release
 - [`AGENTS.md`](AGENTS.md): the one API to use for each task
 
@@ -514,7 +516,7 @@ shared props are computed by `shareProps`:
 - }
 ```
 
-`schema.user` is Better Auth's user table as the README names it; use your
+`schema.user` is Better Auth's user table as `docs/auth-tables.md` names it; use your
 own table's key, such as `schema.users`. The session token is
 `Redacted<string>`: read it with `Redacted.value`. A
 user field you add, such as a role, is a column, and Better Auth reads it
@@ -699,8 +701,7 @@ A sign-in action validates its form like any action and returns
 
 - `signIn` returns
   `betterAuthRedirect('signInEmail', { body: input }, { redirectTo, errors })`.
-  The README's [Signing in and out](README.md#signing-in-and-out) shows it in
-  full.
+  [`docs/sign-in.md`](docs/sign-in.md) shows it in full.
 - Validate a sign-in password with `currentPassword`, which never trims it,
   and a new one with `password(...)`.
 - Never call `auth.api` from an action: it skips Better Auth's rate limits
@@ -827,7 +828,7 @@ The package has no CLI:
 
 Delete `.popweb-applied.json`: drizzle-kit and Wrangler record applied
 migrations in the database itself. The generators have no replacement; write
-actions from the README's and `AGENTS.md`'s examples. Remove `popweb`
+actions from the examples in `docs/` and `AGENTS.md`. Remove `popweb`
 scripts from `package.json`.
 
 ### 12. Give a helper that reads a route model its requirement
@@ -855,8 +856,8 @@ A type error where a route is registered names what is missing:
 | `'web' implicitly has type 'any'` (TS7022) | A `setupWeb` value reads the registration, such as a service using `dbQuery` | Move it to `web.services(...)` |
 
 A list cut off with `... 7 more ...` shows whole with
-`"noErrorTruncation": true` in `tsconfig.json`. The README's [Reading the type
-errors](README.md#reading-the-type-errors) explains each one in full.
+`"noErrorTruncation": true` in `tsconfig.json`. [Reading the type
+errors](docs/type-errors.md) explains each one in full.
 
 ## Changes no type error points at
 

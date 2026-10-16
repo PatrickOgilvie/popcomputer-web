@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The README's sections move to `docs/`, one short file per task, which the package ships: `node_modules/@popcomputer/web/docs/` matches the installed version, as `AGENTS.md` does. An agent reads the file a task needs instead of the whole README, whose tables a fetch tool that summarises it loses. `docs/which-api.md` names the API for each task and the file that explains it. The README keeps the overview and links to every file. The text moves as written, and no rule changes. `AGENTS.md`, the skill and `UPGRADING.md` point at `docs/`.
+- The documentation check type-checks and lints the examples in `docs/` too. It fails on a relative link or `#anchor` that names no file or heading, on a file in `docs/` the README does not link to, and on one longer than 250 lines.
 - The README's installation asks for Node.js 22 or later, better 24, as the demo and web.popcomputer.com's setup prompt do: Wrangler needs 22, and portless is built for 24. It said 24.
 
 ## [1.2.4] - 2026-10-15

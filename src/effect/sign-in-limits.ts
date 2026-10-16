@@ -44,7 +44,7 @@ export type RateLimiterName<Bindings = never> = [Bindings] extends [never]
     ? string
     : Extract<keyof { [Key in keyof Bindings as NonNullable<Bindings[Key]> extends RateLimiter ? Key : never]: unknown }, string>
 
-/** Better Auth's `rateLimit` table, as its CLI and the README declare it: a unique `key`, a `count` and `lastRequest` in milliseconds. */
+/** Better Auth's `rateLimit` table, as its CLI and docs/auth-tables.md declare it: a unique `key`, a `count` and `lastRequest` in milliseconds. */
 export type SignInCountsTable = Table & {
   readonly id: Column
   readonly key: Column

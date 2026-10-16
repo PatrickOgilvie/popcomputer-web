@@ -98,7 +98,7 @@ export const ErrorCodes = {
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes]
 
 /**
- * Fix generators for common scenarios. Code uses the README's application:
+ * Fix generators for common scenarios. Code uses the documented application:
  * `setupWeb(app, config)` in `src/app.ts`, `createDb` and `createAuth`
  * factories, and a Drizzle schema module.
  */

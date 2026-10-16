@@ -7,8 +7,9 @@ description: Rules and a canonical action for building applications on @popcompu
 
 These rules are the package's `AGENTS.md`. When the project has
 `node_modules/@popcomputer/web/AGENTS.md`, read that copy: it matches the
-installed version. For a new application, follow the Quick start in
-`node_modules/@popcomputer/web/README.md`.
+installed version, as do the files beside it in
+`node_modules/@popcomputer/web/docs/`, one short file per task. For a new
+application, follow `node_modules/@popcomputer/web/docs/setup.md`.
 
 A project on an earlier release, or one that imports from `honertia`, the
 framework's former package, upgrades first: follow `UPGRADING.md`, in
@@ -17,8 +18,9 @@ https://github.com/PatrickOgilvie/popcomputer-web/blob/main/UPGRADING.md. It
 also moves the project's own code from Effect 3 to Effect 4.
 
 Rules for writing an application on `@popcomputer/web`. Each rule names the one
-API to use; the README explains the design and shows the full setup. Every
-TypeScript example here and in the README type-checks against the package.
+API to use; the files in `docs/` beside this one explain each task, one short
+file per task, and `docs/which-api.md` names the file for each. Every
+TypeScript example here and in `docs/` type-checks against the package.
 
 ## Rules
 
@@ -290,7 +292,7 @@ Register it beside the other routes in `src/routes.ts`:
 routes.put(paths.project, updateProject, { name: 'projects.update' })
 ```
 
-Test it as the README's Testing section shows: request
+Test it as `docs/testing.md` shows: request
 `PUT /projects/project-1` with `testEnv(signedIn({ id: 'user-1' }),
 testBindings)` and expect a `303` to `/projects/project-1`, a `404` for
 another user, and, for an empty name, a `303` back to the form whose next page

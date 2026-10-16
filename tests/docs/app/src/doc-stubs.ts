@@ -1,4 +1,4 @@
-// Application values that README and AGENTS fragments use without defining them.
+// Application values that the documents' fragments use without defining them.
 // Fragments (fences without a `// src/...` header) import every name exported
 // here that they do not declare or import themselves.
 import { Effect, Schema as S } from 'effect'

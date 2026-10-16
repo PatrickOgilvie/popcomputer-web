@@ -1,6 +1,7 @@
 /**
- * The README's Better Auth tables, for Postgres and for Cloudflare D1, have
- * every column the README's Better Auth configuration needs, and the one
+ * The Better Auth tables docs/auth-tables.md declares, for Postgres and for
+ * Cloudflare D1, have every column docs/auth.md's Better Auth configuration
+ * needs, and the one
  * `auth.signInLimits` counts in. A Better Auth release that adds a column
  * fails here before an application copies tables without it.
  */
@@ -12,19 +13,19 @@ import { getSchema } from 'better-auth/db'
 
 const repoRoot = join(import.meta.dir, '..', '..')
 const outDir = join(import.meta.dir, '.generated')
-const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8')
+const tablesDoc = readFileSync(join(repoRoot, 'docs', 'auth-tables.md'), 'utf8')
 
-/** The README's TypeScript fence whose first line is `firstLine`. */
+/** docs/auth-tables.md's TypeScript fence whose first line is `firstLine`. */
 function fence(firstLine: string): string {
-  const fences = [...readme.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => match[1] ?? '')
+  const fences = [...tablesDoc.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => match[1] ?? '')
   const found = fences.find((code) => code.startsWith(`${firstLine}\n`))
 
-  if (found === undefined) throw new Error(`README.md has no fence starting "${firstLine}".`)
+  if (found === undefined) throw new Error(`docs/auth-tables.md has no fence starting "${firstLine}".`)
 
   return found
 }
 
-async function readmeTables(name: string, firstLine: string): Promise<Record<string, unknown>> {
+async function documentedTables(name: string, firstLine: string): Promise<Record<string, unknown>> {
   mkdirSync(outDir, { recursive: true })
   const file = join(outDir, `${name}.ts`)
   writeFileSync(file, fence(firstLine))
@@ -32,7 +33,7 @@ async function readmeTables(name: string, firstLine: string): Promise<Record<str
   return import(file)
 }
 
-// The README's `createAuth`: email and password, with Better Auth's own
+// docs/auth.md's `createAuth`: email and password, with Better Auth's own
 // limits in memory.
 const needed = getSchema({ emailAndPassword: { enabled: true }, rateLimit: { enabled: true, storage: 'memory' } })
 
@@ -61,12 +62,12 @@ function missingFrom(tables: Record<string, unknown>): string[] {
   return missing
 }
 
-describe("the README's Better Auth tables", () => {
+describe("docs/auth-tables.md's Better Auth tables", () => {
   test('on Postgres', async () => {
-    expect(missingFrom(await readmeTables('auth-schema.pg', '// src/auth-schema.ts'))).toEqual([])
+    expect(missingFrom(await documentedTables('auth-schema.pg', '// src/auth-schema.ts'))).toEqual([])
   })
 
   test('on Cloudflare D1', async () => {
-    expect(missingFrom(await readmeTables('auth-schema.d1', '// src/auth-schema.ts on Cloudflare D1, in place of the Postgres one'))).toEqual([])
+    expect(missingFrom(await documentedTables('auth-schema.d1', '// src/auth-schema.ts on Cloudflare D1, in place of the Postgres one'))).toEqual([])
   })
 })

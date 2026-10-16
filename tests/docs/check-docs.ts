@@ -1,32 +1,44 @@
 /**
- * Type-check every TypeScript code fence in README.md, AGENTS.md and UPGRADING.md.
+ * Type-check every TypeScript code fence in README.md, AGENTS.md, UPGRADING.md
+ * and docs/*.md, and check the links between them.
  *
  * Agents copy these examples verbatim, so each one must compile against the
  * package as an application installs it: the declarations in `dist`, which
  * `bun run build` emits. Types that depend on an application's augmentations
  * (WebRouteBindingsType, WebAuthUserType, ...) must survive declaration emit,
- * and only a check against `dist` sees that. The fences of both documents are
+ * and only a check against `dist` sees that. The fences of every document are
  * assembled into one small application:
  *
  * - A fence whose first line is `// src/<path>.ts` becomes that file, exactly
  *   as written. It must import everything it uses.
  * - Any other fence is a fragment. It gets a one-line prelude importing every
- *   entrypoint's public values, common Effect modules, the README's `app` and the
+ *   entrypoint's public values, common Effect modules, the Quick start's `app` and the
  *   stubs in `app/src/doc-stubs.ts`, minus names the fragment declares or
  *   imports itself. A fragment that uses `yield*` outside a generator is
  *   wrapped in `Effect.gen`.
  *
  * Diagnostics are reported against document line numbers.
  *
+ * Before type-checking, every relative link must name a file that exists and,
+ * with `#anchor`, one of its headings; every file in docs/ must be linked from
+ * the README and hold at most MAX_DOC_LINES lines, so an agent reads one task
+ * in one fetch.
+ *
  * Run: bun run build && bun tests/docs/check-docs.ts
  */
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { rules as lintRules } from '../../src/lint/index.js'
 
 const repoRoot = join(import.meta.dir, '..', '..')
-const documents = ['README.md', 'AGENTS.md', 'UPGRADING.md']
+const docs = readdirSync(join(repoRoot, 'docs'))
+  .filter((file) => file.endsWith('.md'))
+  .sort()
+  .map((file) => `docs/${file}`)
+const documents = ['README.md', 'AGENTS.md', 'UPGRADING.md', ...docs]
+/** The most lines a file in docs/ may hold. */
+const MAX_DOC_LINES = 250
 const stubAppDir = join(import.meta.dir, 'app')
 const outDir = join(import.meta.dir, '.generated')
 
@@ -200,7 +212,108 @@ function buildFragment(
   ]
 }
 
+/** A heading's anchor as GitHub writes it: lower case, punctuation dropped, spaces as hyphens. */
+function slug(heading: string): string {
+  return heading.trim().toLowerCase().replace(/[^\p{L}\p{N}\- _]/gu, '').replaceAll(' ', '-')
+}
+
+/** The lines of a document outside its code fences, with their 1-based line numbers. */
+function prose(markdown: string): Array<{ readonly line: number; readonly text: string }> {
+  const lines: Array<{ readonly line: number; readonly text: string }> = []
+  let inFence = false
+
+  markdown.split('\n').forEach((text, index) => {
+    if (/^ *```/.test(text)) {
+      inFence = !inFence
+      return
+    }
+    if (!inFence) lines.push({ line: index + 1, text })
+  })
+
+  return lines
+}
+
+/** The anchors a document's headings give, numbered as GitHub numbers repeats. */
+function anchors(markdown: string): Set<string> {
+  const seen = new Map<string, number>()
+  const result = new Set<string>()
+
+  for (const { text } of prose(markdown)) {
+    const heading = /^#{1,6} (.+)$/.exec(text)
+    if (!heading) continue
+
+    const base = slug(heading[1])
+    const count = seen.get(base) ?? 0
+    seen.set(base, count + 1)
+    result.add(count === 0 ? base : `${base}-${count}`)
+  }
+
+  return result
+}
+
+/**
+ * Every relative link names a file that exists, and an anchor names one of
+ * its headings; every file in docs/ is linked from the README; and no file in
+ * docs/ holds more than MAX_DOC_LINES lines.
+ */
+function checkLinks(): number {
+  const failures: string[] = []
+  const anchorCache = new Map<string, Set<string>>()
+  const anchorsOf = (file: string) => {
+    if (!anchorCache.has(file)) anchorCache.set(file, anchors(readFileSync(join(repoRoot, file), 'utf8')))
+    return anchorCache.get(file)!
+  }
+  const linkedFromReadme = new Set<string>()
+
+  for (const document of documents) {
+    const markdown = readFileSync(join(repoRoot, document), 'utf8')
+
+    for (const { line, text } of prose(markdown)) {
+      // Code spans can hold text that looks like a link.
+      const withoutCode = text.replace(/`[^`]*`/g, '``')
+
+      for (const match of withoutCode.matchAll(/\]\(([^)\s]+)\)/g)) {
+        const target = match[1]
+        if (/^[a-z]+:/.test(target)) continue
+
+        const [path, anchor] = target.split('#') as [string, string | undefined]
+        const file = path === '' ? document : relative(repoRoot, resolve(repoRoot, dirname(document), path))
+
+        if (!existsSync(join(repoRoot, file))) {
+          failures.push(`${document}:${line}: ${target} links to ${file}, which does not exist.`)
+          continue
+        }
+        if (document === 'README.md') linkedFromReadme.add(file)
+        if (anchor !== undefined && !(file.endsWith('.md') && anchorsOf(file).has(anchor))) {
+          failures.push(`${document}:${line}: ${target} links to #${anchor}, which no heading of ${file} gives.`)
+        }
+      }
+    }
+  }
+
+  for (const document of docs) {
+    const lines = readFileSync(join(repoRoot, document), 'utf8').trimEnd().split('\n').length
+
+    if (!linkedFromReadme.has(document)) {
+      failures.push(`${document}: README.md's documentation list does not link to it.`)
+    }
+    if (lines > MAX_DOC_LINES) {
+      failures.push(`${document}: ${lines} lines. A file in docs/ holds one task in at most ${MAX_DOC_LINES}, so split it.`)
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error(failures.join('\n'))
+    return 1
+  }
+
+  console.log(`${documents.length} documents: every link resolves, and every file in docs/ is linked and at most ${MAX_DOC_LINES} lines.`)
+  return 0
+}
+
 async function main(): Promise<number> {
+  if (checkLinks() !== 0) return 1
+
   const fences = documents.flatMap((document) =>
     readFences(document, readFileSync(join(repoRoot, document), 'utf8'))
   )
@@ -226,7 +339,7 @@ async function main(): Promise<number> {
 
   for (const fence of fences) {
     const header = FILE_HEADER.exec(fence.lines[0] ?? '')
-    const fragmentName = fence.document.replace(/\.md$/, '').toLowerCase()
+    const fragmentName = fence.document.replace(/\.md$/, '').toLowerCase().replaceAll('/', '-')
     const file = header ? header[1] : `src/fragments/${fragmentName}-${fence.startLine}.ts`
     const target = join(outDir, file)
 
@@ -276,7 +389,7 @@ async function main(): Promise<number> {
   const diagnostics = `${result.stdout}${result.stderr}`.trim()
 
   if (result.status === 0) {
-    console.log(`${documents.join(', ')}: ${fences.length} TypeScript examples type-check.`)
+    console.log(`${documents.length} documents: ${fences.length} TypeScript examples type-check.`)
     return lintExamples(sourceMaps)
   }
 
@@ -330,7 +443,7 @@ function lintExamples(sourceMaps: ReadonlyMap<string, ReadonlyArray<OutputLine>>
   }
 
   if (diagnostics.length === 0) {
-    console.log(`${documents.join(', ')}: examples follow the package's lint rules.`)
+    console.log(`${documents.length} documents: examples follow the package's lint rules.`)
     return 0
   }
 

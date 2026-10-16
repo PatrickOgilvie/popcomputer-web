@@ -1,8 +1,8 @@
 /* oxlint-disable effecttsgo/async-function -- Better Auth's callbacks and the test database are native Promise contracts. */
 /**
- * A Better Auth application as the README builds one, with the plugins
+ * A Better Auth application as docs/ builds one, with the plugins
  * power users reach for: organizations, two-factor, magic links, an OAuth
- * provider (which tests stand in for), bearer tokens and admin. Its tables are the README's D1 tables
+ * provider (which tests stand in for), bearer tokens and admin. Its tables are docs/auth-tables.md's D1 tables
  * with the plugins' columns, on SQLite through Drizzle, as on D1.
  */
 

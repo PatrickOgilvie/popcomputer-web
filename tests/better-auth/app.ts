@@ -1,6 +1,6 @@
 /**
- * The application the seam tests drive: registered as the README registers
- * one, with each Better Auth flow written the way the README tells an agent
+ * The application the seam tests drive: registered as docs/ registers
+ * one, with each Better Auth flow written the way docs/ tells an agent
  * to write it.
  */
 

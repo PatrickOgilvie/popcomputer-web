@@ -21,8 +21,9 @@ description: Rules and a canonical action for building applications on @popcompu
 
 const PREAMBLE = `These rules are the package's \`AGENTS.md\`. When the project has
 \`node_modules/@popcomputer/web/AGENTS.md\`, read that copy: it matches the
-installed version. For a new application, follow the Quick start in
-\`node_modules/@popcomputer/web/README.md\`.
+installed version, as do the files beside it in
+\`node_modules/@popcomputer/web/docs/\`, one short file per task. For a new
+application, follow \`node_modules/@popcomputer/web/docs/setup.md\`.
 
 A project on an earlier release, or one that imports from \`honertia\`, the
 framework's former package, upgrades first: follow \`UPGRADING.md\`, in

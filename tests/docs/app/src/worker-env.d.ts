@@ -1,4 +1,4 @@
-// The subset of Cloudflare's KVNamespace the README's Bindings type names.
+// The subset of Cloudflare's KVNamespace docs/setup.md's Bindings type names.
 // Applications get the full type from @cloudflare/workers-types or `wrangler types`.
 interface KVNamespace {
   get(key: string): Promise<string | null>

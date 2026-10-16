@@ -23,7 +23,7 @@ import { nullableString, requiredString } from '../src/effect/schema.js'
 import { validateRequest } from '../src/effect/validation.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
-// The README Quick start's application types: a SQLite projects table and the
+// The Quick start's application types (docs/setup.md): a SQLite projects table and the
 // project route binding.
 const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
@@ -149,8 +149,8 @@ describe('signedIn', () => {
   })
 })
 
-describe('the README route test', () => {
-  // Mirrors README.md "Testing": the Quick start app, its project route with
+describe('the documented route test', () => {
+  // Mirrors docs/testing.md: the Quick start app, its project route with
   // route model binding, and a migrated SQLite database owned by the test.
   const createProjectsApp = async () => {
     const sqlite = new Database(':memory:')
@@ -174,7 +174,7 @@ describe('the README route test', () => {
       errors: { component: 'Error' },
     })
 
-    // README.md "Write actions and register routes".
+    // docs/actions.md.
     effectRoutes(app).get('/projects/{project}', action(Effect.gen(function* () {
       const auth = yield* authorize()
       const project = yield* bound('project')

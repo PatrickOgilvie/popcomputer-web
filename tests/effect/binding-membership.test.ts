@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints call app.request, a native Promise contract. */
 /**
  * A membership is a route model: bound by its user's id, within the
- * organization the path names, as the README's change-role example binds it.
+ * organization the path names, as docs/guards.md's change-role example binds it.
  */
 
 import { describe, expect, test } from 'bun:test'

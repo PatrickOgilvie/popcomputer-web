@@ -1,5 +1,5 @@
-// Drizzle tables the README examples refer to as `./schema`. The examples'
-// database is Postgres, as `src/db.ts` in the README creates it.
+// Drizzle tables the documents' examples refer to as `./schema`. The examples'
+// database is Postgres, as `src/db.ts` in docs/setup.md creates it.
 import { sql } from 'drizzle-orm'
 import { check, integer, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
 import { user } from './auth-schema'
@@ -19,7 +19,7 @@ export const tasks = pgTable('tasks', {
   title: text('title').notNull(),
 })
 
-// The README's patterns: stock a CHECK constraint keeps from going negative,
+// The documented patterns: stock a CHECK constraint keeps from going negative,
 // orders with a unique idempotency key, and webhook events seen once.
 export const products = pgTable(
   'products',
@@ -45,10 +45,10 @@ export const webhookEvents = pgTable('webhook_events', {
   orderId: text('order_id').notNull(),
 })
 
-// Better Auth's tables, as the README's src/auth-schema.ts declares them.
+// Better Auth's tables, as docs/auth-tables.md's src/auth-schema.ts declares them.
 export * from './auth-schema'
 
-// The README's memberships pattern: a role per user and organization.
+// docs/guards.md's memberships pattern: a role per user and organization.
 export const organizations = pgTable('organizations', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
@@ -65,7 +65,7 @@ export const memberships = pgTable(
   (table) => [primaryKey({ columns: [table.organizationId, table.userId] })]
 )
 
-// The README's first-visit record: the application's own row for each user.
+// docs/sign-in.md's first-visit record: the application's own row for each user.
 export const profiles = pgTable('profiles', {
   userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
   displayName: text('display_name').notNull(),
