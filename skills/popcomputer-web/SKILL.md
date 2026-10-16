@@ -30,7 +30,14 @@ TypeScript example here and in `docs/` type-checks against the package.
    error page, and declares their types as values. Register it once with
    `declare module '@popcomputer/web' { interface Register { web: typeof web } }`;
    every other type derives from it. Never declare a type the config already
-   declares. Do not add framework middleware or register routes on the Hono
+   declares. Declare the Worker's vars and secrets once, in `src/env.ts`,
+   with `defineEnv` from `@popcomputer/web/env`: `secret(schema, {
+   generate: randomSecret })` for a secret the app can make itself,
+   `secret(schema)` for one someone sets, `variable(schema)` for a var, `{
+   optional: true }` for one the Worker runs without. Type the bindings as
+   `EnvBindings<typeof env>` and the other bindings beside it, and pass it
+   as `setupWeb`'s `env`, which checks each isolate's bindings before it
+   serves. Do not add framework middleware or register routes on the Hono
    app by hand.
 2. **Every handler is an action.** Wrap an `Effect.gen` in `action(...)` and
    register it on the `routes` that `setupWeb` returns, or that
@@ -238,6 +245,8 @@ responses, pages, the database, services and errors;
 Better Auth integration; `@popcomputer/web/cache` for the KV cache;
 `@popcomputer/web/drizzle` for `rowOf`; `@popcomputer/web/endpoint` for
 `endpoint`, `call` and `openApi`, on the server and in clients alike;
+`@popcomputer/web/env` for `defineEnv`, `secret`, `variable` and
+`checkEnv`, in the Worker and in scripts alike;
 `@popcomputer/web/lint` for `webLint`, in `oxlint.config.ts`;
 `@popcomputer/web/react` for page component types; `@popcomputer/web/paths`
 for `href`, in React and actions alike; `@popcomputer/web/testing` in tests.

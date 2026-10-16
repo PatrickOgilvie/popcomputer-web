@@ -258,6 +258,17 @@ const runJobs = new WeakMap<Request, RunJob>()
 const appsWithRunner = new WeakSet<object>()
 
 /**
+ * Ends `run`'s job with a failure the framework's middleware found before
+ * the job's route, such as bindings the env declaration refuses, so `run`
+ * rejects with it rather than with the error page's status.
+ *
+ * @internal
+ */
+export function failRun(request: Request, error: unknown): void {
+  runJobs.get(request)?.done(Exit.fail(error))
+}
+
+/**
  * An action a route with `Services` can run, under layers that need the
  * route models `Needs`.
  */

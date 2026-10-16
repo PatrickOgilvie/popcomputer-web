@@ -3,7 +3,7 @@
 import { createMiddleware } from 'hono/factory'
 import type { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
-import type { Config, Layer, Schema as S } from 'effect'
+import { Effect, type Config, type Layer, type Schema as S } from 'effect'
 import { web } from './middleware.js'
 import { activeSignInLimits, type RateLimiterName, type SignInLimitsConfig } from './effect/sign-in-limits.js'
 import { originRefusal, securityHeaders, type SecurityHeadersConfig, type VerifyOriginConfig } from './security.js'
@@ -22,9 +22,11 @@ import type {
 } from './effect/services.js'
 import type { DefaultPublicUser } from './effect/auth.js'
 import type { WebDeclaration, WebTypes } from './effect/register.js'
+import { checkEnv, EnvInvalid, type EnvDeclaration } from './env.js'
 import {
   EffectRouteBuilder,
   declareAppBindings,
+  failRun,
   type BaseServices,
   type CoreServices,
 } from './effect/routing.js'
@@ -137,6 +139,17 @@ interface WebSetupOptions<E extends Env> extends WebConfig {
    * page cache off for the whole app.
    */
   pageCache?: boolean
+
+  /**
+   * The Worker's vars and secrets, as `defineEnv` from
+   * `@popcomputer/web/env` declares them. Each isolate checks its bindings
+   * against it on its first request, Cron run or queue batch, before the
+   * database and auth clients are made, and logs each failure once: a
+   * missing or invalid value fails every request with `EnvInvalid`, naming
+   * each one (outside development only that the server failed), and
+   * `routes.scheduled`, `routes.queue` and `routes.run` reject with it.
+   */
+  env?: EnvDeclaration
 }
 
 /** The application's own services, which `web.services(...)` adds to every route. */
@@ -406,6 +419,33 @@ export function setupWeb<
   }
 }
 
+/** Each bindings object's check, so an isolate checks its bindings once. */
+const checkedBindings = new WeakMap<object, EnvInvalid | null>()
+
+/**
+ * The failure for bindings the env declaration refuses, checked once per
+ * bindings object. Each different failure is logged once, naming the vars
+ * and secrets, since a production error page and its log line name none;
+ * `logged` holds the ones this application has logged.
+ */
+function checkBindings(env: EnvDeclaration, bindings: unknown, logged: Set<string>): EnvInvalid | undefined {
+  const values = typeof bindings === 'object' && bindings !== null ? bindings : {}
+  const known = checkedBindings.get(values)
+
+  if (known !== undefined) return known ?? undefined
+
+  const problems = checkEnv(env, values)
+  const result = problems.length === 0 ? null : EnvInvalid.of(problems)
+
+  checkedBindings.set(values, result)
+  if (result !== null && !logged.has(result.message)) {
+    logged.add(result.message)
+    Effect.runSync(Effect.logError(result.message))
+  }
+
+  return result ?? undefined
+}
+
 /** Where `web.services(...)` puts the application's services for the bridge to read on each request. */
 interface ServiceSlots<E extends Env> {
   app?: Layer.Layer<never, Config.ConfigError>
@@ -433,6 +473,8 @@ function createSetupMiddleware<
     version: config.version,
     render: config.render,
   }
+  // The env failures this application has logged, so an isolate logs each once.
+  const loggedEnvFailures = new Set<string>()
 
   // Middleware to wire db and auth into the typed request context
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
@@ -450,6 +492,15 @@ function createSetupMiddleware<
     }
 
     try {
+      if (config.env !== undefined) {
+        const invalid = checkBindings(config.env, c.env, loggedEnvFailures)
+
+        if (invalid !== undefined) {
+          failRun(c.req.raw, invalid)
+          throw invalid
+        }
+      }
+
       // Set up database first (auth may depend on it). A test request may
       // bring its own database (testEnv's `database`).
       const testDatabase = readTestDatabase(c.env)

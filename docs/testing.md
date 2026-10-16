@@ -49,7 +49,9 @@ describe('GET /projects/{project}', () => {
 
 `testBindings` is the application's test configuration: here, the URL of a
 migrated test database with `project-1` owned by `user-1`, an auth secret, a
-KV namespace and `testRateLimiter()` as the sign-in limiter. An `X-Inertia` request returns the page object as JSON, so tests
+KV namespace and `testRateLimiter()` as the sign-in limiter. It holds every
+var and secret `src/env.ts` requires, since `setupWeb` checks them as it does
+in production. An `X-Inertia` request returns the page object as JSON, so tests
 assert on the component and props rather than HTML.
 
 An action is an Effect, so a test can also run it directly and provide the

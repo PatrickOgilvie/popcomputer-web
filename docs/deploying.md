@@ -12,6 +12,9 @@ What the framework does around a deploy:
 - The sign-in limiter is a Rate Limiting binding declared in
   `wrangler.jsonc`, as [Limiting password guessing](auth.md#limiting-password-guessing)
   shows.
+- Each isolate checks the Worker's vars and secrets against `src/env.ts`
+  before it serves, and a script checks them before a deploy with
+  `checkEnv`, as [Vars and secrets](env.md) shows.
 
 ## Version values
 

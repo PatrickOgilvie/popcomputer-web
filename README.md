@@ -40,6 +40,7 @@ Setting up:
 
 - [Installation](docs/installation.md): the demo, the packages, `tsconfig.json`, Oxlint and the supported versions
 - [Quick start](docs/setup.md): the bindings, `setupWeb` and its registration, the database, the Worker's entry
+- [Vars and secrets](docs/env.md): `defineEnv`, the check when an isolate starts, and `checkEnv` for scripts
 - [Deploying](docs/deploying.md): version values, and what the framework does around a deploy
 
 Building:

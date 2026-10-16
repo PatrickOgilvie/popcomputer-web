@@ -8,17 +8,23 @@ the signed-in user, route models, pages, shared props and flash data.
 
 ```ts
 // src/env.ts
-export type Bindings = {
-  DATABASE_URL: string
-  BETTER_AUTH_SECRET: string
-  PAYMENT_WEBHOOK_SECRET: string
-  TIME_ZONE?: string
-  KV: KVNamespace
-  SIGN_IN_LIMITER: RateLimit
-}
+import { Schema as S } from 'effect'
+import { defineEnv, randomSecret, secret, variable, type EnvBindings } from '@popcomputer/web/env'
+
+export const env = defineEnv({
+  DATABASE_URL: secret(),
+  BETTER_AUTH_SECRET: secret(S.String.check(S.isMinLength(32)), { generate: randomSecret }),
+  PAYMENT_WEBHOOK_SECRET: secret(S.String.check(S.isStartingWith('whsec_'))),
+  TIME_ZONE: variable(S.String, { optional: true }),
+})
+
+export type Bindings = EnvBindings<typeof env> & { KV: KVNamespace; SIGN_IN_LIMITER: RateLimit }
 
 export type Env = { Bindings: Bindings }
 ```
+
+The vars and secrets are declared once, and checked before an isolate
+serves: [Vars and secrets](env.md) shows how.
 
 ## 2. Describe the pages
 
@@ -41,7 +47,7 @@ import { tableSchema } from '@popcomputer/web/schema'
 import { createAuth } from './auth'
 import { createDb } from './db'
 import manifest from '../dist/manifest.json'
-import type { Env } from './env'
+import { env, type Env } from './env'
 import { pages } from './pages'
 import { paths } from './paths'
 import * as schema from './schema'
@@ -75,6 +81,7 @@ export const web = setupWeb(new Hono<Env>(), {
   shared: S.Struct({ unreadCount: S.Number }),
   flash: S.Struct({ success: S.String }),
   errors: { component: 'Error' },
+  env,
 })
 
 declare module '@popcomputer/web' {
@@ -93,6 +100,7 @@ application reads its types from:
 | Declared in `setupWeb` | Types |
 | --- | --- |
 | `new Hono<Env>()` | `BindingsService`, Effect `Config`, `testEnv`'s bindings |
+| `env` | the vars and secrets in `Bindings`, through `EnvBindings`, checked when an isolate starts |
 | `database` | `DatabaseService` and the `db` in `dbQuery`, `dbMutation`, `dbBatch` |
 | `schema`, `bindings` | `bound('project')`, its keys and the model's row type |
 | `auth.client` | `AuthService`, and the endpoints `betterAuthRedirect` and `betterAuthCall` call |

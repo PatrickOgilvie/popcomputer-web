@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `@popcomputer/web/env` declares the Worker's vars and secrets once: `defineEnv({ NAME: secret(schema, { generate }), OTHER: variable(schema, { optional: true }) })` in `src/env.ts`. `EnvBindings<typeof env>` types the bindings from it, so `c.env.NAME` and `config.string('NAME')` read the declared names. Each schema decodes from the string the Worker receives; one that does not, such as `S.Number`, is a type error. `randomSecret` makes a secret's value when nobody has to choose one, such as a signing key.
+- `setupWeb`'s `env` checks each isolate's bindings against the declaration on its first request, Cron run or queue batch, before the database and auth clients are made, and again only for bindings it hasn't checked. A missing or invalid var or secret fails every request with `EnvInvalid` (code `WEB_CFG_306_ENV_INVALID`), naming each one and never a value; outside development the error page says only that the server failed, so the isolate logs each failure once, through Effect's logger, naming the problems. `routes.scheduled` and `routes.run` reject with it, and `routes.queue` leaves each message to retry. A test's bindings go through the same check.
+- `checkEnv(env, values)` lists what is missing or invalid, without the values, for a script that runs outside the Worker, such as a check of `.dev.vars` or a deploy; `describeEnvProblem` says each in a sentence. The entrypoint imports only `effect`. `docs/env.md` shows both, and the Quick start declares its bindings this way.
+
 ### Changed
 
 - The README's sections move to `docs/`, one short file per task, which the package ships: `node_modules/@popcomputer/web/docs/` matches the installed version, as `AGENTS.md` does. An agent reads the file a task needs instead of the whole README, whose tables a fetch tool that summarises it loses. `docs/which-api.md` names the API for each task and the file that explains it. The README keeps the overview and links to every file. The text moves as written, and no rule changes. `AGENTS.md`, the skill and `UPGRADING.md` point at `docs/`.
+- The documentation check type-checks a `// scripts/<path>.ts` fence as a script beside the application.
 - The documentation check type-checks and lints the examples in `docs/` too. It fails on a relative link or `#anchor` that names no file or heading, on a file in `docs/` the README does not link to, and on one longer than 250 lines.
 - The README's installation asks for Node.js 22 or later, better 24, as the demo and web.popcomputer.com's setup prompt do: Wrangler needs 22, and portless is built for 24. It said 24.
 

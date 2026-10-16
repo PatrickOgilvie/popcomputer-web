@@ -75,6 +75,8 @@ and the lint rules name it where an action reaches for something else.
 | Task | Use | See |
 | --- | --- | --- |
 | Provide a service | `web.services({ app, request })`, after registering `web` | [Application services](services.md) |
+| Declare the Worker's vars and secrets | `defineEnv` with `secret(schema, { generate })` and `variable(schema)`, passed as `setupWeb`'s `env` | [Vars and secrets](env.md) |
+| Check vars and secrets in a script, before a deploy | `checkEnv(env, values)` | [Vars and secrets](env.md#checking-them-before-a-deploy) |
 | Read a var or a secret | `config.string('NAME')`, `config.redacted('KEY')` | [Application services](services.md) |
 | Work after the response | `background('name', effect)` | [Work after the response](background.md#work-after-the-response) |
 | Run a Cron Trigger or a Queue consumer | `routes.scheduled(job)`, `routes.queue(Schema, handle)` | [Scheduled and queued work](background.md#scheduled-and-queued-work) |

@@ -9,8 +9,9 @@
  * and only a check against `dist` sees that. The fences of every document are
  * assembled into one small application:
  *
- * - A fence whose first line is `// src/<path>.ts` becomes that file, exactly
- *   as written. It must import everything it uses.
+ * - A fence whose first line is `// src/<path>.ts`, or `// scripts/<path>.ts`
+ *   for a script beside the application, becomes that file, exactly as
+ *   written. It must import everything it uses.
  * - Any other fence is a fragment. It gets a one-line prelude importing every
  *   entrypoint's public values, common Effect modules, the Quick start's `app` and the
  *   stubs in `app/src/doc-stubs.ts`, minus names the fragment declares or
@@ -55,7 +56,7 @@ interface OutputLine {
   readonly source?: { readonly document: string; readonly line: number }
 }
 
-const FILE_HEADER = /^\/\/ (src\/[\w./-]+\.tsx?)$/
+const FILE_HEADER = /^\/\/ ((?:src|scripts)\/[\w./-]+\.tsx?)$/
 
 /** Package entrypoints and the built module each one serves, without extension. */
 const ENTRYPOINTS: Readonly<Record<string, string>> = {
@@ -68,6 +69,7 @@ const ENTRYPOINTS: Readonly<Record<string, string>> = {
   '@popcomputer/web/react': 'react',
   '@popcomputer/web/paths': 'paths',
   '@popcomputer/web/endpoint': 'endpoint',
+  '@popcomputer/web/env': 'env',
 }
 const dist = (module: string, extension: '.js' | '.d.ts') => join(repoRoot, 'dist', `${module}${extension}`)
 const TS_LANGS = new Set(['ts', 'tsx', 'typescript'])
@@ -374,7 +376,7 @@ async function main(): Promise<number> {
             Object.entries(ENTRYPOINTS).map(([entrypoint, module]) => [entrypoint, [dist(module, '.d.ts')]])
           ),
         },
-        include: ['src/**/*'],
+        include: ['src/**/*', 'scripts/**/*'],
         exclude: [],
       },
       null,

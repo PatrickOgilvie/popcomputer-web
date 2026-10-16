@@ -13,7 +13,7 @@ TypeScript give up on the types that later errors are about.
 | A registration or `action(...)`, `Effect<..., unknown, unknown>` or `missingServices: "unnamed service"` | An earlier type error inside the action made its type unknown | Fix the first error inside the action |
 | `render(...)`, props not assignable | The page's name or props differ from `src/pages.ts` | Change the props, or the page's schema |
 | A path literal, `Not one of setupWeb's paths`, with `declaredPaths` | The path is not declared | Declare it in `src/paths.ts` and pass `paths.x` |
-| `bound('...')`, `config.string('...')`, a key not assignable | A misspelled binding, or a var the bindings type does not declare | Use a name the error lists, or declare the var in `src/env.ts` |
+| `bound('...')`, `config.string('...')`, a key not assignable | A misspelled binding, or a var the bindings type does not declare | Use a name the error lists, or declare it in `src/env.ts`'s `defineEnv` |
 | `Effect.catchTag('X', ...)`, `not assignable to parameter of type 'readonly [never, ...never[]]'` | The Effect no longer fails with `X` | Remove the handler |
 | `Effect.catchTags({ X: ... })`, `not assignable to type '{ X: never; }'` | The same, for one of the handlers | Remove that handler |
 | A `catchTag` in a helper written apart from its Effect, `{ readonly _tag: unknown }` not assignable | TypeScript cannot see the errors the helper handles | Write it inside `.pipe(...)`, or use `Effect.catchIf((error) => error instanceof X, ...)` |

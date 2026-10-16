@@ -64,6 +64,7 @@ export const ErrorCodes = {
   CFG_301_AUTH_NOT_CONFIGURED: 'WEB_CFG_301_AUTH_NOT_CONFIGURED',
   CFG_302_SCHEMA_NOT_CONFIGURED: 'WEB_CFG_302_SCHEMA_NOT_CONFIGURED',
   CFG_305_INVALID_CONFIG: 'WEB_CFG_305_INVALID_CONFIG',
+  CFG_306_ENV_INVALID: 'WEB_CFG_306_ENV_INVALID',
 
   // HTTP Errors (HTTP)
   HTTP_400_BAD_REQUEST: 'WEB_HTTP_400_BAD_REQUEST',
@@ -282,6 +283,16 @@ export const ErrorCatalog = {
     category: 'configuration',
     title: 'Invalid Configuration',
     messageTemplate: 'Invalid configuration: {reason}',
+    httpStatus: 500,
+    defaultFixes: [],
+  },
+
+  [ErrorCodes.CFG_306_ENV_INVALID]: {
+    code: ErrorCodes.CFG_306_ENV_INVALID,
+    tag: 'EnvInvalid',
+    category: 'configuration',
+    title: 'Environment Invalid',
+    messageTemplate: "The Worker's vars and secrets do not match the env declaration: {names}.",
     httpStatus: 500,
     defaultFixes: [],
   },
