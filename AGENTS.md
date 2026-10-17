@@ -90,26 +90,42 @@ here, as the demo's does.
    field errors as `errors`; a JSON client gets a `422`. A key that route
    params, query and body provide with different values fails validation.
    Read headers and a raw body (a webhook signature) with `RequestService`.
-6. **Load route models with `{param}` placeholders and `bound('param')`.**
-   Name each model's Drizzle table in `setupWeb`'s `bindings`
-   (`bindings: { project: schema.projects }`); the model is the table's row,
-   checked against its columns. Bind every record a path names, nested ones
-   scoped to their parent, a membership by its user too
+6. **Load route models with `{param}` placeholders and `bound('param')`, and
+   say in each binding who may load its record.** Name each model's Drizzle
+   table in `setupWeb`'s `bindings` with `routeBinding` and one option:
+   `routeBinding(schema.projects, { ownedBy: 'userId' })` for its owner only,
+   a column that references `user.id` (anyone else gets the 404 a missing
+   record gets, and a signed-out visitor is asked to sign in), `{ publicWhen: { visibility: 'public' } }` for
+   anyone when its columns hold those values, `{ public: true }` for
+   anyone, or `{ guarded: true }` when
+   a guard layer decides, such as an organization's membership guard. Never
+   check ownership in the action instead: a page anyone may see binds the
+   table a second time, under its own name and path
+   (`showcase: routeBinding(schema.projects, { publicWhen: { visibility: 'public' } })`).
+   The model is the table's row, checked against its columns. Bind every
+   record a path names, nested ones scoped to their parent with `scope`,
+   whose option then decides, a membership by its user too
    (`/orgs/{organization:slug}/members/{member:userId}` with
-   `bindings: { member: schema.memberships }`), and never read a record's id
+   `member: routeBinding(schema.memberships, { scope: { organization: { foreignKey: 'organizationId' } } })`),
+   and never read a record's id
    from the path to query for it yourself (a plain parameter, such as an
    invitation token, or the id of a record served from the data cache, is
    read with `validateRequest` and looked up like any input);
    to lock a bound record inside `dbTransaction`, read it again by its id with
-   `.for('update')`. On a route that needs a signed-in user, call
+   `.for('update')`. When the action needs the signed-in user, call
    `authorize()` before `bound()`: models load on the first `bound()` call,
-   and a missing row is a 404. A record the user may not
-   see answers `notFound(...)`, so its existence stays private; use
+   and a missing row is a 404. A record the user may not see answers 404,
+   so its existence stays private; use
    `authorize((auth) => rule)` (a 403) for a record the user can see but not
    change. `bound('project')` type-checks only on a route whose path or
    prefix has `{project}`, in an action or in a layer guarding it.
 7. **Authorize with `authorize()` or `authorize((auth) => rule, message)`.** Use
-   `currentUser` when signing in is optional. Guard a group of routes with
+   `currentUser` when signing in is optional. A rule a group of routes shares
+   is a `guard(...)` provided to it, `routes.provide(guard(effect))`; a
+   membership guard finds the visitor's membership,
+   `guard(CurrentMember, effect)`, and each action states the role or
+   permission it needs, `yield* can('members.role')`, as `docs/guards.md`
+   shows. Guard a group of routes from signed-out visitors with
    `routes.provide(RequireAuthLayer)`, which sends a signed-out visitor to
    `auth.signInPath`, or `routes.provide(RequireGuestLayer)`, which sends a
    signed-in one to `auth.homePath`. Validate a sign-in's password with
@@ -246,16 +262,7 @@ for `href`, in React and actions alike; `@popcomputer/web/testing` in tests.
 // src/actions/projects/update.ts
 import { eq } from 'drizzle-orm'
 import { Effect, Schema as S } from 'effect'
-import {
-  action,
-  authorize,
-  bound,
-  dbMutation,
-  flash,
-  notFound,
-  redirect,
-  validateRequest,
-} from '@popcomputer/web/effect'
+import { action, bound, dbMutation, flash, redirect, validateRequest } from '@popcomputer/web/effect'
 import { nullableString, requiredString } from '@popcomputer/web/schema'
 import { paths } from '../../paths'
 import { projects } from '../../schema'
@@ -267,11 +274,8 @@ const UpdateProject = S.Struct({
 
 export const updateProject = action(
   Effect.gen(function* () {
-    const auth = yield* authorize()
+    // Its owner's only: the binding is ownedBy 'userId'.
     const project = yield* bound('project')
-
-    if (project.userId !== auth.user.id) return yield* notFound('Project')
-
     const input = yield* validateRequest(UpdateProject)
 
     yield* dbMutation((db) =>

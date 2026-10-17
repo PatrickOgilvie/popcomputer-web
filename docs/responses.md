@@ -73,8 +73,12 @@ Serve an upload back with `file(bytes, { contentType, filename })`: the
 `filename` makes it a download, and `file` always sends
 `X-Content-Type-Options: nosniff`, so the browser keeps to the declared type,
 and shows an HTML, SVG or XML body without a file name only under
-`Content-Security-Policy: sandbox`. Check who may read the file before
-serving it, as for any record.
+`Content-Security-Policy: sandbox`. A `contentType` that is not one media
+type, such as `image/png;x=,text/html`, which a browser reads by its last
+type, is sent as `application/octet-stream`; `upload()` refuses such a file,
+and keeps only its media type, so store `file.type` as it decodes. Name the
+stored object with a key the server makes, never the upload's file name, and
+check who may read the file before serving it, as for any record.
 
 ## Requests from other sites, and security headers
 

@@ -1,7 +1,7 @@
 // Drizzle tables the documents' examples refer to as `./schema`. The examples'
 // database is Postgres, as `src/db.ts` in docs/setup.md creates it.
 import { sql } from 'drizzle-orm'
-import { check, integer, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
+import { boolean, check, integer, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
 import { user } from './auth-schema'
 
 export const projects = pgTable('projects', {
@@ -9,7 +9,9 @@ export const projects = pgTable('projects', {
   name: text('name').notNull(),
   slug: text('slug').notNull(),
   description: text('description'),
-  userId: text('user_id').notNull(),
+  userId: text('user_id').notNull().references(() => user.id),
+  isPublic: boolean('is_public').notNull().default(false),
+  archivedAt: timestamp('archived_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
 

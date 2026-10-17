@@ -83,7 +83,6 @@ import {
   bound,
   dbMutation,
   dbQuery,
-  notFound,
   responseHeader,
 } from '@popcomputer/web/effect'
 import { href } from '@popcomputer/web/paths'
@@ -124,21 +123,12 @@ export const createProject = action(endpoints.createProject, ({ auth, body }) =>
   })
 )
 
-export const showProject = action(endpoints.showProject, ({ auth }) =>
+// The binding is ownedBy 'userId': another member's project is a 404.
+export const showProject = action(endpoints.showProject, () => bound('project'))
+
+export const deleteProject = action(endpoints.deleteProject, () =>
   Effect.gen(function* () {
     const project = yield* bound('project')
-
-    if (project.userId !== auth.user.id) return yield* notFound('Project')
-
-    return project
-  })
-)
-
-export const deleteProject = action(endpoints.deleteProject, ({ auth }) =>
-  Effect.gen(function* () {
-    const project = yield* bound('project')
-
-    if (project.userId !== auth.user.id) return yield* notFound('Project')
 
     yield* dbMutation((db) => db.delete(projects).where(eq(projects.id, project.id)))
   })

@@ -21,8 +21,9 @@ other, typed from the registered client. Where they meet the application:
   page instead: `.pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired')))`.
 - Organizations: the plugin's `member` table is the membership a guard reads,
   as [Roles belong to memberships](guards.md#roles-belong-to-memberships-read-by-a-guard)
-  shows, with the organization bound by its route:
-  `bindings: { organization: schema.organization }`. Check a role in the
+  shows, with the organization bound by its route, its binding saying the
+  guard decides: `organization: routeBinding(schema.organization, { guarded: true })`.
+  Check a role in the
   guard or the action before calling the plugin's endpoint, so a member
   without it gets a 403: the plugin's own refusal fails as a rejection does,
   sending the form back with its message.

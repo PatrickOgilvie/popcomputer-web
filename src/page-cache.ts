@@ -110,10 +110,12 @@ export interface PageCacheOptions {
  * cached. A no-op outside the page cache.
  */
 export function markPageDynamic<E extends Env>(c: Context<E>): void {
-  const state = openWebContext(c).pageCache
+  const context = openWebContext(c)
 
-  if (state) {
-    state.dynamic = true
+  context.readRequestState = true
+
+  if (context.pageCache) {
+    context.pageCache.dynamic = true
   }
 }
 

@@ -59,6 +59,19 @@ export interface VariableDeclarator extends AstNode {
   readonly init: AstNode | null
 }
 
+export interface ObjectExpression extends AstNode {
+  readonly type: 'ObjectExpression'
+  readonly properties: ReadonlyArray<AstNode>
+}
+
+/** A key and value in an object literal; a spread is a `SpreadElement` instead. */
+export interface Property extends AstNode {
+  readonly type: 'Property'
+  readonly key: AstNode
+  readonly value: AstNode
+  readonly computed: boolean
+}
+
 export interface YieldExpression extends AstNode {
   readonly type: 'YieldExpression'
   readonly argument: AstNode | null
@@ -132,6 +145,17 @@ export function propertyName(member: MemberExpression): string | undefined {
   return property.type === 'Literal' && typeof (property as Literal).value === 'string'
     ? String((property as Literal).value)
     : undefined
+}
+
+export const isObject = (node: AstNode | null | undefined): node is ObjectExpression => node?.type === 'ObjectExpression'
+
+/** An object literal property's key, when it is written as a name or a string. */
+export function keyName(property: Property): string | undefined {
+  if (!property.computed && isIdentifier(property.key)) return property.key.name
+
+  const key = property.key
+
+  return key.type === 'Literal' && typeof (key as Literal).value === 'string' ? String((key as Literal).value) : undefined
 }
 
 /** The identifier a chain such as `db.select().from(x)` starts from. */
@@ -232,6 +256,9 @@ export class Imports {
 
 /** The framework's entrypoint for actions, routes and the database. */
 export const WEB_EFFECT = new Set(['@popcomputer/web/effect'])
+
+/** The framework's entrypoint for `setupWeb`. */
+export const WEB = new Set(['@popcomputer/web'])
 
 /** Effect's entrypoints a file imports `Effect` from. */
 export const EFFECT = new Set(['effect', 'effect/Effect'])

@@ -176,6 +176,20 @@ describe('file', () => {
     expect(response.headers.get('Content-Security-Policy')).toBeNull()
   })
 
+  test('sends a type that is not one media type as bytes, since a browser reads a list by its last type', async () => {
+    for (const contentType of ['image/png;x=,text/html', 'image/png, text/html', 'text/html\r\nX-Injected: 1', '']) {
+      const response = await Effect.runPromise(file('<script>alert(1)</script>', { contentType }))
+
+      expect({ contentType, sent: response.headers.get('Content-Type') }).toEqual({ contentType, sent: 'application/octet-stream' })
+    }
+  })
+
+  test('shows any XML inline without script, as it may embed a page', async () => {
+    const response = await Effect.runPromise(file('<rss/>', { contentType: 'application/rss+xml' }))
+
+    expect(response.headers.get('Content-Security-Policy')).toBe('sandbox')
+  })
+
   test('shows a type a browser runs script in, such as an SVG, without script', async () => {
     const inline = await Effect.runPromise(file('<svg/>', { contentType: 'image/svg+xml' }))
     const download = await Effect.runPromise(file('<svg/>', { contentType: 'image/svg+xml', filename: 'logo.svg' }))

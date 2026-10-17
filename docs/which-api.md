@@ -19,7 +19,7 @@ and the lint rules name it where an action reaches for something else.
 | Answer a JSON API | an `endpoint` contract, implemented with `action(endpoint, handler)` | [JSON endpoints](endpoints.md) |
 | Answer JSON from a page's action | `json(Schema, value)` or `jsonOrRender('Page', props)` | [JSON responses](json.md#json-responses-declared-by-a-schema) |
 | Answer a failure with a body a client reads | `httpError(status, message, Schema, body)` | [Failures a client reads](json.md#failures-a-client-reads) |
-| Hide a record the visitor may not see | `notFound('Project')` | [Route model binding](route-models.md) |
+| Hide a record the visitor may not see | Its binding's `ownedBy` or `publicWhen`, or `notFound('Project')` in a guard | [Who may load a record](route-models.md#who-may-load-a-record) |
 | Refuse a visitor who can see the record | `authorize((auth) => rule)`, or `forbidden(message)` | [Auth](auth.md) |
 | Serve a file or a download | `file(body, { contentType, filename })` | [Serving an upload back](responses.md#serving-an-upload-back) |
 | Answer a poll that has nothing new | `ifChanged(etag, response)` | [Files, headers and polling](responses.md#files-headers-and-polling) |
@@ -32,8 +32,10 @@ and the lint rules name it where an action reaches for something else.
 | Task | Use | See |
 | --- | --- | --- |
 | Declare a URL, and build links to it | `paths` in `src/paths.ts`, `href(paths.project, params)` | [Actions and routes](actions.md) |
-| Load the record a URL names | `bindings: { project: schema.projects }`, then `bound('project')` | [Route model binding](route-models.md) |
-| Guard a group of routes | `routes.provide(layer)`, such as `RequireAuthLayer` | [A layer guards a group of routes](guards.md#a-layer-guards-a-group-of-routes) |
+| Load the record a URL names | `bindings: { project: routeBinding(schema.projects, { ownedBy: 'userId' }) }`, then `bound('project')` | [Route model binding](route-models.md) |
+| Say who may load it | `ownedBy: 'userId'` for its owner, `publicWhen: { isPublic: true }`, `public: true`, or `guarded: true` when a guard decides | [Who may load a record](route-models.md#who-may-load-a-record) |
+| Guard a group of routes | `routes.provide(guard(effect))`, or `RequireAuthLayer` | [A guard guards a group of routes](guards.md#a-guard-guards-a-group-of-routes) |
+| Check a role or a permission | `yield* can('members.role')` in the action, after a membership `guard(CurrentMember, ...)` | [Roles belong to memberships](guards.md#roles-belong-to-memberships-read-by-a-guard) |
 | Show the same props on every page | `shared` in `setupWeb`, computed by `shareProps(effect)` | [Props every page shows](pages.md#props-every-page-shows) |
 | Declare a page's props | a schema in `src/pages.ts`, typed in React as `WebPage<'Name'>` | [Describe the pages](pages.md#describe-the-pages) |
 | Take a page's fields from a table | `tableSchema(table).mapFields(Struct.pick([...]))` | [Describe the pages](pages.md#describe-the-pages) |

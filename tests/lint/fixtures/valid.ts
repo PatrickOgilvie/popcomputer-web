@@ -1,5 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { Effect, Schema as S } from 'effect'
+import { Hono } from 'hono'
+import { setupWeb } from '@popcomputer/web'
 import {
   action,
   authorize,
@@ -12,6 +14,7 @@ import {
   file,
   json,
   RequestService,
+  routeBinding,
   validateRequest,
 } from '@popcomputer/web/effect'
 import { endpoint } from '@popcomputer/web/endpoint'
@@ -50,3 +53,21 @@ export const pinged = action(ping, ({ body }) => Effect.succeed({ ok: body.name 
 export const reset = (db: { delete(table: unknown): Promise<void> }) => db.delete(tasks)
 
 export const readsConfig = config.redacted('STRIPE_KEY')
+
+// Each binding says who may load its record, or that its parent decides.
+const shared = { team: routeBinding(projects, { guarded: true }) }
+const owned = routeBinding(tasks, { ownedBy: 'userId' })
+
+export const web = setupWeb(new Hono(), {
+  version: '1',
+  render: (page) => JSON.stringify(page),
+  bindings: {
+    project: routeBinding(projects, { ownedBy: 'userId' }),
+    showcase: routeBinding(projects, { publicWhen: { isPublic: true } }),
+    listing: routeBinding(projects, { public: true }),
+    task: routeBinding(tasks, { scope: { project: { foreignKey: 'projectId' } } }),
+    note: { schema: tasks, ownedBy: 'userId' },
+    owned,
+    ...shared,
+  },
+})

@@ -83,4 +83,23 @@ describe('upload types', () => {
   test('reject other types', async () => {
     expect((await decode(new File(['x'], 'page.html', { type: 'text/html;charset=utf-8' })))._tag).toBe('Failure')
   })
+
+  test('reject a type that is a list, which a browser would read by its last type', async () => {
+    const page = Uint8Array.from([...png, ...new TextEncoder().encode('<script>alert(1)</script>')])
+
+    for (const type of ['image/png;x=,text/html', 'image/png, text/html', 'image/png;a="b",text/html']) {
+      expect({ type, decoded: (await decode(new File([page], 'photo.png', { type })))._tag }).toEqual({ type, decoded: 'Failure' })
+    }
+  })
+
+  test('keep only the media type, so what is stored and served back is one type', async () => {
+    const decoded = await decode(new File([png], 'photo.png', { type: 'Image/PNG; x=y' }))
+
+    expect(decoded._tag === 'Success' ? decoded.value.type : decoded._tag).toBe('image/png')
+  })
+
+  test('refuse any XML under image/*, which a browser may run script in', async () => {
+    expect((await decode(new File(['<svg/>'], 'logo.svg', { type: 'image/svg+xml' })))._tag).toBe('Failure')
+    expect((await decode(new File(['<x/>'], 'x.xml', { type: 'image/x-custom+xml' })))._tag).toBe('Failure')
+  })
 })

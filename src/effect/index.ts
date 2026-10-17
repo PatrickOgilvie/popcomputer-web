@@ -6,6 +6,9 @@
  * test seams in `@popcomputer/web/testing`.
  */
 
+// Guards
+export { guard } from './guard.js'
+
 // Services
 export {
   DatabaseService,
@@ -188,6 +191,8 @@ export {
   type BoundKey,
   type BoundRequirements,
   type RouteBindingScope,
+  type RouteBindingAccess,
+  type RouteBindingColumnValues,
   type RouteBindingOptions,
   type RouteBindingDefinition,
   type RouteBindingTable,

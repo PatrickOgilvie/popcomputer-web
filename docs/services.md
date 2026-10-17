@@ -137,11 +137,8 @@ export const TasksLive: Layer.Layer<Tasks> = Layer.succeed(Tasks, Tasks.of({
 }))
 
 export const addTask = action(Effect.gen(function* () {
-  const auth = yield* authorize()
+  // Its owner's only: the binding is ownedBy 'userId'.
   const project = yield* bound('project')
-
-  if (project.userId !== auth.user.id) return yield* notFound('Project')
-
   const input = yield* validateRequest(S.Struct({ title: requiredString }))
   const service = yield* Tasks
 

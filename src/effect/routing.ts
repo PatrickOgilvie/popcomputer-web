@@ -24,6 +24,7 @@ import {
   NotFoundError,
   Redirect,
   RouteConfigurationError,
+  UnauthorizedError,
 } from './errors.js'
 import { openWebContext } from '../request-context.js'
 import { invalidateCacheTags } from '../cache.js'
@@ -50,7 +51,8 @@ import {
   formatRecordTag,
   type RouteCacheOptions,
 } from './response-cache.js'
-import { DatabaseService, RequestService } from './services.js'
+import { AuthUserService, DatabaseService, RequestService } from './services.js'
+import { isDeciding } from './guard.js'
 import type {
   AuthService,
   ExecutionContextService,
@@ -69,6 +71,8 @@ import {
   decodeBoundRow,
   inferParamsSchema,
   assertBindingColumns,
+  assertRouteAccess,
+  isGuardedBinding,
   loadDrizzle,
   type BoundModelError,
   type CompiledRouteBinding,
@@ -402,9 +406,16 @@ interface LoadedModels {
 }
 
 /** The result of loading a route's models. */
+/** A signed-in user's id: Better Auth's are strings, or numbers when it generates serial ids. */
+type UserId = string | number | bigint
+
+const isUserId = (value: unknown): value is UserId =>
+  typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint'
+
 type BindingLoadOutcome =
   | LoadedModels
   | { readonly missing: string }
+  | { readonly signedOut: string }
   | { readonly failure: RouteConfigurationError }
 
 /**
@@ -425,6 +436,9 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
 
   return (
     requestCtx.authUser !== undefined ||
+    // A header, cookie or request state the response depends on, such as an
+    // API key a route's own layer reads, is no part of a shared cache's key.
+    requestCtx.readRequestState === true ||
     c.req.header('Authorization') !== undefined ||
     hasSessionCookie(c.req.header('Cookie'), requestCtx.sessionCookies ?? [])
   )
@@ -811,12 +825,13 @@ export class EffectRouteBuilder<
     c: HonoContext<E>,
     plan: readonly CompiledRouteBinding[],
     db: Database,
+    userId: UserId | undefined,
   ): Promise<BindingLoadOutcome> {
     if (plan.length === 0) {
       return { models: new Map(), recordTags: [] }
     }
 
-    const { eq, and } = await loadDrizzle()
+    const { eq, and, isNull } = await loadDrizzle()
 
     const models = new Map<string, S.Schema.Type<typeof S.Unknown>>()
     const rows = new Map<string, object>()
@@ -839,6 +854,11 @@ export class EffectRouteBuilder<
       type QueryBuilder = {
         where: <Condition>(condition: Condition) => QueryBuilder
         limit: (n: number) => PromiseLike<object[]>
+      }
+
+      // A record only its owner may load is never looked up for anyone else.
+      if (binding.access !== undefined && 'ownedBy' in binding.access && userId === undefined) {
+        return { signedOut: binding.param }
       }
 
       // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
@@ -890,6 +910,24 @@ export class EffectRouteBuilder<
         }
 
         whereCondition = and(...conditions)
+      }
+
+      // Who may load the record narrows the same query, so another user's
+      // record, or one its column keeps private, is missing like any other.
+      if (binding.access !== undefined) {
+        const required: ReadonlyArray<readonly [string, unknown]> = 'ownedBy' in binding.access
+          ? [[binding.access.ownedBy, userId]]
+          : Object.entries(binding.access.publicWhen)
+        const table = binding.table
+
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
+        const columnOf = (key: string) => Object.getOwnPropertyDescriptor(table, key)?.value as Parameters<typeof eq>[0]
+
+        // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
+        whereCondition = and(
+          whereCondition as Parameters<typeof and>[number],
+          ...required.map(([key, value]) => value === null ? isNull(columnOf(key)) : eq(columnOf(key), value))
+        )
       }
 
       // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
@@ -1009,16 +1047,25 @@ export class EffectRouteBuilder<
       // Resolve route model bindings if we have any and schema is configured
       // Route models load on the action's first bound() call, after guards.
 
+      // A guarded binding loads once a guard(...) the route is provided has
+      // read it. The route's records load together, so until then nothing
+      // else may ask for any of them: an action, a layer that reads a record
+      // for breadcrumbs, or a purge.
+      const guarded = modelBindings.map((binding) => binding.param).filter((name) => isGuardedBinding(configuredBindings?.[name]))
+      const decided = new Set<string>()
+      const undecided = (): string | undefined => guarded.find((name) => !decided.has(name))
+
       // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Drizzle adapter awaits native query builders sequentially to enforce parent binding scope before returning a typed outcome.
       const loadModels = async (
         bindingSchema: object,
         parsers: RouteBindingsConfig,
-        db: object
+        db: object,
+        userId: UserId | undefined
       ): Promise<BindingLoadOutcome> => {
         try {
           bindingPlanPromise ??= compileBindingPlan(modelBindings, bindingSchema, parsers)
 
-          return await this.resolveBindings(c, await bindingPlanPromise, db)
+          return await this.resolveBindings(c, await bindingPlanPromise, db, userId)
         } catch (cause) {
           // Misconfigured bindings are typed failures; anything else, such as
           // a failed query, is a defect for the error boundary.
@@ -1031,7 +1078,8 @@ export class EffectRouteBuilder<
       // Models load through the request's DatabaseService, so a database a
       // test provides with testEnv serves bound() as it serves dbQuery.
       const loadAllModels = (
-        database: Option.Option<object>
+        database: Option.Option<object>,
+        userId: UserId | undefined
       ): Effect.Effect<LoadedModels, BoundModelError> =>
         Effect.gen(function* () {
           if (!configuredBindings || modelBindings.length === 0) {
@@ -1045,10 +1093,14 @@ export class EffectRouteBuilder<
           const db = database.value
 
           const outcome = yield* Effect.promise(() =>
-            loadModels(schema ?? {}, configuredBindings, db)
+            loadModels(schema ?? {}, configuredBindings, db, userId)
           )
 
           if ('failure' in outcome) return yield* outcome.failure
+
+          if ('signedOut' in outcome) {
+            return yield* new UnauthorizedError({ message: 'Authentication required' })
+          }
 
           if ('missing' in outcome) {
             return yield* new NotFoundError({ resource: outcome.missing })
@@ -1061,7 +1113,17 @@ export class EffectRouteBuilder<
       const boundModelsLayer = Layer.effectContext(
         Effect.gen(function* () {
           const database = yield* Effect.serviceOption(DatabaseService)
-          const load = yield* Effect.cached(loadAllModels(database))
+          // The signed-in user, whose id a binding only its owner may load is
+          // looked up by, read when the models first load rather than now, so
+          // a layer the route provides, such as an API key's, has given it.
+          // AuthUserService holds the user and the session.
+          const load = yield* Effect.cached(Effect.gen(function* () {
+            const signedIn = yield* Effect.serviceOption(AuthUserService)
+            const user: unknown = Option.isSome(signedIn) ? Reflect.get(signedIn.value, 'user') : undefined
+            const userId: unknown = user instanceof Object ? Reflect.get(user, 'id') : undefined
+
+            return yield* loadAllModels(database, isUserId(userId) ? userId : undefined)
+          }))
 
           const models = BoundModels.of({
             get: (key) => {
@@ -1077,16 +1139,35 @@ export class EffectRouteBuilder<
                 return Effect.fail(RouteConfigurationError.bindingParserNotConfigured(key))
               }
 
-              return Effect.map(load, (loaded) => loaded.models.get(key))
+              return Effect.flatMap(isDeciding, (deciding) => {
+                if (deciding) decided.add(key)
+
+                const unguarded = deciding ? undefined : undecided()
+
+                return unguarded === undefined
+                  ? Effect.map(load, (loaded) => loaded.models.get(key))
+                  : Effect.fail(RouteConfigurationError.guardedWithoutGuard(unguarded))
+              })
             },
           })
 
           // A record the action removed, or never loaded and no longer
           // exists, names no cached page.
+          // Purging the records a route names reads them too, so a guarded
+          // one no guard read purges nothing for a visitor the guard would
+          // have turned away.
+          const unguardedRead = Effect.suspend(() => {
+            const unguarded = undecided()
+
+            return unguarded === undefined ? Effect.void : Effect.fail(RouteConfigurationError.guardedWithoutGuard(unguarded))
+          })
+
           const records = RouteRecords.of({
-            tags: load.pipe(
+            tags: unguardedRead.pipe(
+              Effect.andThen(load),
               Effect.map((loaded) => loaded.recordTags),
-              Effect.catchTag('NotFoundError', () => Effect.succeed([]))
+              Effect.catchTag('NotFoundError', () => Effect.succeed([])),
+              Effect.catchTag('UnauthorizedError', () => Effect.succeed([]))
             ),
           })
 
@@ -1273,6 +1354,14 @@ export class EffectRouteBuilder<
 
     const declared = declaredBindings.get(this.app)
     assertBindingColumns(bindings, configured ?? declared?.bindings, this.bridgeConfig?.schema ?? declared?.schema)
+
+    // A record that depends on who is visiting is someone's own: a shared
+    // cache, which answers before the Worker runs, would hand it to the next.
+    const personal = assertRouteAccess(bindings, configured ?? declared?.bindings)
+
+    if (typeof options?.cache === 'object' && personal.size > 0) {
+      throw RouteConfigurationError.cacheOnPersonalRoute(routePath, [...personal]).atStartup()
+    }
 
     if (
       options?.purges === true &&

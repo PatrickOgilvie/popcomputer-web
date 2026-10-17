@@ -28,9 +28,10 @@ you installed:
 6. [From 0.7 to 1.0](#from-07-to-10)
 7. [Changes no type error points at](#changes-no-type-error-points-at)
 8. [From 1.0 to 1.3](#from-10-to-13)
-9. [Tooling after the upgrade](#tooling-after-the-upgrade)
-10. [Checklist](#checklist)
-11. [A worked example](#a-worked-example)
+9. [From 1.3 to 1.4](#from-13-to-14)
+10. [Tooling after the upgrade](#tooling-after-the-upgrade)
+11. [Checklist](#checklist)
+12. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -49,14 +50,14 @@ you installed:
   | Package | Range | Needed when |
   | --- | --- | --- |
   | `effect` | `^4.0.0` | Always |
-  | `hono` | `^4.10.0` | Always |
-  | `drizzle-orm` | `>=0.30.0 <1.0.0` | You use Drizzle or route model binding |
+  | `hono` | `^4.13.5` | Always |
+  | `drizzle-orm` | `>=0.45.2 <1.0.0` | You use Drizzle or route model binding |
   | `better-auth` | `>=1.7.7 <1.8.0` | You use the Better Auth integration |
   | `miniflare` | `>=4.0.0 <5.0.0` | You test against Cloudflare D1 |
   | `@types/react` | `>=18` | You use the React page types |
 
-  Hono releases before 4.10 fail to type-check the package, and Hono 5 and
-  Drizzle 1.0 are outside the ranges.
+  Each floor is the first release with the security fixes for the parts the
+  package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
 - **Install 1.3.0** with the peers your application uses, removing `honertia`
   if you are on it:
@@ -65,11 +66,11 @@ you installed:
   bun remove honertia                    # if you are on honertia
   bun add @popcomputer/web@^1.3.0 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
-  bun add 'drizzle-orm@>=0.30.0 <1.0.0'  # if you use Drizzle
+  bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
 
-  Add `hono@^4.10.0` only if your Hono is older than 4.10: `bun add` writes
-  the range you give, so it would loosen a tighter one, such as `^4.12.0`.
+  Add `hono@^4.13.5` only if your Hono is older than 4.13.5: `bun add` writes
+  the range you give, so it would loosen a tighter one, such as `^4.13.10`.
   Better Auth's plugin packages, such as `@better-auth/mcp`, move with
   `better-auth` to the same version.
 
@@ -1094,6 +1095,47 @@ What 1.3.0 brings:
   [`docs/which-api.md`](docs/which-api.md) names the file for each task. A
   link to one of the README's old sections finds it under the same heading
   in its file there.
+
+## From 1.3 to 1.4
+
+Your routes answer as before: a binding that names only its table still
+loads any record its path names. What changes is that each binding now says
+who may load its record, beside its table, instead of each action checking.
+Install 1.4.0:
+
+```bash
+bun add @popcomputer/web@^1.4.0
+```
+
+`bun run check` then reports `require-binding-access` on each binding that
+does not say. For each, give the option that does, and delete the check it
+replaces:
+
+- A record only its owner sees: `routeBinding(schema.projects, { ownedBy: 'userId' })`,
+  whose column references the users table, `.references(() => user.id)`;
+  `setupWeb` fails on one that doesn't. Delete the action's `if (project.userId !== auth.user.id) return yield* notFound('Project')`,
+  and a guard layer that did only that. Another user's record is now the
+  404 a missing one is, from the lookup's own query.
+- A record anyone sees when a column says so: `{ publicWhen: { visibility: 'public' } }`,
+  or `{ publicWhen: { isPublic: true } }`.
+  Its owner's pages bind the same table a second time, with `ownedBy`,
+  under another name and path.
+- A record anyone sees: `{ public: true }`.
+- A record a guard layer decides, such as an organization its membership
+  guard checks: `{ guarded: true }`.
+- A record loaded only under its parent: `scope: { project: { foreignKey: 'projectId' } }`,
+  so the parent's option decides.
+
+```diff
+- bindings: { project: schema.projects, task: schema.tasks },
++ bindings: {
++   project: routeBinding(schema.projects, { ownedBy: 'userId' }),
++   task: routeBinding(schema.tasks, { scope: { project: { foreignKey: 'projectId' } } }),
++ },
+```
+
+To move binding by binding, report the rule as a warning until each says:
+`webLint({ 'require-binding-access': 'warn' })`.
 
 ## Tooling after the upgrade
 

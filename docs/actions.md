@@ -23,7 +23,7 @@ export const paths = {
   projects: '/projects',
   project: '/projects/{project}',
   projectName: '/projects/{project}/name',
-  projectBySlug: '/p/{project:slug}',
+  projectBySlug: '/p/{showcase:slug}',
   organizationMembers: '/orgs/{organization:slug}/members',
   organizationMember: '/orgs/{organization:slug}/members/{member:userId}',
   task: '/projects/{project}/tasks/{task}',
@@ -36,21 +36,13 @@ export const paths = {
 ```ts
 // src/actions/projects/show.ts
 import { Effect } from 'effect'
-import {
-  action,
-  authorize,
-  bound,
-  notFound,
-  render,
-} from '@popcomputer/web/effect'
+import { action, bound, render } from '@popcomputer/web/effect'
 
 export const showProject = action(
   Effect.gen(function* () {
-    const auth = yield* authorize()
+    // The binding is ownedBy 'userId': another member's project answers 404,
+    // as a missing one does, so its existence stays private.
     const project = yield* bound('project')
-
-    // Another member's project answers 404, so its existence stays private.
-    if (project.userId !== auth.user.id) return yield* notFound('Project')
 
     return yield* render('Projects/Show', { project })
   })

@@ -85,7 +85,8 @@ export function createAuth(options: CreateAuthOptions) {
     rateLimit: { enabled: true, storage: 'memory' },
     advanced: {
       ...options.advanced,
-      ipAddress: { ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for'], ...options.advanced?.ipAddress },
+      // Cloudflare's header, which a client cannot write; X-Forwarded-For it can.
+      ipAddress: { ipAddressHeaders: ['cf-connecting-ip'], ...options.advanced?.ipAddress },
     },
   })
 }

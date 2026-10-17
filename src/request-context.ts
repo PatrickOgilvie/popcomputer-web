@@ -31,6 +31,12 @@ export interface WebRequestContext<E extends Env = Env> {
   /** loadUser() — present only when the request carries a valid session */
   authUser?: AuthUser
   /**
+   * Set when producing the response read a request header, a cookie or
+   * request state, none of which a shared cache's key holds: a route's
+   * `cache` option then stores nothing.
+   */
+  readRequestState?: boolean
+  /**
    * The services testEnv's layer built for this request, recorded when the
    * request's runtime builds it, so a route gives them over its own layers.
    */

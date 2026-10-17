@@ -621,6 +621,27 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     })
   }
 
+  /** Create an error for a route whose records were asked for before a guard read its guarded one. */
+  static guardedWithoutGuard(binding: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" is guarded: true, but this route's records were asked for before a guard(...) read it, so nothing had decided who may load it.`,
+      hint: `Wrap the layer that decides in guard(...), as guard(CurrentMember, Effect.gen(...)), have it read bound('${binding}'), and provide it to every route whose path names {${binding}}, before any other layer that reads a record.`,
+      binding,
+      code: ErrorCodes.RTE_606_BINDING_ACCESS_INVALID,
+    })
+  }
+
+  /** Create an error for a route that caches a record that depends on who is visiting. */
+  static cacheOnPersonalRoute(path: string, bindings: readonly string[]): RouteConfigurationError {
+    const named = bindings.map((binding) => `"${binding}"`).join(' and ')
+
+    return new RouteConfigurationError({
+      message: `Route '${path}' caches its response, but who may load ${named} depends on the visitor: a shared cache answers before the Worker runs, so it would hand one visitor's record to the next.`,
+      hint: `Remove cache from this route. A page anyone may see binds the table a second time with publicWhen or public: true, under a path of its own, and caches there.`,
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
   /** Create an error for an endpoint registered on routes with a prefix. */
   static endpointUnderPrefix(path: string, prefix: string): RouteConfigurationError {
     return new RouteConfigurationError({
@@ -746,6 +767,66 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
         : `Add the parent's binding to setupWeb's bindings, or remove "${binding}"'s scope.`,
       binding,
       code: ErrorCodes.RTE_603_RELATION_NOT_FOUND,
+    })
+  }
+
+  /** Create an error for a binding that says more than one thing about who may load it. */
+  static bindingAccessConflict(binding: string, given: readonly string[]): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" gives ${given.join(' and ')}: it can say only one of ownedBy, public, publicWhen and guarded.`,
+      hint: `Keep the one that says who may load "${binding}": ownedBy for its owner only, public: true for anyone, publicWhen for anyone when its columns hold the values it gives, or guarded: true when a guard layer decides.`,
+      binding,
+      code: ErrorCodes.RTE_606_BINDING_ACCESS_INVALID,
+    })
+  }
+
+  /**
+   * Create an error for a binding whose owner column does not reference the
+   * users table, so it would compare another table's ids with the user's.
+   */
+  static bindingOwnerNotUser(
+    binding: string,
+    table: string,
+    column: string,
+    users: string,
+    referenced: string | undefined,
+    parent = 'parent'
+  ): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: referenced === undefined
+        ? `Route binding "${binding}" is ownedBy "${column}", which does not reference "${users}": nothing says it holds a user's id.`
+        : `Route binding "${binding}" is ownedBy "${column}", which references "${referenced}", not "${users}": compared with the signed-in user's id, it would match no record.`,
+      hint: referenced === undefined
+        ? `Declare the reference on "${table}", ${column}: text(...).references(() => ${users}.id), and generate a migration.`
+        : `Put "${binding}" under the "${referenced}" row it belongs to: its binding in the path before "{${binding}}", "${binding}" scoped to it with scope: { ${parent}: { foreignKey: '${column}' } }, and the "${parent}" binding saying who may load it (guarded: true when a membership guard decides).`,
+      binding,
+      table,
+      code: ErrorCodes.RTE_607_BINDING_OWNER_NOT_USER,
+    })
+  }
+
+  /**
+   * Create an error for a binding that says anyone may load it, nested under
+   * a parent that says who may.
+   */
+  static publicUnderRestrictedParent(binding: string, parent: string, foreignKeys: readonly string[]): RouteConfigurationError {
+    const foreignKey = foreignKeys.length === 1 ? `'${foreignKeys[0]}'` : `[${foreignKeys.map((key) => `'${key}'`).join(', ')}]`
+
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" says public: true, but loads under "${parent}" here, which says who may load it: anyone may load "${binding}" on a path without "${parent}".`,
+      hint: `Give "${binding}" scope: { ${parent}: { foreignKey: ${foreignKey} } } instead, so it loads only under its ${parent} and the ${parent}'s option decides; bind the table a second time for a page anyone may see.`,
+      binding,
+      code: ErrorCodes.RTE_606_BINDING_ACCESS_INVALID,
+    })
+  }
+
+  /** Create an error for a binding whose publicWhen names no column. */
+  static bindingPublicWhenEmpty(binding: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" gives publicWhen with no column, which would make every record public.`,
+      hint: `Name the column and the value that make a record public, as publicWhen: { visibility: 'public' }, or give public: true if every record is.`,
+      binding,
+      code: ErrorCodes.RTE_606_BINDING_ACCESS_INVALID,
     })
   }
 

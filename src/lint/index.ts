@@ -11,7 +11,8 @@
  *
  * A rule applies where a file uses the framework, with nothing to configure:
  * the action rules to files that import `action`, the database rules inside
- * `dbQuery`, `dbMutation`, `dbTransaction` and `dbBatch`.
+ * `dbQuery`, `dbMutation`, `dbTransaction` and `dbBatch`, the binding rule
+ * to `setupWeb`'s `bindings` and `routeBinding`.
  *
  * @example
  * // oxlint.config.ts
@@ -34,6 +35,7 @@ import {
   preferCheckedConfig,
   requireBackground,
 } from './actions.js'
+import { requireBindingAccess } from './bindings.js'
 import {
   noDatabaseServiceInAction,
   noExternalWorkInTransaction,
@@ -64,6 +66,7 @@ export const rules: Readonly<Record<string, LintRule>> = {
   'no-validation-in-endpoint': noValidationInEndpoint,
   'no-auth-api-in-action': noAuthApiInAction,
   'prefer-checked-config': preferCheckedConfig,
+  'require-binding-access': requireBindingAccess,
 }
 
 /** The plugin Oxlint's `jsPlugins` or ESLint's `plugins` loads. */

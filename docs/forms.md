@@ -152,17 +152,14 @@ that form reads. The action needs nothing of its own; `validateRequest` and
 // src/actions/projects/rename.ts
 import { eq } from 'drizzle-orm'
 import { Effect } from 'effect'
-import { action, authorize, back, bound, dbMutation, flash, notFound, validateRequest } from '@popcomputer/web/effect'
+import { action, back, bound, dbMutation, flash, validateRequest } from '@popcomputer/web/effect'
 import { RenameProject } from '../../forms'
 import { paths } from '../../paths'
 import { projects } from '../../schema'
 
 export const renameProject = action(Effect.gen(function* () {
-  const auth = yield* authorize()
+  // Its owner's only: the binding is ownedBy 'userId'.
   const project = yield* bound('project')
-
-  if (project.userId !== auth.user.id) return yield* notFound('Project')
-
   const input = yield* validateRequest(RenameProject)
 
   yield* dbMutation((db) => db.update(projects).set({ name: input.name }).where(eq(projects.id, project.id)))

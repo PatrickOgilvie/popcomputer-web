@@ -1189,6 +1189,23 @@ export const ACTIVE_CONTENT_TYPES: ReadonlySet<string> = new Set([
   'text/xsl',
 ])
 
+/**
+ * One media type, `type/subtype` and its parameters. A browser reads a
+ * `Content-Type` holding a comma-separated list by its last type, so
+ * `image/png;x=,text/html` is a page to it, however its first type reads.
+ */
+const MEDIA_TYPE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+(?:\s*;\s*[a-z0-9!#$&^_.+-]+=(?:[a-z0-9!#$&^_.+-]+|"[^"\\,]*"))*\s*$/i
+
+/** The media type a header or an upload declares, when it declares exactly one. */
+export const singleMediaType = (type: string): string | undefined => (MEDIA_TYPE.test(type) ? type.trim() : undefined)
+
+/** Whether a browser runs script in a body of this type: the active types, and any XML, which may embed XHTML. */
+export const isActiveContentType = (type: string): boolean => {
+  const named = essence(type)
+
+  return ACTIVE_CONTENT_TYPES.has(named) || named.endsWith('+xml')
+}
+
 const acceptsType = (types: ReadonlyArray<string>, type: string): boolean => {
   const sent = essence(type)
 
@@ -1196,7 +1213,7 @@ const acceptsType = (types: ReadonlyArray<string>, type: string): boolean => {
     const expected = essence(accepted)
 
     return expected.endsWith('/*')
-      ? sent.startsWith(expected.slice(0, -1)) && !ACTIVE_CONTENT_TYPES.has(sent)
+      ? sent.startsWith(expected.slice(0, -1)) && !isActiveContentType(sent)
       : sent === expected
   })
 }
@@ -1232,7 +1249,7 @@ const contentMatches = (type: string, head: string): boolean => {
   const signature = SIGNATURES[essence(type)]
 
   // An active type, such as an SVG, is markup by nature: it is accepted only when named.
-  if (ACTIVE_CONTENT_TYPES.has(essence(type))) return true
+  if (isActiveContentType(type)) return true
 
   if (signature !== undefined) return signature.starts.some(([offset, bytes]) => head.startsWith(bytes, offset))
 
@@ -1251,8 +1268,10 @@ const fileOfItsType = S.File.pipe(
           Effect.flatMap((buffer) => {
             const head = String.fromCharCode(...new Uint8Array(buffer))
 
+            // The file keeps only its type's essence, as `image/png`, so what
+            // is stored and later served is one media type.
             return contentMatches(file.type, head)
-              ? Effect.succeed(file)
+              ? Effect.succeed(new File([file], file.name, { type: essence(file.type) || 'application/octet-stream', lastModified: file.lastModified }))
               : Effect.fail(new SchemaIssue.InvalidValue({ message: `The file is not a ${labelOf(file.type)}` }, file, options))
           })
         ),
@@ -1274,6 +1293,7 @@ const fileOfItsType = S.File.pipe(
 export const upload = (options: UploadOptions = {}) =>
   S.File.check(
     S.makeFilter((file: File) => !isEmptyFileInput(file), { message: 'Choose a file' }),
+    S.makeFilter((file: File) => file.type === '' || singleMediaType(file.type) !== undefined, { message: 'The file must have one media type' }),
     S.makeFilter(
       (file: File) => options.types === undefined || acceptsType(options.types, file.type),
       { message: `The file must be ${(options.types ?? []).join(', ')}` }

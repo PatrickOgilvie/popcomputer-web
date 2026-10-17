@@ -134,9 +134,13 @@ export interface SignInAttempt {
   readonly account: string | undefined
 }
 
-/** The client's address, as Cloudflare reports it (a proxy in front reports X-Forwarded-For). */
+/**
+ * The client's address, as Cloudflare reports it. `X-Forwarded-For` is the
+ * client's to write, so a request without Cloudflare's header shares one
+ * address rather than naming its own.
+ */
 export function clientAddress(headers: Headers): string {
-  return headers.get('cf-connecting-ip') ?? headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  return headers.get('cf-connecting-ip') ?? 'unknown'
 }
 
 /** The account a sign-in names, from its body: the email, or a username, lowercased. */

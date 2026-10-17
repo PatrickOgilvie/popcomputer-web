@@ -55,7 +55,12 @@ turns page caching off for the whole application.
 To cache pages that do read data for a fixed time, set the route's `cache`
 option and enable Workers Cache (`"cache": { "enabled": true }` in Wrangler
 config). The option emits Workers Cache headers and tags. It does not publicly
-cache authenticated, cookie-setting, partial, failed, or mutating responses.
+cache authenticated, cookie-setting, partial, failed, or mutating responses,
+nor one whose producing read a request header, a cookie or request state,
+such as an API key a route's own layer reads: none of them is part of the
+cache's key. That key is the path and query string, not the host, so a
+Worker serving several hostnames shares one cache across them: a page that
+differs by hostname does not set `cache`.
 
 ```ts
 routes.get(paths.pricing, showPricing, {
@@ -97,7 +102,12 @@ options, `purgeCache` and `cache` take only those and record tags, so a
 misspelled table is a type error. `purges` removes cached entries after
 a successful write. `purges: true` purges the records the route's bindings name
 and the table of its last binding, so a write by id purges the page read by
-slug, and the table's tag purges an index that declares it:
+slug, and the table's tag purges an index that declares it. A cached page
+binds its record for anyone, `publicWhen` or `public: true`: registering
+`cache` on a route whose record depends on the visitor, an `ownedBy` or
+`guarded` binding or one under them, fails, since a shared cache would hand
+one visitor's record to the next. Tags name the table, so a write through
+the owner's `{project}` purges the public `{showcase}` page of the same row:
 
 ```ts
 routes

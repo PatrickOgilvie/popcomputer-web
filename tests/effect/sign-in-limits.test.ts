@@ -162,6 +162,25 @@ describe('sign-in limits', () => {
     expect((await viaApi('correct horse')).status).toBe(429)
   })
 
+  test("Better Auth's sign-in route counts however the request spells its path or its body's type", async () => {
+    const { app, env } = await createApp(testRateLimiter({ limit: 100 }))
+    const viaApi = (path: string, type: string, password: string) => testBrowser(app, env).request(`/api/auth${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': type },
+      body: JSON.stringify({ email: 'ada@example.com', password }),
+    })
+
+    expect((await viaApi('/sign-in/email', 'Application/JSON', 'guess-1')).status).toBe(401)
+    expect((await viaApi('/sign-in/email', 'application/json; charset=utf-8', 'guess-2')).status).toBe(401)
+    // Not a sign-in: Better Auth finds no endpoint there.
+    expect((await viaApi('//sign-in/email', 'application/json', 'guess-3')).status).toBe(404)
+    // A body the framework cannot read is refused, so it is never an uncounted guess.
+    expect((await viaApi('/sign-in/email', 'text/plain', 'guess-4')).status).toBe(415)
+    expect((await viaApi('/sign-in/email', 'APPLICATION/JSON', 'guess-5')).status).toBe(401)
+
+    expect((await viaApi('/sign-in/email', 'application/json', 'correct horse')).status).toBe(429)
+  })
+
   test('a sign-in through an identity provider is not counted against the address', async () => {
     const limiter = testRateLimiter({ limit: 1 })
     const { app, env } = await createApp(limiter)

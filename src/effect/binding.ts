@@ -13,7 +13,7 @@ import {
   SchemaTransformation,
 } from 'effect'
 import type { Table } from 'drizzle-orm'
-import { ConfigurationError, NotFoundError, RouteConfigurationError } from './errors.js'
+import { ConfigurationError, NotFoundError, RouteConfigurationError, UnauthorizedError } from './errors.js'
 import { ErrorCodes } from './error-catalog.js'
 import type { Registered } from './register.js'
 import { tableOfSchema, tableSchema } from './table-schema.js'
@@ -45,13 +45,82 @@ export interface RouteBindingScope<Column extends string = string> {
   readonly references?: string | readonly string[]
 }
 
-/** Optional overrides for a parsed route-model binding. */
-export interface RouteBindingOptions<Column extends string = string> {
+/** Where a parsed route-model binding finds its record. */
+interface RouteBindingLookup<Column extends string = string> {
   /** Drizzle schema key when it cannot be derived from the route parameter. */
   readonly table?: string
   /** Parent binding scopes, keyed by the parent binding's name in setupWeb's bindings. */
   readonly scope?: Readonly<Record<string, RouteBindingScope<Column>>>
 }
+
+/**
+ * Who may load a binding's record, declared once beside its table, so no
+ * action decides it. Give one: `ownedBy`, `public`, `publicWhen` or
+ * `guarded`. A binding that gives none loads any record its path names, for
+ * any visitor, and the framework's lint rule asks for one.
+ */
+export type RouteBindingAccess<Column extends string = string, Row = NoRow<Column>> =
+  | {
+      /**
+       * Only the signed-in user whose id this column holds. Another user's
+       * record answers the same 404 as a missing one, and a signed-out
+       * visitor is asked to sign in, before the database is asked. The
+       * column references the users table's `id`, which `setupWeb` checks.
+       */
+      readonly ownedBy: Column
+      readonly public?: never
+      readonly publicWhen?: never
+      readonly guarded?: never
+    }
+  | {
+      /** Anyone, signed in or not, may load any record. */
+      readonly public: true
+      readonly ownedBy?: never
+      readonly publicWhen?: never
+      readonly guarded?: never
+    }
+  | {
+      /**
+       * Anyone may load a record whose columns hold these values, such as
+       * `{ visibility: 'public' }` or `{ isPublic: true }`; any other
+       * answers 404, its owner included.
+       */
+      readonly publicWhen: RouteBindingColumnValues<Column, Row>
+      readonly ownedBy?: never
+      readonly public?: never
+      readonly guarded?: never
+    }
+  | {
+      /**
+       * A guard layer decides, such as a membership check for an
+       * organization: the record loads for anyone, so every route whose
+       * path names it is provided the guard, which answers 404 to a visitor
+       * who may not see it.
+       */
+      readonly guarded: true
+      readonly ownedBy?: never
+      readonly public?: never
+      readonly publicWhen?: never
+    }
+  | { readonly ownedBy?: never; readonly public?: never; readonly publicWhen?: never; readonly guarded?: never }
+
+/**
+ * Options typed by their columns' names alone, as 1.3 typed them, know no
+ * column's type, so they give no `publicWhen` values.
+ */
+type NoRow<Column extends string> = Readonly<Record<Column, never>>
+
+/** Any row, for a definition whose table's types are already checked. */
+type AnyRow = Readonly<Record<string, unknown>>
+
+/** Values for some of a row's columns, each of its column's type. */
+export type RouteBindingColumnValues<Column extends string = string, Row = NoRow<Column>> = {
+  readonly [K in Column]?: K extends keyof Row ? Row[K] : never
+}
+
+/** Optional overrides for a parsed route-model binding, and who may load its record. */
+export type RouteBindingOptions<Column extends string = string, Row = NoRow<Column>> =
+  RouteBindingLookup<Column> & RouteBindingAccess<Column, Row>
 
 /**
  * A Drizzle table whose rows a binding loads. Each row is checked against
@@ -60,8 +129,18 @@ export interface RouteBindingOptions<Column extends string = string> {
 export type RouteBindingTable<Row = unknown> = Table & { readonly $inferSelect: Row }
 
 /** A row parser plus the small amount of metadata inference may need. */
-export interface RouteBindingDefinition<A = unknown> extends RouteBindingOptions {
+export type RouteBindingDefinition<A = unknown> = RouteBindingOptions<string, AnyRow> & {
   readonly schema: S.Codec<A, unknown, never, never> | RouteBindingTable<A>
+}
+
+/** The column a binding's access rule reads, and how. */
+export type CompiledRouteBindingAccess =
+  | { readonly ownedBy: string }
+  | { readonly publicWhen: Readonly<Record<string, unknown>> }
+
+/** The access options a binding gives, by name: a valid binding gives at most one. */
+function accessOptionsOf(definition: RouteBindingAccess<string, AnyRow>): readonly string[] {
+  return (['ownedBy', 'public', 'publicWhen', 'guarded'] as const).filter((key) => definition[key] !== undefined)
 }
 
 /**
@@ -77,22 +156,27 @@ export type RouteBindingConfig =
 export type RouteBindingsConfig = Readonly<Record<string, RouteBindingConfig>>
 
 /**
- * Add explicit metadata to a route-model binding.
+ * A route-model binding: its table, or an Effect Schema, and who may load
+ * its record (`ownedBy`, `public`, `publicWhen` or `guarded`), with the table
+ * name or parent scope when the route parameter cannot say them.
  *
- * Most bindings name their table, or an Effect Schema, directly. Use this
- * only when a table name or nested parent scope is ambiguous.
+ * @example
+ * bindings: {
+ *   project: routeBinding(schema.projects, { ownedBy: 'userId' }),
+ *   showcase: routeBinding(schema.projects, { publicWhen: { visibility: 'public' } }),
+ * }
  */
 export function routeBinding<T extends RouteBindingTable>(
   table: T,
-  options?: RouteBindingOptions<Extract<keyof T['$inferSelect'], string>>
+  options?: RouteBindingOptions<Extract<keyof T['$inferSelect'], string>, T['$inferSelect']>
 ): RouteBindingDefinition<T['$inferSelect']>
 export function routeBinding<A>(
   schema: S.Codec<A, unknown, never, never>,
-  options?: RouteBindingOptions
+  options?: RouteBindingOptions<string, AnyRow>
 ): RouteBindingDefinition<A>
 export function routeBinding<A>(
   schema: S.Codec<A, unknown, never, never> | RouteBindingTable<A>,
-  options: RouteBindingOptions = {}
+  options: RouteBindingOptions<string, AnyRow> = {}
 ): RouteBindingDefinition<A> {
   return { schema, ...options }
 }
@@ -102,6 +186,47 @@ function hasColumn(table: RouteBindingTable, key: string): boolean {
   const column: unknown = Object.getOwnPropertyDescriptor(table, key)?.value
 
   return column instanceof Object && 'columnType' in column
+}
+
+/** A column's inline foreign keys, from `.references(() => ...)`, as Drizzle keeps them. */
+function inlineReferences(table: RouteBindingTable, key: string): ReadonlyArray<{ readonly table: unknown; readonly column: unknown }> {
+  const column: unknown = Object.getOwnPropertyDescriptor(table, key)?.value
+  const symbol = Object.getOwnPropertySymbols(table).find((candidate) => candidate.description?.endsWith('InlineForeignKeys'))
+  const foreignKeys: unknown = symbol === undefined ? undefined : Reflect.get(table, symbol)
+  const found: Array<{ table: unknown; column: unknown }> = []
+
+  if (!Array.isArray(foreignKeys)) return found
+
+  for (const foreignKey of foreignKeys) {
+    const reference: unknown = foreignKey instanceof Object && Reflect.get(foreignKey, 'reference') instanceof Function
+      ? Reflect.apply(Reflect.get(foreignKey, 'reference'), foreignKey, [])
+      : undefined
+
+    if (!(reference instanceof Object)) continue
+
+    const columns: unknown = Reflect.get(reference, 'columns')
+    const foreignColumns: unknown = Reflect.get(reference, 'foreignColumns')
+
+    if (Array.isArray(columns) && Array.isArray(foreignColumns) && columns.length === 1 && columns[0] === column) {
+      found.push({ table: Reflect.get(reference, 'foreignTable'), column: foreignColumns[0] })
+    }
+  }
+
+  return found
+}
+
+/** The table a column references, when it declares one. */
+function referencedTable(table: RouteBindingTable, key: string): RouteBindingTable | undefined {
+  const referenced = inlineReferences(table, key).map((reference) => reference.table).find(isBindingTable)
+
+  return referenced
+}
+
+/** Whether a column references the `id` column of `users`. */
+function referencesId(table: RouteBindingTable, key: string, users: RouteBindingTable): boolean {
+  const id: unknown = Object.getOwnPropertyDescriptor(users, 'id')?.value
+
+  return id !== undefined && inlineReferences(table, key).some((reference) => reference.table === users && reference.column === id)
 }
 
 /** A Drizzle table's SQL name. */
@@ -116,7 +241,7 @@ function tableNameOf(table: RouteBindingTable): string {
  * binding, or a column a table does not have, fails at startup, naming the
  * fix, instead of failing every request to the routes that use it.
  */
-export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: object): void {
+export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: object, users?: object): void {
   const names = Object.keys(bindings)
 
   for (const [name, config] of Object.entries(bindings)) {
@@ -127,6 +252,33 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: obj
     }
 
     const source = bindingTableOf(config) ?? config.schema
+    const access = accessOptionsOf(config)
+
+    if (access.length > 1) throw RouteConfigurationError.bindingAccessConflict(name, access).atStartup()
+    if (config.publicWhen !== undefined && Object.keys(config.publicWhen).length === 0) {
+      throw RouteConfigurationError.bindingPublicWhenEmpty(name).atStartup()
+    }
+
+    for (const key of [config.ownedBy, ...Object.keys(config.publicWhen ?? {})]) {
+      if (key !== undefined && isBindingTable(source) && !hasColumn(source, key)) {
+        throw RouteConfigurationError.bindingColumnNotFound(name, tableNameOf(source), key)
+      }
+    }
+
+    if (config.ownedBy !== undefined && isBindingTable(source) && isBindingTable(users)) {
+      const referenced = referencedTable(source, config.ownedBy)
+
+      if (referenced !== users || !referencesId(source, config.ownedBy, users)) {
+        throw RouteConfigurationError.bindingOwnerNotUser(
+          name,
+          tableNameOf(source),
+          config.ownedBy,
+          tableNameOf(users),
+          referenced === undefined ? undefined : tableNameOf(referenced),
+          names.find((other) => referenced !== undefined && bindingTableOf(bindings[other]) === referenced)
+        ).atStartup()
+      }
+    }
 
     for (const [parent, scope] of Object.entries(config.scope ?? {})) {
       if (parent === name || !Object.hasOwn(bindings, parent)) {
@@ -181,6 +333,8 @@ export interface CompiledRouteBinding {
     readonly param: string
     readonly relation: RelationInfo
   }
+  /** Who may load the record: its owner, or anyone when a column says so. */
+  readonly access?: CompiledRouteBindingAccess
 }
 
 /**
@@ -216,8 +370,11 @@ export function toHonoPath(path: string): string {
   return path.replace(/\{(\w+)(?::\w+)?\}/g, ':$1')
 }
 
-/** Why a route model could not be loaded. */
-export type BoundModelError = NotFoundError | RouteConfigurationError | ConfigurationError
+/**
+ * Why a route model could not be loaded. `UnauthorizedError` is a signed-out
+ * visitor on a binding only its owner may load.
+ */
+export type BoundModelError = NotFoundError | UnauthorizedError | RouteConfigurationError | ConfigurationError
 
 /**
  * Loads a route's models. A route loads all of its `{param}` models the first
@@ -348,6 +505,11 @@ function isBindingDefinition(
   return !isBindingTable(config) && config instanceof Object && 'schema' in config
 }
 
+/** Whether a binding says a guard layer decides who may load its record. */
+export function isGuardedBinding(config: RouteBindingConfig | undefined): boolean {
+  return config !== undefined && isBindingDefinition(config) && config.guarded === true
+}
+
 /** A binding's table or row schema, without its options. */
 function bindingSource(config: RouteBindingConfig): RouteBindingTable | S.Codec<unknown, unknown, never, never> {
   return isBindingDefinition(config) ? config.schema : config
@@ -400,6 +562,9 @@ export async function compileBindingPlan<Schema extends object>(
   configured: RouteBindingsConfig
 ): Promise<readonly CompiledRouteBinding[]> {
   const plan: CompiledRouteBinding[] = []
+  // The bindings on this route that say who may load their record, or load
+  // under one that does.
+  const restricted = new Set<string>()
 
   for (const binding of bindings) {
     const config = configured[binding.param]
@@ -483,6 +648,41 @@ export async function compileBindingPlan<Schema extends object>(
       parent = { param: parentPlan.param, relation }
     }
 
+    const accessOptions = accessOptionsOf(definition)
+
+    if (accessOptions.length > 1) throw RouteConfigurationError.bindingAccessConflict(binding.param, accessOptions)
+
+    if (definition.publicWhen !== undefined && Object.keys(definition.publicWhen).length === 0) {
+      throw RouteConfigurationError.bindingPublicWhenEmpty(binding.param)
+    }
+
+    for (const column of [definition.ownedBy, ...Object.keys(definition.publicWhen ?? {})]) {
+      if (column !== undefined && !isColumnProperty(table, column)) {
+        throw RouteConfigurationError.bindingColumnNotFound(binding.param, tableName, column)
+      }
+    }
+
+    const access: CompiledRouteBindingAccess | undefined = definition.ownedBy !== undefined
+      ? { ownedBy: definition.ownedBy }
+      : definition.publicWhen !== undefined
+        ? { publicWhen: { ...definition.publicWhen } }
+        : undefined
+
+    // A child that says anyone may load it, under a parent that says who may,
+    // is loaded only by the parent's visitors here, and by anyone on a path
+    // without the parent: its scope says what it means.
+    if (definition.public === true && parent !== undefined && restricted.has(parent.param)) {
+      throw RouteConfigurationError.publicUnderRestrictedParent(
+        binding.param,
+        parent.param,
+        parent.relation.columnPairs.map((pair) => pair.foreignKey)
+      )
+    }
+
+    if (access !== undefined || definition.guarded === true || (parent !== undefined && restricted.has(parent.param))) {
+      restricted.add(binding.param)
+    }
+
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
     plan.push({
       param: binding.param,
@@ -493,6 +693,7 @@ export async function compileBindingPlan<Schema extends object>(
       paramSchema: columnTypeToSchema(column.columnType),
       rowSchema: isBindingTable(source) ? tableSchema(source) : source,
       parent,
+      access,
     })
   }
 
@@ -562,6 +763,67 @@ export function assertBindingColumns(
       code: ErrorCodes.RTE_601_TABLE_NOT_FOUND,
     }).atStartup()
   }
+}
+
+/**
+ * Check, when a route is registered, who may load each record its path
+ * names: a binding's `scope` must name a binding before it on the path, and
+ * a binding that says `public: true` must not load under one that says who
+ * may load it, since either would load a record for visitors its parent
+ * turns away. Returns the bindings whose record depends on who is visiting:
+ * `ownedBy` and `guarded` ones, and those that load under them.
+ */
+export function assertRouteAccess(
+  bindings: readonly ParsedBinding[],
+  configured: RouteBindingsConfig | undefined
+): ReadonlySet<string> {
+  const earlier: string[] = []
+  // Bindings that say who may load their record, or load under one that does.
+  const restricted = new Set<string>()
+  // Of those, the ones whose record depends on who is visiting.
+  const personal = new Set<string>()
+
+  for (const binding of bindings) {
+    const config = configured?.[binding.param]
+    const definition = config !== undefined && isBindingDefinition(config) ? config : undefined
+    const named = Object.keys(definition?.scope ?? {})[0]
+
+    if (named !== undefined && !earlier.includes(named)) {
+      throw RouteConfigurationError.scopeNotInRoute(binding.param, named, earlier).atStartup()
+    }
+
+    const parent = named ?? earlier[earlier.length - 1]
+
+    if (definition?.public === true && parent !== undefined && restricted.has(parent)) {
+      const child = bindingTableOf(definition)
+      const parentTable = bindingTableOf(configured?.[parent] ?? definition)
+      const foreignKeys = child === undefined
+        ? []
+        : Object.keys(child).filter((key) => inlineReferences(child, key).some((reference) => reference.table === parentTable))
+
+      throw RouteConfigurationError.publicUnderRestrictedParent(
+        binding.param,
+        parent,
+        foreignKeys.length > 0 ? foreignKeys : [`${parent}Id`]
+      ).atStartup()
+    }
+
+    const says = definition !== undefined &&
+      (definition.ownedBy !== undefined || definition.publicWhen !== undefined || definition.guarded === true)
+
+    if (says || (parent !== undefined && restricted.has(parent))) restricted.add(binding.param)
+
+    if (
+      (definition !== undefined && (definition.ownedBy !== undefined || definition.guarded === true)) ||
+      (parent !== undefined && personal.has(parent))
+    ) {
+      personal.add(binding.param)
+    }
+
+    earlier.push(binding.param)
+  }
+
+  return personal
 }
 
 /**

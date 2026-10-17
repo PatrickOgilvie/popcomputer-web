@@ -26,6 +26,7 @@ import {
   type BetterAuthActionError,
 } from './better-auth-boundary.js'
 import { openWebContext } from '../request-context.js'
+import { tableOfSchema } from './table-schema.js'
 import type { PagePropValue, PageProps } from '../types.js'
 
 
@@ -416,10 +417,37 @@ export function betterAuthSession(
   user: S.Codec<unknown, unknown, never, never>,
   session?: S.Struct<S.Struct.Fields>
 ): S.Struct<S.Struct.Fields> {
-  return S.Struct({
+  const schema = S.Struct({
     user: withAbsentNulls(structFields(user)) ?? user,
     session: session === undefined ? BetterAuthSessionRecord : withAbsentNulls({ ...session.fields, token: SessionToken }),
   })
+  const users = tableOfSchema(user)
+
+  if (users !== undefined) sessionUserTables.set(schema, users)
+
+  return schema
+}
+
+const sessionUserTables = new WeakMap<object, object>()
+
+/**
+ * The table whose rows are the signed-in users: the one `betterAuthSession`
+ * was given with `tableSchema`, else Better Auth's `user` table in the
+ * schema, or `users` when its tables are plural. `ownedBy` columns must
+ * reference its `id`.
+ */
+export function usersTableOf(session: unknown, schema: object | undefined): object | undefined {
+  const given = session instanceof Object ? sessionUserTables.get(session) : undefined
+
+  if (given !== undefined) return given
+
+  for (const key of ['user', 'users']) {
+    const named: unknown = schema === undefined ? undefined : Object.getOwnPropertyDescriptor(schema, key)?.value
+
+    if (named instanceof Object) return named
+  }
+
+  return undefined
 }
 
 /**
@@ -853,8 +881,17 @@ export function betterAuthHandler(
 
     const raw = request.raw()
     const path = yield* Effect.promise(() => handlerPath(auth, raw))
-    // The body, for the endpoints the framework checks; the handler then reads it itself.
-    const body = isPasswordSignIn(path) || writesUser(path) ? yield* Effect.promise(() => bodyOf(raw)) : undefined
+    // The body, for the endpoints the framework checks; the handler then
+    // reads it itself. One the framework cannot read is refused, so Better
+    // Auth never reads a body the checks did not see.
+    const checked = isPasswordSignIn(path) || writesUser(path)
+    const read = checked ? yield* Effect.promise(() => bodyOf(raw)) : undefined
+
+    if (checked && read === undefined) {
+      return yield* new HttpError({ status: 415, message: 'Send this request as JSON or a form.' })
+    }
+
+    const body = read?.body
 
     if (writesUser(path) && body instanceof Object) {
       const refused = inputUserFields(auth).filter((field) => !settable.has(field) && Object.hasOwn(body, field))
@@ -891,21 +928,28 @@ async function handlerPath(auth: BetterAuthInstance, request: Request): Promise<
   const base = context?.baseURL !== undefined && context.baseURL !== ''
     ? new URL(context.baseURL).pathname
     : auth.options?.basePath ?? '/api/auth'
-  const pathname = new URL(request.url).pathname
+  // Repeated and trailing slashes are dropped, as a router that collapses
+  // them would, so `//sign-in/email` is the sign-in its limits apply to.
+  const pathname = new URL(request.url).pathname.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1')
   const prefix = base.replace(/\/$/, '')
 
   return pathname.startsWith(`${prefix}/`) ? pathname.slice(prefix.length) : pathname
 }
 
-/** A JSON or form body, read from a copy, or none. */
-async function bodyOf(request: Request): Promise<unknown> {
-  const type = request.headers.get('content-type') ?? ''
+/**
+ * A JSON or form body, read from a copy, by its media type in any case; none
+ * for any other type, or one that does not parse.
+ */
+async function bodyOf(request: Request): Promise<{ readonly body: unknown } | undefined> {
+  const media = (request.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase()
 
   try {
-    if (type.includes('application/json')) return await request.clone().json()
-    if (type.includes('form')) return Object.fromEntries(await request.clone().formData())
+    if (media === 'application/json' || media.endsWith('+json')) return { body: await request.clone().json() }
+    if (media === 'application/x-www-form-urlencoded' || media === 'multipart/form-data') {
+      return { body: Object.fromEntries(await request.clone().formData()) }
+    }
   } catch {
-    // A body the handler will refuse itself.
+    // A body that does not parse as its type says.
   }
 
   return undefined

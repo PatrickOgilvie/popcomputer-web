@@ -11,12 +11,12 @@ request-to-page workflow without giving up explicit dependencies and typed
 failures.
 
 ```ts
+// Only its owner loads a project: anyone else gets the 404 a missing one gets.
+const bindings = { project: routeBinding(projects, { ownedBy: 'userId' }) }
+
 export const showProject = action(
   Effect.gen(function* () {
-    const auth = yield* authorize()
     const project = yield* bound('project')
-
-    if (project.userId !== auth.user.id) return yield* notFound('Project')
 
     return yield* render('Projects/Show', { project })
   })
@@ -153,7 +153,7 @@ Each lives in the file for its task:
 
 - [Rules live in services; actions decide what a failure means](docs/services.md#rules-live-in-services-actions-decide-what-a-failure-means)
 - [Constraints keep invariants that concurrent requests would break](docs/constraints.md)
-- [A layer guards a group of routes](docs/guards.md#a-layer-guards-a-group-of-routes)
+- [A guard guards a group of routes](docs/guards.md#a-guard-guards-a-group-of-routes)
 - [Roles belong to memberships, read by a guard](docs/guards.md#roles-belong-to-memberships-read-by-a-guard)
 - [Webhooks verify the raw body, then record the event once](docs/webhooks.md)
 - User input in, files out: [filters and uploads](docs/validation.md#user-input-in),

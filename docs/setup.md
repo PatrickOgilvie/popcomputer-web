@@ -37,12 +37,9 @@ page takes its props from it: [Pages and props](pages.md) shows both.
 // src/app.ts
 import { Hono } from 'hono'
 import { Schema as S, Struct } from 'effect'
-import {
-  createTemplate,
-  createVersion,
-  setupWeb,
-} from '@popcomputer/web'
+import { createTemplate, createVersion, setupWeb } from '@popcomputer/web'
 import { betterAuthSession } from '@popcomputer/web/auth'
+import { routeBinding } from '@popcomputer/web/effect'
 import { tableSchema } from '@popcomputer/web/schema'
 import { createAuth } from './auth'
 import { createDb } from './db'
@@ -61,7 +58,13 @@ export const web = setupWeb(new Hono<Env>(), {
   }),
   database: (c) => createDb(c.env.DATABASE_URL),
   schema,
-  bindings: { project: schema.projects, task: schema.tasks, organization: schema.organizations, member: schema.memberships },
+  bindings: {
+    project: routeBinding(schema.projects, { ownedBy: 'userId' }),
+    showcase: routeBinding(schema.projects, { publicWhen: { isPublic: true } }),
+    task: routeBinding(schema.tasks, { scope: { project: { foreignKey: 'projectId' } } }),
+    organization: routeBinding(schema.organizations, { guarded: true }),
+    member: routeBinding(schema.memberships, { scope: { organization: { foreignKey: 'organizationId' } } }),
+  },
   pages,
   paths,
   auth: {
@@ -102,7 +105,7 @@ application reads its types from:
 | `new Hono<Env>()` | `BindingsService`, Effect `Config`, `testEnv`'s bindings |
 | `env` | the vars and secrets in `Bindings`, through `EnvBindings`, checked when an isolate starts |
 | `database` | `DatabaseService` and the `db` in `dbQuery`, `dbMutation`, `dbBatch` |
-| `schema`, `bindings` | `bound('project')`, its keys and the model's row type |
+| `schema`, `bindings` | `bound('project')`, its keys, the model's row type and who may load it |
 | `auth.client` | `AuthService`, and the endpoints `betterAuthRedirect` and `betterAuthCall` call |
 | `auth.session` | `authorize()`, `currentUser`, `AuthUserService`, `signedIn` |
 | `auth.share` | `auth.user` in `SharedProps` and `WebPage` (default: `id`, `name`, `image`) |
@@ -153,9 +156,6 @@ On Cloudflare D1, `createDb` takes the binding instead,
 `provider` is `'sqlite'`. Type the database as `ReturnType<typeof createDb>` or
 Drizzle's `DrizzleD1Database<typeof schema>`: either way `dbTransaction` is a
 type error on D1, which has no interactive transactions.
-
-The configuration is deliberately flat. `setupWeb({ web: { ... } })` would
-repeat the framework boundary without clarifying ownership.
 
 Database-backed auth receives the database as an explicit dependency. The
 following examples are alternative configurations; choose the shape that

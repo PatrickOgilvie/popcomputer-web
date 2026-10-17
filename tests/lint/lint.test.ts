@@ -77,6 +77,10 @@ describe('@popcomputer/web/lint', () => {
     expect(found(lint('invalid-actions.ts'))).toEqual(expected('invalid-actions.ts').sort())
   })
 
+  test('reports each binding that does not say who may load its record', () => {
+    expect(found(lint('invalid-bindings.ts'))).toEqual(expected('invalid-bindings.ts').sort())
+  })
+
   test('accepts the patterns the framework documents', () => {
     expect(lint('valid.ts')).toEqual([])
   })

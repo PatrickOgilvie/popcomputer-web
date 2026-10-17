@@ -123,6 +123,32 @@ describe('signing up, in and out', () => {
     expect((await api('/update-user', { name: 'Ada King' }, member)).status).toBe(200)
   })
 
+  test("the same fields are refused however the request spells its path or its body's type", async () => {
+    const { browser } = setup()
+    const tried: Array<{ readonly path: string; readonly type: string; readonly status: number }> = []
+    const variants: ReadonlyArray<readonly [string, string]> = [
+      ['/sign-up/email', 'Application/JSON'],
+      ['/sign-up/email', 'application/json; charset=utf-8'],
+      ['/sign-up/email', 'text/plain'],
+      ['//sign-up/email', 'application/json'],
+      ['/sign-up//email', 'application/json'],
+      ['/sign-up/email/', 'application/json'],
+    ]
+
+    for (const [index, [path, type]] of variants.entries()) {
+      const res = await browser().request(`/api/auth${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': type, Origin: 'http://localhost' },
+        body: JSON.stringify({ name: 'Eve', email: `eve${index}@example.com`, password: 'correct horse battery', timeZone: 'Mars/Olympus' }),
+      })
+
+      tried.push({ path, type, status: res.status })
+    }
+
+    // Each is refused before Better Auth writes the user, or by Better Auth, which finds no such endpoint.
+    expect(tried.filter((attempt) => attempt.status < 400)).toEqual([])
+  })
+
   test("a wrong password is refused with Better Auth's message on the email field", async () => {
     const { browser } = setup()
     await signUp(browser(), 'ada@example.com')

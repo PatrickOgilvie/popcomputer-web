@@ -29,6 +29,7 @@ import {
 } from '../../src/effect/response-cache.js'
 import { Redirect, ValidationError } from '../../src/effect/errors.js'
 import { render } from '../../src/effect/responses.js'
+import { RequestService } from '../../src/effect/services.js'
 
 const recordingCacheLayer = () => {
   const purges: ResponseCachePurgeInput[] = []
@@ -223,6 +224,24 @@ describe('cache route option', () => {
       expect(warnings).toEqual([])
     } finally {
       console.warn = originalWarn
+    }
+  })
+
+  test("a response that read a request header is never stored, as one an API key in its own header signs in", async () => {
+    const app = createApp()
+    // A route's own sign-in, reading a header no shared cache keys on.
+    const ApiKeyAuth = Layer.effectDiscard(Effect.flatMap(RequestService, (request) => Effect.sync(() => request.header('X-Api-Key'))))
+    const routes = effectRoutes(app)
+
+    routes.provide(ApiKeyAuth).get('/api/me', Effect.succeed(new Response('ada')), { cache: { maxAge: 300 } })
+    routes.get('/greeting', Effect.flatMap(RequestService, (request) =>
+      Effect.sync(() => new Response(request.header('Accept-Language') === 'fr' ? 'bonjour' : 'hello'))
+    ), { cache: { maxAge: 300 } })
+
+    for (const [path, headers] of [['/api/me', { 'X-Api-Key': 'ada-key' }], ['/greeting', { 'Accept-Language': 'fr' }]] as const) {
+      const res = await app.request(path, { headers })
+
+      expect({ path, status: res.status, cacheControl: res.headers.get('Cache-Control') }).toEqual({ path, status: 200, cacheControl: 'no-store' })
     }
   })
 

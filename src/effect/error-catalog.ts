@@ -84,6 +84,8 @@ export const ErrorCodes = {
   RTE_603_RELATION_NOT_FOUND: 'WEB_RTE_603_RELATION_NOT_FOUND',
   RTE_604_BOUND_ROW_INVALID: 'WEB_RTE_604_BOUND_ROW_INVALID',
   RTE_605_BINDING_AMBIGUOUS: 'WEB_RTE_605_BINDING_AMBIGUOUS',
+  RTE_606_BINDING_ACCESS_INVALID: 'WEB_RTE_606_BINDING_ACCESS_INVALID',
+  RTE_607_BINDING_OWNER_NOT_USER: 'WEB_RTE_607_BINDING_OWNER_NOT_USER',
 
   // Service Errors (SVC)
   SVC_700_SERVICE_UNAVAILABLE: 'WEB_SVC_700_SERVICE_UNAVAILABLE',
@@ -432,6 +434,27 @@ export const ErrorCatalog = {
     title: 'Route Binding Ambiguous',
     messageTemplate:
       'Route binding "{binding}" matched more than one row of "{table}".',
+    httpStatus: 500,
+    defaultFixes: [],
+  },
+  [ErrorCodes.RTE_606_BINDING_ACCESS_INVALID]: {
+    code: ErrorCodes.RTE_606_BINDING_ACCESS_INVALID,
+    tag: 'RouteConfigurationError',
+    category: 'routing',
+    title: 'Route Binding Access Invalid',
+    messageTemplate:
+      'Route binding "{binding}" gives more than one of ownedBy, public, publicWhen and guarded, or a publicWhen with no column.',
+    httpStatus: 500,
+    defaultFixes: [],
+  },
+
+  [ErrorCodes.RTE_607_BINDING_OWNER_NOT_USER]: {
+    code: ErrorCodes.RTE_607_BINDING_OWNER_NOT_USER,
+    tag: 'RouteConfigurationError',
+    category: 'routing',
+    title: 'Route Binding Owner Not A User',
+    messageTemplate:
+      'Route binding "{binding}" is ownedBy a column that does not reference the users table.',
     httpStatus: 500,
     defaultFixes: [],
   },

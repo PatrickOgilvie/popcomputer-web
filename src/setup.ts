@@ -8,7 +8,7 @@ import { web } from './middleware.js'
 import { activeSignInLimits, type RateLimiterName, type SignInLimitsConfig } from './effect/sign-in-limits.js'
 import { originRefusal, securityHeaders, type SecurityHeadersConfig, type VerifyOriginConfig } from './security.js'
 import type { WebConfig } from './types.js'
-import { loadUserMiddleware, shareAuthMiddleware } from './effect/auth.js'
+import { loadUserMiddleware, shareAuthMiddleware, usersTableOf } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
 import { readTestDatabase } from './effect/test-env.js'
 import { pageCache, privateByDefault } from './page-cache.js'
@@ -388,7 +388,9 @@ export function setupWeb<
   RoutePath<Paths>
 > {
   assertSetupConfig(config)
-  if (config.bindings !== undefined) assertBindingsConfig(config.bindings, config.schema)
+  if (config.bindings !== undefined) {
+    assertBindingsConfig(config.bindings, config.schema, usersTableOf(config.auth?.session, config.schema))
+  }
 
   // The application's own services, which `web.services(...)` gives after
   // setup; requests read them from here.

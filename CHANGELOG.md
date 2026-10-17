@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Nothing an application on 1.3.0 needs to change at runtime: a binding that names only its table loads as before. The new lint rule, on as an error, reports each such binding; `webLint({ 'require-binding-access': 'warn' })` makes it a warning while you move.
+
+### Added
+
+- A binding says who may load its record, beside its table. `routeBinding(schema.projects, { ownedBy: 'userId' })` loads a record only for the signed-in user whose id the column holds: the lookup's query is scoped by the user, so anyone else gets the 404 a missing record gets, and a signed-out visitor is asked to sign in before the database is asked. `{ publicWhen: { visibility: 'public' } }` loads a record for anyone when its columns hold those values, each typed by its column, `{ public: true }` for anyone, and `{ guarded: true }` says a guard layer decides, such as an organization's membership guard. `RouteBindingAccess` types them. Giving two, or naming a column the table lacks, is a type error, and `setupWeb` rejects it when called (`WEB_RTE_606_BINDING_ACCESS_INVALID`, and the existing column error), as it rejects a `publicWhen` that names no column. An `ownedBy` column must reference the users table's `id`, the table `betterAuthSession` was given or Better Auth's `user`: one that references another table, or none, fails when `setupWeb` is called (`WEB_RTE_607_BINDING_OWNER_NOT_USER`), naming the binding to scope the record to instead, since compared with the user's id it would match no record. A record an organization owns loads under the organization's `guarded: true` binding, scoped to it.
+- Registering a route checks its nested bindings: a binding whose `scope` names a binding the path lacks fails then, rather than on the route's first request, and so does a binding that says `public: true` under a parent that says who may load it, which would load for anyone on a path without the parent. The error names the `scope` to give it instead.
+- A `guarded: true` binding is read by its guard: a route whose records are asked for, by its action, another layer or a `purges: true` that would read them, before a `guard(...)` it is provided has read the guarded one fails with `WEB_RTE_606_BINDING_ACCESS_INVALID`, so a route registered without its membership guard loads and purges nothing for anyone.
+- Registering `cache` on a route whose record depends on the visitor, an `ownedBy` or `guarded` binding or one under them, fails: a shared cache answers before the Worker runs, so it would hand one visitor's record to the next. A page anyone may see binds the table a second time, with `publicWhen` or `public: true`, and caches there.
+- `ownedBy` reads the signed-in user when the route's records load, so the user a layer the route provides gives, such as an API key's, owns records as the session's does, and a numeric id, as Better Auth gives with serial ids, matches its column.
+- `guard(...)` makes the layer that decides whether a visitor may go on: from the Effect that decides, `guard(authorize(({ user }) => user.emailVerified))`; from a service and the Effect that finds it, `guard(CurrentMember, findMembership)`; or from a layer. Only a guard's reads vouch for a `guarded: true` record, so a layer that reads one for breadcrumbs or a log is no guard. `docs/guards.md` shows a membership guard, roles, and permissions named in one table, checked in the action, `yield* can('members.role')`, or for a group, `routes.provide(guard(can('projects.delete')))`.
+- The `require-binding-access` lint rule reports a binding that says none of them: a bare table, an Effect Schema, or `routeBinding` without `ownedBy`, `publicWhen`, `public`, `guarded` or `scope`, under which its parent's option decides.
+
+### Changed
+
+- The documentation's examples say who may load each binding and no longer check ownership in the action. `docs/route-models.md` explains the options, `AGENTS.md`'s rule 6 asks for one, and `docs/guards.md` keeps guards for rules a column cannot state, such as an archived project or an organization's members. `UPGRADING.md` shows the move from 1.3.
+
+### Fixed
+
+- The peer ranges start at the first releases with the security fixes for the parts the package uses: Hono `^4.13.5` (cookie attributes, body parsing) and Drizzle ORM `>=0.45.2` (quoting in `sql.identifier()`). They allowed Hono 4.10 and Drizzle 0.30.
+- `setupWeb`'s sign-in limits take the client's address only from Cloudflare's `CF-Connecting-IP`, which a client cannot write, and no longer fall back to `X-Forwarded-For`, which it can; `docs/auth.md`'s Better Auth configuration reads only `cf-connecting-ip` too.
+- `upload()` refuses a file whose type is a list, such as `image/png;x=,text/html`, and keeps only a file's media type, `image/png`, so what an application stores is one type. `file()` sends a `Content-Type` that is not one media type as `application/octet-stream`, and shows any XML type inline only under `Content-Security-Policy: sandbox`. A browser reads a list by its last type, so in 1.3.0 an upload that began as a PNG could be served back as a page that ran script on the application's origin.
+- The checks `betterAuthHandler` makes on Better Auth's sign-in and sign-up endpoints read the body by its media type in any case, and refuse one they cannot read with 415, so `Content-Type: Application/JSON` no longer sets a user field visitors may set only through the application's own forms, or signs in uncounted by the account's limit, as it did in 1.3.0. They read the path with repeated and trailing slashes dropped.
+- A route's `cache` option no longer stores a response that read a request header, a cookie or request state, which Workers Cache's key does not hold, so a response a route's own layer signed in by an API key in a header of its own, or one in the visitor's language, is not served to the next visitor. It stored them publicly in 1.3.0 and earlier: `Authorization` and the session cookie were the only request state it checked.
+
 ## [1.3.0] - 2026-10-17
 
 Nothing an application on 1.2.4 needs to change. Declaring the Worker's vars and secrets with `@popcomputer/web/env` is optional, and the documentation moves from the README to `docs/`.

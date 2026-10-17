@@ -20,25 +20,14 @@ with the Effect's own typed error.
 // src/actions/projects/destroy.ts
 import { eq } from 'drizzle-orm'
 import { Effect } from 'effect'
-import {
-  action,
-  authorize,
-  bound,
-  dbMutation,
-  dbTransaction,
-  flash,
-  notFound,
-  redirect,
-} from '@popcomputer/web/effect'
+import { action, bound, dbMutation, dbTransaction, flash, redirect } from '@popcomputer/web/effect'
 import { paths } from '../../paths'
 import { projects, tasks } from '../../schema'
 
 export const destroyProject = action(
   Effect.gen(function* () {
-    const auth = yield* authorize()
+    // Its owner's only: the binding is ownedBy 'userId'.
     const project = yield* bound('project')
-
-    if (project.userId !== auth.user.id) return yield* notFound('Project')
 
     yield* dbTransaction(Effect.gen(function* () {
       yield* dbMutation((db) => db.delete(tasks).where(eq(tasks.projectId, project.id)))

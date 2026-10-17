@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
-import { Effect, Schema as S } from 'effect'
+import { Effect, Layer, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
@@ -34,9 +34,12 @@ import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { bigint, integer as pgInteger, pgTable, text as pgText, uuid as pgUuid, varchar } from 'drizzle-orm/pg-core'
 import { action } from '../../src/effect/action.js'
+import { guard } from '../../src/effect/guard.js'
 import { authorize } from '../../src/effect/services.js'
-import { json } from '../../src/effect/responses.js'
-import { RequireAuthLayer } from '../../src/effect/auth.js'
+import { json, notFound } from '../../src/effect/responses.js'
+import { betterAuthSession, RequireAuthLayer } from '../../src/effect/auth.js'
+import { dbQuery } from '../../src/effect/database.js'
+import { and, eq } from 'drizzle-orm'
 import { signedIn, testEnv } from '../../src/testing.js'
 
 describe('parseBindings', () => {
@@ -266,6 +269,416 @@ describe('binding scopes', () => {
       expect(setup({ scope: { project: { foreignKey: 'projectId', references: 'uuid' } } })).toThrow('Column "uuid" for route binding "project"')
       expect(setup({ scope: { project: { foreignKey: 'projectId' } } })).not.toThrow()
     })
+  })
+})
+
+describe('who may load a binding', () => {
+  const projects = sqliteTable('projects', {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    isPublic: integer('is_public', { mode: 'boolean' }).notNull(),
+  })
+
+  const createApp = () => {
+    const sqlite = new Database(':memory:')
+    sqlite.run('CREATE TABLE projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, is_public INTEGER NOT NULL)')
+    sqlite.run("INSERT INTO projects (id, user_id, is_public) VALUES ('ada-private', 'ada', 0), ('ada-public', 'ada', 1)")
+
+    // Every statement a request sends to the database.
+    const queries: string[] = []
+    const db = drizzle(sqlite, { schema: { projects }, logger: { logQuery: (query) => queries.push(query) } })
+    const app = new Hono()
+
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      database: () => db,
+      schema: { projects },
+      bindings: {
+        project: routeBinding(projects, { ownedBy: 'userId' }),
+        shared: routeBinding(projects, { publicWhen: { isPublic: true } }),
+        listed: routeBinding(projects, { public: true }),
+        team: routeBinding(projects, { guarded: true }),
+      },
+    })
+
+    // A guard that lets in only the record's owner, as a membership guard
+    // lets in only an organization's members.
+    const OwnerOnly = guard(Effect.gen(function* () {
+      const auth = yield* authorize()
+      // This test registers no bindings, so the model is read as its row.
+      const team = S.decodeUnknownSync(S.Struct({ userId: S.String }))(yield* bound('team'))
+
+      if (team.userId !== auth.user.id) return yield* notFound('Team')
+    }))
+
+    routes
+      .get('/projects/{project}', action(Effect.flatMap(bound('project'), (project) => json(project))))
+      .get('/shared/{shared}', action(Effect.flatMap(bound('shared'), (project) => json(project))))
+      .get('/listed/{listed}', action(Effect.flatMap(bound('listed'), (project) => json(project))))
+    routes.provide(OwnerOnly).get('/teams/{team}', action(Effect.flatMap(bound('team'), (team) => json(team))))
+
+    return { app, queries }
+  }
+
+  test('ownedBy loads a record for its owner only; anyone else gets the 404 a missing record gets', async () => {
+    const { app } = createApp()
+    const ada = testEnv(signedIn({ id: 'ada' }))
+    const grace = testEnv(signedIn({ id: 'grace' }))
+
+    const own = await app.request('/projects/ada-private', {}, ada)
+    const othersExisting = await app.request('/projects/ada-private', {}, grace)
+    const othersMissing = await app.request('/projects/no-such-project', {}, grace)
+
+    expect(own.status).toBe(200)
+    expect(await own.json()).toMatchObject({ id: 'ada-private', userId: 'ada' })
+    expect([othersExisting.status, othersMissing.status]).toEqual([404, 404])
+    // Only the page's own url differs: nothing says the record exists.
+    const page = async (res: Response): Promise<unknown> => ({ ...(await res.json()), url: undefined })
+    expect(await page(othersExisting)).toEqual(await page(othersMissing))
+  })
+
+  test("ownedBy reads the user a route's own layer gives, as an API key's does", async () => {
+    const { app, routes } = (() => {
+      const sqlite = new Database(':memory:')
+      sqlite.run('CREATE TABLE projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, is_public INTEGER NOT NULL)')
+      sqlite.run("INSERT INTO projects (id, user_id, is_public) VALUES ('ada-private', 'ada', 0)")
+      const hono = new Hono()
+      const web = setupWeb(hono, {
+        version: '1',
+        render: (page) => JSON.stringify(page),
+        database: () => drizzle(sqlite, { schema: { projects } }),
+        schema: { projects },
+        bindings: { project: routeBinding(projects, { ownedBy: 'userId' }) },
+      })
+
+      return { app: hono, routes: web.routes }
+    })()
+
+    routes.prefix('/ada').provide(signedIn({ id: 'ada' })).get('/ada/projects/{project}', action(Effect.flatMap(bound('project'), (project) => json(project))))
+    routes.prefix('/grace').provide(signedIn({ id: 'grace' })).get('/grace/projects/{project}', action(Effect.flatMap(bound('project'), (project) => json(project))))
+
+    expect((await app.request('/ada/projects/ada-private')).status).toBe(200)
+    expect((await app.request('/grace/projects/ada-private')).status).toBe(404)
+  })
+
+  test('a route that caches its response is refused when not everyone may load its record', () => {
+    const { routes } = setupWeb(new Hono(), {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      bindings: {
+        project: routeBinding(projects, { ownedBy: 'userId' }),
+        shared: routeBinding(projects, { publicWhen: { isPublic: true } }),
+        team: routeBinding(projects, { guarded: true }),
+      },
+    })
+    const show = <Name extends 'project' | 'shared' | 'team'>(name: Name) => action(Effect.flatMap(bound(name), (found) => json(found)))
+
+    expect(() => routes.get('/projects/{project}', show('project'), { cache: { maxAge: 60 } }))
+      .toThrow("Route '/projects/{project}' caches its response, but who may load \"project\" depends on the visitor")
+    expect(() => routes.get('/teams/{team}', show('team'), { cache: { maxAge: 60 } })).toThrow('caches its response')
+    expect(() => routes.get('/shared/{shared}', show('shared'), { cache: { maxAge: 60 } })).not.toThrow()
+  })
+
+  test('ownedBy matches a numeric user id, as Better Auth gives with serial ids', async () => {
+    const notes = sqliteTable('notes', { id: text('id').primaryKey(), userId: integer('user_id').notNull() })
+    const sqlite = new Database(':memory:')
+    sqlite.run('CREATE TABLE notes (id TEXT PRIMARY KEY, user_id INTEGER NOT NULL)')
+    sqlite.run("INSERT INTO notes (id, user_id) VALUES ('n1', 7)")
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      database: () => drizzle(sqlite, { schema: { notes } }),
+      schema: { notes },
+      bindings: { note: routeBinding(notes, { ownedBy: 'userId' }) },
+    })
+    const show = action(Effect.flatMap(bound('note'), (note) => json(note)))
+
+    // SAFETY: The default user type has a string id; this application's ids are serial numbers.
+    routes.prefix('/seven').provide(signedIn({ id: 7 } as never)).get('/seven/notes/{note}', show)
+    // SAFETY: As above.
+    routes.prefix('/eight').provide(signedIn({ id: 8 } as never)).get('/eight/notes/{note}', show)
+
+    expect((await app.request('/seven/notes/n1')).status).toBe(200)
+    expect((await app.request('/eight/notes/n1')).status).toBe(404)
+  })
+
+  test('ownedBy asks a signed-out visitor to sign in before asking the database', async () => {
+    const { app, queries } = createApp()
+
+    const res = await app.request('/projects/ada-private')
+
+    expect(res.status).toBe(302)
+    expect(queries.some((query) => query.includes('"projects"'))).toBe(false)
+  })
+
+  test('publicWhen loads a record whose columns hold its values for anyone, and no other', async () => {
+    const { app } = createApp()
+
+    const publicOne = await app.request('/shared/ada-public')
+    const privateOne = await app.request('/shared/ada-private')
+    const privateToItsOwner = await app.request('/shared/ada-private', {}, testEnv(signedIn({ id: 'ada' })))
+
+    expect(publicOne.status).toBe(200)
+    expect([privateOne.status, privateToItsOwner.status]).toEqual([404, 404])
+  })
+
+  test('public loads any record for anyone', async () => {
+    const { app } = createApp()
+
+    expect((await app.request('/listed/ada-private')).status).toBe(200)
+    expect((await app.request('/listed/ada-public')).status).toBe(200)
+  })
+
+  test('guarded loads the record for the guard, which decides', async () => {
+    const { app } = createApp()
+
+    const own = await app.request('/teams/ada-private', {}, testEnv(signedIn({ id: 'ada' })))
+    const others = await app.request('/teams/ada-private', {}, testEnv(signedIn({ id: 'grace' })))
+
+    expect([own.status, others.status]).toEqual([200, 404])
+  })
+
+  describe('when setupWeb is called, it checks', () => {
+    const setup = (bindings: Parameters<typeof setupWeb>[1]['bindings']) => () => setupWeb(new Hono(), {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      bindings,
+    })
+
+    test('a binding that says more than one thing about who may load it', () => {
+      expect(setup({
+        // @ts-expect-error a binding gives one of ownedBy, public, publicWhen and guarded
+        project: routeBinding(projects, { ownedBy: 'userId', public: true }),
+      })).toThrow('Route binding "project" gives ownedBy and public: it can say only one of ownedBy, public, publicWhen and guarded.')
+    })
+
+    test('an owner or visibility column the table does not have', () => {
+      // @ts-expect-error projects has no column ownerId
+      expect(setup({ project: routeBinding(projects, { ownedBy: 'ownerId' }) })).toThrow('Column "ownerId" for route binding "project"')
+      // @ts-expect-error projects has no column visible
+      expect(setup({ project: routeBinding(projects, { publicWhen: { visible: true } }) })).toThrow('Column "visible" for route binding "project"')
+      expect(setup({ project: routeBinding(projects, { ownedBy: 'userId' }) })).not.toThrow()
+    })
+
+    test('a publicWhen that names no column, which would make every record public', () => {
+      expect(setup({ project: routeBinding(projects, { publicWhen: {} }) })).toThrow('Route binding "project" gives publicWhen with no column')
+    })
+
+    test("a publicWhen value of another type than its column's", () => {
+      // @ts-expect-error isPublic is a boolean
+      expect(setup({ project: routeBinding(projects, { publicWhen: { isPublic: 'yes' } }) })).not.toThrow()
+    })
+  })
+})
+
+describe('an ownedBy column', () => {
+  const user = sqliteTable('user', { id: text('id').primaryKey() })
+  const organizations = sqliteTable('organizations', { id: text('id').primaryKey() })
+  const projects = sqliteTable('projects', {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull().references(() => user.id),
+    organizationId: text('organization_id').notNull().references(() => organizations.id),
+    createdBy: text('created_by').notNull(),
+  })
+
+  const setup = (bindings: Parameters<typeof setupWeb>[1]['bindings'], schema: object = { user, organizations, projects }) => () =>
+    setupWeb(new Hono(), { version: '1', render: (page) => JSON.stringify(page), schema, bindings })
+
+  test("references the users table's id", () => {
+    expect(setup({ project: routeBinding(projects, { ownedBy: 'userId' }) })).not.toThrow()
+  })
+
+  test('that references another table fails when setupWeb is called, naming the binding to scope it to', () => {
+    expect(setup({
+      organization: routeBinding(organizations, { guarded: true }),
+      project: routeBinding(projects, { ownedBy: 'organizationId' }),
+    })).toThrow('Route binding "project" is ownedBy "organizationId", which references "organizations", not "user"')
+
+    try {
+      setup({ organization: routeBinding(organizations, { guarded: true }), project: routeBinding(projects, { ownedBy: 'organizationId' }) })()
+    } catch (error) {
+      assert(error instanceof RouteConfigurationError)
+      expect(error.code).toBe(ErrorCodes.RTE_607_BINDING_OWNER_NOT_USER)
+      expect(error.hint).toContain("scope: { organization: { foreignKey: 'organizationId' } }")
+    }
+  })
+
+  test('that references nothing fails, asking for the reference', () => {
+    expect(setup({ project: routeBinding(projects, { ownedBy: 'createdBy' }) }))
+      .toThrow('Route binding "project" is ownedBy "createdBy", which does not reference "user"')
+  })
+
+  test("is checked against the table betterAuthSession's user came from", () => {
+    const members = sqliteTable('members', { id: text('id').primaryKey() })
+    const notes = sqliteTable('notes', {
+      id: text('id').primaryKey(),
+      memberId: text('member_id').notNull().references(() => members.id),
+      userId: text('user_id').notNull().references(() => user.id),
+    })
+    const withMembers = (ownedBy: 'memberId' | 'userId') => () => setupWeb(new Hono(), {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      schema: { user, members, notes },
+      auth: { client: () => ({}), session: betterAuthSession(tableSchema(members)) },
+      bindings: { note: routeBinding(notes, { ownedBy }) },
+    })
+
+    expect(withMembers('memberId')).not.toThrow()
+    expect(withMembers('userId')).toThrow('which references "user", not "members"')
+  })
+
+  test('is not checked when the application has no users table', () => {
+    expect(setup({ project: routeBinding(projects, { ownedBy: 'createdBy' }) }, { organizations, projects })).not.toThrow()
+  })
+})
+
+describe("an organization's records", () => {
+  const organizations = sqliteTable('organizations', { id: text('id').primaryKey() })
+  const memberships = sqliteTable('memberships', {
+    organizationId: text('organization_id').notNull().references(() => organizations.id),
+    userId: text('user_id').notNull(),
+  })
+  const projects = sqliteTable('projects', {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id),
+  })
+
+  const createApp = () => {
+    const sqlite = new Database(':memory:')
+    sqlite.run('CREATE TABLE organizations (id TEXT PRIMARY KEY)')
+    sqlite.run('CREATE TABLE memberships (organization_id TEXT NOT NULL, user_id TEXT NOT NULL)')
+    sqlite.run('CREATE TABLE projects (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL)')
+    sqlite.run("INSERT INTO organizations (id) VALUES ('acme'), ('globex')")
+    sqlite.run("INSERT INTO memberships (organization_id, user_id) VALUES ('acme', 'ada'), ('globex', 'grace')")
+    sqlite.run("INSERT INTO projects (id, organization_id) VALUES ('rocket', 'acme'), ('laser', 'globex')")
+
+    const db = drizzle(sqlite, { schema: { organizations, memberships, projects } })
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      database: () => db,
+      schema: { organizations, memberships, projects },
+      bindings: {
+        // The organization's membership guard decides, and its projects load only under it.
+        organization: routeBinding(organizations, { guarded: true }),
+        project: routeBinding(projects, { scope: { organization: { foreignKey: 'organizationId' } } }),
+      },
+    })
+
+    const RequireMember = guard(Effect.gen(function* () {
+      const auth = yield* authorize()
+      // This test registers no bindings, so the model is read as its row.
+      const organization = S.decodeUnknownSync(S.Struct({ id: S.String }))(yield* bound('organization'))
+      const [membership] = yield* dbQuery((client) =>
+        // SAFETY: This test registers no database type; the client is the Drizzle client above.
+        (client as unknown as typeof db).select().from(memberships).where(and(
+          eq(memberships.organizationId, organization.id),
+          eq(memberships.userId, auth.user.id)
+        ))
+      )
+
+      if (membership === undefined) return yield* notFound('Organization')
+    }))
+
+    routes
+      .prefix('/orgs/{organization}')
+      .provide(RequireMember)
+      .get('/orgs/{organization}/projects/{project}', action(Effect.flatMap(bound('project'), (project) => json(project))))
+
+    // The same routes, without the guard.
+    routes.get('/unguarded/{organization}/projects/{project}', action(Effect.flatMap(bound('project'), (project) => json(project))))
+    routes.get('/unguarded/{organization}', action(Effect.flatMap(bound('organization'), (organization) => json(organization))))
+
+    return app
+  }
+
+  test('a guarded record no guard read fails, even when the action asks only for its child', async () => {
+    const app = createApp()
+    const grace = testEnv(signedIn({ id: 'grace' }), { ENVIRONMENT: 'development' })
+
+    for (const path of ['/unguarded/acme/projects/rocket', '/unguarded/acme']) {
+      const res = await app.request(path, { headers: { Accept: 'application/json' } }, grace)
+
+      expect({ path, status: res.status }).toEqual({ path, status: 500 })
+      expect(await res.json()).toMatchObject({
+        code: 'WEB_RTE_606_BINDING_ACCESS_INVALID',
+        message: expect.stringContaining('records were asked for before a guard(...) read it'),
+      })
+    }
+  })
+
+  test("a member loads the organization's project; anyone else, or another organization's project, is a 404", async () => {
+    const app = createApp()
+    const ada = testEnv(signedIn({ id: 'ada' }))
+
+    expect((await app.request('/orgs/acme/projects/rocket', {}, ada)).status).toBe(200)
+    expect((await app.request('/orgs/acme/projects/rocket', {}, testEnv(signedIn({ id: 'grace' })))).status).toBe(404)
+    expect((await app.request('/orgs/acme/projects/laser', {}, ada)).status).toBe(404)
+    expect((await app.request('/orgs/globex/projects/laser', {}, ada)).status).toBe(404)
+    expect((await app.request('/orgs/acme/projects/rocket')).status).toBe(302)
+  })
+})
+
+describe('a binding nested under one that says who may load it', () => {
+  const lists = sqliteTable('lists', { id: text('id').primaryKey(), userId: text('user_id').notNull() })
+  const books = sqliteTable('books', {
+    id: text('id').primaryKey(),
+    listId: text('list_id').notNull().references(() => lists.id),
+  })
+
+  const createApp = (book: Parameters<typeof setupWeb>[1]['bindings']) => {
+    const sqlite = new Database(':memory:')
+    sqlite.run('CREATE TABLE lists (id TEXT PRIMARY KEY, user_id TEXT NOT NULL)')
+    sqlite.run('CREATE TABLE books (id TEXT PRIMARY KEY, list_id TEXT NOT NULL)')
+    sqlite.run("INSERT INTO lists (id, user_id) VALUES ('l1', 'ada')")
+    sqlite.run("INSERT INTO books (id, list_id) VALUES ('b1', 'l1')")
+
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      database: () => drizzle(sqlite, { schema: { lists, books } }),
+      schema: { lists, books },
+      bindings: { list: routeBinding(lists, { ownedBy: 'userId' }), ...book },
+    })
+
+    routes.get('/lists/{list}/books/{book}', action(Effect.flatMap(bound('book'), (found) => json(found))))
+
+    return app
+  }
+
+  test('fails when its route is registered if it says public: true, naming the scope to give it instead', () => {
+    expect(() => createApp({ book: routeBinding(books, { public: true }) }))
+      .toThrow('Route binding "book" says public: true, but loads under "list" here')
+
+    try {
+      createApp({ book: routeBinding(books, { public: true }) })
+    } catch (error) {
+      assert(error instanceof RouteConfigurationError)
+      expect(error.code).toBe(ErrorCodes.RTE_606_BINDING_ACCESS_INVALID)
+      expect(error.hint).toContain("scope: { list: { foreignKey: 'listId' } }")
+    }
+  })
+
+  test('with scope, fails when it is registered on a path without its parent', () => {
+    const { routes } = setupWeb(new Hono(), {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      bindings: { list: routeBinding(lists, { ownedBy: 'userId' }), book: routeBinding(books, { scope: { list: { foreignKey: 'listId' } } }) },
+    })
+
+    expect(() => routes.get('/books/{book}', action(Effect.flatMap(bound('book'), (found) => json(found)))))
+      .toThrow('Route binding "book" is scoped to "list", which is not one binding before it on this route.')
+  })
+
+  test('loads under its parent with scope, for the parent\'s visitors only', async () => {
+    const app = createApp({ book: routeBinding(books, { scope: { list: { foreignKey: 'listId' } } }) })
+
+    expect((await app.request('/lists/l1/books/b1', {}, testEnv(signedIn({ id: 'ada' })))).status).toBe(200)
+    expect((await app.request('/lists/l1/books/b1', {}, testEnv(signedIn({ id: 'grace' })))).status).toBe(404)
   })
 })
 
