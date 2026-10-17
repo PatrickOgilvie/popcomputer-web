@@ -109,6 +109,10 @@
   "bugs": {
     "url": "https://github.com/patrickogilvie/popcomputer-web/issues"
   },
+  "overrides": {
+    "undici": "^7.29.1",
+    "sharp": "^0.35.5"
+  },
   "peerDependencies": {
     "effect": "^4.0.0",
     "hono": "^4.13.5",
@@ -132,16 +136,16 @@
     }
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261013.1",
-    "@electric-sql/pglite": "^0.5.9",
+    "@cloudflare/workers-types": "^5.20261016.1",
+    "@electric-sql/pglite": "^0.5.10",
     "@inertiajs/core": "3.9.1",
     "@inertiajs/react": "3.9.1",
     "@types/bun": "^1.4.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "better-auth": "1.7.7",
+    "better-auth": "1.7.10",
     "drizzle-orm": "^0.45.4",
-    "effect": "4.0.3",
+    "effect": "4.0.5",
     "esbuild": "^0.28.2",
     "hono": "^4.13.13",
     "miniflare": "4.20260730.0",
