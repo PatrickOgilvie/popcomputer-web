@@ -122,6 +122,14 @@ export const requireRole = (...roles: ReadonlyArray<Membership['role']>) =>
   })
 ```
 
+On Postgres through Hyperdrive, query caching is on by default: a read can be
+answered from Hyperdrive's cache for up to a minute without asking the
+database, so a membership just removed, or a role just lowered, still lets
+its member through. Read memberships, roles and sessions through a Hyperdrive
+configuration with caching disabled, as Cloudflare's
+[query caching](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/)
+page recommends for them. D1 has no such cache.
+
 A permission names what a route does rather than who may do it, so what
 each role may do is one table, and a new role is one row:
 
