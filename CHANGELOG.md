@@ -5,9 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-10-17
 
-Nothing an application on 1.3.0 needs to change at runtime: a binding that names only its table loads as before. The new lint rule, on as an error, reports each such binding; `webLint({ 'require-binding-access': 'warn' })` makes it a warning while you move.
+A binding that names only its table loads as before, and the new lint rule, on as an error, reports each such binding; `webLint({ 'require-binding-access': 'warn' })` makes it a warning while you move. Hono must be 4.13.5 or later and Drizzle ORM 0.45.2 or later, the first releases with the security fixes for the parts the package uses, and `url` and `nullableUrl` accept only `http:` and `https:` links.
 
 ### Added
 
