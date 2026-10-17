@@ -433,8 +433,23 @@ export const nullableEmail = S.Unknown.pipe(
   )
 ).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(null)))
 
+// A page shows a stored link in an `href`, where any other scheme, such as
+// `javascript:` or `data:`, can run script. The scheme is read the way a
+// browser reads it, so case, leading control characters and tabs inside it
+// make no difference.
+const WEB_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:'])
+const WEB_URL_MESSAGE = 'Use a link that starts with https:// or http://.'
+
+const isWebUrl = (value: string) => {
+  try {
+    return WEB_PROTOCOLS.has(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}
+
 /**
- * A URL with trimming.
+ * An `http:` or `https:` URL with trimming. Every other scheme fails.
  */
 export const url = S.String.pipe(
   S.decodeTo(
@@ -444,21 +459,11 @@ export const url = S.String.pipe(
       encode: (s) => s,
     })
   ),
-  S.check(
-    S.makeFilter((s) => {
-      try {
-        new URL(s)
-
-        return true
-      } catch {
-        return false
-      }
-    }, { message: 'Invalid URL' })
-  )
+  S.check(S.makeFilter(isWebUrl, { message: WEB_URL_MESSAGE }))
 )
 
 /**
- * A nullable URL.
+ * A nullable `http:` or `https:` URL. Every other scheme fails.
  */
 export const nullableUrl = S.Unknown.pipe(
   S.decodeTo(
@@ -477,15 +482,13 @@ export const nullableUrl = S.Unknown.pipe(
 
         if (trimmed === '') return Effect.succeed(null)
 
-        try {
-          new URL(trimmed)
-
-          return Effect.succeed(trimmed)
-        } catch {
+        if (!isWebUrl(trimmed)) {
           return Effect.fail(
-            new SchemaIssue.InvalidValue({ message: 'Invalid URL' }, value, options)
+            new SchemaIssue.InvalidValue({ message: WEB_URL_MESSAGE }, value, options)
           )
         }
+
+        return Effect.succeed(trimmed)
       },
       encode: Effect.succeed,
     })

@@ -81,6 +81,14 @@ const ReceiptForm = S.Struct({
 })
 ```
 
+Read a link with `url`, or `nullableUrl` when it is optional. Each accepts
+only `http:` and `https:` links and refuses every other scheme with "Use a
+link that starts with https:// or http://.": a page shows a stored link in an
+`href`, where a `javascript:` or `data:` link runs script on the
+application's origin. The scheme is read as a browser reads it, so
+`JavaScript:` or spaces before it make no difference. Keep an email address
+with `email` and build its `mailto:` link in the page.
+
 A body field named like one of the route's placeholders, such as `claim` on
 `PUT /claims/{claim}`, must carry the same value or the request fails
 validation, whether or not the schema reads it; leave such fields out of the

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- `url` and `nullableUrl` accept only `http:` and `https:` links. They accepted any string `new URL()` parses, so a `javascript:` or `data:` link passed validation, and a page that showed it in an `href`, such as a reading list's link to a book, ran its script on the application's origin when a visitor followed it. The scheme is read as a browser reads it, so `JavaScript:`, spaces or control characters before it and tabs inside it are refused too. Every other scheme, `mailto:` and `ftp:` included, fails with "Use a link that starts with https:// or http://.", as does a string that is not a link at all, which said "Invalid URL". Links already stored are not checked again. Found by an agent building an application on the framework, which had added its own check.
+
 ## [1.3.0] - 2026-10-17
 
 Nothing an application on 1.2.4 needs to change. Declaring the Worker's vars and secrets with `@popcomputer/web/env` is optional, and the documentation moves from the README to `docs/`.

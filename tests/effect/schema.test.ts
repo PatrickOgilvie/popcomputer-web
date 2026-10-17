@@ -659,25 +659,71 @@ describe('Format Types', () => {
     })
   })
 
+  // A page shows a stored link in an `href`, where these run script.
+  const scriptUrls = [
+    'javascript:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'vbscript:msgbox(1)',
+    'JavaScript:alert(1)',
+    '  javascript:alert(1)',
+    '\u0001javascript:alert(1)',
+    'java\tscript:alert(1)',
+  ]
+
   describe('url', () => {
     test('validates URLs', () => {
       expect(decode(url, 'https://example.com')).toBe('https://example.com')
       expect(decode(url, 'http://localhost:3000/path')).toBe('http://localhost:3000/path')
+      expect(decode(url, '  HTTPS://Example.com/a?b=1  ')).toBe('HTTPS://Example.com/a?b=1')
     })
 
     test('fails on invalid URLs', () => {
       expect(decodeEither(url, 'not-a-url')._tag).toBe('Failure')
+      expect(decodeEither(url, 'example.com')._tag).toBe('Failure')
+    })
+
+    test.each(scriptUrls)('fails on %j', (value) => {
+      expect(decodeEither(url, value)._tag).toBe('Failure')
+    })
+
+    test('fails on schemes other than http and https', () => {
+      expect(decodeEither(url, 'mailto:someone@example.com')._tag).toBe('Failure')
+      expect(decodeEither(url, 'ftp://example.com/file')._tag).toBe('Failure')
+    })
+
+    test('says what a link must start with', async () => {
+      const failure = await Effect.runPromise(Effect.flip(validateUnknown(
+        S.Struct({ link: url }),
+        { link: 'javascript:alert(1)' },
+      )))
+
+      expect(failure.errors).toEqual({ link: 'Use a link that starts with https:// or http://.' })
     })
   })
 
   describe('nullableUrl', () => {
     test('allows null for empty', () => {
       expect(decode(nullableUrl, '')).toBeNull()
+      expect(decode(nullableUrl, '   ')).toBeNull()
     })
 
     test('validates non-empty URLs', () => {
       expect(decode(nullableUrl, 'https://example.com')).toBe('https://example.com')
+      expect(decode(nullableUrl, ' http://example.com/a ')).toBe('http://example.com/a')
       expect(decodeEither(nullableUrl, 'not-a-url')._tag).toBe('Failure')
+    })
+
+    test.each(scriptUrls)('fails on %j', (value) => {
+      expect(decodeEither(nullableUrl, value)._tag).toBe('Failure')
+    })
+
+    test('says what a link must start with', async () => {
+      const failure = await Effect.runPromise(Effect.flip(validateUnknown(
+        S.Struct({ link: nullableUrl }),
+        { link: 'JavaScript:alert(1)' },
+      )))
+
+      expect(failure.errors).toEqual({ link: 'Use a link that starts with https:// or http://.' })
     })
   })
 
