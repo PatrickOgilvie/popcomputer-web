@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-10-17
+
+Documentation and tests only: nothing an application on 1.4.0 needs to change.
+
+### Changed
+
+- `docs/guards.md` says that on Postgres through Hyperdrive, whose query caching is on by default, a membership just removed or a role just lowered can still let its member through a guard for up to a minute, and to read memberships, roles and sessions through a Hyperdrive configuration with caching disabled.
+
+### Verification
+
+- A security regression suite, `tests/security/`, attacks the framework the way each class of bug attacked another framework, each file naming the advisories it guards against: a guarded path spelled another way, headers that tell a framework about the request, writes from another site in every body type and spelling, undeclared and prototype keys, uploads served back as pages, open redirects, signed cookies moved between names, page data breaking out of the HTML, a shared cache keeping one visitor's response, concurrent requests seeing each other's user, error detail in production, the client address, validators made slow, and the dependency floors. All 55 pass, and three classes the framework does not yet guard are listed as `todo`: a body size limit, a lint rule for `sql.identifier()` given request input, and Better Auth's account linking in the template.
+- 1080 tests pass. Every test file and all 100 TypeScript examples across the 33 documents type-check against the built package and follow its lint rules.
+
 ## [1.4.0] - 2026-10-17
 
 A binding that names only its table loads as before, and the new lint rule, on as an error, reports each such binding; `webLint({ 'require-binding-access': 'warn' })` makes it a warning while you move. Hono must be 4.13.5 or later and Drizzle ORM 0.45.2 or later, the first releases with the security fixes for the parts the package uses, and `url` and `nullableUrl` accept only `http:` and `https:` links.
