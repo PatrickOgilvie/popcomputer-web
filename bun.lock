@@ -28,11 +28,13 @@
         "drizzle-orm": ">=0.30.0 <1.0.0",
         "effect": "^4.0.0",
         "hono": "^4.10.0",
+        "miniflare": ">=4.0.0 <5.0.0",
       },
       "optionalPeers": [
         "@types/react",
         "better-auth",
         "drizzle-orm",
+        "miniflare",
       ],
     },
   },

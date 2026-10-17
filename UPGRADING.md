@@ -1,12 +1,12 @@
-# Upgrading to @popcomputer/web 1.2.4
+# Upgrading to @popcomputer/web 1.3.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.2.4.
+`honertia` package it was renamed from, to 1.3.0.
 
-1.1.0, 1.2.0, 1.2.2, 1.2.3 and 1.2.4 change nothing that an application written
-for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
+1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
+written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
 published to npm. So the path is one jump: make the 1.0.0 changes below,
-install 1.2.4, and you are done.
+install 1.3.0, and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -27,7 +27,7 @@ you installed:
 5. [From 0.4, 0.5 and 0.6](#from-04-05-and-06)
 6. [From 0.7 to 1.0](#from-07-to-10)
 7. [Changes no type error points at](#changes-no-type-error-points-at)
-8. [From 1.0 to 1.2](#from-10-to-12)
+8. [From 1.0 to 1.3](#from-10-to-13)
 9. [Tooling after the upgrade](#tooling-after-the-upgrade)
 10. [Checklist](#checklist)
 11. [A worked example](#a-worked-example)
@@ -44,7 +44,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.2.4 needs:
+- **Check the peer dependencies.** 1.3.0 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -58,12 +58,12 @@ you installed:
   Hono releases before 4.10 fail to type-check the package, and Hono 5 and
   Drizzle 1.0 are outside the ranges.
 
-- **Install 1.2.4** with the peers your application uses, removing `honertia`
+- **Install 1.3.0** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.2.4 effect@^4.0.0
+  bun add @popcomputer/web@^1.3.0 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.30.0 <1.0.0'  # if you use Drizzle
   ```
@@ -83,7 +83,7 @@ you installed:
 | 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.7.x | [0.7 to 1.0](#from-07-to-10) |
-| 1.0.x or 1.1.x | [1.0 to 1.2](#from-10-to-12) only |
+| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13) only |
 
 `honertia` and `@popcomputer/web` share one version line, so `honertia` 0.1.45
 is "0.1.x". The 0.4 to 0.7 sections hardly apply to an application coming from
@@ -1015,12 +1015,12 @@ application and its tests.
   cannot answer into a defect with `Effect.orDie`, as
   [Reading the type errors](#reading-the-type-errors) shows.
 
-## From 1.0 to 1.2
+## From 1.0 to 1.3
 
-Nothing to change. Install 1.2.4:
+Nothing to change. Install 1.3.0:
 
 ```bash
-bun add @popcomputer/web@^1.2.4
+bun add @popcomputer/web@^1.3.0
 ```
 
 What 1.1.0 brought:
@@ -1075,6 +1075,25 @@ What 1.2.3 brings:
   written after the new session's cookie, so a sign-in through Better Auth's
   handler, or an action returning Better Auth's cookies, looked accepted and
   the next page was signed out, or still the previous user.
+
+What 1.3.0 brings:
+
+- **The Worker's vars and secrets can be declared once,** with `defineEnv`
+  from `@popcomputer/web/env` in `src/env.ts`: each one's schema, whether it
+  is a secret, whether the Worker needs it, and how to generate it.
+  `EnvBindings<typeof env>` types the bindings, and `setupWeb`'s `env` checks
+  each isolate's bindings before it serves, failing requests with
+  `EnvInvalid`, which names each missing or invalid one and never a value.
+  It's optional; an application without `env` works as before. When you add
+  it, give `testEnv` every var and secret it requires, since tests go through
+  the same check. [Vars and secrets](docs/env.md) shows it, and `checkEnv`
+  for a script that checks them before a deploy.
+- **The documentation is one short file per task,** in `docs/`, which the
+  package ships as `node_modules/@popcomputer/web/docs/`. The README keeps
+  the overview and links to each file, and
+  [`docs/which-api.md`](docs/which-api.md) names the file for each task. A
+  link to one of the README's old sections finds it under the same heading
+  in its file there.
 
 ## Tooling after the upgrade
 
@@ -1131,7 +1150,7 @@ What 1.2.3 brings:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.2.4`.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.3.0`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
 - [ ] `bun test` passes, with tests on `testEnv`, `signedIn` and `readPage`.
