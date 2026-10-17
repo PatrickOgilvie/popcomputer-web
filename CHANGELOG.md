@@ -31,6 +31,11 @@ Nothing an application on 1.3.0 needs to change at runtime: a binding that names
 - The checks `betterAuthHandler` makes on Better Auth's sign-in and sign-up endpoints read the body by its media type in any case, and refuse one they cannot read with 415, so `Content-Type: Application/JSON` no longer sets a user field visitors may set only through the application's own forms, or signs in uncounted by the account's limit, as it did in 1.3.0. They read the path with repeated and trailing slashes dropped.
 - A route's `cache` option no longer stores a response that read a request header, a cookie or request state, which Workers Cache's key does not hold, so a response a route's own layer signed in by an API key in a header of its own, or one in the visitor's language, is not served to the next visitor. It stored them publicly in 1.3.0 and earlier: `Authorization` and the session cookie were the only request state it checked.
 
+### Security
+
+- `url` and `nullableUrl` accept only `http:` and `https:` links. They accepted any string `new URL()` parses, so a `javascript:` or `data:` link passed validation, and a page that showed it in an `href`, such as a reading list's link to a book, ran its script on the application's origin when a visitor followed it. The scheme is read as a browser reads it, so `JavaScript:`, spaces or control characters before it and tabs inside it are refused too. Every other scheme, `mailto:` and `ftp:` included, fails with "Use a link that starts with https:// or http://.", as does a string that is not a link at all, which said "Invalid URL". Links already stored are not checked again. Found by an agent building an application on the framework, which had added its own check.
+
+
 ## [1.3.0] - 2026-10-17
 
 Nothing an application on 1.2.4 needs to change. Declaring the Worker's vars and secrets with `@popcomputer/web/env` is optional, and the documentation moves from the README to `docs/`.
