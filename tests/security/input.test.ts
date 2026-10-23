@@ -6,7 +6,9 @@
  * column) and GHSA-44pg-c29v-hp6r (`users.name` stripped to `name`), Rails
  * CVE-2020-8164 (permitted params returned unfiltered), TypeORM
  * CVE-2025-60542 (`city[role]=admin` set a column), qs CVE-2022-24999 and
- * Hono CVE-2026-56763 (`__proto__` keys in parsed bodies), Fastify
+ * Hono CVE-2026-56763 (`__proto__` keys in parsed bodies), qs
+ * CVE-2017-1000048 (a bracketed key past its guard on the names
+ * Object.prototype holds), Fastify
  * CVE-2026-84504 (a body key replaced the validated body), Next.js
  * CVE-2026-44574 (a query parameter changed the param the page received).
  */
@@ -19,6 +21,24 @@ const polluted = () => Reflect.get({}, 'polluted') !== undefined || Reflect.get(
 afterEach(() => {
   Reflect.deleteProperty(Object.prototype, 'polluted')
 })
+
+/** Object.prototype, Function.prototype and their methods: the own keys each gains, and a way to undo it. */
+function builtInMethods() {
+  const methods = Object.entries({ 'Object.prototype': Object.prototype, 'Function.prototype': Function.prototype }).flatMap(([owner, prototype]) => [
+    { name: owner, method: prototype, keys: Reflect.ownKeys(prototype) },
+    ...Object.entries(Object.getOwnPropertyDescriptors(prototype)).flatMap(([name, { value }]) =>
+      value instanceof Function ? [{ name: `${owner}.${name}`, method: value, keys: Reflect.ownKeys(value) }] : []
+    ),
+  ])
+  const added = () => methods.map(({ name, method, keys }) => ({ name, method, keys: Reflect.ownKeys(method).filter((key) => !keys.includes(key)) }))
+
+  return {
+    gained: () => Object.fromEntries(added().flatMap(({ name, keys }) => (keys.length > 0 ? [[name, keys.map(String)]] : []))),
+    restore: () => {
+      for (const { method, keys } of added()) for (const key of keys) Reflect.deleteProperty(method, key)
+    },
+  }
+}
 
 describe('fields the form does not declare', () => {
   test("never set a record's owner, id or visibility, however the key is spelled", async () => {
@@ -69,6 +89,40 @@ describe('keys that name the prototype', () => {
       await app.request(path, asJson(init), as('ada'))
 
       expect({ path, polluted: polluted() }).toEqual({ path, polluted: false })
+    }
+  })
+})
+
+describe('keys that name an inherited method', () => {
+  test("never write onto the built-in methods every request's objects share", async () => {
+    const { app } = createApp()
+    const builtIns = builtInMethods()
+    const names = ['hasOwnProperty[call]', 'toString.call', 'hasOwnProperty[call][call]', 'valueOf[bind].apply', 'propertyIsEnumerable[call]', 'isPrototypeOf.apply.call']
+    const fields = names.map((name) => `${encodeURIComponent(name)}=x`).join('&')
+    const form = new FormData()
+    form.append('email', 'someone@example.com')
+    for (const name of names) form.append(name, 'x')
+
+    const urlencoded = { 'Content-Type': 'application/x-www-form-urlencoded' }
+    const requests: ReadonlyArray<readonly [string, RequestInit]> = [
+      ['/sign-in', { method: 'POST', headers: urlencoded, body: `email=someone%40example.com&${fields}` }],
+      ['/sign-in', { method: 'POST', body: form }],
+      [`/sign-in?${fields}`, { method: 'POST', headers: urlencoded, body: 'email=someone%40example.com' }],
+    ]
+
+    try {
+      for (const [path, init] of requests) {
+        // A signed-out visitor, with no Origin or Referer, as a script sends it.
+        const res = await app.request(path, asJson(init), as())
+
+        expect({ path, status: res.status, gained: builtIns.gained() }).toEqual({ path, status: 200, gained: {} })
+      }
+
+      // Drizzle reads every row through Object.prototype.hasOwnProperty.call.
+      expect((await app.request('/projects/p1', asJson(), as('ada'))).status).toBe(200)
+      expect((await app.request('/projects', asJson({ method: 'POST', headers: urlencoded, body: 'name=Mine' }), as('grace'))).status).toBe(200)
+    } finally {
+      builtIns.restore()
     }
   })
 })

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- A form or query field named like a method every object inherits, such as `hasOwnProperty[call]=x` or `toString.call=x`, no longer writes onto that method. Nesting read each name through the prototype chain and descended into any object, functions included, so one request from a signed-out visitor to any route that calls `validateRequest`, such as a sign-in form, set the value on `Object.prototype.hasOwnProperty` or `Function.prototype.call`, shared by every request the isolate serves: Drizzle reads rows through `Object.prototype.hasOwnProperty.call`, and every database-backed request answered 500 until the isolate was recycled. Nesting now writes only to objects it made for the request. `validateRequest` drops a JSON body's `__proto__` key, which under `onConflict: 'last-wins'` set the merged input's prototype and so supplied any field the schema declared, and a field named like an inherited method, such as `toString`, is no longer a source conflict.
+- A form or query field's list index more than 20 past the number of items sent stays a key, so the field fails to decode as a list, as qs's `arrayLimit` bounds it (CVE-2014-7191). Each list was as long as its largest index, up to 9999, at every level of a name up to 31 deep: a 9 KB urlencoded post from a signed-out visitor held 139 MB of heap while it was validated in Bun, and 16 KB held 273 MB in Node. A form whose rows can be removed must renumber the rows it sends.
+
 ## [1.4.2] - 2026-10-23
 
 Nothing an application on 1.4.1 needs to change. One that passed `schema: { ...schema }` to `setupWeb` to get its nested bindings working under Vite's dev server can pass `schema` again.

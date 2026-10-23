@@ -38,8 +38,47 @@ describe('nestFields', () => {
     expect(({} as Record<string, unknown>).admin).toBeUndefined()
   })
 
+  test('never writes to a method every object inherits', () => {
+    const methods = [Object.prototype, Function.prototype].flatMap((prototype) =>
+      Object.values(Object.getOwnPropertyDescriptors(prototype)).flatMap(({ value }) => (value instanceof Function ? [value] : []))
+    )
+    const before = methods.map((method) => Reflect.ownKeys(method))
+
+    try {
+      const nested = nestFields({
+        'hasOwnProperty[call]': 'x',
+        'toString.call': 'x',
+        'hasOwnProperty[call][call]': 'x',
+        'valueOf[bind].apply': 'x',
+      })
+
+      expect(methods.map((method) => Reflect.ownKeys(method))).toEqual(before)
+      expect(nested).toEqual({ hasOwnProperty: { call: { call: 'x' } }, toString: { call: 'x' }, valueOf: { bind: { apply: 'x' } } })
+    } finally {
+      methods.forEach((method, index) => {
+        for (const key of Reflect.ownKeys(method)) if (!before[index].includes(key)) Reflect.deleteProperty(method, key)
+      })
+    }
+  })
+
   test('keeps a list index that is not a small number as a key', () => {
     expect(nestFields({ 'lines[99999999][q]': '1' })).toEqual({ lines: { 99999999: { q: '1' } } })
+  })
+
+  test('keeps an index far past the items sent as a key, so a few bytes never make a long list', () => {
+    expect(nestFields({ 'a[9999]': 'x' })).toEqual({ a: { 9999: 'x' } })
+    expect(nestFields({ 'a[0]': 'x', 'a[9999]': 'y' })).toEqual({ a: { 0: 'x', 9999: 'y' } })
+
+    // 31 indices of 9999 made 310,000 list slots from one name of 190 bytes.
+    const name = `f0${'[9999]'.repeat(31)}`
+
+    expect(JSON.stringify(nestFields({ [name]: 'x', [name.replace(/\[9999\]/g, '.9999')]: 'x' }))).not.toContain('[')
+  })
+
+  test('a list whose items skip a few indices keeps each at its index', () => {
+    expect(nestFields({ 'lines[0][q]': '1', 'lines[3][q]': '2' })).toEqual({ lines: [{ q: '1' }, undefined, undefined, { q: '2' }] })
+    expect(nestFields({ 'a[20]': 'x' }).a).toHaveLength(21)
+    expect(nestFields({ 'a[21]': 'x' })).toEqual({ a: { 21: 'x' } })
   })
 })
 

@@ -7,6 +7,8 @@
  * every value sent under it. A key that names nothing nested is kept as it is.
  */
 
+import { Predicate } from 'effect'
+
 /** A form field's value: text, or a file from a multipart form. */
 export type FieldValue = string | File
 
@@ -16,6 +18,8 @@ const FIELD_NAME = /^[^.[\]]+(?:\[[^\]]*\]|\.[^.[\]]+)*$/
 const INDEX = /^(?:0|[1-9]\d{0,3})$/
 const UNSAFE = new Set(['__proto__', 'prototype', 'constructor'])
 const MAX_DEPTH = 32
+/** How many more slots than items sent a list may hold, as qs's `arrayLimit` bounds it. */
+const MAX_LIST_GAP = 20
 
 type Nested = { [key: string]: unknown }
 
@@ -31,23 +35,32 @@ function segmentsOf(key: string): readonly string[] | undefined {
   return [head, ...rest]
 }
 
-function isNested(value: unknown): value is Nested {
-  return value instanceof Object && !Array.isArray(value) && !(value instanceof File)
+/** Whether a value is an object this nesting made, the only kind it writes to. */
+function isMade(value: unknown, made: WeakSet<object>): value is Nested {
+  return Predicate.isObjectKeyword(value) && made.has(value)
 }
 
-/** An object keyed only by list indices, as a list; anything else as it is. */
-function listsOf(value: unknown): unknown {
-  if (!isNested(value)) return value
+/**
+ * An object keyed only by list indices, as a list, when its largest index is
+ * within `MAX_LIST_GAP` of the items sent; anything else as it is. A sparse
+ * index, `a[9999]`, stays a key, so a few bytes never make a long list.
+ */
+function listsOf(value: unknown, made: WeakSet<object>): unknown {
+  if (!isMade(value, made)) return value
 
   const keys = Object.keys(value)
-  const entries = keys.map((key) => [key, listsOf(value[key])] as const)
+  const entries = keys.map((key) => [key, listsOf(value[key], made)] as const)
 
   if (keys.length > 0 && keys.every((key) => INDEX.test(key))) {
-    const list: unknown[] = []
+    const largest = keys.reduce((most, key) => Math.max(most, Number(key)), 0)
 
-    for (const [key, item] of entries) list[Number(key)] = item
+    if (largest < keys.length + MAX_LIST_GAP) {
+      const list: unknown[] = []
 
-    return Array.from(list)
+      for (const [key, item] of entries) list[Number(key)] = item
+
+      return Array.from(list)
+    }
   }
 
   return Object.fromEntries(entries)
@@ -59,7 +72,14 @@ function listsOf(value: unknown): unknown {
  */
 export function nestFields(fields: Readonly<Record<string, unknown>>): Record<string, unknown> {
   const nested: Nested = {}
+  const made = new WeakSet<object>()
   const created = new Set<string>()
+  const make = () => {
+    const child: Nested = {}
+    made.add(child)
+
+    return child
+  }
 
   for (const [key, value] of Object.entries(fields)) {
     const segments = segmentsOf(key)
@@ -80,16 +100,18 @@ export function nestFields(fields: Readonly<Record<string, unknown>>): Record<st
     let container = nested
 
     for (const segment of path.slice(0, -1)) {
-      const next = container[segment]
+      // Only an own property: `hasOwnProperty[call]` names a new object, never
+      // the method every object inherits.
+      const next = Object.hasOwn(container, segment) ? container[segment] : undefined
 
-      container = isNested(next) ? next : (container[segment] = {})
+      container = isMade(next, made) ? next : (container[segment] = make())
     }
 
     container[path[path.length - 1]] = appends ? (Array.isArray(value) ? value : [value]) : value
     created.add(path[0])
   }
 
-  for (const key of created) nested[key] = listsOf(nested[key])
+  for (const key of created) nested[key] = listsOf(nested[key], made)
 
   return nested
 }
