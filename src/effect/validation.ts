@@ -173,7 +173,11 @@ function mergeRequestSources(
 
   for (const { source, data } of orderedSources) {
     for (const [key, value] of Object.entries(data)) {
-      if (!(key in merged)) {
+      // A JSON body's `__proto__` key would set the merged object's prototype,
+      // and a field named like an inherited method, `toString`, is no conflict.
+      if (key === '__proto__') continue
+
+      if (!Object.hasOwn(merged, key)) {
         merged[key] = value
         sourceOfKey.set(key, source)
         continue

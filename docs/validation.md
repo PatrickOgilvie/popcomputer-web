@@ -107,7 +107,9 @@ form.
   and a multipart post (which Inertia sends for a form with a file) all
   decode the same: form fields named `items[2][amount]` or `items.2.amount`
   nest into the list, and every value of a `tags[]` field, in a form or a
-  query string, is a list. Read them in React from
+  query string, is a list. A list's largest index may be at most 20 past the
+  number of items sent, so renumber rows a form removes: `items[50][amount]`
+  sent alone stays a key, and fails to decode as a list. Read them in React from
   the page's `errors` prop, ``errors[`items.${index}.amount`]``, which takes any
   path; Inertia's `useForm().errors` is keyed by the form's top-level fields
   only, so reading a nested path from it needs a cast. A wizard whose final

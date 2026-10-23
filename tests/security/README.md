@@ -10,7 +10,7 @@ every statement the database receives.
 | --- | --- |
 | A guarded path spelled another way; headers that tell a framework about the request; method overrides; Host and forwarded headers | `requests.test.ts` |
 | Writes from another site, for every body type, spelling, `Origin: null` and method | `cross-site.test.ts` |
-| Undeclared fields, prototype keys, arrays for strings, the path's record swapped by the body or query | `input.test.ts` |
+| Undeclared fields, prototype keys, keys naming an inherited method, arrays for strings, the path's record swapped by the body or query | `input.test.ts` |
 | Uploads served back as pages; download names breaking out of their header | `served-content.test.ts` |
 | Where sign-in returns to, and where a failed form goes back to | `redirects.test.ts` |
 | Signed cookies moved or changed; page data breaking out of the HTML | `cookies-and-pages.test.ts` |

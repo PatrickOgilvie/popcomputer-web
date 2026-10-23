@@ -1,8 +1,9 @@
 /**
  * The application the security regression tests attack: each binding says
  * who may load its record, a guard decides an organization's, a form creates
- * a member's project, one page is cached, and two routes redirect where a
- * request asks. Every statement the database receives is logged.
+ * a member's project, a signed-out form takes anyone's input as sign-in does,
+ * one page is cached, and two routes redirect where a request asks. Every
+ * statement the database receives is logged.
  */
 
 import { Hono } from 'hono'
@@ -45,6 +46,7 @@ const schema = { user, projects, tasks, organizations, memberships }
 class CurrentMember extends Context.Service<CurrentMember, typeof memberships.$inferSelect>()('security/CurrentMember') {}
 
 const ProjectForm = S.Struct({ name: requiredString })
+const SignInForm = S.Struct({ email: requiredString })
 
 export function createApp() {
   const sqlite = new Database(':memory:')
@@ -132,6 +134,7 @@ export function createApp() {
       return yield* json({ viewer: auth.user.id, owner: project.userId })
     })))
     .get('/after-sign-in', action(Effect.flatMap(intendedUrl('/home'), (url) => json({ url }))))
+    .post('/sign-in', action(Effect.flatMap(validateRequest(SignInForm), (input) => json(input))))
     .post('/go-back', action(back('/home')))
     .get('/home', action(redirect('/home')))
 

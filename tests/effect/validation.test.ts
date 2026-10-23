@@ -556,6 +556,20 @@ describe('validateRequest', () => {
     expect(error.code).toBe(ErrorCodes.VAL_006_SOURCE_CONFLICT)
   })
 
+  test("a JSON body's __proto__ key supplies no field, and a field named like a method is no conflict", async () => {
+    const schema = S.Struct({ name: S.String, role: S.optional(S.String), toString: S.optional(S.String) })
+
+    for (const onConflict of ['error', 'first-wins', 'last-wins'] as const) {
+      const request = createMockRequest({
+        method: 'POST',
+        body: JSON.parse('{"name":"Ada","__proto__":{"role":"admin"},"toString":"x"}'),
+      })
+      const input = await Effect.runPromise(withRequest(validateRequest(schema, { request: { onConflict } }), request))
+
+      expect({ onConflict, input }).toEqual({ onConflict, input: { name: 'Ada', toString: 'x' } })
+    }
+  })
+
   test('treats +json content types as JSON parse failures', async () => {
     const schema = S.Struct({ name: S.String })
 
