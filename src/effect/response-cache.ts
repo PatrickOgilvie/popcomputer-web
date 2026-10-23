@@ -21,6 +21,7 @@
  */
 
 import { Predicate, Context, Data, Effect, Option, Schema as S } from 'effect'
+import { invalidateCacheTags } from '../cache.js'
 import { HEADERS } from '../types.js'
 import { createStructuredError, ErrorCodes } from './error-catalog.js'
 import { emptyContext } from './error-context.js'
@@ -584,6 +585,36 @@ export const tagCache = (...tags: readonly CacheTag[]): Effect.Effect<void, neve
  */
 export const purgeCache = (...tags: readonly CacheTag[]): Effect.Effect<void, never, PendingPurges> =>
   Effect.flatMap(PendingPurges, (pending) => pending.add(tags))
+
+/**
+ * Purge the cached data and the Workers Cache responses tagged with any of
+ * `tags`: what a route sends once its action succeeds, and background work
+ * once it does.
+ *
+ * @internal
+ */
+export const purgeTags = (tags: readonly string[]): Effect.Effect<void, ResponseCachePurgeError, ResponseCacheService> =>
+  Effect.gen(function* () {
+    if (tags.length === 0) return
+
+    const preparedTags = prepareCachePurgeTags(tags)
+
+    if (Predicate.isTagged(preparedTags, 'invalid')) {
+      return yield* new ResponseCachePurgeError({
+        input: { tags },
+        cause: ResponseCachePurgeFailure.InvalidCacheTags({ reason: preparedTags.reason }),
+      })
+    }
+
+    // Cached data tagged with them goes too, before the Workers Cache purge,
+    // which can fail.
+    // SAFETY: the tags are the record and table tags of a route's bound
+    // tables, or tags passed to purgeCache, all CacheTags.
+    yield* invalidateCacheTags(tags as ReadonlyArray<CacheTag>)
+
+    const cache = yield* ResponseCacheService
+    yield* cache.purge({ tags: preparedTags.tags })
+  })
 
 /**
  * The purge surface Workers Cache exposes — on the execution context

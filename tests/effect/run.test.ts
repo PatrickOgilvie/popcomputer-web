@@ -10,6 +10,7 @@ import { describe, expect, test } from 'bun:test'
 import { Clock, Config, Context, Effect, Layer, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
+import { purgeCache, ResponseCachePurgeError } from '../../src/effect/response-cache.js'
 import { testBatch, testClock, testEnv } from '../../src/testing.js'
 
 class Counter extends Context.Service<Counter, { readonly next: Effect.Effect<number> }>()('test/Counter') {}
@@ -118,5 +119,94 @@ describe('routes.queue', () => {
 
     expect(batch.acked()).toEqual([{ orderId: 'order-1' }])
     expect(batch.retried()).toEqual([{ orderId: 42 }, { orderId: 'locked' }])
+  })
+})
+
+describe('a job whose cache purge fails', () => {
+  const Unpublish = S.Struct({ project: S.String })
+  const unpublish = (project: string, extra = 0) =>
+    Effect.as(purgeCache(`projects:${project}`, ...Array.from({ length: extra }, (_, index) => `projects:extra-${index}`)), project)
+
+  /** A Worker's execution context whose Workers Cache purge answers with `purge`, recording the tags it was asked for. */
+  const worker = (purge: () => Promise<object>) => {
+    const purged: Array<readonly string[] | undefined> = []
+    const ctx = {
+      waitUntil: () => {},
+      passThroughOnException: () => {},
+      props: {},
+      cache: {
+        purge: (input: { readonly tags?: readonly string[] }) => {
+          purged.push(input.tags)
+
+          return purge()
+        },
+      },
+    }
+
+    return { ctx, purged }
+  }
+
+  const refusing = () => worker(async () => ({ success: false, errors: [{ code: 1, message: 'purge refused' }] }))
+  const throwing = () => worker(async () => {
+    throw new Error('purge endpoint unavailable')
+  })
+
+  for (const [name, make] of [['refused', refusing], ['thrown', throwing]] as const) {
+    test(`fails its run when the purge is ${name}: run and scheduled reject, and the queue retries`, async () => {
+      const { routes } = createApp()
+      const { ctx, purged } = make()
+      const env = { REGION: 'weur' }
+
+      await expect(routes.run(unpublish('p2'), env, ctx)).rejects.toBeInstanceOf(ResponseCachePurgeError)
+      await expect(routes.scheduled(() => unpublish('p2'))({ cron: '0 3 * * *', scheduledTime: 0 }, env, ctx)).rejects.toBeInstanceOf(ResponseCachePurgeError)
+
+      const batch = testBatch([{ project: 'p2' }])
+      await routes.queue(Unpublish, (message) => unpublish(message.project))(batch, env, ctx)
+
+      expect(batch.acked()).toEqual([])
+      expect(batch.retried()).toEqual([{ project: 'p2' }])
+      expect(purged).toEqual([['projects:p2'], ['projects:p2'], ['projects:p2']])
+    })
+  }
+
+  test('fails its run when it names more tags than Workers Cache purges at once', async () => {
+    const { routes } = createApp()
+    const env = { REGION: 'weur' }
+
+    await expect(routes.run(unpublish('p2', 100), env)).rejects.toBeInstanceOf(ResponseCachePurgeError)
+    await expect(routes.scheduled(() => unpublish('p2', 100))({ cron: '0 3 * * *', scheduledTime: 0 }, env)).rejects.toBeInstanceOf(ResponseCachePurgeError)
+
+    const batch = testBatch([{ project: 'p2' }])
+    await routes.queue(Unpublish, (message) => unpublish(message.project, 100))(batch, env)
+
+    expect(batch.retried()).toEqual([{ project: 'p2' }])
+  })
+
+  test('rejects when its route answers anything but 204 after the job succeeds', async () => {
+    const app = new Hono()
+    // Stands in for a failure after the job that does not end its run itself.
+    app.use('*', async (c, next) => {
+      await next()
+      // oxlint-disable-next-line no-param-reassign -- Hono replaces a middleware's response by assigning c.res.
+      c.res = new Response(null, { status: 503 })
+    })
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    await expect(routes.run(Effect.succeed('p2'), {})).rejects.toThrow('its route answered 503')
+  })
+
+  test('resolves and acknowledges when the purge is accepted', async () => {
+    const { routes } = createApp()
+    const { ctx, purged } = worker(async () => ({ success: true, errors: [] }))
+    const env = { REGION: 'weur' }
+
+    expect(await routes.run(unpublish('p2'), env, ctx)).toBe('p2')
+    await routes.scheduled(() => unpublish('p2'))({ cron: '0 3 * * *', scheduledTime: 0 }, env, ctx)
+
+    const batch = testBatch([{ project: 'p2' }])
+    await routes.queue(Unpublish, (message) => unpublish(message.project))(batch, env, ctx)
+
+    expect(batch.acked()).toEqual([{ project: 'p2' }])
+    expect(purged).toEqual([['projects:p2'], ['projects:p2'], ['projects:p2']])
   })
 })

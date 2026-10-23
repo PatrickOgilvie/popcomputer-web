@@ -4,7 +4,7 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Cause, Predicate, Context, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import { Cause, Predicate, Context, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S, Semaphore } from 'effect'
 import type { Context as HonoContext, ExecutionContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { runEffectWithRuntime } from './handler.js'
 import {
@@ -28,7 +28,6 @@ import {
   UnauthorizedError,
 } from './errors.js'
 import { openWebContext } from '../request-context.js'
-import { invalidateCacheTags } from '../cache.js'
 import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
@@ -40,10 +39,9 @@ import {
   hasSessionCookie,
   isPageResponse,
   isPartialReloadRequest,
-  prepareCachePurgeTags,
-  ResponseCachePurgeError,
-  ResponseCachePurgeFailure,
-  ResponseCacheService,
+  purgeTags,
+  type ResponseCachePurgeError,
+  type ResponseCacheService,
   PendingPurges,
   makePendingPurges,
   PendingCacheTags,
@@ -263,9 +261,10 @@ const runJobs = new WeakMap<Request, RunJob>()
 const appsWithRunner = new WeakSet<object>()
 
 /**
- * Ends `run`'s job with a failure the framework's middleware found before
- * the job's route, such as bindings the env declaration refuses, so `run`
- * rejects with it rather than with the error page's status.
+ * Ends `run`'s job with a failure the framework found outside the job, such
+ * as bindings the env declaration refuses before it or a failed purge of
+ * what it changed after it, so `run` rejects with it rather than with the
+ * error page's status. A no-op for any request that is not `run`'s.
  *
  * @internal
  */
@@ -407,13 +406,25 @@ interface LoadedModels {
   readonly recordTags: readonly string[]
 }
 
-/** The result of loading a route's models. */
+/**
+ * The models a request has loaded so far, parents first, which a later load
+ * goes on from: a guard's read loads the record it names and those before
+ * it, and the first read after the guards loads the rest.
+ */
+interface LoadingModels {
+  readonly models: Map<string, unknown>
+  /** Each loaded binding's row, which scopes the bindings under it. */
+  readonly rows: Map<string, object>
+  readonly recordTags: string[]
+}
+
 /** A signed-in user's id: Better Auth's are strings, or numbers when it generates serial ids. */
 type UserId = string | number | bigint
 
 const isUserId = (value: unknown): value is UserId =>
   typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint'
 
+/** The result of loading a route's models. */
 type BindingLoadOutcome =
   | LoadedModels
   | { readonly missing: string }
@@ -548,7 +559,8 @@ export class EffectRouteBuilder<
    * in a Cron Trigger or a Queue consumer: the database, `services`, `Config`
    * from the bindings and `background()` work as they do in an action, with
    * this builder's provided layers. Resolves with the Effect's value and
-   * rejects with its failure. A test passes `testEnv(layer, bindings)` as
+   * rejects with its failure, or with the failure of the purge it asked for
+   * with `purgeCache`. A test passes `testEnv(layer, bindings)` as
    * `env`, so its fakes, clock and database apply.
    *
    * @example
@@ -590,6 +602,13 @@ export class EffectRouteBuilder<
 
       if (result === undefined) {
         throw new Error(`routes.run could not reach its route; the app answered ${response.status}. Register catch-all routes after setupWeb.`)
+      }
+
+      // The route answers 204 once the job and what follows it, such as its
+      // purges, have succeeded; any other answer means something after the
+      // job failed.
+      if (Exit.isSuccess(result) && response.status !== 204) {
+        throw new Error(`routes.run's Effect succeeded, but its route answered ${response.status}: the work after it, such as a cache purge, failed.`)
       }
     } finally {
       runJobs.delete(request)
@@ -865,7 +884,8 @@ export class EffectRouteBuilder<
 
   /**
    * Load the route's models from the database, parents first so each child
-   * is scoped to its parent. Reports the first binding without a row.
+   * is scoped to its parent, going on from those `loaded` already holds.
+   * Reports the first binding without a row.
    */
   // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Drizzle adapter awaits native query builders sequentially to enforce parent binding scope before returning HTTP results.
   private async resolveBindings<Database>(
@@ -873,18 +893,18 @@ export class EffectRouteBuilder<
     plan: readonly CompiledRouteBinding[],
     db: Database,
     userId: UserId | undefined,
+    loaded: LoadingModels
   ): Promise<BindingLoadOutcome> {
-    if (plan.length === 0) {
-      return { models: new Map(), recordTags: [] }
+    const { models, rows, recordTags } = loaded
+    const pending = plan.filter((binding) => !rows.has(binding.param))
+
+    if (pending.length === 0) {
+      return { models, recordTags: [...recordTags] }
     }
 
     const { eq, and, isNull } = await loadDrizzle()
 
-    const models = new Map<string, S.Schema.Type<typeof S.Unknown>>()
-    const rows = new Map<string, object>()
-    const recordTags: string[] = []
-
-    for (const binding of plan) {
+    for (const binding of pending) {
       const rawParam = c.req.param(binding.param)
 
       if (!rawParam) {
@@ -998,9 +1018,11 @@ export class EffectRouteBuilder<
         throw RouteConfigurationError.ambiguousBinding(binding.param, binding.tableName, binding.column)
       }
 
+      const model = await decodeBoundRow(binding, result)
+
       // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
       rows.set(binding.param, result)
-      models.set(binding.param, await decodeBoundRow(binding, result))
+      models.set(binding.param, model)
       const key: unknown = Object.getOwnPropertyDescriptor(result, binding.primaryKey)?.value
 
       if (key !== undefined && key !== null) {
@@ -1008,7 +1030,7 @@ export class EffectRouteBuilder<
       }
     }
 
-    return { models, recordTags }
+    return { models, recordTags: [...recordTags] }
   }
 
   private createHandler<R>(
@@ -1109,17 +1131,23 @@ export class EffectRouteBuilder<
       const decided = new Set<string>()
       const undecided = (): string | undefined => guarded.find((name) => !decided.has(name))
 
+      // The models this request has loaded, which each later load goes on
+      // from, one load at a time.
+      const loading: LoadingModels = { models: new Map(), rows: new Map(), recordTags: [] }
+      const loadingLock = Semaphore.makeUnsafe(1)
+
       // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Drizzle adapter awaits native query builders sequentially to enforce parent binding scope before returning a typed outcome.
       const loadModels = async (
         bindingSchema: object,
         parsers: RouteBindingsConfig,
         db: object,
-        userId: UserId | undefined
+        userId: UserId | undefined,
+        count: number
       ): Promise<BindingLoadOutcome> => {
         try {
           bindingPlanPromise ??= compileBindingPlan(modelBindings, bindingSchema, parsers)
 
-          return await this.resolveBindings(c, await bindingPlanPromise, db, userId)
+          return await this.resolveBindings(c, (await bindingPlanPromise).slice(0, count), db, userId, loading)
         } catch (cause) {
           // Misconfigured bindings are typed failures; anything else, such as
           // a failed query, is a defect for the error boundary.
@@ -1130,14 +1158,20 @@ export class EffectRouteBuilder<
       }
 
       // Models load through the request's DatabaseService, so a database a
-      // test provides with testEnv serves bound() as it serves dbQuery.
-      const loadAllModels = (
+      // test provides with testEnv serves bound() as it serves dbQuery. The
+      // first `count` of them load, after any loaded already.
+      const loadModelsThrough = (
         database: Option.Option<object>,
-        userId: UserId | undefined
+        userId: UserId | undefined,
+        count: number
       ): Effect.Effect<LoadedModels, BoundModelError> =>
         Effect.gen(function* () {
           if (!configuredBindings || modelBindings.length === 0) {
             return { models: new Map(), recordTags: [] }
+          }
+
+          if (loading.rows.size >= count) {
+            return { models: loading.models, recordTags: [...loading.recordTags] }
           }
 
           if (Option.isNone(database)) {
@@ -1147,7 +1181,7 @@ export class EffectRouteBuilder<
           const db = database.value
 
           const outcome = yield* Effect.promise(() =>
-            loadModels(schema ?? {}, configuredBindings, db, userId)
+            loadModels(schema ?? {}, configuredBindings, db, userId, count)
           )
 
           if ('failure' in outcome) return yield* outcome.failure
@@ -1163,21 +1197,22 @@ export class EffectRouteBuilder<
           return outcome
         })
 
-      // bound() and the route's cache tags read the same models, loaded once.
+      // bound() and the route's cache tags read the same models, each loaded once.
       const boundModelsLayer = Layer.effectContext(
         Effect.gen(function* () {
           const database = yield* Effect.serviceOption(DatabaseService)
           // The signed-in user, whose id a binding only its owner may load is
-          // looked up by, read when the models first load rather than now, so
-          // a layer the route provides, such as an API key's, has given it.
+          // looked up by, read when the models load rather than now, so a
+          // layer the route provides, such as an API key's, has given it.
           // AuthUserService holds the user and the session.
-          const load = yield* Effect.cached(Effect.gen(function* () {
+          const loadThrough = (count: number) => loadingLock.withPermits(1)(Effect.gen(function* () {
             const signedIn = yield* Effect.serviceOption(AuthUserService)
             const user: unknown = Option.isSome(signedIn) ? Reflect.get(signedIn.value, 'user') : undefined
             const userId: unknown = user instanceof Object ? Reflect.get(user, 'id') : undefined
 
-            return yield* loadAllModels(database, isUserId(userId) ? userId : undefined)
+            return yield* loadModelsThrough(database, isUserId(userId) ? userId : undefined, count)
           }))
+          const load = loadThrough(modelBindings.length)
 
           const models = BoundModels.of({
             get: (key) => {
@@ -1194,9 +1229,19 @@ export class EffectRouteBuilder<
               }
 
               return Effect.flatMap(isDeciding, (deciding) => {
-                if (deciding) decided.add(key)
+                if (deciding) {
+                  decided.add(key)
 
-                const unguarded = deciding ? undefined : undecided()
+                  // A guard decides from the record it reads and those before
+                  // it, so the records under it, such as an organization's
+                  // project, are looked up only once the guards have let the
+                  // visitor in: a visitor one turns away learns only that.
+                  const through = modelBindings.findIndex((binding) => binding.param === key) + 1
+
+                  return Effect.map(loadThrough(through), (loaded) => loaded.models.get(key))
+                }
+
+                const unguarded = undecided()
 
                 return unguarded === undefined
                   ? Effect.map(load, (loaded) => loaded.models.get(key))
@@ -1303,30 +1348,13 @@ export class EffectRouteBuilder<
 
           return Effect.gen(function* () {
             const requested = yield* Effect.flatMap(PendingPurges, (pending) => pending.take)
-            const tags = [...new Set([...(yield* routePurges), ...requested])]
 
-            if (tags.length === 0) return
-
-            const preparedTags = prepareCachePurgeTags(tags)
-
-            if (Predicate.isTagged(preparedTags, 'invalid')) {
-              return yield* new ResponseCachePurgeError({
-                input: { tags },
-                cause: ResponseCachePurgeFailure.InvalidCacheTags({
-                  reason: preparedTags.reason,
-                }),
-              })
-            }
-
-            // Cached data tagged with them goes too, before the Workers Cache
-            // purge, which can fail the request.
-            // SAFETY: the route's tags are record and table tags of its bound
-            // tables, or tags the action passed to purgeCache, all CacheTags.
-            yield* invalidateCacheTags(tags as ReadonlyArray<CacheTag>)
-
-            const cache = yield* ResponseCacheService
-            yield* cache.purge({ tags: preparedTags.tags })
-          })
+            yield* purgeTags([...new Set([...(yield* routePurges), ...requested])])
+          }).pipe(
+            // routes.run's job has succeeded by now; a failed purge of what it
+            // changed fails its run, so the queue retries and the cron fails.
+            Effect.tapError((error) => Effect.sync(() => failRun(c.req.raw, error)))
+          )
         })
       )
 

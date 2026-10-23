@@ -104,7 +104,10 @@ guard or `authorize()` that runs first decides before any database lookup,
 and a signed-out visitor cannot tell an existing record from a missing one.
 A missing row fails `bound()` with `NotFoundError`, which renders a 404. The
 route's models load together, so a missing one is a 404 whichever the action
-asks for.
+asks for. A guard's read loads only the record it reads and those before it
+in the path, and the rest load on the first read after the guards, so a
+visitor a guard turns away learns nothing of the records under the one it
+decides for, even when it answers 403 or redirects.
 
 `{post}` looks the record up by the table's `id` column, or, for a table
 without one, its primary key. `{post:slug}` names the column by its property

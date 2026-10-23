@@ -14,7 +14,9 @@ action: the response does not wait for it, and the Worker's execution context
 keeps it alive after the response. Without an execution context, as in tests,
 it runs where it is called, before the response returns, so a test sees its
 effects but not a race between them; pass an execution context as
-`app.request`'s fourth argument to test concurrent behaviour.
+`app.request`'s fourth argument to test concurrent behaviour. Tags the work
+names with `purgeCache` are purged once it succeeds, and a failed purge is
+reported as the work's failure.
 
 ## Scheduled and queued work
 
@@ -54,7 +56,9 @@ messages one at a time: one whose work succeeds is acknowledged, and one whose
 body does not decode, or whose work fails, is logged and left for the queue
 to retry, after which the queue drops it or moves it to its dead-letter
 queue. The handler also receives the message's `id` and `attempts`, for work
-that must happen once however often a message is delivered.
+that must happen once however often a message is delivered. A job whose
+`purgeCache` purge fails has failed too: it rejects, and the queue retries
+the message.
 
 A test calls the handlers as the platform does, with `testEnv`'s bindings, so
 its fakes, clock and database apply. `testBatch` from
