@@ -4,7 +4,7 @@
  * Utility functions for creating responses within Effect computations.
  */
 
-import { isActiveContentType, singleMediaType } from './schema.js'
+import { isInertContentType, singleMediaType } from './schema.js'
 import { wantsJson } from './negotiation.js'
 import { Cause, Context, Effect, Layer, Option, Schema as S, Stream } from 'effect'
 import { observeOrLog } from './error-observer.js'
@@ -208,7 +208,11 @@ export const text = (data: string, init: ResponseOptions = 200): Effect.Effect<R
 export interface FileOptions {
   /** The body's media type, such as `text/csv; charset=utf-8`. */
   readonly contentType: string
-  /** Offer the body as a download with this file name. Without it, browsers show the body inline. */
+  /**
+   * Offer the body as a download with this file name. Without it, browsers
+   * show the body inline, sandboxed unless it is an image other than SVG, a
+   * PDF, plain text, JSON, audio or video.
+   */
   readonly filename?: string
   readonly status?: number
   readonly headers?: HeadersInit
@@ -248,8 +252,11 @@ export function file<E = never, R = never>(
 
     if (options.filename !== undefined) {
       headers.set('Content-Disposition', contentDisposition(options.filename))
-    } else if (isActiveContentType(contentType) && !headers.has('Content-Security-Policy')) {
-      // A page or SVG shown inline runs without script, forms or the origin.
+    } else if (!isInertContentType(contentType) && !headers.has('Content-Security-Policy')) {
+      // Only a type a browser shows without running script, such as an image
+      // or a PDF, is shown inline as it is. A page, an SVG, or a type a
+      // browser may read as one, such as `text/rdf`, runs without script,
+      // forms or the origin.
       headers.set('Content-Security-Policy', 'sandbox')
     }
 

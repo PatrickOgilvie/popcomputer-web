@@ -1179,8 +1179,9 @@ const essence = (type: string): string => type.split(';', 1)[0].trim().toLowerCa
 
 /**
  * Media types a browser runs script in when it opens them, such as an SVG
- * image. A family such as `image/*` accepts them only when they are named,
- * since an uploaded file served back as one runs on the application's origin.
+ * image, or `text/rdf`, which Firefox has read as XML. A family such as
+ * `image/*` or `text/*` accepts them only when they are named, since an
+ * uploaded file served back as one runs on the application's origin.
  */
 export const ACTIVE_CONTENT_TYPES: ReadonlySet<string> = new Set([
   'text/html',
@@ -1189,6 +1190,7 @@ export const ACTIVE_CONTENT_TYPES: ReadonlySet<string> = new Set([
   'text/xml',
   'application/xml',
   'text/xsl',
+  'text/rdf',
 ])
 
 /**
@@ -1206,6 +1208,21 @@ export const isActiveContentType = (type: string): boolean => {
   const named = essence(type)
 
   return ACTIVE_CONTENT_TYPES.has(named) || named.endsWith('+xml')
+}
+
+/**
+ * Media types a browser shows without running script in them: a PDF, plain
+ * text and JSON, and any image but SVG, audio or video. No list of the types
+ * a browser may read as a page is complete, so `file` shows every other type
+ * inline only sandboxed.
+ */
+const INERT_CONTENT_TYPES: ReadonlySet<string> = new Set(['application/pdf', 'text/plain', 'application/json'])
+
+/** Whether a browser shows a body of this type without running script in it. */
+export const isInertContentType = (type: string): boolean => {
+  const named = essence(type)
+
+  return !isActiveContentType(named) && (INERT_CONTENT_TYPES.has(named) || /^(?:image|audio|video)\//.test(named))
 }
 
 const acceptsType = (types: ReadonlyArray<string>, type: string): boolean => {
