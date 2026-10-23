@@ -1,15 +1,16 @@
 /* oxlint-disable effecttsgo/async-function -- Better Auth's callbacks and the test database are native Promise contracts. */
 /**
  * A Better Auth application as docs/ builds one, with the plugins
- * power users reach for: organizations, two-factor, magic links, an OAuth
- * provider (which tests stand in for), bearer tokens and admin. Its tables are docs/auth-tables.md's D1 tables
+ * power users reach for: organizations, two-factor, magic links, email and
+ * phone one-time codes, an OAuth provider (which tests stand in for), bearer
+ * tokens and admin. Its tables are docs/auth-tables.md's D1 tables
  * with the plugins' columns, on SQLite through Drizzle, as on D1.
  */
 
 import { Database } from 'bun:sqlite'
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
-import { admin, bearer, genericOAuth, magicLink, organization, twoFactor } from 'better-auth/plugins'
+import { admin, bearer, emailOTP, genericOAuth, magicLink, organization, phoneNumber, twoFactor } from 'better-auth/plugins'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { betterAuthFields } from '../../src/auth.js'
 import { testOAuthProvider } from '../../src/testing.js'
@@ -33,6 +34,9 @@ export const user = sqliteTable('user', {
   banned: integer('banned', { mode: 'boolean' }).default(false),
   banReason: text('ban_reason'),
   banExpires: integer('ban_expires', { mode: 'timestamp_ms' }),
+  // phoneNumber()
+  phoneNumber: text('phone_number').unique(),
+  phoneNumberVerified: integer('phone_number_verified', { mode: 'boolean' }),
   // The application's own field, which a visitor chooses when signing up.
   timeZone: text('time_zone'),
 })
@@ -182,9 +186,11 @@ export interface Outbox {
   readonly verifications: Array<{ readonly email: string; readonly token: string }>
   readonly magicLinks: Array<{ readonly email: string; readonly token: string }>
   readonly invitations: Array<{ readonly id: string; readonly email: string }>
+  /** One-time codes, emailed or texted: `to` is the address or the phone number. */
+  readonly codes: Array<{ readonly to: string; readonly code: string }>
 }
 
-export const newOutbox = (): Outbox => ({ verifications: [], magicLinks: [], invitations: [] })
+export const newOutbox = (): Outbox => ({ verifications: [], magicLinks: [], invitations: [], codes: [] })
 
 /** Acme, an OAuth provider the application signs people in with, which tests stand in for. */
 const ACME = {
@@ -229,6 +235,18 @@ export function createAuth(options: CreateAuthOptions) {
         sendMagicLink: async ({ email, token }) => {
           options.outbox.magicLinks.push({ email, token })
         },
+      }),
+      emailOTP({
+        sendVerificationOTP: async ({ email, otp }) => {
+          options.outbox.codes.push({ to: email, code: otp })
+        },
+      }),
+      phoneNumber({
+        sendOTP: async ({ phoneNumber, code }) => {
+          options.outbox.codes.push({ to: phoneNumber, code })
+        },
+        // A first verified code makes the user, as a phone-only sign-up does.
+        signUpOnVerification: { getTempEmail: (phone) => `${phone.replace(/\D/g, '')}@phone.example` },
       }),
       bearer(),
       admin(),
