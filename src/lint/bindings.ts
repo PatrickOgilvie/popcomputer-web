@@ -50,6 +50,32 @@ function declaresAccess(options: ObjectExpression): boolean | undefined {
   return spread ? undefined : false
 }
 
+/**
+ * The publicWhen column an options object gives the literal value undefined
+ * (or `void 0`), which says no value that makes a record public.
+ */
+function undefinedPublicWhen(options: ObjectExpression): string | undefined {
+  for (const property of options.properties) {
+    if (!isProperty(property) || keyName(property) !== 'publicWhen') continue
+
+    const values = unwrap(property.value)
+
+    if (!isObject(values)) return undefined
+
+    for (const entry of values.properties) {
+      if (!isProperty(entry)) continue
+
+      const value = unwrap(entry.value)
+      const isUndefined = (isIdentifier(value) && value.name === 'undefined')
+        || (value.type === 'UnaryExpression' && 'operator' in value && value.operator === 'void')
+
+      if (isUndefined) return keyName(entry) ?? 'column'
+    }
+  }
+
+  return undefined
+}
+
 export const requireBindingAccess: LintRule = {
   meta: {
     type: 'problem',
@@ -59,6 +85,8 @@ export const requireBindingAccess: LintRule = {
         "Use routeBinding's options to say who may load this record: { ownedBy: 'userId' } for its owner only, { publicWhen: { visibility: 'public' } } for anyone when its columns hold those values, { public: true } for anyone, { guarded: true } when a guard layer decides, or scope when it is only loaded under its parent. Said beside the table, no action has to remember the check.",
       bare:
         "Use routeBinding(table, options) for binding \"{{name}}\", to say who may load its record: { ownedBy: 'userId' } for its owner only, { publicWhen: { visibility: 'public' } } for anyone when its columns hold those values, { public: true } for anyone, { guarded: true } when a guard layer decides, or scope when it is only loaded under its parent.",
+      undefinedValue:
+        "Use the value that makes a record public for \"{{column}}\", as publicWhen: { {{column}}: true }: undefined says none, and on a SQLite boolean column it matches the private records.",
     },
   },
   create(context) {
@@ -88,6 +116,10 @@ export const requireBindingAccess: LintRule = {
             context.report({ node, messageId: 'access' })
           }
 
+          const column = isObject(options) ? undefinedPublicWhen(options) : undefined
+
+          if (column !== undefined) context.report({ node, messageId: 'undefinedValue', data: { column } })
+
           return
         }
 
@@ -110,6 +142,10 @@ export const requireBindingAccess: LintRule = {
 
             // routeBinding's own call is checked where it is made.
             if (isRouteBinding(definition) || (isIdentifier(definition) && bindings.has(definition.name))) continue
+
+            const column = isObject(definition) ? undefinedPublicWhen(definition) : undefined
+
+            if (column !== undefined) context.report({ node: binding, messageId: 'undefinedValue', data: { column } })
             if (isObject(definition) && declaresAccess(definition) !== false) continue
 
             context.report({ node: binding, messageId: 'bare', data: { name: keyName(binding) ?? 'binding' } })

@@ -425,6 +425,27 @@ describe('who may load a binding', () => {
     expect([privateOne.status, privateToItsOwner.status]).toEqual([404, 404])
   })
 
+  test('a publicWhen value that is undefined is refused before any route can load a record by it', async () => {
+    // compileBindingPlan checks the bindings again for a route registered on
+    // a hand-composed app, which setupWeb never checked.
+    await expect(compileBindingPlan(
+      [{ param: 'shared', column: 'id' }],
+      { projects },
+      { shared: routeBinding(projects, { publicWhen: { isPublic: undefined } }) }
+    )).rejects.toMatchObject({
+      message: expect.stringContaining('Route binding "shared" gives publicWhen the value undefined for "isPublic"'),
+      code: ErrorCodes.RTE_606_BINDING_ACCESS_INVALID,
+    })
+
+    const [compiled] = await compileBindingPlan(
+      [{ param: 'shared', column: 'id' }],
+      { projects },
+      { shared: routeBinding(projects, { publicWhen: { isPublic: true } }) }
+    )
+
+    expect(compiled.access).toEqual({ publicWhen: { isPublic: true } })
+  })
+
   test('public loads any record for anyone', async () => {
     const { app } = createApp()
 
@@ -465,6 +486,26 @@ describe('who may load a binding', () => {
 
     test('a publicWhen that names no column, which would make every record public', () => {
       expect(setup({ project: routeBinding(projects, { publicWhen: {} }) })).toThrow('Route binding "project" gives publicWhen with no column')
+    })
+
+    test('a publicWhen value that is undefined, which a SQLite boolean column reads as false', () => {
+      // A setting that is absent, or a constant read through a circular import.
+      interface Settings { readonly sharedFlag?: boolean }
+      const settings: Settings = {}
+
+      expect(setup({ project: routeBinding(projects, { publicWhen: { isPublic: settings.sharedFlag } }) }))
+        .toThrow('Route binding "project" gives publicWhen the value undefined for "isPublic"')
+      expect(setup({ project: routeBinding(projects, { publicWhen: { isPublic: true, userId: undefined } }) }))
+        .toThrow('gives publicWhen the value undefined for "userId"')
+      expect(setup({ project: routeBinding(projects, { publicWhen: { isPublic: false } }) })).not.toThrow()
+
+      try {
+        setup({ project: routeBinding(projects, { publicWhen: { isPublic: undefined } }) })()
+      } catch (error) {
+        assert(error instanceof RouteConfigurationError)
+        expect(error.code).toBe(ErrorCodes.RTE_606_BINDING_ACCESS_INVALID)
+        expect(error.hint).toContain('publicWhen: { isPublic: true }')
+      }
     })
 
     test("a publicWhen value of another type than its column's", () => {

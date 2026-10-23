@@ -830,6 +830,20 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     })
   }
 
+  /**
+   * Create an error for a binding whose publicWhen gives a column the value
+   * undefined, which a SQLite boolean column compares as false: its private
+   * records would be the public ones.
+   */
+  static bindingPublicWhenUndefined(binding: string, column: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" gives publicWhen the value undefined for "${column}", which says no value that makes a record public: on a SQLite boolean column it matches the private records.`,
+      hint: `Give "${column}" the value that makes a record public, as publicWhen: { ${column}: true }. When the value comes from settings or another module, make sure it is set before setupWeb is called.`,
+      binding,
+      code: ErrorCodes.RTE_606_BINDING_ACCESS_INVALID,
+    })
+  }
+
   /** Create an error for a binding whose lookup column matched more than one row. */
   static ambiguousBinding(binding: string, table: string, column: string): RouteConfigurationError {
     return new RouteConfigurationError({

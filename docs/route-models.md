@@ -46,9 +46,11 @@ says `public: true` under a parent that says who may load it, since it would
 load for anyone on a path without the parent.
 
 A binding gives one option: two fail when `setupWeb` is called
-(`WEB_RTE_606_BINDING_ACCESS_INVALID`), as does a column the table lacks,
-and the `require-binding-access` [lint rule](lint-rules.md) reports a binding
-that gives none, which loads any record its path names, for anyone.
+(`WEB_RTE_606_BINDING_ACCESS_INVALID`), as do a column the table lacks and
+a `publicWhen` value that is undefined, such as an absent setting, which a
+SQLite boolean column would read as false. The `require-binding-access`
+[lint rule](lint-rules.md) reports a binding that gives none, which loads
+any record its path names, for anyone.
 
 The signed-in user is the session's, or the one a layer the route provides
 gives, as an API key's does. An `ownedBy` column declares that it holds a

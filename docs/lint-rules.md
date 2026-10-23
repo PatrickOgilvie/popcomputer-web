@@ -24,7 +24,7 @@ The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `no-provision-in-action` | `Effect.provide` in an action module | `web.services(...)`, or `routes.provide(layer)` |
 | `require-background` | `waitUntil(...)` | `background('name', effect)` |
 | `no-validation-in-endpoint` | `validateRequest` or `json` in an endpoint's action | The handler's argument, and the returned value |
-| `require-binding-access` | A binding that does not say who may load its record: a bare table, or `routeBinding` without `ownedBy`, `publicWhen`, `public`, `guarded` or `scope` | `routeBinding(schema.projects, { ownedBy: 'userId' })`, or the option that says who may |
+| `require-binding-access` | A binding that does not say who may load its record: a bare table, or `routeBinding` without `ownedBy`, `publicWhen`, `public`, `guarded` or `scope`; or a `publicWhen` value written `undefined` | `routeBinding(schema.projects, { ownedBy: 'userId' })`, or the option that says who may; `publicWhen: { isPublic: true }` |
 | `prefer-checked-config` | Effect's `Config.String('NAME')` and its siblings in an application of the framework | `config.string('NAME')`, which checks the name against the Worker's bindings |
 | `no-auth-api-in-action` | `auth.api.signInEmail(...)` and Better Auth's other endpoints called from an action, which skips its rate limits | `betterAuthRedirect('signInEmail', { body }, ...)` or `betterAuthCall(...)` |
 
