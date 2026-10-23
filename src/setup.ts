@@ -137,10 +137,11 @@ interface WebSetupOptions<E extends Env> extends WebConfig {
   errors?: ErrorHandlerConfig
 
   /**
-   * The most bytes `validateRequest` reads of a request body, 1 MiB unless
-   * set: a larger one is refused before it is parsed, with a 413 for a JSON
-   * client and the form's `form` error for a page. An action that takes
-   * uploads raises it with `validateRequest(Schema, { bodyLimit })`.
+   * The most bytes `validateRequest` and `betterAuthHandler` read of a
+   * request body, 1 MiB unless set: a larger one is refused before it is
+   * parsed, with a 413, or for a page's form, the form's `form` error. An
+   * action that takes uploads raises it with
+   * `validateRequest(Schema, { bodyLimit })`.
    */
   bodyLimit?: number
 

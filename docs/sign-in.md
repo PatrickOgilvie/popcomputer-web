@@ -164,7 +164,9 @@ the user fields declared `input: true` without the application's actions
 checking them. Once the registered Better Auth declares such a field, TypeScript asks
 for the ones visitors may set there, `betterAuthHandler({ settable: ['timeZone'] })`,
 and the handler refuses a request setting any other with a 400; `settable: []`
-keeps every field to the application's own forms.
+keeps every field to the application's own forms. It reads a body within
+setupWeb's `bodyLimit`, as `validateRequest` does, and answers a larger one
+with a 413 before Better Auth reads it.
 
 ## The sign-in page
 

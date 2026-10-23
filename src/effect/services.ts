@@ -175,7 +175,7 @@ export interface RequestContext<Bindings extends object = object> {
    */
   parseBody(options?: BodyReadOptions): Promise<Record<string, string | File | (string | File)[]>>
   header(name: string): string | undefined
-  /** The most bytes `json()` and `parseBody()` read: setupWeb's `bodyLimit`, 1 MiB unless it sets one. */
+  /** The most bytes `json()`, `parseBody()` and `betterAuthHandler` read: setupWeb's `bodyLimit`, 1 MiB unless it sets one. */
   readonly bodyLimit?: number
 }
 
