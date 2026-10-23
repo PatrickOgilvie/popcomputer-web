@@ -56,7 +56,9 @@ messages one at a time: one whose work succeeds is acknowledged, and one whose
 body does not decode, or whose work fails, is logged and left for the queue
 to retry, after which the queue drops it or moves it to its dead-letter
 queue. The handler also receives the message's `id` and `attempts`, for work
-that must happen once however often a message is delivered.
+that must happen once however often a message is delivered. A job whose
+`purgeCache` purge fails has failed too: it rejects, and the queue retries
+the message.
 
 A test calls the handlers as the platform does, with `testEnv`'s bindings, so
 its fakes, clock and database apply. `testBatch` from

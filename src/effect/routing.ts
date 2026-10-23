@@ -261,9 +261,10 @@ const runJobs = new WeakMap<Request, RunJob>()
 const appsWithRunner = new WeakSet<object>()
 
 /**
- * Ends `run`'s job with a failure the framework's middleware found before
- * the job's route, such as bindings the env declaration refuses, so `run`
- * rejects with it rather than with the error page's status.
+ * Ends `run`'s job with a failure the framework found outside the job, such
+ * as bindings the env declaration refuses before it or a failed purge of
+ * what it changed after it, so `run` rejects with it rather than with the
+ * error page's status. A no-op for any request that is not `run`'s.
  *
  * @internal
  */
@@ -546,7 +547,8 @@ export class EffectRouteBuilder<
    * in a Cron Trigger or a Queue consumer: the database, `services`, `Config`
    * from the bindings and `background()` work as they do in an action, with
    * this builder's provided layers. Resolves with the Effect's value and
-   * rejects with its failure. A test passes `testEnv(layer, bindings)` as
+   * rejects with its failure, or with the failure of the purge it asked for
+   * with `purgeCache`. A test passes `testEnv(layer, bindings)` as
    * `env`, so its fakes, clock and database apply.
    *
    * @example
@@ -588,6 +590,13 @@ export class EffectRouteBuilder<
 
       if (result === undefined) {
         throw new Error(`routes.run could not reach its route; the app answered ${response.status}. Register catch-all routes after setupWeb.`)
+      }
+
+      // The route answers 204 once the job and what follows it, such as its
+      // purges, have succeeded; any other answer means something after the
+      // job failed.
+      if (Exit.isSuccess(result) && response.status !== 204) {
+        throw new Error(`routes.run's Effect succeeded, but its route answered ${response.status}: the work after it, such as a cache purge, failed.`)
       }
     } finally {
       runJobs.delete(request)
@@ -1303,7 +1312,11 @@ export class EffectRouteBuilder<
             const requested = yield* Effect.flatMap(PendingPurges, (pending) => pending.take)
 
             yield* purgeTags([...new Set([...(yield* routePurges), ...requested])])
-          })
+          }).pipe(
+            // routes.run's job has succeeded by now; a failed purge of what it
+            // changed fails its run, so the queue retries and the cron fails.
+            Effect.tapError((error) => Effect.sync(() => failRun(c.req.raw, error)))
+          )
         })
       )
 
