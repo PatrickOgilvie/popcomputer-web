@@ -386,6 +386,13 @@ export const ensureArray = <InputSchema extends S.Constraint>(schema: InputSchem
 // Common Patterns
 // =============================================================================
 
+// Linear, with the same answers as /^[^\s@]+@[^\s@]+\.[^\s@]+$/, which retries
+// every '.' of a failing domain against the whole rest of the value, so a
+// visitor's long dotted domain costs time in the square of its length. Here the
+// lookahead checks the domain's characters in one pass, then a '.' with a
+// character after it is found by backtracking bounded by the domain's length.
+const EMAIL_PATTERN = /^[^\s@]+@(?=[^\s@]+$)[^\s@]+\.[^\s@]/u
+
 /**
  * An email address with trimming and lowercase normalization.
  */
@@ -397,7 +404,7 @@ export const email = S.String.pipe(
       encode: (s) => s,
     })
   ),
-  S.check(S.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u, { message: 'Invalid email address' }))
+  S.check(S.isPattern(EMAIL_PATTERN, { message: 'Invalid email address' }))
 )
 
 /**
@@ -420,7 +427,7 @@ export const nullableEmail = S.Unknown.pipe(
 
         if (trimmed === '') return Effect.succeed(null)
 
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+        if (!EMAIL_PATTERN.test(trimmed)) {
           return Effect.fail(
             new SchemaIssue.InvalidValue({ message: 'Invalid email address' }, value, options)
           )
