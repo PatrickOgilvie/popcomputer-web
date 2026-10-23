@@ -15,6 +15,7 @@ export const env = defineEnv({
   DATABASE_URL: secret(),
   BETTER_AUTH_SECRET: secret(S.String.check(S.isMinLength(32)), { generate: randomSecret }),
   PAYMENT_WEBHOOK_SECRET: secret(S.String.check(S.isStartingWith('whsec_'))),
+  APP_URL: variable(S.String),
   TIME_ZONE: variable(S.String, { optional: true }),
 })
 
@@ -24,7 +25,10 @@ export type Env = { Bindings: Bindings }
 ```
 
 The vars and secrets are declared once, and checked before an isolate
-serves: [Vars and secrets](env.md) shows how.
+serves: [Vars and secrets](env.md) shows how. `APP_URL`, such as
+`https://app.example.com`, is Better Auth's `baseURL`, the origin its emailed
+reset, verification and magic links name: read from each request's URL
+instead, they would follow whatever host and scheme reached the Worker.
 
 ## 2. Describe the pages
 
@@ -72,14 +76,13 @@ export const web = setupWeb(new Hono<Env>(), {
     client: (c, { db, backgroundTasks }) => createAuth({
       db,
       secret: c.env.BETTER_AUTH_SECRET,
-      baseURL: new URL(c.req.url).origin,
+      baseURL: c.env.APP_URL,
       sendEmail: (email) => sendEmail(c.env, email),
       advanced: { backgroundTasks },
     }),
     // The user's fields are the user table's; pages see only `share`'s.
     session: betterAuthSession(tableSchema(schema.user)),
-    // Slow password guessing: the binding wrangler.jsonc declares, and
-    // Better Auth's rateLimit table, where failed sign-ins are counted.
+    // Slow password guessing: wrangler.jsonc's limiter, and the table that counts failures.
     signInLimits: { limiter: 'SIGN_IN_LIMITER', table: schema.rateLimit },
     share: tableSchema(schema.user).mapFields(Struct.pick(['id', 'name', 'image'])),
   },
@@ -170,11 +173,7 @@ const template = createTemplate({ title: 'Projects' })
 setupWeb(app, { version, render: template })
 
 // Database without auth
-setupWeb(app, {
-  version,
-  render: template,
-  database: (c) => createDb(c.env.DATABASE_URL),
-})
+setupWeb(app, { version, render: template, database: (c) => createDb(c.env.DATABASE_URL) })
 
 // Stateless auth
 setupWeb(app, {

@@ -138,6 +138,15 @@ export type CompiledRouteBindingAccess =
   | { readonly ownedBy: string }
   | { readonly publicWhen: Readonly<Record<string, unknown>> }
 
+/**
+ * The first publicWhen column whose value is undefined, such as a setting
+ * that is absent: Drizzle binds it as a SQLite boolean column's false, so it
+ * would serve the private records to anyone.
+ */
+function undefinedPublicWhen(definition: RouteBindingAccess<string, AnyRow>): string | undefined {
+  return Object.entries(definition.publicWhen ?? {}).find(([, value]) => value === undefined)?.[0]
+}
+
 /** The access options a binding gives, by name: a valid binding gives at most one. */
 function accessOptionsOf(definition: RouteBindingAccess<string, AnyRow>): readonly string[] {
   return (['ownedBy', 'public', 'publicWhen', 'guarded'] as const).filter((key) => definition[key] !== undefined)
@@ -258,6 +267,10 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: obj
     if (config.publicWhen !== undefined && Object.keys(config.publicWhen).length === 0) {
       throw RouteConfigurationError.bindingPublicWhenEmpty(name).atStartup()
     }
+
+    const unset = undefinedPublicWhen(config)
+
+    if (unset !== undefined) throw RouteConfigurationError.bindingPublicWhenUndefined(name, unset).atStartup()
 
     for (const key of [config.ownedBy, ...Object.keys(config.publicWhen ?? {})]) {
       if (key !== undefined && isBindingTable(source) && !hasColumn(source, key)) {
@@ -655,6 +668,10 @@ export async function compileBindingPlan<Schema extends object>(
     if (definition.publicWhen !== undefined && Object.keys(definition.publicWhen).length === 0) {
       throw RouteConfigurationError.bindingPublicWhenEmpty(binding.param)
     }
+
+    const unset = undefinedPublicWhen(definition)
+
+    if (unset !== undefined) throw RouteConfigurationError.bindingPublicWhenUndefined(binding.param, unset)
 
     for (const column of [definition.ownedBy, ...Object.keys(definition.publicWhen ?? {})]) {
       if (column !== undefined && !isColumnProperty(table, column)) {

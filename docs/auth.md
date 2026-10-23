@@ -66,6 +66,7 @@ import * as schema from './schema'
 export interface CreateAuthOptions {
   readonly db: Database
   readonly secret: string
+  /** The origin emailed links name: a declared var, never the request's URL. */
   readonly baseURL: string
   /** Delivers an email through the application's mail provider. */
   readonly sendEmail: (email: { readonly to: string; readonly subject: string; readonly text: string }) => Promise<void>

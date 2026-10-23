@@ -822,9 +822,10 @@ export type BetterAuthInputField = [AuthOptions] extends [never] ? string : Inpu
 export interface BetterAuthHandlerOptions {
   /**
    * The user fields declared `input: true` that a visitor may set through
-   * Better Auth's own API, at sign-up and later with its update-user, where
-   * the application's actions do not validate them. A request setting any
-   * other is refused.
+   * Better Auth's own API, at sign-up, on a first email-OTP sign-in or
+   * phone-number verification, and later with its update-user, where the
+   * application's actions do not validate them. A request setting any other
+   * is refused.
    */
   readonly settable: ReadonlyArray<BetterAuthInputField>
 }
@@ -834,8 +835,18 @@ type BetterAuthHandlerArguments = [InputFieldsOf<AuthOptions>] extends [never]
   ? [options?: BetterAuthHandlerOptions]
   : [options: BetterAuthHandlerOptions]
 
-/** Better Auth's endpoints that write the user from the request's body. */
-const writesUser = (path: string): boolean => path.startsWith('/sign-up/') || path === '/update-user'
+/**
+ * Better Auth's endpoints that write a visitor's user fields from the
+ * request's body: its `parseUserInput` call sites. Besides sign-up and
+ * update-user, the emailOTP plugin's sign-in and the phoneNumber plugin's
+ * verify create the user on first use (unless emailOTP's `disableSignUp`, or
+ * with phoneNumber's `signUpOnVerification`) from the rest of the body.
+ * Checked against better-auth 1.7.10; the admin plugin's create-user and
+ * update-user take fields from an admin, whose permissions Better Auth checks.
+ */
+const USER_WRITING_ENDPOINTS = new Set(['/update-user', '/sign-in/email-otp', '/phone-number/verify'])
+
+const writesUser = (path: string): boolean => path.startsWith('/sign-up/') || USER_WRITING_ENDPOINTS.has(path)
 
 /** The user fields Better Auth lets a visitor set: its `additionalFields` whose `input` is not false. */
 function inputUserFields(auth: BetterAuthInstance): ReadonlyArray<string> {
@@ -859,7 +870,8 @@ function inputUserFields(auth: BetterAuthInstance): ReadonlyArray<string> {
  * ```
  *
  * It exposes every endpoint Better Auth and its plugins define, including
- * sign-up and update-user, which write user fields declared `input: true`
+ * sign-up, update-user and the plugin sign-ins that create a user (email
+ * OTP, phone-number verify), which write user fields declared `input: true`
  * without the application's validation. Name the ones a visitor may set there
  * in `settable`, which TypeScript asks for once the registered Better Auth
  * declares any; a request setting another is refused with a 400. A

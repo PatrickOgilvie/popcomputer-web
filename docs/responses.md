@@ -88,10 +88,12 @@ check who may read the file before serving it, as for any record.
 names another site with 403, through the error boundary, so a visit gets the
 error page and a JSON client the envelope, beside the `SameSite` cookies
 Better Auth sets. A request without either header, such as a webhook, passes,
-and so does one with an `Authorization` header, which a browser never adds to
-a cross-site request by itself. A native app or
-another site that posts to the application is listed in
-`security: { verifyOrigin: { allowedOrigins: ['https://admin.example'] } }`.
+and so does one whose `Authorization` header holds a token, such as
+`Bearer`, which a browser never adds by itself. `Basic`, `Digest`,
+`Negotiate` and `NTLM` credentials are checked like a cookie, since a browser
+resends the ones it cached, as behind a staging gate, with another site's
+form. A native app or another site that posts to the application is listed
+in `security: { verifyOrigin: { allowedOrigins: ['https://admin.example'] } }`.
 
 Every response also gets, unless it sets its own, `X-Content-Type-Options:
 nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, which keeps the

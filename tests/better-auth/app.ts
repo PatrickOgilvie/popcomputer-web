@@ -22,6 +22,8 @@ import { createAuth, loadedOnFirstUse, schema, type CreateAuthOptions, type Outb
 export interface Bindings {
   readonly OUTBOX: Outbox
   readonly SESSION?: CreateAuthOptions['session']
+  /** The origin emailed links name, a declared var as docs/setup.md declares it. */
+  readonly APP_URL?: string
   /** Load Better Auth on first use, as an application keeping it out of Worker startup does. */
   readonly LAZY?: boolean
 }
@@ -62,7 +64,7 @@ export const web = setupWeb(new Hono<{ Bindings: Bindings }>(), {
   bindings: { organization: schema.organization },
   auth: {
     client: (c, { db }) => {
-      const create = () => createAuth({ db, outbox: c.env.OUTBOX, session: c.env.SESSION })
+      const create = () => createAuth({ db, outbox: c.env.OUTBOX, session: c.env.SESSION, baseURL: c.env.APP_URL })
 
       return c.env.LAZY === true ? loadedOnFirstUse(create) : create()
     },

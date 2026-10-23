@@ -19,6 +19,8 @@ export const web = setupWeb(new Hono(), {
     archived,
     named: routeBinding(schema.projects, options),
     unscoped: routeBinding(schema.tasks, { scope: {} }), // expect: require-binding-access
+    shared: routeBinding(schema.projects, { publicWhen: { isPublic: undefined } }), // expect: require-binding-access
+    hidden: { schema: schema.projects, publicWhen: { isPublic: void 0 } }, // expect: require-binding-access
   },
 })
 

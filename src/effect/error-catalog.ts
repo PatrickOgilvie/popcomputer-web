@@ -116,7 +116,9 @@ const fixGenerators = {
   }),
 
   addAuthConfig: (): FixSuggestion => ({
-    description: 'Give setupWeb a Better Auth client factory (auth: { client }), and register setupWeb\'s result.',
+    description: 'Give setupWeb a Better Auth client factory (auth: { client }), and register setupWeb\'s result. ' +
+      'Take its baseURL from a declared var, such as APP_URL, or list the hosts in Better Auth\'s baseURL: { allowedHosts }: ' +
+      'read from each request\'s URL, the reset, verification and magic links Better Auth emails follow whatever host reached the Worker.',
     code: `setupWeb(app, {
   version,
   render,
@@ -125,7 +127,7 @@ const fixGenerators = {
     client: (c, { db, backgroundTasks }) => createAuth({
       db,
       secret: c.env.BETTER_AUTH_SECRET,
-      baseURL: new URL(c.req.url).origin,
+      baseURL: c.env.APP_URL,
       sendEmail: (email) => sendEmail(c.env, email),
       advanced: { backgroundTasks },
     }),
@@ -444,7 +446,7 @@ export const ErrorCatalog = {
     category: 'routing',
     title: 'Route Binding Access Invalid',
     messageTemplate:
-      'Route binding "{binding}" gives more than one of ownedBy, public, publicWhen and guarded, or a publicWhen with no column.',
+      'Route binding "{binding}" gives more than one of ownedBy, public, publicWhen and guarded, a publicWhen with no column, or a publicWhen value that is undefined.',
     httpStatus: 500,
     defaultFixes: [],
   },

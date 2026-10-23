@@ -149,9 +149,10 @@ Browser code that calls Better Auth directly (its client SDK) needs all of it,
 `routes.all(paths.authApi, betterAuthHandler())` with
 `authApi: '/api/auth/*'`, which exposes every endpoint Better Auth and its
 plugins define past the application's guards: the organization plugin's
-role changes and deletions, and sign-up and update-user, which write the user
-fields declared `input: true` without the application's actions checking
-them. Once the registered Better Auth declares such a field, TypeScript asks
+role changes and deletions, and sign-up, update-user and the email-OTP
+sign-in and phone-number verify that make a user on first use, which write
+the user fields declared `input: true` without the application's actions
+checking them. Once the registered Better Auth declares such a field, TypeScript asks
 for the ones visitors may set there, `betterAuthHandler({ settable: ['timeZone'] })`,
 and the handler refuses a request setting any other with a 400; `settable: []`
 keeps every field to the application's own forms.

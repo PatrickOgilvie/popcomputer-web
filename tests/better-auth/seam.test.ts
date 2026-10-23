@@ -27,7 +27,7 @@ const SESSION = 'better-auth.session_token'
 function setup(session?: CreateAuthOptions['session']) {
   const db = createDatabase()
   const outbox = newOutbox()
-  const env = testEnv({ OUTBOX: outbox, SESSION: session }, { database: db })
+  const env = testEnv({ OUTBOX: outbox, SESSION: session, APP_URL: 'http://localhost' }, { database: db })
   const browser = () => testBrowser(app, env)
 
   /** Follow the link Better Auth last emailed to prove `email`. */
@@ -304,6 +304,86 @@ describe('signing up, in and out', () => {
   })
 })
 
+describe('one-time codes that make the user on a first sign-in', () => {
+  /** The fields a request to Better Auth's API sends as JSON. */
+  type ApiBody = Readonly<Record<string, string>>
+
+  const api = (client: Browser, path: string, body: ApiBody) =>
+    client.request(`/api/auth${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+      body: JSON.stringify(body),
+    })
+
+  test("an emailed code's sign-in refuses the user fields visitors may set only on the application's forms", async () => {
+    const { browser, db, outbox } = setup()
+    const visitor = browser()
+
+    expect((await api(visitor, '/email-otp/send-verification-otp', { email: 'eve@example.com', type: 'sign-in' })).status).toBe(200)
+    const code = outbox.codes.find((sent) => sent.to === 'eve@example.com')?.code ?? ''
+
+    const refused = await api(visitor, '/sign-in/email-otp', { email: 'eve@example.com', otp: code, timeZone: 'Mars/Olympus' })
+
+    expect(refused.status).toBe(400)
+    expect((await refused.json()).message).toContain('timeZone')
+    expect(setsSession(refused)).toBe(false)
+    expect(await db.select().from(schema.user).where(eq(schema.user.email, 'eve@example.com'))).toEqual([])
+
+    // Refused before Better Auth read it, so the code still signs in without the field.
+    const signedIn = await api(visitor, '/sign-in/email-otp', { email: 'eve@example.com', otp: code })
+
+    expect(signedIn.status).toBe(200)
+    expect(setsSession(signedIn)).toBe(true)
+    expect(await db.select({ timeZone: schema.user.timeZone }).from(schema.user).where(eq(schema.user.email, 'eve@example.com')))
+      .toEqual([{ timeZone: null }])
+  })
+
+  test("a texted code's verification refuses the user fields visitors may set only on the application's forms", async () => {
+    const { browser, db, outbox } = setup()
+    const visitor = browser()
+    const phone = '+15550000001'
+
+    expect((await api(visitor, '/phone-number/send-otp', { phoneNumber: phone })).status).toBe(200)
+    const code = outbox.codes.find((sent) => sent.to === phone)?.code ?? ''
+
+    const refused = await api(visitor, '/phone-number/verify', { phoneNumber: phone, code, timeZone: 'Mars/Olympus' })
+
+    expect(refused.status).toBe(400)
+    expect((await refused.json()).message).toContain('timeZone')
+    expect(setsSession(refused)).toBe(false)
+    expect(await db.select().from(schema.user).where(eq(schema.user.phoneNumber, phone))).toEqual([])
+
+    const verified = await api(visitor, '/phone-number/verify', { phoneNumber: phone, code })
+
+    expect(verified.status).toBe(200)
+    expect(setsSession(verified)).toBe(true)
+    expect(await db.select({ timeZone: schema.user.timeZone }).from(schema.user).where(eq(schema.user.phoneNumber, phone)))
+      .toEqual([{ timeZone: null }])
+  })
+
+  test('a code sent in a body the framework cannot read is refused, though Better Auth would read it as JSON', async () => {
+    const { browser, db, outbox } = setup()
+    const visitor = browser()
+    const phone = '+15550000002'
+    // Better Auth reads any type that starts application/json as JSON; the framework reads only JSON's own.
+    const sent = (path: string, body: ApiBody) => visitor.request(`/api/auth${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json-seq', Origin: 'http://localhost' },
+      body: JSON.stringify(body),
+    })
+
+    await api(visitor, '/email-otp/send-verification-otp', { email: 'eve@example.com', type: 'sign-in' })
+    await api(visitor, '/phone-number/send-otp', { phoneNumber: phone })
+    const codeTo = (to: string) => outbox.codes.find((code) => code.to === to)?.code ?? ''
+
+    const emailed = await sent('/sign-in/email-otp', { email: 'eve@example.com', otp: codeTo('eve@example.com'), timeZone: 'Mars/Olympus' })
+    const texted = await sent('/phone-number/verify', { phoneNumber: phone, code: codeTo(phone), timeZone: 'Mars/Olympus' })
+
+    expect([emailed.status, texted.status]).toEqual([415, 415])
+    expect(await db.select().from(schema.user)).toEqual([])
+  })
+})
+
 describe('two-factor', () => {
   test('a member with two-factor on is asked for a code, which signs them in', async () => {
     const { browser, join } = setup()
@@ -347,6 +427,21 @@ describe('magic links', () => {
     expect(reused.status).toBe(200)
     expect(await reused.json()).toMatchObject({ component: 'Auth/LinkExpired' })
     expect(again.cookies.has(SESSION)).toBe(false)
+  })
+})
+
+describe('emailed links', () => {
+  test("name the application's declared origin, whatever host and scheme the request reached", async () => {
+    const { browser, outbox } = setup()
+    // A host the Worker answers that the application does not name, such as
+    // a custom hostname a tenant's DNS points at it.
+    const res = await browser().request('https://attacker.example/magic-link', {
+      ...form({ email: 'ada@example.com' }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://attacker.example' },
+    })
+
+    expect(res.status).toBe(303)
+    expect(outbox.magicLinks.map((sent) => new URL(sent.url).origin)).toEqual(['http://localhost'])
   })
 })
 

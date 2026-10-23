@@ -20,6 +20,8 @@ export const env = defineEnv({
   // Signs sessions: generated the first time, and replacing it signs everyone out.
   BETTER_AUTH_SECRET: secret(S.String.check(S.isMinLength(32)), { generate: randomSecret }),
   PAYMENT_WEBHOOK_SECRET: secret(S.String.check(S.isStartingWith('whsec_'))),
+  // The origin Better Auth's emailed links name, never the host a request reached.
+  APP_URL: variable(S.String),
   TIME_ZONE: variable(S.String, { optional: true }),
 })
 
