@@ -27,7 +27,7 @@ const SESSION = 'better-auth.session_token'
 function setup(session?: CreateAuthOptions['session']) {
   const db = createDatabase()
   const outbox = newOutbox()
-  const env = testEnv({ OUTBOX: outbox, SESSION: session }, { database: db })
+  const env = testEnv({ OUTBOX: outbox, SESSION: session, APP_URL: 'http://localhost' }, { database: db })
   const browser = () => testBrowser(app, env)
 
   /** Follow the link Better Auth last emailed to prove `email`. */
@@ -427,6 +427,21 @@ describe('magic links', () => {
     expect(reused.status).toBe(200)
     expect(await reused.json()).toMatchObject({ component: 'Auth/LinkExpired' })
     expect(again.cookies.has(SESSION)).toBe(false)
+  })
+})
+
+describe('emailed links', () => {
+  test("name the application's declared origin, whatever host and scheme the request reached", async () => {
+    const { browser, outbox } = setup()
+    // A host the Worker answers that the application does not name, such as
+    // a custom hostname a tenant's DNS points at it.
+    const res = await browser().request('https://attacker.example/magic-link', {
+      ...form({ email: 'ada@example.com' }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://attacker.example' },
+    })
+
+    expect(res.status).toBe(303)
+    expect(outbox.magicLinks.map((sent) => new URL(sent.url).origin)).toEqual(['http://localhost'])
   })
 })
 

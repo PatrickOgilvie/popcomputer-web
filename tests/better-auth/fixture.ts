@@ -184,7 +184,7 @@ export type TestDatabase = ReturnType<typeof createDatabase>
 /** What Better Auth sent: the emails an application would deliver. */
 export interface Outbox {
   readonly verifications: Array<{ readonly email: string; readonly token: string }>
-  readonly magicLinks: Array<{ readonly email: string; readonly token: string }>
+  readonly magicLinks: Array<{ readonly email: string; readonly token: string; readonly url: string }>
   readonly invitations: Array<{ readonly id: string; readonly email: string }>
   /** One-time codes, emailed or texted: `to` is the address or the phone number. */
   readonly codes: Array<{ readonly to: string; readonly code: string }>
@@ -204,13 +204,15 @@ export const acme = testOAuthProvider({ ...ACME, client: { id: 'acme-client', se
 export interface CreateAuthOptions {
   readonly db: TestDatabase
   readonly outbox: Outbox
+  /** The origin emailed links name: the application's declared APP_URL, as docs/setup.md gives it. */
+  readonly baseURL?: string
   readonly session?: { readonly updateAge?: number; readonly cookieCache?: { readonly enabled: boolean; readonly maxAge?: number } }
 }
 
 export function createAuth(options: CreateAuthOptions) {
   return betterAuth({
     database: drizzleAdapter(options.db, { provider: 'sqlite', schema }),
-    baseURL: 'http://localhost',
+    baseURL: options.baseURL ?? 'http://localhost',
     secret: 'better-auth-seam-test-secret-with-enough-entropy-0123',
     // docs/auth.md's createAuth: a password signs in only once its address is
     // proven, and following the link signs nobody in.
@@ -232,8 +234,8 @@ export function createAuth(options: CreateAuthOptions) {
       }),
       twoFactor({ skipVerificationOnEnable: true }),
       magicLink({
-        sendMagicLink: async ({ email, token }) => {
-          options.outbox.magicLinks.push({ email, token })
+        sendMagicLink: async ({ email, token, url }) => {
+          options.outbox.magicLinks.push({ email, token, url })
         },
       }),
       emailOTP({
