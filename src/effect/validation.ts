@@ -11,6 +11,7 @@ import { RequestService, type RequestContext } from './services.js'
 import { ValidationError } from './errors.js'
 import type { FieldError } from './error-types.js'
 import { ErrorCodes, type ErrorCode } from './error-catalog.js'
+import { BodyTooLarge, DEFAULT_BODY_LIMIT, formatBytes, readBody } from './body-limit.js'
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
 
@@ -216,8 +217,8 @@ function isFormContentType(contentType: string): boolean {
  * (`text/plain`) or a client sends one with none: read as JSON, an empty body
  * as no fields. One that is not JSON fails as a body that could not be parsed.
  */
-async function untypedBody(request: RequestContext): Promise<unknown> {
-  const text = await request.raw().clone().text()
+async function untypedBody(request: RequestContext, limit: number): Promise<unknown> {
+  const text = new TextDecoder().decode(await readBody(request.raw(), limit, { copy: true }))
 
   return text.trim() === '' ? {} : JSON.parse(text)
 }
@@ -244,7 +245,8 @@ function queryFields(request: RequestContext): Record<string, unknown> {
 }
 
 function getValidationDataWithOptions(
-  config?: RequestValidationOptions
+  config?: RequestValidationOptions,
+  bodyLimit?: number
 ): Effect.Effect<RequestData, ValidationError, RequestService> {
   return Effect.gen(function* () {
     const request = yield* RequestService
@@ -261,14 +263,20 @@ function getValidationDataWithOptions(
     ) {
       const contentType = request.header('Content-Type') ?? ''
       const isJson = isJsonContentType(contentType)
+      const limit = bodyLimit ?? request.bodyLimit ?? DEFAULT_BODY_LIMIT
 
-      const parsed = yield* Effect.tryPromise(async () =>
-        isJson ? request.json() : isFormContentType(contentType) ? formFields(await request.parseBody()) : untypedBody(request)
-      ).pipe(
-        Effect.mapError((error) =>
-          createBodyParseValidationError(error, contentType)
-        )
-      )
+      if (!(limit >= 0)) {
+        return yield* Effect.die(new RangeError(`bodyLimit is a number of bytes, not ${String(limit)}.`))
+      }
+
+      const parsed = yield* Effect.tryPromise({
+        try: async () => isJson
+          ? request.json({ bodyLimit: limit })
+          : isFormContentType(contentType) ? formFields(await request.parseBody({ bodyLimit: limit })) : untypedBody(request, limit),
+        catch: (cause) => cause instanceof BodyTooLarge
+          ? createBodyTooLargeValidationError(cause.limit)
+          : createBodyParseValidationError(cause, contentType),
+      })
 
       if (!Predicate.isObject(parsed)) {
         return yield* createBodyParseValidationError(
@@ -446,6 +454,17 @@ export interface ValidateOptions {
   parseOptions?: ParseOptions
 
   /**
+   * The most bytes the request body may have, in place of setupWeb's
+   * `bodyLimit` (1 MiB unless it sets one): raise it for a form that uploads
+   * files. A larger body is refused before it is parsed, with a 413 for a
+   * JSON client and the form's `form` error for a page.
+   *
+   * @example
+   * validateRequest(Receipt, { bodyLimit: 6_000_000 })
+   */
+  bodyLimit?: number
+
+  /**
    * Where a form that fails validation goes back to, with its errors,
    * instead of the page it was posted from: a wizard's step, when the final
    * submit carries every step's fields.
@@ -487,6 +506,19 @@ export function createBodyParseValidationError(
       },
     },
     code: ErrorCodes.VAL_003_BODY_PARSE_FAILED,
+  })
+}
+
+/** A body refused for passing `limit` bytes before it was parsed. */
+function createBodyTooLargeValidationError(limit: number): ValidationError {
+  const message = `This request is too large: send at most ${formatBytes(limit)}.`
+
+  return new ValidationError({
+    errors: { form: message },
+    fieldDetails: {
+      form: { expected: `a body of at most ${limit} bytes`, message, path: ['form'], schemaType: 'Body' },
+    },
+    code: ErrorCodes.VAL_007_BODY_TOO_LARGE,
   })
 }
 
@@ -553,7 +585,7 @@ export const validateRequest = Effect.fn('Web.validateRequest')(function* <A, I>
   options: ValidateOptions = {}
 ) {
   const redirectTo = options.redirectTo
-  const validated = Effect.flatMap(getValidationDataWithOptions(options.request), (data) => validateUnknown(schema, data, options))
+  const validated = Effect.flatMap(getValidationDataWithOptions(options.request, options.bodyLimit), (data) => validateUnknown(schema, data, options))
 
   return yield* redirectTo === undefined
     ? validated

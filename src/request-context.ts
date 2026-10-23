@@ -66,6 +66,8 @@ export interface WebRequestContext<E extends Env = Env> {
   signInPath?: string
   /** setupWeb() — where a signed-in visitor goes from a page for guests. */
   homePath?: string
+  /** setupWeb() — the most bytes the framework reads of a request body. */
+  bodyLimit?: number
   /** setupWeb() — the sign-in limits, with the request's Rate Limiting binding. */
   signInLimits?: ActiveSignInLimits
   /**

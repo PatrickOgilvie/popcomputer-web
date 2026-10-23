@@ -43,6 +43,7 @@ import { readTestLayer } from './test-env.js'
 import type { RouteBindingsConfig } from './binding.js'
 import type { DeclaredFields, PageSchemas } from './pages.js'
 import { observeOrLog } from './error-observer.js'
+import { DEFAULT_BODY_LIMIT, readBody } from './body-limit.js'
 
 /**
  * Configuration for the Effect bridge.
@@ -103,6 +104,21 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
 // typed request context (see request-context.ts).
 
 /**
+ * Read the body into Hono's body cache within `limit` bytes, so its json()
+ * and parseBody() parse that copy and a later read reuses it. A body already
+ * read, by Hono middleware or an earlier read, is kept as it is.
+ */
+function readBodyWithin<E extends Env>(c: HonoContext<E>, limit: number): void {
+  const cache = c.req.bodyCache
+
+  if (Object.keys(cache).length > 0) return
+
+  // HonoRequest keeps each body read's promise in bodyCache and reads the
+  // other kinds from it (#cachedBody), though its type names the values.
+  Object.assign(cache, { arrayBuffer: readBody(c.req.raw, limit) })
+}
+
+/**
  * Create a RequestContext from Hono context.
  */
 function createRequestContext<E extends Env>(
@@ -110,6 +126,7 @@ function createRequestContext<E extends Env>(
 ): RequestContext<NonNullable<E['Bindings']>> {
   // SAFETY: Hono supplies c.env from the route Env; the empty object is used only when that optional binding bag is absent.
   const env = (c.env ?? {}) as NonNullable<E['Bindings']>
+  const bodyLimit = openWebContext(c).bodyLimit ?? DEFAULT_BODY_LIMIT
 
   return {
     method: c.req.method,
@@ -129,19 +146,28 @@ function createRequestContext<E extends Env>(
     },
     query: () => c.req.query(),
     queries: () => c.req.queries(),
-    json: (): Promise<unknown> => c.req.json(),
+    json: (options): Promise<unknown> => {
+      readBodyWithin(c, options?.bodyLimit ?? bodyLimit)
+
+      return c.req.json()
+    },
     // The raw request carries every header, and Cloudflare's `cf` data.
     raw: () => {
       markPageDynamic(c)
 
       return c.req.raw
     },
-    parseBody: () => c.req.parseBody({ all: true }),
+    parseBody: (options) => {
+      readBodyWithin(c, options?.bodyLimit ?? bodyLimit)
+
+      return c.req.parseBody({ all: true })
+    },
     header: (name: string) => {
       markPageDynamic(c)
 
       return c.req.header(name)
     },
+    bodyLimit,
   }
 }
 

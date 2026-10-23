@@ -107,9 +107,11 @@ export class ValidationError extends Schema.TaggedError<ValidationError>()('Vali
   /** Verified response headers accumulated by an external provider. */
   headers: OptionalHeaders,
 }) implements StructuredErrorCapable {
-  /** 400 for a body that could not be parsed, 422 for input that did not validate. */
+  /** 400 for a body that could not be parsed, 413 for one too large to read, 422 for input that did not validate. */
   get httpStatus(): number {
-    return this.code === ErrorCodes.VAL_003_BODY_PARSE_FAILED ? 400 : 422
+    if (this.code === ErrorCodes.VAL_003_BODY_PARSE_FAILED) return 400
+
+    return this.code === ErrorCodes.VAL_007_BODY_TOO_LARGE ? 413 : 422
   }
 
   toStructured(context: ErrorContext = emptyContext()): StructuredError {

@@ -9,7 +9,7 @@ and the lint rules name it where an action reaches for something else.
 | --- | --- | --- |
 | Read form, query or JSON input | `validateRequest(Schema)` | [Validating input](validation.md) |
 | Read a header, or the raw body a webhook signs | `RequestService`'s `header(name)` and `raw()` | [Webhooks](webhooks.md) |
-| Accept a file | `upload({ types, maxBytes })` in the schema | [User input in](validation.md#user-input-in) |
+| Accept a file | `upload({ types, maxBytes })` in the schema, and `validateRequest`'s `bodyLimit` past 1 MiB | [User input in](validation.md#user-input-in) |
 | Render a page | `render('Projects/Show', props)` | [Actions and routes](actions.md) |
 | Redirect after a write | `redirect(paths.project, { project: id })` | [Responses](actions.md#responses-and-failures) |
 | Go back to the page the request came from | `back(paths.projects)` | [Responses](actions.md#responses-and-failures) |

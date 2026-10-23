@@ -1,10 +1,12 @@
 /**
  * Requests whose size alone costs the isolate that serves every request: a
- * list of thousands of invalid items, each kept, observed and answered as
- * an error of its own.
+ * body read whole before anything could refuse it, and a list of thousands
+ * of invalid items, each kept, observed and answered as an error of its own.
  *
- * Precedents: Laravel's validator and Zod report every invalid item; a
- * Worker's isolate shares its memory among the requests it serves.
+ * Precedents: Starlette CVE-2024-47874 and CVE-2026-54283, Hono
+ * CVE-2026-44456 and SvelteKit CVE-2026-40073 (bodies parsed without a
+ * limit); Laravel's validator and Zod report every invalid item; a Worker's
+ * isolate shares its memory among the requests it serves.
  */
 
 import { describe, expect, test } from 'bun:test'
@@ -13,7 +15,7 @@ import { Effect, Layer, Schema as S } from 'effect'
 import { action } from '../../src/effect/action.js'
 import { EffectErrorObserverService, type EffectErrorEvent } from '../../src/effect/error-observer.js'
 import { json } from '../../src/effect/responses.js'
-import { coercedNumber, maxItems, minItems } from '../../src/effect/schema.js'
+import { coercedNumber, maxItems, minItems, upload } from '../../src/effect/schema.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { setupWeb } from '../../src/setup.js'
 import { testEnv } from '../../src/testing.js'
@@ -113,5 +115,158 @@ describe('a list of thousands of invalid items', () => {
     }, testEnv({ ENVIRONMENT: 'production' }))
 
     expect(Object.keys((await res.json()).errors)).toHaveLength(101)
+  })
+})
+
+const MiB = 1024 * 1024
+const Note = S.Struct({ text: S.String })
+const Cover = S.Struct({ cover: upload({ types: ['image/png'], maxBytes: 1024 }) })
+const Receipt = S.Struct({ receipt: upload({ types: ['image/png'], maxBytes: 3 * MiB }) })
+
+function createUploadsApp(bodyLimit?: number) {
+  const app = new Hono()
+  const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page), bodyLimit })
+  const accept = (schema: S.Codec<unknown, unknown>, bodyLimit?: number) => action(Effect.gen(function* () {
+    yield* validateRequest(schema, { bodyLimit })
+
+    return yield* json(Ok, { ok: true })
+  }))
+
+  routes.post('/notes', accept(Note)).post('/covers', accept(Cover)).post('/receipts', accept(Receipt, 4 * MiB))
+
+  return app
+}
+
+/** A body sent in chunks, counting the bytes the server pulls. */
+function streamed(bytes: Uint8Array, chunk = 64 * 1024) {
+  let pulled = 0
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (pulled >= bytes.byteLength) return controller.close()
+
+      const next = bytes.subarray(pulled, pulled + chunk)
+      pulled += next.byteLength
+      controller.enqueue(next)
+    },
+  }, { highWaterMark: 0 })
+
+  return { body, pulled: () => pulled }
+}
+
+/** A multipart form of one PNG of `size` bytes, and its Content-Type. */
+async function multipart(field: string, size: number) {
+  const png = new Uint8Array(size)
+  png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  const form = new FormData()
+  form.set(field, new File([png], 'image.png', { type: 'image/png' }))
+  const encoded = new Response(form)
+
+  return { type: encoded.headers.get('Content-Type') ?? '', bytes: new Uint8Array(await encoded.arrayBuffer()) }
+}
+
+const send = (app: Hono, path: string, init: RequestInit) => {
+  // A streamed body needs `duplex`, which the DOM's RequestInit does not name.
+  const streaming: RequestInit & { readonly duplex: 'half' } = { method: 'POST', duplex: 'half', ...init }
+
+  return app.request(new Request(`http://localhost${path}`, streaming), undefined, testEnv({ ENVIRONMENT: 'production' }))
+}
+
+describe('a body over the limit', () => {
+  test('streamed without a length, is refused with 413 before more than the limit is read', async () => {
+    const { type, bytes } = await multipart('cover', 8 * MiB)
+    const { body, pulled } = streamed(bytes)
+    const res = await send(createUploadsApp(), '/covers', { headers: { Accept: 'application/json', 'Content-Type': type }, body })
+
+    expect(res.status).toBe(413)
+    expect(await res.json()).toMatchObject({
+      code: 'WEB_VAL_007_BODY_TOO_LARGE',
+      errors: { form: 'This request is too large: send at most 1 MB.' },
+    })
+    expect(pulled()).toBeLessThan(MiB + 256 * 1024)
+  })
+
+  test('with a declared Content-Length over the limit, is refused before a byte is read', async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify({ text: 'x'.repeat(2 * MiB) }))
+
+    for (const type of ['application/json', 'text/plain', 'application/x-www-form-urlencoded']) {
+      const { body, pulled } = streamed(bytes)
+      const res = await send(createUploadsApp(), '/notes', {
+        headers: { Accept: 'application/json', 'Content-Type': type, 'Content-Length': String(bytes.byteLength) },
+        body,
+      })
+
+      expect({ type, status: res.status, pulled: pulled() }).toEqual({ type, status: 413, pulled: 0 })
+    }
+  })
+
+  test('sent as JSON or text without a length is refused too', async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify({ text: 'x'.repeat(2 * MiB) }))
+
+    for (const type of ['application/json', 'text/plain']) {
+      const { body, pulled } = streamed(bytes)
+      const res = await send(createUploadsApp(), '/notes', { headers: { Accept: 'application/json', 'Content-Type': type }, body })
+
+      expect({ type, status: res.status, withinLimit: pulled() < MiB + 256 * 1024 }).toEqual({ type, status: 413, withinLimit: true })
+    }
+  })
+
+  test("from a page's form goes back to the form, as a body that does not parse does", async () => {
+    const res = await send(createUploadsApp(), '/notes', {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: 'http://localhost/notes/new' },
+      body: streamed(new TextEncoder().encode(`text=${'x'.repeat(2 * MiB)}`)).body,
+    })
+
+    expect(res.status).toBe(303)
+    expect(res.headers.get('Location')).toBe('/notes/new')
+    const flash = /popweb-flash=([^;]+)/.exec(res.headers.get('Set-Cookie') ?? '')?.[1] ?? ''
+
+    expect(JSON.parse(Buffer.from(flash, 'base64url').toString())).toMatchObject({ errors: { form: 'This request is too large: send at most 1 MB.' } })
+  })
+})
+
+describe('the body limit', () => {
+  test("is raised by validateRequest's bodyLimit for an action that takes uploads", async () => {
+    const { type, bytes } = await multipart('receipt', 2 * MiB)
+    const res = await send(createUploadsApp(), '/receipts', { headers: { Accept: 'application/json', 'Content-Type': type }, body: streamed(bytes).body })
+
+    expect(res.status).toBe(200)
+  })
+
+  test("is setupWeb's bodyLimit for every other action", async () => {
+    const res = await send(createUploadsApp(1024), '/notes', {
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'x'.repeat(2048) }),
+    })
+
+    expect(res.status).toBe(413)
+    expect((await res.json()).errors.form).toBe('This request is too large: send at most 1 KB.')
+  })
+
+  test('that is not a number of bytes is a defect, not a client error', async () => {
+    const res = await send(createUploadsApp(Number.NaN), '/notes', {
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'hi' }),
+    })
+
+    expect(res.status).toBe(500)
+  })
+
+  test('leaves a body within it read once, for every validateRequest of the action', async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    routes.post('/notes', action(Effect.gen(function* () {
+      const first = yield* validateRequest(Note)
+      const second = yield* validateRequest(Note)
+
+      return yield* json(Note, { text: `${first.text} ${second.text}` })
+    })))
+
+    for (const type of ['application/json', 'application/x-www-form-urlencoded']) {
+      const body = type === 'application/json' ? JSON.stringify({ text: 'hi' }) : 'text=hi'
+      const res = await send(app, '/notes', { headers: { Accept: 'application/json', 'Content-Type': type }, body })
+
+      expect({ type, body: await res.json() }).toEqual({ type, body: { text: 'hi hi' } })
+    }
   })
 })
