@@ -29,7 +29,9 @@ export interface PageObject<TProps extends object = PageProps> {
   props: TProps & { errors?: PageErrors }
   url: string
   version: string
+  /** The client forgets the key that encrypted its history, so earlier pages cannot be shown again. */
   clearHistory?: boolean
+  /** The client encrypts this page in the browser's history. */
   encryptHistory?: boolean
   /** Inertia 3's flash data: values the previous request handed to this page. */
   flash?: Readonly<Record<string, unknown>>
@@ -48,6 +50,24 @@ export interface WebConfig {
    * rendering a page is a configuration error.
    */
   render?: (page: PageObject, ctx?: Context) => string | Promise<string>
+  /**
+   * How pages keep their props in the browser's history. Pages rendered to a
+   * signed-in request are encrypted there unless this says otherwise, and the
+   * first page after the session ends clears it, so Back after sign-out
+   * cannot show the previous user's pages.
+   */
+  history?: HistoryConfig
+}
+
+/** How pages keep their props in the browser's history: setupWeb's and web()'s `history`. */
+export interface HistoryConfig {
+  /**
+   * Which pages Inertia encrypts in the browser's history, with a key the
+   * tab forgets when the session ends: `'signed-in'`, the default, for pages
+   * rendered to a signed-in request; `true` for every page; `false` for
+   * none. `render(..., { encryptHistory })` decides for one page.
+   */
+  readonly encrypt?: boolean | 'signed-in'
 }
 
 export interface RenderOptions {

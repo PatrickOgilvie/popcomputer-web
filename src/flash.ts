@@ -7,6 +7,8 @@
  * next page to render reads and clears, so they show once, without
  * server-side sessions; a request that only redirects passes them on. Data
  * set during a request that renders a page goes into that page directly.
+ * The same cookie tells the next page to clear Inertia's history once the
+ * session ends.
  */
 
 import type { Context } from 'hono'
@@ -23,11 +25,14 @@ export interface FlashedPageData {
   readonly errors: FlashErrors
   /** Inertia's page `flash` field. Values reach the client as JSON. */
   readonly flash: Readonly<Record<string, unknown>>
+  /** Whether the page clears Inertia's history: the session ended since the last page. */
+  readonly clearHistory: boolean
 }
 
 interface MutableFlash {
   errors: Record<string, string | Readonly<Record<string, string>>>
   flash: Record<string, unknown>
+  clearHistory: boolean
 }
 
 /** The request's flash data: what the previous request left and what this one sets. */
@@ -36,6 +41,8 @@ export interface FlashStore {
   set(key: string, value: PagePropValue): void
   /** Hand field errors to the next page, under `bag` when the form named one. */
   setErrors(errors: Readonly<Record<string, string>>, bag?: string): void
+  /** Have the next page clear Inertia's history. */
+  clearHistory(): void
   /** The data for the page this request renders. */
   take(): FlashedPageData
   /** Whether committing a response of this status writes the flash cookie, to carry data or clear it. */
@@ -54,11 +61,12 @@ const MAX_COOKIE_BYTES = 3800
 const StoredFlash = S.Struct({
   errors: S.Record(S.String, S.Union([S.String, S.Record(S.String, S.String)])),
   flash: S.Record(S.String, S.Unknown),
+  clearHistory: S.optional(S.Boolean),
 })
 
 const decodeStored = S.decodeUnknownOption(S.fromJsonString(StoredFlash))
 
-const empty = (): MutableFlash => ({ errors: {}, flash: {} })
+const empty = (): MutableFlash => ({ errors: {}, flash: {}, clearHistory: false })
 
 /** Open the flash store for a request. */
 export function openFlash(c: Context): FlashStore {
@@ -68,7 +76,10 @@ export function openFlash(c: Context): FlashStore {
   // An Inertia prefetch is not a visit: it leaves flash data for the visit.
   const prefetch = c.req.header('Purpose') === 'prefetch'
 
-  const incoming = raw === undefined ? Option.none() : decodeStored(fromBase64Url(raw))
+  const incoming = Option.map(
+    raw === undefined ? Option.none() : decodeStored(fromBase64Url(raw)),
+    (decoded): MutableFlash => ({ errors: decoded.errors, flash: decoded.flash, clearHistory: decoded.clearHistory === true })
+  )
   const pending = empty()
   let delivered = false
   const clears = raw !== undefined && !prefetch
@@ -83,6 +94,7 @@ export function openFlash(c: Context): FlashStore {
     return {
       errors: { ...carried.errors, ...pending.errors },
       flash: { ...carried.flash, ...pending.flash },
+      clearHistory: carried.clearHistory || pending.clearHistory,
     }
   }
 
@@ -99,11 +111,16 @@ export function openFlash(c: Context): FlashStore {
       }
     },
 
+    clearHistory() {
+      pending.clearHistory = true
+    },
+
     take() {
       const previous = Option.getOrElse(incoming, empty)
       const data = {
         errors: delivered || prefetch ? { ...pending.errors } : { ...previous.errors, ...pending.errors },
         flash: delivered || prefetch ? { ...pending.flash } : { ...previous.flash, ...pending.flash },
+        clearHistory: delivered || prefetch ? pending.clearHistory : previous.clearHistory || pending.clearHistory,
       }
 
       delivered = !prefetch
@@ -123,7 +140,7 @@ export function openFlash(c: Context): FlashStore {
       if (!carries && !clears) return response
 
       const cookie = carries
-        ? serialize(name, toBase64Url(JSON.stringify(withinBudget(next))), {
+        ? serialize(name, toBase64Url(stored(withinBudget(next))), {
             path: '/',
             httpOnly: true,
             secure,
@@ -145,19 +162,27 @@ export function openFlash(c: Context): FlashStore {
 }
 
 function hasData(data: MutableFlash): boolean {
-  return Object.keys(data.errors).length > 0 || Object.keys(data.flash).length > 0
+  return Object.keys(data.errors).length > 0 || Object.keys(data.flash).length > 0 || data.clearHistory
 }
 
-/** Keep field errors before flash values when the data outgrows a cookie. */
+/** The cookie's JSON, which names `clearHistory` only when it is set. */
+function stored(data: MutableFlash): string {
+  return JSON.stringify(data.clearHistory ? data : { errors: data.errors, flash: data.flash })
+}
+
+/**
+ * Keep field errors before flash values when the data outgrows a cookie,
+ * and clearing the history before either.
+ */
 function withinBudget(data: MutableFlash): MutableFlash {
   const fits = (candidate: MutableFlash) =>
-    toBase64Url(JSON.stringify(candidate)).length <= MAX_COOKIE_BYTES
+    toBase64Url(stored(candidate)).length <= MAX_COOKIE_BYTES
 
   if (fits(data)) return data
 
-  const errorsOnly = { errors: data.errors, flash: {} }
+  const errorsOnly = { errors: data.errors, flash: {}, clearHistory: data.clearHistory }
 
-  return fits(errorsOnly) ? errorsOnly : empty()
+  return fits(errorsOnly) ? errorsOnly : { ...empty(), clearHistory: data.clearHistory }
 }
 
 function toBase64Url(text: string): string {

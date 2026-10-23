@@ -479,6 +479,7 @@ function createSetupMiddleware<
   const webConfig: WebConfig = {
     version: config.version,
     render: config.render,
+    history: config.history,
   }
   // The env failures this application has logged, so an isolate logs each once.
   const loggedEnvFailures = new Set<string>()

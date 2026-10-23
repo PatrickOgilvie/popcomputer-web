@@ -41,8 +41,19 @@ matching its schema, and encodes the props as JSON through it, so `createdAt`
 reaches the browser as an ISO string. A page answers 200, or the status its
 third argument gives: `render('Projects/Missing', {}, { status: 404 })`. An
 application without `pages` passes props of any declared shape, interfaces
-included, whose values JSON carries. The React component takes its props from
-the same schema:
+included, whose values JSON carries.
+
+Inertia keeps each page's props in the tab's history, and Back shows them
+again without asking the server. A page rendered to a signed-in request is
+encrypted there, and the first page after the session ends clears the
+history, so the next person at the browser cannot page back through the
+previous user's pages ([Signing in and out](sign-in.md)). `setupWeb`'s
+`history: { encrypt: true }` encrypts every page and `false` none;
+`render('Account/Codes', props, { encryptHistory: true, clearHistory: true })`
+decides for one page. Inertia encrypts only over HTTPS or on localhost, and
+elsewhere warns and keeps the page as it is.
+
+The React component takes its props from the same schema:
 
 ```tsx
 // src/pages/Projects/Show.tsx
