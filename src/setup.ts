@@ -137,6 +137,14 @@ interface WebSetupOptions<E extends Env> extends WebConfig {
   errors?: ErrorHandlerConfig
 
   /**
+   * The most bytes `validateRequest` reads of a request body, 1 MiB unless
+   * set: a larger one is refused before it is parsed, with a 413 for a JSON
+   * client and the form's `form` error for a page. An action that takes
+   * uploads raises it with `validateRequest(Schema, { bodyLimit })`.
+   */
+  bodyLimit?: number
+
+  /**
    * Cache static pages at the edge (default `true`, or `false` when
    * `middleware` is given, since a cached page is served before it runs).
    * Pages that read no bindings, headers or request state are served from
@@ -490,6 +498,7 @@ function createSetupMiddleware<
     requestCtx.errorBoundary = config.errors
     requestCtx.signInPath = config.auth?.signInPath
     requestCtx.homePath = config.auth?.homePath
+    requestCtx.bodyLimit = config.bodyLimit
     const signInLimits = config.auth?.signInLimits
     requestCtx.signInLimits = signInLimits === undefined ? undefined : activeSignInLimits(signInLimits, c.env ?? {})
     const executionContext = getRequestExecutionContextClient(c)

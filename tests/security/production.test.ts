@@ -10,19 +10,26 @@
  * limits keyed on X-Forwarded-For), Zod CVE-2023-4316, Valibot
  * CVE-2025-66020 and path-to-regexp CVE-2024-45296 (regular expressions with
  * exponential backtracking), Drizzle CVE-2026-39356 and Hono's 2026
- * advisories (fixed in the releases the peer ranges now start at).
+ * advisories (fixed in the releases the peer ranges now start at), Laravel's
+ * validator (reports no ValidationException and flashes no password field).
  */
 
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Hono } from 'hono'
-import { Effect, Exit, Schema as S } from 'effect'
+import { Effect, Exit, Layer, Schema as S } from 'effect'
 import { action } from '../../src/effect/action.js'
 import { parseBindings } from '../../src/effect/binding.js'
-import { alpha, alphaDash, alphaNum, email, ip, isoDate, isoDateTime, jsonString, macAddress, nullableEmail, singleMediaType, url, uuid } from '../../src/effect/schema.js'
+import { EffectErrorObserverService, type EffectErrorEvent } from '../../src/effect/error-observer.js'
+import { ValidationError } from '../../src/effect/errors.js'
+import { json } from '../../src/effect/responses.js'
+import { alpha, alphaDash, alphaNum, email, ip, isoDate, isoDateTime, jsonString, macAddress, nullableEmail, password, requiredString, singleMediaType, url, uuid } from '../../src/effect/schema.js'
 import { clientAddress } from '../../src/effect/sign-in-limits.js'
+import { validateRequest } from '../../src/effect/validation.js'
+import { endpoint } from '../../src/endpoint.js'
 import { setupWeb } from '../../src/setup.js'
+import { testEnv } from '../../src/testing.js'
 
 const secret = 'hunter2-secret postgres://admin:hunter2@db.internal:5432/app'
 
@@ -65,6 +72,120 @@ describe('an error in production', () => {
 
       expect({ path, headers, leaks: body.includes('hunter2') }).toEqual({ path, headers, leaks: false })
     }
+  })
+})
+
+describe('a failed validation in production', () => {
+  // Dummy credentials, each of which a request below sends and fails with.
+  const shortPassword = 'P520dummyPw'
+  const firstPassword = 'P520-dummy-first-password'
+  const secondPassword = 'P520-dummy-second-password'
+  const sessionCookie = 'better-auth.session_token=P520-DUMMY-SESSION'
+  const bearer = 'Bearer P520-DUMMY-BEARER'
+  // The conflict's query value stays in the context's URL, as the request named it.
+  const secrets = [shortPassword, firstPassword, secondPassword, 'P520-DUMMY-SESSION', 'P520-DUMMY-BEARER', 'P520-body']
+
+  const SignUp = S.Struct({ email: requiredString, password: password({ min: 12 }), passwordConfirmation: S.String }).check(
+    S.makeFilter((input) => input.password === input.passwordConfirmation, { message: 'The passwords do not match.' })
+  )
+  const signUp = action(Effect.gen(function* () {
+    yield* validateRequest(SignUp)
+
+    return yield* json(S.Struct({ ok: S.Boolean }), { ok: true })
+  }))
+  // A rule over every header a client sends, cookie and authorization included.
+  const session = endpoint.post('/api/session', {
+    headers: S.Struct({ cookie: S.optional(S.String), authorization: S.optional(S.String) }).check(
+      S.makeFilter((headers) => headers.cookie === undefined || headers.authorization === undefined, { message: 'Send a cookie or a token, not both.' })
+    ),
+  })
+
+  const createApp = (observed: EffectErrorEvent[]) => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) }).services({
+      app: Layer.succeed(EffectErrorObserverService, EffectErrorObserverService.of({
+        observe: (event) => Effect.sync(() => void observed.push(event)),
+      })),
+    })
+
+    routes.post('/sign-up', signUp)
+    routes.endpoint(action(session, () => Effect.void))
+
+    return app
+  }
+
+  const send = (app: Hono, path: string, init: RequestInit) =>
+    app.request(path, { method: 'POST', ...init }, testEnv({ ENVIRONMENT: 'production' }))
+  const asJson = (body: Readonly<Record<string, string>>): RequestInit => ({
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  test('hands the error observer no submitted password, cookie or token, and keeps its messages, paths and codes', async () => {
+    const observed: EffectErrorEvent[] = []
+    const app = createApp(observed)
+
+    // A sign-up password that breaks its rule, posted from a form.
+    const form = await send(app, '/sign-up', {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ email: 'ada@example.test', password: shortPassword, passwordConfirmation: shortPassword }).toString(),
+    })
+    // Both passwords, through a rule over the whole form.
+    const mismatch = await send(app, '/sign-up', asJson({ email: 'ada@example.test', password: firstPassword, passwordConfirmation: secondPassword }))
+    // A field the query and the body give different values.
+    const conflict = await send(app, '/sign-up?email=P520-query', asJson({ email: 'P520-body', password: firstPassword, passwordConfirmation: firstPassword }))
+    // The session cookie and the bearer token, through a rule over every header.
+    const headers = await send(app, '/api/session', { headers: { Accept: 'application/json', Cookie: sessionCookie, Authorization: bearer } })
+    // Every field missing, which keeps its required-field code without a value to read.
+    const empty = await send(app, '/sign-up', asJson({}))
+
+    expect([form.status, mismatch.status, conflict.status, headers.status, empty.status]).toEqual([303, 422, 422, 422, 422])
+    expect(observed).toHaveLength(5)
+
+    for (const event of observed) {
+      const reported = `${JSON.stringify(event.structured)} ${JSON.stringify(event.error)}`
+
+      expect({ code: event.structured?.code, leaked: secrets.filter((secret) => reported.includes(secret)) })
+        .toEqual({ code: event.structured?.code, leaked: [] })
+    }
+
+    const fields = observed.map((event) => event.structured?.validation?.fields ?? {})
+
+    expect(observed.map((event) => event.structured?.code)).toEqual([
+      'WEB_VAL_004_SCHEMA_MISMATCH',
+      'WEB_VAL_004_SCHEMA_MISMATCH',
+      'WEB_VAL_006_SOURCE_CONFLICT',
+      'WEB_VAL_004_SCHEMA_MISMATCH',
+      'WEB_VAL_001_FIELD_REQUIRED',
+    ])
+    expect(fields[0].password).toEqual({
+      expected: 'Password must be at least 12 characters',
+      message: 'Password must be at least 12 characters',
+      path: ['password'],
+    })
+    expect(fields[1].form).toMatchObject({ message: 'The passwords do not match.', path: [] })
+    expect(fields[2].email).toMatchObject({ message: 'Conflicting values for email from query and body.', path: ['email'] })
+    expect(fields[3].form).toMatchObject({ message: 'Send a cookie or a token, not both.', path: [] })
+    expect(Object.keys(fields[4])).toEqual(['email', 'password', 'passwordConfirmation'])
+  })
+
+  test("drops the values an application's own ValidationError carries from the structured error", async () => {
+    const observed: EffectErrorEvent[] = []
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) }).services({
+      app: Layer.succeed(EffectErrorObserverService, EffectErrorObserverService.of({
+        observe: (event) => Effect.sync(() => void observed.push(event)),
+      })),
+    })
+
+    routes.post('/rotate', action(Effect.fail(new ValidationError({
+      errors: { password: 'Choose another password.' },
+      fieldDetails: { password: { value: firstPassword, expected: 'a new password', message: 'Choose another password.', path: ['password'] } },
+    }))))
+
+    expect((await send(app, '/rotate', asJson({}))).status).toBe(422)
+    expect(JSON.stringify(observed[0].structured)).not.toContain(firstPassword)
+    expect(observed[0].structured?.validation?.fields.password).toEqual({ expected: 'a new password', message: 'Choose another password.', path: ['password'] })
   })
 })
 

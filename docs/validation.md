@@ -52,7 +52,15 @@ A multipart form's files reach the schema as `File` values. Check them with
 `upload({ types: ['image/png', 'image/jpeg'], maxBytes: 5_000_000 })`, or
 `nullableUpload(...)` when the file is optional; a file input left empty is
 no file. [Serving an upload back](responses.md#serving-an-upload-back) shows
-serving one back. Headers and the
+serving one back.
+
+`validateRequest` reads at most 1 MiB of a body, or setupWeb's `bodyLimit`,
+counting its declared `Content-Length` and the bytes as they arrive, and
+refuses a larger one before parsing it: a JSON client gets a 413
+(`WEB_VAL_007_BODY_TOO_LARGE`) and a page's form goes back with a `form`
+error. An action whose form uploads files raises it past their `maxBytes`,
+`validateRequest(ReceiptForm, { bodyLimit: 6_000_000 })`, as `ReceiptForm`
+below needs. Headers and the
 raw body, such as an `Idempotency-Key` or a webhook signature, are read from
 `RequestService`'s `header()` and `raw()`.
 
@@ -103,7 +111,10 @@ form.
   the validators also serves as a page's props schema, so a filter form's
   query and the page that shows it share one.
 - **Lists in forms**: decode a list with `S.Array(Item)`; a failing item's
-  errors are keyed by its path, as `items.2.amount`. A JSON body, a form post
+  errors are keyed by its path, as `items.2.amount`. A failed validation lists
+  at most 100 fields, then says on `form` that more were invalid. Bound a
+  list with `maxItems(Item, 50)`, which refuses a longer one with its own
+  message before decoding any item. A JSON body, a form post
   and a multipart post (which Inertia sends for a form with a file) all
   decode the same: form fields named `items[2][amount]` or `items.2.amount`
   nest into the list, and every value of a `tags[]` field, in a form or a

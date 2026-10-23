@@ -16,7 +16,8 @@ every statement the database receives.
 | A path placeholder filled with `..`, `.` or an empty value, reaching another route or host | `redirects.test.ts`, `../paths.test.ts`, `../effect/endpoint.test.ts` |
 | Signed cookies moved or changed; page data breaking out of the HTML | `cookies-and-pages.test.ts` |
 | A shared cache keeping one visitor's response; concurrent requests seeing each other's user | `cache-and-isolation.test.ts` |
-| Error detail in production; the client address; validators made slow; dependency floors | `production.test.ts` |
+| A body over the limit, streamed or declared, read whole before anything refused it; a list of thousands of invalid items, each kept, observed and answered as an error of its own | `sizes.test.ts` |
+| Error detail in production; submitted passwords, cookies and tokens handed to the error observer; the client address; validators made slow; dependency floors | `production.test.ts` |
 | Who may load a record, through a route that checks nothing itself | `../effect/careless-route.test.ts` |
 | Guards, roles and permissions | `../effect/guard.test.ts` |
 | Better Auth's endpoints reached with another body type or path | `../better-auth/seam.test.ts`, `../effect/sign-in-limits.test.ts` |

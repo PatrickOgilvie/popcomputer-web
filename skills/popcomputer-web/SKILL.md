@@ -94,7 +94,8 @@ TypeScript example here and in `docs/` type-checks against the package.
    parameters with `request: { order: ['query'] }, parseOptions: {
    onExcessProperty: 'error' }`), `nullable(...)` for a filter a GET form
    may send empty, and `upload({ types: [...] })` for files, served back with
-   `file(...)`. A form that
+   `file(...)`; a body over 1 MiB is refused, so an action taking larger
+   files raises `validateRequest(Schema, { bodyLimit })`. A form that
    fails validation goes back to the page it came from (its Referer; without
    one, the page its route names, `routes.post(path, action, { form:
    paths.page })`, or its own path's page), which receives the

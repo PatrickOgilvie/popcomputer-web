@@ -23,6 +23,7 @@ export {
   type AuthUser,
   type PageRenderer,
   type RequestContext,
+  type BodyReadOptions,
   type RequestStateClient,
   type ExecutionContextClient,
   type DefaultAuthUser,

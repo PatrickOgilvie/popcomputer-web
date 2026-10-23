@@ -49,6 +49,7 @@ export const ErrorCodes = {
   VAL_003_BODY_PARSE_FAILED: 'WEB_VAL_003_BODY_PARSE_FAILED',
   VAL_004_SCHEMA_MISMATCH: 'WEB_VAL_004_SCHEMA_MISMATCH',
   VAL_006_SOURCE_CONFLICT: 'WEB_VAL_006_SOURCE_CONFLICT',
+  VAL_007_BODY_TOO_LARGE: 'WEB_VAL_007_BODY_TOO_LARGE',
 
   // Auth Errors (AUTH)
   AUTH_100_UNAUTHENTICATED: 'WEB_AUTH_100_UNAUTHENTICATED',
@@ -146,6 +147,10 @@ setupWeb(app, { version, render, database, schema })`,
     description: `Send a value for "${formatErrorParam(params.field)}", or make the field optional in the schema with S.optional(...).`,
   }),
 
+  raiseBodyLimit: (): FixSuggestion => ({
+    description: 'Send a smaller body, or raise the limit: validateRequest(Schema, { bodyLimit }) for an action that takes uploads, or setupWeb\'s bodyLimit for every action.',
+  }),
+
   signIn: (): FixSuggestion => ({
     description: 'Authenticate the request as the route requires: sign in for a session, or send the credential the application checks, such as an API key.',
   }),
@@ -194,6 +199,16 @@ export const ErrorCatalog = {
     messageTemplate: 'Conflicting values were provided for "{field}" across request sources.',
     httpStatus: 422,
     defaultFixes: [],
+  },
+
+  [ErrorCodes.VAL_007_BODY_TOO_LARGE]: {
+    code: ErrorCodes.VAL_007_BODY_TOO_LARGE,
+    tag: 'ValidationError',
+    category: 'validation',
+    title: 'Request Body Too Large',
+    messageTemplate: 'The request body is larger than this action reads.',
+    httpStatus: 413,
+    defaultFixes: [fixGenerators.raiseBodyLimit],
   },
 
   // Auth Errors

@@ -11,6 +11,7 @@ import { RequestService, type RequestContext } from './services.js'
 import { ValidationError } from './errors.js'
 import type { FieldError } from './error-types.js'
 import { ErrorCodes, type ErrorCode } from './error-catalog.js'
+import { BodyTooLarge, DEFAULT_BODY_LIMIT, formatBytes, readBody } from './body-limit.js'
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
 
@@ -101,8 +102,6 @@ interface SourceConflict {
   field: string
   existingSource: RequestValidationSource
   incomingSource: RequestValidationSource
-  existingValue: unknown
-  incomingValue: unknown
 }
 
 const DEFAULT_ORDER: ReadonlyArray<RequestValidationSource> = ['params', 'query', 'body']
@@ -142,10 +141,6 @@ function createSourceConflictValidationError(
     const message = `Conflicting values for ${conflict.field} from ${conflict.existingSource} and ${conflict.incomingSource}.`
     errors[conflict.field] = message
     fieldDetails[conflict.field] = {
-      value: {
-        [conflict.existingSource]: conflict.existingValue,
-        [conflict.incomingSource]: conflict.incomingValue,
-      },
       expected: 'a single unambiguous value from request input',
       message,
       path: conflict.field.split('.'),
@@ -193,9 +188,7 @@ function mergeRequestSources(
         continue
       }
 
-      const existingValue = merged[key]
-
-      if (Object.is(existingValue, value)) {
+      if (Object.is(merged[key], value)) {
         continue
       }
 
@@ -203,8 +196,6 @@ function mergeRequestSources(
         field: key,
         existingSource: sourceOfKey.get(key) ?? source,
         incomingSource: source,
-        existingValue,
-        incomingValue: value,
       })
     }
   }
@@ -226,8 +217,8 @@ function isFormContentType(contentType: string): boolean {
  * (`text/plain`) or a client sends one with none: read as JSON, an empty body
  * as no fields. One that is not JSON fails as a body that could not be parsed.
  */
-async function untypedBody(request: RequestContext): Promise<unknown> {
-  const text = await request.raw().clone().text()
+async function untypedBody(request: RequestContext, limit: number): Promise<unknown> {
+  const text = new TextDecoder().decode(await readBody(request.raw(), limit, { copy: true }))
 
   return text.trim() === '' ? {} : JSON.parse(text)
 }
@@ -254,7 +245,8 @@ function queryFields(request: RequestContext): Record<string, unknown> {
 }
 
 function getValidationDataWithOptions(
-  config?: RequestValidationOptions
+  config?: RequestValidationOptions,
+  bodyLimit?: number
 ): Effect.Effect<RequestData, ValidationError, RequestService> {
   return Effect.gen(function* () {
     const request = yield* RequestService
@@ -271,14 +263,20 @@ function getValidationDataWithOptions(
     ) {
       const contentType = request.header('Content-Type') ?? ''
       const isJson = isJsonContentType(contentType)
+      const limit = bodyLimit ?? request.bodyLimit ?? DEFAULT_BODY_LIMIT
 
-      const parsed = yield* Effect.tryPromise(async () =>
-        isJson ? request.json() : isFormContentType(contentType) ? formFields(await request.parseBody()) : untypedBody(request)
-      ).pipe(
-        Effect.mapError((error) =>
-          createBodyParseValidationError(error, contentType)
-        )
-      )
+      if (!(limit >= 0)) {
+        return yield* Effect.die(new RangeError(`bodyLimit is a number of bytes, not ${String(limit)}.`))
+      }
+
+      const parsed = yield* Effect.tryPromise({
+        try: async () => isJson
+          ? request.json({ bodyLimit: limit })
+          : isFormContentType(contentType) ? formFields(await request.parseBody({ bodyLimit: limit })) : untypedBody(request, limit),
+        catch: (cause) => cause instanceof BodyTooLarge
+          ? createBodyTooLargeValidationError(cause.limit)
+          : createBodyParseValidationError(cause, contentType),
+      })
 
       if (!Predicate.isObject(parsed)) {
         return yield* createBodyParseValidationError(
@@ -309,9 +307,20 @@ function getValidationDataWithOptions(
 export interface FormattedSchemaErrors {
   /** Simple field -> message mapping */
   errors: Record<string, string>
-  /** Detailed field errors for structured output */
+  /** Detailed field errors for structured output, without the rejected values */
   details: Record<string, FieldError>
+  /** The fields sent empty: absent or null */
+  missing: ReadonlySet<string>
 }
+
+/**
+ * The most fields one failed validation lists. Each invalid item of a list
+ * is a field of its own, so a request of thousands of invalid items would
+ * otherwise be kept, observed and answered with an error for each.
+ */
+const MAX_REPORTED_FIELDS = 100
+
+const TOO_MANY_FIELDS = `More than ${MAX_REPORTED_FIELDS} fields are invalid; the first ${MAX_REPORTED_FIELDS} are listed.`
 
 function getFormattedIssuePath(
   issue: FormattedSchemaIssue
@@ -323,7 +332,9 @@ function getFormattedIssuePath(
 
 /**
  * Format Effect Schema parse errors into field-level validation errors.
- * Returns both simple errors and detailed field information.
+ * Returns both simple errors and detailed field information. The details
+ * keep no submitted value: they reach the error observer, and a rejected
+ * value can be a password, or a cookie or a token in a headers schema.
  */
 export function formatSchemaErrorsWithDetails<Input>(
   error: S.SchemaError,
@@ -333,7 +344,9 @@ export function formatSchemaErrorsWithDetails<Input>(
 ): FormattedSchemaErrors {
   const errors: Record<string, string> = {}
   const details: Record<string, FieldError> = {}
+  const missing = new Set<string>()
   const issues = formatSchemaIssue(error.issue).issues
+  let reported = 0
 
   for (const issue of issues) {
     // A tagged union's unknown kind belongs on its _tag, the field a form chooses it with.
@@ -342,6 +355,17 @@ export function formatSchemaErrorsWithDetails<Input>(
     const field = path.length > 0 ? path.map(String).join('.') : 'form'
 
     if (errors[field]) continue // First error wins
+
+    if (reported === MAX_REPORTED_FIELDS) {
+      if (errors.form === undefined) {
+        errors.form = TOO_MANY_FIELDS
+        details.form = { expected: `at most ${MAX_REPORTED_FIELDS} invalid fields`, message: TOO_MANY_FIELDS, path: [] }
+      }
+
+      break
+    }
+
+    reported += 1
 
     const attribute = attributes[field] ?? field
     const message = messages[field] ?? (tags === undefined ? readableMessage(issue.message) : `Choose one of: ${tags.join(', ')}`)
@@ -359,9 +383,9 @@ export function formatSchemaErrorsWithDetails<Input>(
       value = Object.getOwnPropertyDescriptor(value, segment)?.value
     }
 
-    // Create detailed field error
+    if (value === undefined || value === null) missing.add(field)
+
     details[field] = {
-      value,
       expected: issue.message,
       message: errors[field],
       path: path.map(String),
@@ -369,7 +393,7 @@ export function formatSchemaErrorsWithDetails<Input>(
     }
   }
 
-  return { errors, details }
+  return { errors, details, missing }
 }
 
 /**
@@ -430,6 +454,17 @@ export interface ValidateOptions {
   parseOptions?: ParseOptions
 
   /**
+   * The most bytes the request body may have, in place of setupWeb's
+   * `bodyLimit` (1 MiB unless it sets one): raise it for a form that uploads
+   * files. A larger body is refused before it is parsed, with a 413 for a
+   * JSON client and the form's `form` error for a page.
+   *
+   * @example
+   * validateRequest(Receipt, { bodyLimit: 6_000_000 })
+   */
+  bodyLimit?: number
+
+  /**
    * Where a form that fails validation goes back to, with its errors,
    * instead of the page it was posted from: a wizard's step, when the final
    * submit carries every step's fields.
@@ -442,14 +477,14 @@ export interface ValidateOptions {
 
 /**
  * Build a parse error with concrete guidance for malformed request bodies.
+ * The parser's error is not kept: its message can quote the body.
  */
 export function createBodyParseValidationError(
-  cause: unknown,
+  _cause: unknown,
   contentType: string
 ): ValidationError {
   const isJson = isJsonContentType(contentType)
   const isForm = isFormContentType(contentType)
-  const reason = cause instanceof Error ? cause.message : String(cause)
   const base = isJson ? 'Invalid JSON body' : isForm ? 'Could not parse the form body' : 'Could not read the body as JSON'
 
   const hint = isJson
@@ -464,7 +499,6 @@ export function createBodyParseValidationError(
     errors: { form: message },
     fieldDetails: {
       form: {
-        value: reason,
         expected: isJson ? 'valid JSON payload' : 'parsable request body',
         message,
         path: ['form'],
@@ -475,20 +509,33 @@ export function createBodyParseValidationError(
   })
 }
 
+/** A body refused for passing `limit` bytes before it was parsed. */
+function createBodyTooLargeValidationError(limit: number): ValidationError {
+  const message = `This request is too large: send at most ${formatBytes(limit)}.`
+
+  return new ValidationError({
+    errors: { form: message },
+    fieldDetails: {
+      form: { expected: `a body of at most ${limit} bytes`, message, path: ['form'], schemaType: 'Body' },
+    },
+    code: ErrorCodes.VAL_007_BODY_TOO_LARGE,
+  })
+}
+
 function determineValidationCode(
-  details: Record<string, FieldError>
+  { details, missing }: FormattedSchemaErrors
 ): ErrorCode {
   // Required only when every invalid field is missing; a value of the wrong
   // kind beside a missing one is a schema mismatch.
-  const missing = (field: string, detail: FieldError): boolean =>
+  const isMissing = (field: string, detail: FieldError): boolean =>
     field !== 'form' && (
-      detail.value === undefined || detail.value === null ||
-      detail.expected?.toLowerCase().includes('required') === true ||
-      detail.message?.toLowerCase().includes('required') === true
+      missing.has(field) ||
+      detail.expected.toLowerCase().includes('required') ||
+      detail.message.toLowerCase().includes('required')
     )
   const entries = Object.entries(details)
 
-  return entries.length > 0 && entries.every(([field, detail]) => missing(field, detail))
+  return entries.length > 0 && entries.every(([field, detail]) => isMissing(field, detail))
     ? ErrorCodes.VAL_001_FIELD_REQUIRED
     : ErrorCodes.VAL_004_SCHEMA_MISMATCH
 }
@@ -501,7 +548,7 @@ function runValidation<A, I, Input>(
   // Report every invalid field, so a form shows all of its errors at once.
   return S.decodeUnknownEffect(schema, { errors: 'all', ...options.parseOptions })(data).pipe(
     Effect.mapError((error) => {
-      const { errors, details } = formatSchemaErrorsWithDetails(
+      const formatted = formatSchemaErrorsWithDetails(
         error,
         data,
         options.messages,
@@ -509,9 +556,9 @@ function runValidation<A, I, Input>(
       )
 
       return new ValidationError({
-        errors,
-        fieldDetails: details,
-        code: determineValidationCode(details),
+        errors: formatted.errors,
+        fieldDetails: formatted.details,
+        code: determineValidationCode(formatted),
       })
     })
   )
@@ -538,7 +585,7 @@ export const validateRequest = Effect.fn('Web.validateRequest')(function* <A, I>
   options: ValidateOptions = {}
 ) {
   const redirectTo = options.redirectTo
-  const validated = Effect.flatMap(getValidationDataWithOptions(options.request), (data) => validateUnknown(schema, data, options))
+  const validated = Effect.flatMap(getValidationDataWithOptions(options.request, options.bodyLimit), (data) => validateUnknown(schema, data, options))
 
   return yield* redirectTo === undefined
     ? validated

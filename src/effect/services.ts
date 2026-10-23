@@ -162,13 +162,27 @@ export interface RequestContext<Bindings extends object = object> {
   query(): Record<string, string>
   /** Every value of each query parameter, as `status[]=open&status[]=closed` sends them. */
   queries(): Record<string, string[]>
-  /** The parsed JSON body. Decode it with a schema, as `validateRequest` does. */
-  json(): Promise<unknown>
+  /**
+   * The parsed JSON body. Decode it with a schema, as `validateRequest` does.
+   * A body over the limit rejects with BodyTooLarge.
+   */
+  json(options?: BodyReadOptions): Promise<unknown>
   /** The request itself, for adapters that forward it, such as `betterAuthHandler`. */
   raw(): Request
-  /** A form body's fields; a field sent more than once has each of its values. */
-  parseBody(): Promise<Record<string, string | File | (string | File)[]>>
+  /**
+   * A form body's fields; a field sent more than once has each of its values.
+   * A body over the limit rejects with BodyTooLarge.
+   */
+  parseBody(options?: BodyReadOptions): Promise<Record<string, string | File | (string | File)[]>>
   header(name: string): string | undefined
+  /** The most bytes `json()` and `parseBody()` read: setupWeb's `bodyLimit`, 1 MiB unless it sets one. */
+  readonly bodyLimit?: number
+}
+
+/** How `json()` and `parseBody()` read the body. */
+export interface BodyReadOptions {
+  /** The most bytes the body may have, in place of the request's `bodyLimit`. */
+  readonly bodyLimit?: number
 }
 
 export class RequestService extends Context.Service<

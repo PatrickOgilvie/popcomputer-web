@@ -77,7 +77,10 @@ function mergeWire(encoded: JsonValue | undefined, decoded: JsonValue | undefine
     merged.properties = properties
   }
 
+  // A list whose length is checked before its items decode, as maxItems'
+  // is, says nothing about its items on the encoded side.
   if (encoded.items !== undefined) merged.items = mergeWire(encoded.items, decoded.items) ?? encoded.items
+  else if (encoded.type === 'array' && decoded.items !== undefined) merged.items = decoded.items
 
   for (const keyword of ['anyOf', 'oneOf'] as const) {
     const branches = encoded[keyword]
