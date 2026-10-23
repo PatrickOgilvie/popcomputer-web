@@ -304,6 +304,55 @@ describe('signing up, in and out', () => {
   })
 })
 
+// Starlette CVE-2024-47874 and CVE-2026-54283, Hono CVE-2026-44456, SvelteKit CVE-2026-40073:
+// Better Auth reads whole every body it is handed.
+describe("a body over setupWeb's bodyLimit sent to Better Auth's API", () => {
+  const MiB = 1024 * 1024
+
+  /** A JSON body of over `size` bytes, streamed to `path` in chunks, counting the bytes the server pulls. */
+  const sendStreamed = (path: string, size: number, { declared = false } = {}) => {
+    const bytes = new TextEncoder().encode(JSON.stringify({ email: 'ada@example.com', password: 'x'.repeat(size) }))
+    let pulled = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled >= bytes.byteLength) return controller.close()
+
+        const next = bytes.subarray(pulled, pulled + 64 * 1024)
+        pulled += next.byteLength
+        controller.enqueue(next)
+      },
+    }, { highWaterMark: 0 })
+    const headers = new Headers({ Accept: 'application/json', 'Content-Type': 'application/json', Origin: 'http://localhost' })
+
+    if (declared) headers.set('Content-Length', String(bytes.byteLength))
+
+    // A streamed body needs `duplex`, which the DOM's RequestInit does not name.
+    const init: RequestInit & { readonly duplex: 'half' } = { method: 'POST', duplex: 'half', headers, body }
+
+    return { res: app.request(new Request(`http://localhost${path}`, init), undefined, setup().env), pulled: () => pulled }
+  }
+
+  test('to the password sign-in, streamed without a length, is refused with 413 before more than the limit is read', async () => {
+    const { res, pulled } = sendStreamed('/api/auth/sign-in/email', 8 * MiB)
+
+    expect((await res).status).toBe(413)
+    expect(pulled()).toBeLessThan(MiB + 256 * 1024)
+  })
+
+  test('to an endpoint whose body Better Auth alone reads is refused the same way', async () => {
+    const { res, pulled } = sendStreamed('/api/auth/send-verification-email', 8 * MiB)
+
+    expect((await res).status).toBe(413)
+    expect(pulled()).toBeLessThan(MiB + 256 * 1024)
+  })
+
+  test('with a declared Content-Length over the limit, is refused before a byte is read', async () => {
+    const { res, pulled } = sendStreamed('/api/auth/sign-in/email', 2 * MiB, { declared: true })
+
+    expect({ status: (await res).status, pulled: pulled() }).toEqual({ status: 413, pulled: 0 })
+  })
+})
+
 describe('one-time codes that make the user on a first sign-in', () => {
   /** The fields a request to Better Auth's API sends as JSON. */
   type ApiBody = Readonly<Record<string, string>>

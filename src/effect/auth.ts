@@ -26,6 +26,7 @@ import {
   type BetterAuthActionError,
 } from './better-auth-boundary.js'
 import { openWebContext } from '../request-context.js'
+import { BodyTooLarge, DEFAULT_BODY_LIMIT, formatBytes, readBody } from './body-limit.js'
 import { schemaExport, tableOfSchema } from './table-schema.js'
 import type { PagePropValue, PageProps } from '../types.js'
 
@@ -874,9 +875,10 @@ function inputUserFields(auth: BetterAuthInstance): ReadonlyArray<string> {
  * OTP, phone-number verify), which write user fields declared `input: true`
  * without the application's validation. Name the ones a visitor may set there
  * in `settable`, which TypeScript asks for once the registered Better Auth
- * declares any; a request setting another is refused with a 400. A
- * server-rendered app that signs users in with `betterAuthRedirect` needs it
- * only for OAuth callbacks.
+ * declares any; a request setting another is refused with a 400. A body
+ * over setupWeb's `bodyLimit` is refused with a 413 before Better Auth reads
+ * it. A server-rendered app that signs users in with `betterAuthRedirect`
+ * needs it only for OAuth callbacks.
  */
 export function betterAuthHandler(
   ...[options]: BetterAuthHandlerArguments
@@ -892,12 +894,22 @@ export function betterAuthHandler(
     }
 
     const raw = request.raw()
+    const limit = request.bodyLimit ?? DEFAULT_BODY_LIMIT
+
+    if (!(limit >= 0)) {
+      return yield* Effect.die(new RangeError(`bodyLimit is a number of bytes, not ${String(limit)}.`))
+    }
+
     const path = yield* Effect.promise(() => handlerPath(auth, raw))
+    // Better Auth reads whole every body it is handed, so it is handed the
+    // body read within the limit, in a request of its own; `raw` stays the
+    // request the framework knows.
+    const forwarded = yield* withinBodyLimit(raw, limit)
     // The body, for the endpoints the framework checks; the handler then
     // reads it itself. One the framework cannot read is refused, so Better
     // Auth never reads a body the checks did not see.
     const checked = isPasswordSignIn(path) || writesUser(path)
-    const read = checked ? yield* Effect.promise(() => bodyOf(raw)) : undefined
+    const read = checked ? yield* Effect.promise(() => bodyOf(forwarded)) : undefined
 
     if (checked && read === undefined) {
       return yield* new HttpError({ status: 415, message: 'Send this request as JSON or a form.' })
@@ -920,7 +932,7 @@ export function betterAuthHandler(
     const response = yield* withinSignInLimits(
       attempt,
       Effect.tryPromise({
-        try: (): Promise<Response> => Promise.resolve(auth.handler(raw)),
+        try: (): Promise<Response> => Promise.resolve(auth.handler(forwarded)),
         catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
       })
     )
@@ -947,6 +959,23 @@ async function handlerPath(auth: BetterAuthInstance, request: Request): Promise<
   const prefix = base.replace(/\/$/, '')
 
   return pathname.startsWith(`${prefix}/`) ? pathname.slice(prefix.length) : pathname
+}
+
+/**
+ * The request with its body read within `limit` bytes, or itself when it has
+ * none. A body over the limit is refused with a 413: at once when its
+ * declared Content-Length passes the limit, and otherwise at the first chunk
+ * past it, so Better Auth never reads more.
+ */
+function withinBodyLimit(request: Request, limit: number): Effect.Effect<Request, HttpError> {
+  if (request.body === null) return Effect.succeed(request)
+
+  return Effect.tryPromise({
+    try: async () => new Request(request, { method: request.method, body: await readBody(request, limit) }),
+    catch: (cause) => cause instanceof BodyTooLarge
+      ? new HttpError({ status: 413, message: `This request is too large: send at most ${formatBytes(cause.limit)}.` })
+      : new HttpError({ status: 400, message: 'The request body could not be read.', cause }),
+  })
 }
 
 /**
