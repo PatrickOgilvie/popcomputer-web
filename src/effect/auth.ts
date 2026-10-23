@@ -18,7 +18,7 @@ import {
   UnauthorizedError,
 } from './errors.js'
 import { AuthRateLimitError, type AuthRedirect, type ValidationError } from './errors.js'
-import { accountOf, clientAddress, isPasswordSignIn, withinSignInLimits } from './sign-in-limits.js'
+import { accountOf, isPasswordSignIn, signInAttempt, withinSignInLimits } from './sign-in-limits.js'
 import {
   inspectBetterAuthResponse,
   sendToBetterAuth,
@@ -694,7 +694,7 @@ function callEndpoint(
     }
 
     const { path } = yield* Effect.try({ try: () => endpointOf(auth, name), catch: (cause) => cause }).pipe(Effect.orDie)
-    const attempt = { path, address: clientAddress(raw.headers), account: accountOf(input.body) }
+    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, input.body))
 
     const response = yield* withinSignInLimits(
       attempt,
@@ -904,8 +904,9 @@ export function betterAuthHandler(
       }
     }
 
+    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, body))
     const response = yield* withinSignInLimits(
-      { path, address: clientAddress(raw.headers), account: isPasswordSignIn(path) ? accountOf(body) : undefined },
+      attempt,
       Effect.tryPromise({
         try: (): Promise<Response> => Promise.resolve(auth.handler(raw)),
         catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),

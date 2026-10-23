@@ -20,6 +20,7 @@ export const auth = createAuth({
   db: createDb(':memory:'),
   secret: 'readme-secret',
   baseURL: 'http://localhost',
+  sendEmail: async () => {},
 })
 export declare const headers: Headers
 

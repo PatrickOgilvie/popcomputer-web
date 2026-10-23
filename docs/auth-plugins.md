@@ -19,6 +19,10 @@ other, typed from the registered client. Where they meet the application:
   token, `betterAuthRedirect('magicLinkVerify', { query: input }, { redirectTo })`,
   fails as a rejection does once the link is used or expired, so it shows a
   page instead: `.pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired')))`.
+  Beside password sign-up, keep `createAuth`'s `requireEmailVerification`: a
+  link's first sign-in revokes the password and sessions of an account someone
+  else registered with that address, not a two-factor challenge they hold or a
+  password sign-in under way, as [Proving an address](auth.md#proving-an-address) says.
 - Organizations: the plugin's `member` table is the membership a guard reads,
   as [Roles belong to memberships](guards.md#roles-belong-to-memberships-read-by-a-guard)
   shows, with the organization bound by its route, its binding saying the

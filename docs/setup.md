@@ -43,6 +43,7 @@ import { routeBinding } from '@popcomputer/web/effect'
 import { tableSchema } from '@popcomputer/web/schema'
 import { createAuth } from './auth'
 import { createDb } from './db'
+import { sendEmail } from './email'
 import manifest from '../dist/manifest.json'
 import { env, type Env } from './env'
 import { pages } from './pages'
@@ -72,6 +73,7 @@ export const web = setupWeb(new Hono<Env>(), {
       db,
       secret: c.env.BETTER_AUTH_SECRET,
       baseURL: new URL(c.req.url).origin,
+      sendEmail: (email) => sendEmail(c.env, email),
       advanced: { backgroundTasks },
     }),
     // The user's fields are the user table's; pages see only `share`'s.
@@ -148,8 +150,8 @@ export function createDb(url: string): Database {
 }
 ```
 
-Better Auth's factory, `src/auth.ts`, is in [Auth](auth.md#better-auths-client),
-and the tables it reads and writes in [Better Auth's tables](auth-tables.md).
+Better Auth's factory, `src/auth.ts`, and the mailer it sends through, `src/email.ts`, are in
+[Auth](auth.md#better-auths-client); the tables it reads and writes, in [Better Auth's tables](auth-tables.md).
 
 On Cloudflare D1, `createDb` takes the binding instead,
 `drizzle(c.env.DB, { schema })` from `drizzle-orm/d1`, and the adapter's
@@ -158,8 +160,7 @@ Drizzle's `DrizzleD1Database<typeof schema>`: either way `dbTransaction` is a
 type error on D1, which has no interactive transactions.
 
 Database-backed auth receives the database as an explicit dependency. The
-following examples are alternative configurations; choose the shape that
-matches the application. None require placeholders or explicit generics.
+alternatives below need no placeholders or explicit generics:
 
 ```ts
 const version = createVersion(manifest)
@@ -188,9 +189,8 @@ setupWeb(app, {
 })
 ```
 
-`setupWeb` installs the middleware stack and shared error boundary on the app
-and returns `{ app, routes }`. For manual Hono composition, see
-[Lower-level composition](lower-level.md).
+`setupWeb` installs the middleware stack and error boundary and returns
+`{ app, routes }`; for manual composition, see [Lower-level composition](lower-level.md).
 
 ## 4. Write actions and register routes
 
@@ -232,7 +232,7 @@ Each file of the application declares one thing, and the rest reads it:
 | --- | --- | --- |
 | `src/env.ts` | the Worker's bindings | `new Hono<Env>()`, `config`, `testEnv`'s bindings |
 | `src/schema.ts` | the Drizzle tables | `bindings`, `tableSchema`, `columnsOf`, cache tags, Better Auth |
-| `src/db.ts`, `src/auth.ts` | the database and Better Auth clients | `setupWeb`'s `database` and `auth.client` |
+| `src/db.ts`, `src/auth.ts`, `src/email.ts` | the database, Better Auth and mail clients | `setupWeb`'s `database` and `auth.client` |
 | `src/paths.ts` | every route's path | `routes`, `redirect`, `back`, `href`, endpoint contracts |
 | `src/pages.ts` | each page's props | `render`, `WebPage`, `readPage` |
 | `src/forms.ts` | each form's fields | `validateRequest` in actions, `FormInput` in React |

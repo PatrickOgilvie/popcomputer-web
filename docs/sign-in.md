@@ -69,10 +69,12 @@ routes.post(paths.logout, betterAuthLogoutAction({ redirectTo: paths.login }))
 
 A signed-out visit to a guarded page goes to the sign-in path with the page as
 `?redirect=`, and `intendedUrl(fallback)` returns there after signing in; it
-returns only paths on this site. A rejection, such as a wrong password or a
-registered email, goes back to the form with the field errors `errors` returns; rate limits and Better Auth
+returns only paths on this site. A rejection, such as a wrong password or an
+address not yet proven, goes back to the form with the field errors `errors` returns; rate limits and Better Auth
 failures stay separate typed errors. Sign-up works the same way with
-`'signUpEmail'`, after whatever else the action does with the input.
+`'signUpEmail'`, after whatever else the action does with the input, and
+signs nobody in until the emailed link proves the address, as
+[Proving an address](auth.md#proving-an-address) shows.
 
 Better Auth writes the new user itself, so the application's own record of
 a member, such as a profile, is a second write. Make it on the member's first
@@ -108,8 +110,9 @@ Fields the server sets rather than the form, such as a role or a team, are
 `input: false` in `betterAuthFields`, so a sign-up cannot send them: keep
 them in the application's own table, such as a membership, which a guard
 layer reads. `redirectTo` given a function receives the endpoint's result,
-sign-up's `{ token, user }`, so it reads the new user's id as
-`result.user.id`. A result is the JSON Better Auth's handler answered, and
+sign-in's `{ token, user }`, so it reads the user's id as
+`result.user.id`; sign-up's names a made-up user when the address is already
+registered, so key nothing on it. A result is the JSON Better Auth's handler answered, and
 typed so: its dates are ISO strings.
 
 A Better Auth call whose result the action uses, such as enabling two-factor

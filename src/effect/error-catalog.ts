@@ -126,6 +126,7 @@ const fixGenerators = {
       db,
       secret: c.env.BETTER_AUTH_SECRET,
       baseURL: new URL(c.req.url).origin,
+      sendEmail: (email) => sendEmail(c.env, email),
       advanced: { backgroundTasks },
     }),
   },
