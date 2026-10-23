@@ -159,6 +159,8 @@ yield* tagCache(recordCacheTag('projects', 'project-1'))
 
 `purgeCache` works the same in an Effect run by `routes.run`, such as a
 queue consumer that changes a record: the purge runs once the Effect succeeds.
+Work given to `background()` purges what it names once it succeeds, whether
+it runs after the response, as in a Worker, or before it, as in tests.
 
 ## Other patterns
 

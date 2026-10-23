@@ -14,7 +14,9 @@ action: the response does not wait for it, and the Worker's execution context
 keeps it alive after the response. Without an execution context, as in tests,
 it runs where it is called, before the response returns, so a test sees its
 effects but not a race between them; pass an execution context as
-`app.request`'s fourth argument to test concurrent behaviour.
+`app.request`'s fourth argument to test concurrent behaviour. Tags the work
+names with `purgeCache` are purged once it succeeds, and a failed purge is
+reported as the work's failure.
 
 ## Scheduled and queued work
 

@@ -28,7 +28,6 @@ import {
   UnauthorizedError,
 } from './errors.js'
 import { openWebContext } from '../request-context.js'
-import { invalidateCacheTags } from '../cache.js'
 import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
@@ -40,10 +39,9 @@ import {
   hasSessionCookie,
   isPageResponse,
   isPartialReloadRequest,
-  prepareCachePurgeTags,
-  ResponseCachePurgeError,
-  ResponseCachePurgeFailure,
-  ResponseCacheService,
+  purgeTags,
+  type ResponseCachePurgeError,
+  type ResponseCacheService,
   PendingPurges,
   makePendingPurges,
   PendingCacheTags,
@@ -1303,29 +1301,8 @@ export class EffectRouteBuilder<
 
           return Effect.gen(function* () {
             const requested = yield* Effect.flatMap(PendingPurges, (pending) => pending.take)
-            const tags = [...new Set([...(yield* routePurges), ...requested])]
 
-            if (tags.length === 0) return
-
-            const preparedTags = prepareCachePurgeTags(tags)
-
-            if (Predicate.isTagged(preparedTags, 'invalid')) {
-              return yield* new ResponseCachePurgeError({
-                input: { tags },
-                cause: ResponseCachePurgeFailure.InvalidCacheTags({
-                  reason: preparedTags.reason,
-                }),
-              })
-            }
-
-            // Cached data tagged with them goes too, before the Workers Cache
-            // purge, which can fail the request.
-            // SAFETY: the route's tags are record and table tags of its bound
-            // tables, or tags the action passed to purgeCache, all CacheTags.
-            yield* invalidateCacheTags(tags as ReadonlyArray<CacheTag>)
-
-            const cache = yield* ResponseCacheService
-            yield* cache.purge({ tags: preparedTags.tags })
+            yield* purgeTags([...new Set([...(yield* routePurges), ...requested])])
           })
         })
       )
