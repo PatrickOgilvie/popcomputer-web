@@ -70,6 +70,38 @@ describe('the page a form goes back to', () => {
       expect({ referer, staysHome: staysHome(await back(referer)) }).toEqual({ referer, staysHome: true })
     }
   })
+
+  // A page at http://localhost//evil.test/x posts with that Referer, whose
+  // path is //evil.test/x: as a Location, another host.
+  test("is the fallback when the application's own page has a path beginning //", async () => {
+    const { app } = createApp()
+    const back = async (referer: string, inertia = false) => {
+      const res = await app.request('http://localhost/go-back', {
+        method: 'POST',
+        headers: { Referer: referer, Origin: 'http://localhost', ...(inertia ? { 'X-Inertia': 'true' } : {}) },
+      }, as('ada'))
+
+      return `${res.status} ${res.headers.get('Location') ?? res.headers.get('X-Inertia-Location')}`
+    }
+
+    for (const referer of ['http://localhost//evil.test/x', 'http://localhost//evil.test/x?a=1', 'http://localhost/\\evil.test/x', 'http://localhost///evil.test/x']) {
+      expect({ referer, plain: await back(referer), inertia: await back(referer, true) }).toEqual({ referer, plain: '303 /home', inertia: '303 /home' })
+    }
+
+    expect(await back('http://localhost/projects/p1?tab=a')).toBe('303 /projects/p1?tab=a')
+    expect(await back('http://localhost/a//b')).toBe('303 /a//b')
+  })
+
+  test('after a failed form is never another host, from a Referer whose path begins //', async () => {
+    const { app } = createApp()
+    const res = await app.request('http://localhost/projects', {
+      method: 'POST',
+      headers: { Referer: 'http://localhost//evil.test/x', Origin: 'http://localhost' },
+      body: new URLSearchParams({ name: '' }),
+    }, as('ada'))
+
+    expect({ status: res.status, location: res.headers.get('Location') }).toEqual({ status: 303, location: '/' })
+  })
 })
 
 describe('a redirect to a URL a form names', () => {
