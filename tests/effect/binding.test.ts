@@ -41,6 +41,7 @@ import { betterAuthSession, RequireAuthLayer } from '../../src/effect/auth.js'
 import { dbQuery } from '../../src/effect/database.js'
 import { and, eq } from 'drizzle-orm'
 import { signedIn, testEnv } from '../../src/testing.js'
+import { viteNamespace } from '../fixtures/vite-namespace.js'
 
 describe('parseBindings', () => {
   test('reads each {param} and {param:column} placeholder, in order, and nothing else', () => {
@@ -531,6 +532,14 @@ describe('an ownedBy column', () => {
 
   test('is not checked when the application has no users table', () => {
     expect(setup({ project: routeBinding(projects, { ownedBy: 'createdBy' }) }, { organizations, projects })).not.toThrow()
+  })
+
+  test("finds the users table in a schema whose tables are getters, as Vite's dev server gives `import * as schema`", () => {
+    const namespace = viteNamespace({ user, organizations, projects })
+
+    expect(setup({ project: routeBinding(projects, { ownedBy: 'userId' }) }, namespace)).not.toThrow()
+    expect(setup({ project: routeBinding(projects, { ownedBy: 'createdBy' }) }, namespace))
+      .toThrow('Route binding "project" is ownedBy "createdBy", which does not reference "user"')
   })
 })
 

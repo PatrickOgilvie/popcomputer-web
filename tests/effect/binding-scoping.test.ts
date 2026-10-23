@@ -20,7 +20,8 @@ import { effectRoutes } from '../../src/effect/routing.js'
 import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import { webServices } from '../../src/request-context.js'
-import { bound, findRelation } from '../../src/effect/binding.js'
+import { bound, findRelation, routeBinding } from '../../src/effect/binding.js'
+import { viteNamespace } from '../fixtures/vite-namespace.js'
 
 const workspaces = sqliteTable('workspaces', {
   id: text('id').primaryKey(),
@@ -145,16 +146,29 @@ function createTestDb() {
   return db
 }
 
-function createApp() {
+// The same bindings named by their tables, whose schema keys differ from
+// their SQL names (apiKeys, api_keys) and are found by looking the table up.
+const tableBindings = {
+  workspace: routeBinding(workspaces, { public: true }),
+  apiKey: routeBinding(apiKeys, { public: true }),
+  membership: routeBinding(memberships, { public: true }),
+  parent: routeBinding(parents, { public: true }),
+  child: routeBinding(childs, { public: true }),
+}
+
+function createApp(
+  appSchema: object = schema,
+  appBindings: typeof bindings | typeof tableBindings = bindings
+) {
   const db = createTestDb()
   const app = new Hono()
 
   app.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
   // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
   app.use('*', webServices(() => ({ db: db as never })))
-  app.use('*', effectBridge({ schema, bindings }))
+  app.use('*', effectBridge({ schema: appSchema, bindings: appBindings }))
 
-  const routes = effectRoutes(app, { schema, bindings })
+  const routes = effectRoutes(app, { schema: appSchema, bindings: appBindings })
 
   routes.get(
     '/workspaces/{workspace}/api-keys/{apiKey}',
@@ -250,6 +264,52 @@ describe('nested binding scoping', () => {
         tenantId: 'tenant-1',
         parentId: 'parent-1',
       })
+    })
+  })
+})
+
+// Under Vite's dev server an application's `import * as schema` is an object
+// of getters, which reading each property's descriptor's value misses: the
+// tables, and the relation between them, were not found, and a nested
+// binding failed every request with WEB_RTE_603_RELATION_NOT_FOUND.
+describe("a schema whose tables are getters, as Vite's dev server gives `import * as schema`", () => {
+  const namespace = viteNamespace(schema)
+
+  for (const [named, appBindings] of [['schemas', bindings], ['tables', tableBindings]] as const) {
+    describe(`with bindings named by their ${named}`, () => {
+      test('a child is scoped to its parent by its .references() foreign key', async () => {
+        const app = createApp(namespace, appBindings)
+
+        const own = await app.request('/workspaces/ws-1/api-keys/key-1')
+        const other = await app.request('/workspaces/ws-1/api-keys/key-2')
+
+        expect(own.status).toBe(200)
+        expect(await own.json()).toMatchObject({ id: 'key-1', workspaceId: 'ws-1' })
+        expect(other.status).toBe(404)
+      })
+
+      test('a child is scoped to its parent by its relations() definition', async () => {
+        const app = createApp(namespace, appBindings)
+
+        expect((await app.request('/workspaces/ws-1/memberships/mem-1')).status).toBe(200)
+        expect((await app.request('/workspaces/ws-1/memberships/mem-2')).status).toBe(404)
+      })
+
+      test('a child is scoped by every column of a composite relation', async () => {
+        const app = createApp(namespace, appBindings)
+
+        expect((await app.request('/parents/parent-1/childs/child-1')).status).toBe(200)
+        expect((await app.request('/parents/parent-1/childs/child-2')).status).toBe(404)
+      })
+    })
+  }
+
+  test('findRelation reads both tables and the relations() definition through their getters', async () => {
+    expect(await findRelation(namespace, 'apiKeys', 'workspaces')).toEqual({
+      columnPairs: [{ foreignKey: 'workspaceId', references: 'id' }],
+    })
+    expect(await findRelation(namespace, 'memberships', 'workspaces')).toEqual({
+      columnPairs: [{ foreignKey: 'workspaceId', references: 'id' }],
     })
   })
 })

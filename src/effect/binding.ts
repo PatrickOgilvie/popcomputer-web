@@ -16,7 +16,7 @@ import type { Table } from 'drizzle-orm'
 import { ConfigurationError, NotFoundError, RouteConfigurationError, UnauthorizedError } from './errors.js'
 import { ErrorCodes } from './error-catalog.js'
 import type { Registered } from './register.js'
-import { tableOfSchema, tableSchema } from './table-schema.js'
+import { schemaExport, tableOfSchema, tableSchema } from './table-schema.js'
 
 /**
  * Drizzle column interface for type inference.
@@ -582,7 +582,7 @@ export async function compileBindingPlan<Schema extends object>(
     const sourceTable = bindingTableOf(config)
     const table: unknown = sourceTable !== undefined
       ? sourceTable
-      : Object.getOwnPropertyDescriptor(schema, tableName)?.value
+      : schemaExport(schema, tableName)
 
     if (!(table instanceof Object)) {
       throw RouteConfigurationError.tableNotFound(tableName)
@@ -750,7 +750,7 @@ export function assertBindingColumns(
     if (config === undefined || binding.column === 'id') continue
 
     const table: unknown = bindingTableOf(config) ??
-      (schema === undefined ? undefined : Object.getOwnPropertyDescriptor(schema, bindingTableName(binding, configured, schema))?.value)
+      (schema === undefined ? undefined : schemaExport(schema, bindingTableName(binding, configured, schema)))
 
     if (!(table instanceof Object) || isColumnProperty(table, binding.column)) continue
 
@@ -846,7 +846,7 @@ export function bindingTableName(
   if (source === undefined) return pluralize(binding.param)
 
   const key = schema
-    ? Object.keys(schema).find((name) => Object.getOwnPropertyDescriptor(schema, name)?.value === source)
+    ? Object.keys(schema).find((name) => schemaExport(schema, name) === source)
     : undefined
   const sqlName: unknown = Reflect.get(source, DRIZZLE_TABLE_NAME)
 
@@ -951,8 +951,8 @@ export async function findRelation<Schema extends object>(
   childTableName: string,
   parentTableName: string
 ): Promise<RelationInfo | null> {
-  const childTable = Object.getOwnPropertyDescriptor(schema, childTableName)?.value
-  const parentTable = Object.getOwnPropertyDescriptor(schema, parentTableName)?.value
+  const childTable = schemaExport(schema, childTableName)
+  const parentTable = schemaExport(schema, parentTableName)
 
   if (
     !childTable ||
@@ -1038,10 +1038,7 @@ export async function findRelation<Schema extends object>(
   // 2. relations() definitions (e.g., postsRelations). Evaluate the config
   // with Drizzle's real helpers so the returned One/Many instances are valid.
   // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-  const relations = Object.getOwnPropertyDescriptor(
-    schema,
-    `${childTableName}Relations`
-  )?.value as
+  const relations = schemaExport(schema, `${childTableName}Relations`) as
     | { table?: object; config?: <Helpers>(helpers: Helpers) => object }
     | undefined
 
@@ -1171,10 +1168,9 @@ export function inferParamsSchema<Schema extends object>(
 
   for (const binding of bindings) {
     const tableName = bindingTableName(binding, configured, schema)
-    // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
-    const table = Object.getOwnPropertyDescriptor(schema, tableName)?.value
+    const table = schemaExport(schema, tableName)
 
-    if (!table) {
+    if (!(table instanceof Object)) {
       // Table not found - can't infer, let it fail at query time
       return null
     }

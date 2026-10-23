@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Route bindings find their tables under Vite's dev server. Vite gives an application's `import * as schema` as an object of getters, where Bun, Node and workerd give its tables as plain values, and the bindings read only plain values: under `vite dev` a nested binding scoped by its table's `.references()` or `relations()` failed every request with `WEB_RTE_603_RELATION_NOT_FOUND`, a binding named by an Effect Schema with `WEB_RTE_601_TABLE_NOT_FOUND`, and `setupWeb` checked no `ownedBy` column against Better Auth's `user` table, while the same application passed its tests. An application that passed `schema: { ...schema }` to get around it can pass `schema` again. Found by an agent building a blog on the framework, whose public post page answered 500 in development only.
+
 ## [1.4.1] - 2026-10-17
 
 Documentation and tests only: nothing an application on 1.4.0 needs to change.

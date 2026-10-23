@@ -26,7 +26,7 @@ import {
   type BetterAuthActionError,
 } from './better-auth-boundary.js'
 import { openWebContext } from '../request-context.js'
-import { tableOfSchema } from './table-schema.js'
+import { schemaExport, tableOfSchema } from './table-schema.js'
 import type { PagePropValue, PageProps } from '../types.js'
 
 
@@ -442,7 +442,7 @@ export function usersTableOf(session: unknown, schema: object | undefined): obje
   if (given !== undefined) return given
 
   for (const key of ['user', 'users']) {
-    const named: unknown = schema === undefined ? undefined : Object.getOwnPropertyDescriptor(schema, key)?.value
+    const named: unknown = schema === undefined ? undefined : schemaExport(schema, key)
 
     if (named instanceof Object) return named
   }

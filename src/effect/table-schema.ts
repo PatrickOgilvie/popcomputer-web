@@ -54,6 +54,17 @@ export function tableOfSchema(schema: object): Table | undefined {
   return schemaTables.get(schema)
 }
 
+/**
+ * What a Drizzle schema module exports under this key, such as a table or
+ * its `relations()`. Vite's dev server gives `import * as schema` as an
+ * object of getters, where Bun, Node and workerd give data properties, so
+ * the value is read through the getter; an inherited key such as
+ * `constructor` is no export.
+ */
+export function schemaExport(schema: object, key: string): unknown {
+  return Object.hasOwn(schema, key) ? Reflect.get(schema, key) : undefined
+}
+
 export function tableSchema<T extends Table, const Overrides extends ColumnOverrides<T> = {}>(
   table: T,
   overrides?: Overrides
