@@ -19,6 +19,8 @@ every statement the database receives.
 | Who may load a record, through a route that checks nothing itself | `../effect/careless-route.test.ts` |
 | Guards, roles and permissions | `../effect/guard.test.ts` |
 | Better Auth's endpoints reached with another body type or path | `../better-auth/seam.test.ts`, `../effect/sign-in-limits.test.ts` |
+| Password guesses at one account through another of its sign-ins, or a body naming another account | `../effect/sign-in-limits.test.ts` |
+| An account registered with someone else's address keeping a session, password or two-factor challenge once its owner signs in by a link (Better Auth CVE-2026-53516 and GHSA-qq9h-g4jm-xgf3, NextAuth CVE-2022-35924) | `../better-auth/seam.test.ts` |
 
 `gaps.test.ts` lists, as `todo`, the classes the framework does not yet
 guard against, so each run shows them.

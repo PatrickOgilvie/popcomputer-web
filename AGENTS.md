@@ -142,7 +142,12 @@ here, as the demo's does.
    (a Workers Rate Limiting binding, and Better Auth's `rateLimit` table for
    each account's failures), sweep the table with
    `routes.scheduled(() => sweepSignInFailures)`, and keep
-   `betterAuth({ rateLimit: { enabled: true, storage: 'memory' } })`. Better
+   `betterAuth({ rateLimit: { enabled: true, storage: 'memory' } })`. Keep
+   `emailAndPassword: { enabled: true, requireEmailVerification: true }` and
+   an `emailVerification.sendVerificationEmail` whose email tells a recipient
+   who did not sign up to ignore it, with `autoSignInAfterVerification` off,
+   as docs/auth.md's `createAuth` does: a password whose address nobody has
+   proven then signs no one in. Better
    Auth's plugins (organizations, two-factor, magic links, OAuth providers)
    stay Better Auth's: call their endpoints by name the same way. Sign in
    through an OAuth provider (`socialProviders`, or `genericOAuth` for a

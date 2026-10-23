@@ -28,11 +28,24 @@ function setup(session?: CreateAuthOptions['session']) {
   const db = createDatabase()
   const outbox = newOutbox()
   const env = testEnv({ OUTBOX: outbox, SESSION: session }, { database: db })
+  const browser = () => testBrowser(app, env)
 
-  return { db, outbox, env, browser: () => testBrowser(app, env) }
+  /** Follow the link Better Auth last emailed to prove `email`. */
+  const verifyEmail = (client: Browser, email: string) =>
+    client.request(`/verify-email?token=${outbox.verifications.filter((sent) => sent.email === email).at(-1)?.token}`)
+
+  /** A member, as the template makes one: sign up, prove the address by its emailed link, and sign in. */
+  const join = async (client: Browser, email: string, name?: string) => {
+    await signUp(client, email, name)
+    await verifyEmail(client, email)
+
+    return signIn(client, email)
+  }
+
+  return { db, outbox, env, browser, verifyEmail, join }
 }
 
-type Browser = ReturnType<ReturnType<typeof setup>['browser']>
+type Browser = ReturnType<typeof testBrowser>
 
 const form = (body: Record<string, string>): RequestInit => ({
   method: 'POST',
@@ -88,20 +101,41 @@ describe('tables', () => {
 })
 
 describe('signing up, in and out', () => {
-  test('a form signs a visitor up and in, and the session loads on the next request', async () => {
-    const { browser } = setup()
+  test('a form signs a visitor up, its emailed link proves the address, and the password then signs them in', async () => {
+    const { browser, outbox, verifyEmail } = setup()
     const visitor = browser()
 
-    const res = await signUp(visitor, 'ada@example.com')
+    const signedUp = await signUp(visitor, 'ada@example.com')
 
-    expect(res.status).toBe(303)
-    expect(res.headers.get('Location')).toBe('/dashboard')
-    expect(setsSession(res)).toBe(true)
+    expect(signedUp.status).toBe(303)
+    expect(signedUp.headers.get('Location')).toBe('/check-email')
+    expect(setsSession(signedUp)).toBe(false)
+    expect(outbox.verifications).toMatchObject([{ email: 'ada@example.com' }])
+
+    const early = await visitor.request('/sign-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ email: 'ada@example.com', password: 'correct horse battery' }),
+    })
+
+    expect(early.status).toBe(422)
+    expect((await early.json()).errors).toEqual({ email: 'Email not verified' })
+
+    const verified = await verifyEmail(visitor, 'ada@example.com')
+
+    expect(verified.headers.get('Location')).toBe('/sign-in')
+    expect(setsSession(verified)).toBe(false)
+    expect((await me(visitor)).status).toBe(401)
+
+    const signedIn = await signIn(visitor, 'ada@example.com')
+
+    expect(signedIn.headers.get('Location')).toBe('/dashboard')
+    expect(setsSession(signedIn)).toBe(true)
     expect((await me(visitor)).body).toMatchObject({ email: 'ada@example.com', timeZone: 'Europe/London', activeOrganizationId: null })
   })
 
   test("Better Auth's API refuses the user fields the application lets visitors set only on its own forms", async () => {
-    const { browser } = setup()
+    const { browser, join } = setup()
     const api = (path: string, body: object, client = browser()) =>
       client.request(`/api/auth${path}`, {
         method: 'POST',
@@ -115,7 +149,7 @@ describe('signing up, in and out', () => {
     expect((await signedUp.json()).message).toContain('timeZone')
 
     const member = browser()
-    await signUp(member, 'ada@example.com')
+    await join(member, 'ada@example.com')
     const updated = await api('/update-user', { timeZone: 'Mars/Olympus' }, member)
 
     expect(updated.status).toBe(400)
@@ -150,8 +184,8 @@ describe('signing up, in and out', () => {
   })
 
   test("a wrong password is refused with Better Auth's message on the email field", async () => {
-    const { browser } = setup()
-    await signUp(browser(), 'ada@example.com')
+    const { browser, join } = setup()
+    await join(browser(), 'ada@example.com')
     const visitor = browser()
 
     const res = await visitor.request('/sign-in', {
@@ -165,9 +199,9 @@ describe('signing up, in and out', () => {
   })
 
   test('signing out ends the session in the database and in the browser', async () => {
-    const { browser, db } = setup()
+    const { browser, db, join } = setup()
     const visitor = browser()
-    await signUp(visitor, 'ada@example.com')
+    await join(visitor, 'ada@example.com')
 
     const res = await visitor.request('/sign-out', { method: 'POST' })
 
@@ -178,9 +212,9 @@ describe('signing up, in and out', () => {
   })
 
   test('signing out of a Better Auth loaded on first use ends the session in the database too', async () => {
-    const { db, outbox, browser } = setup()
+    const { db, outbox, browser, join } = setup()
     const visitor = browser()
-    await signUp(visitor, 'ada@example.com')
+    await join(visitor, 'ada@example.com')
     const lazily = testBrowser(app, testEnv({ OUTBOX: outbox, LAZY: true }, { database: db }))
     lazily.setCookie(SESSION, visitor.cookies.get(SESSION) ?? '')
 
@@ -203,9 +237,9 @@ describe('signing up, in and out', () => {
 
   test('a session Better Auth extends sends the browser its renewed cookie', async () => {
     // updateAge 0: every request extends the session, as one a day apart does.
-    const { browser } = setup({ updateAge: 0 })
+    const { browser, join } = setup({ updateAge: 0 })
     const visitor = browser()
-    await signUp(visitor, 'ada@example.com')
+    await join(visitor, 'ada@example.com')
 
     const { res } = await me(visitor)
 
@@ -214,9 +248,9 @@ describe('signing up, in and out', () => {
   })
 
   test('a session revoked elsewhere is signed out, and its cookie cleared', async () => {
-    const { browser, db } = setup()
+    const { browser, db, join } = setup()
     const visitor = browser()
-    await signUp(visitor, 'ada@example.com')
+    await join(visitor, 'ada@example.com')
     db.delete(schema.session).run()
 
     const { status } = await me(visitor)
@@ -226,9 +260,9 @@ describe('signing up, in and out', () => {
   })
 
   test('signing in again after the session was revoked elsewhere keeps the new session', async () => {
-    const { browser, db } = setup()
+    const { browser, db, join } = setup()
     const visitor = browser()
-    await signUp(visitor, 'ada@example.com')
+    await join(visitor, 'ada@example.com')
     db.delete(schema.session).run()
 
     const res = await signIn(visitor, 'ada@example.com')
@@ -238,9 +272,9 @@ describe('signing up, in and out', () => {
   })
 
   test("signing in through Better Auth's API after the session was revoked elsewhere keeps the new session", async () => {
-    const { browser, db } = setup()
+    const { browser, db, join } = setup()
     const visitor = browser()
-    await signUp(visitor, 'ada@example.com')
+    await join(visitor, 'ada@example.com')
     db.delete(schema.session).run()
 
     const res = await visitor.request('/api/auth/sign-in/email', {
@@ -255,10 +289,10 @@ describe('signing up, in and out', () => {
 
   test("signing in as someone else through Better Auth's API while the session is being extended keeps the new session", async () => {
     // updateAge 0: every request extends the session, as one a day old does.
-    const { browser } = setup({ updateAge: 0 })
-    await signUp(browser(), 'grace@example.com', 'Grace Hopper')
+    const { browser, join } = setup({ updateAge: 0 })
+    await join(browser(), 'grace@example.com', 'Grace Hopper')
     const visitor = browser()
-    await signUp(visitor, 'ada@example.com')
+    await join(visitor, 'ada@example.com')
 
     await visitor.request('/api/auth/sign-in/email', {
       method: 'POST',
@@ -272,9 +306,9 @@ describe('signing up, in and out', () => {
 
 describe('two-factor', () => {
   test('a member with two-factor on is asked for a code, which signs them in', async () => {
-    const { browser } = setup()
+    const { browser, join } = setup()
     const member = browser()
-    await signUp(member, 'ada@example.com')
+    await join(member, 'ada@example.com')
     const enrolled = await member.request('/two-factor/enable', form({ password: 'correct horse battery' }))
     const { backupCodes } = await enrolled.json()
     await member.request('/sign-out', { method: 'POST' })
@@ -313,6 +347,47 @@ describe('magic links', () => {
     expect(reused.status).toBe(200)
     expect(await reused.json()).toMatchObject({ component: 'Auth/LinkExpired' })
     expect(again.cookies.has(SESSION)).toBe(false)
+  })
+})
+
+describe("an account registered with someone else's address", () => {
+  test("a two-factor challenge its registrant holds does not sign in once the address's owner signs in by a link", async () => {
+    const { browser, outbox } = setup()
+    // Mallory registers the address before its owner does, and enrols two-factor if she can.
+    const attacker = browser()
+    await signUp(attacker, 'victim@example.com', 'Mallory')
+    const enrolled = await attacker.request('/two-factor/enable', form({ password: 'correct horse battery' }))
+    const backupCodes: ReadonlyArray<string> = enrolled.status === 200 ? (await enrolled.json()).backupCodes : []
+    // She holds a challenge from a password sign-in.
+    const challenger = browser()
+    await signIn(challenger, 'victim@example.com')
+
+    const victim = browser()
+    await victim.request('/magic-link', form({ email: 'victim@example.com' }))
+    await victim.request(`/magic-link/verify?token=${outbox.magicLinks.at(-1)?.token}`)
+    await challenger.request('/two-factor', form({ code: backupCodes[0] ?? 'no-code' }))
+
+    expect((await me(victim)).body).toMatchObject({ email: 'victim@example.com' })
+    expect({ attacker: (await me(attacker)).status, challenger: (await me(challenger)).status }).toEqual({ attacker: 401, challenger: 401 })
+  })
+
+  test("a password sign-in its registrant started does not sign in once the address's owner signs in by a link", async () => {
+    const { browser, outbox } = setup()
+    const attacker = browser()
+    await signUp(attacker, 'victim@example.com', 'Mallory')
+    const victim = browser()
+    await victim.request('/magic-link', form({ email: 'victim@example.com' }))
+
+    // The owner's link lands while Mallory's password sign-ins are hashing.
+    const racers = [browser(), browser(), browser()]
+    const racing = Promise.all(racers.map((racer) => signIn(racer, 'victim@example.com')))
+    await victim.request(`/magic-link/verify?token=${outbox.magicLinks.at(-1)?.token}`)
+    await racing
+    const retried = browser()
+    await signIn(retried, 'victim@example.com')
+
+    expect((await me(victim)).body).toMatchObject({ email: 'victim@example.com' })
+    expect(await Promise.all([attacker, ...racers, retried].map(async (client) => (await me(client)).status))).toEqual([401, 401, 401, 401, 401])
   })
 })
 
@@ -376,11 +451,11 @@ describe("Better Auth's session cookie cache", () => {
 
 describe('organizations', () => {
   test('a member creates an organization, invites another, who accepts and makes it active', async () => {
-    const { browser, outbox } = setup()
+    const { browser, outbox, join } = setup()
     const owner = browser()
     const invitee = browser()
-    await signUp(owner, 'owner@example.com', 'Owner')
-    await signUp(invitee, 'invitee@example.com', 'Invitee')
+    await join(owner, 'owner@example.com', 'Owner')
+    await join(invitee, 'invitee@example.com', 'Invitee')
 
     const created = await owner.request('/organizations', form({ name: 'Acme', slug: 'acme' }))
     const location = created.headers.get('Location') ?? ''
@@ -408,8 +483,8 @@ describe('organizations', () => {
 
 describe('bearer tokens', () => {
   test("a client signed in through Better Auth's API is signed in by its token", async () => {
-    const { browser } = setup()
-    await signUp(browser(), 'ada@example.com')
+    const { browser, join } = setup()
+    await join(browser(), 'ada@example.com')
 
     const signedIn = await browser().request('/api/auth/sign-in/email', {
       method: 'POST',
@@ -428,11 +503,11 @@ describe('bearer tokens', () => {
 
 describe('admin', () => {
   test('an admin bans a member, whose sign-in is refused on the form, and impersonates another', async () => {
-    const { browser, db } = setup()
+    const { browser, db, join } = setup()
     const admin = browser()
-    await signUp(admin, 'admin@example.com', 'Admin')
-    await signUp(browser(), 'banned@example.com', 'Banned')
-    await signUp(browser(), 'member@example.com', 'Member')
+    await join(admin, 'admin@example.com', 'Admin')
+    await join(browser(), 'banned@example.com', 'Banned')
+    await join(browser(), 'member@example.com', 'Member')
     db.update(schema.user).set({ role: 'admin' }).where(eq(schema.user.email, 'admin@example.com')).run()
     const id = (email: string) => db.select().from(schema.user).where(eq(schema.user.email, email)).get()?.id ?? ''
 

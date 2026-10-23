@@ -179,11 +179,12 @@ export type TestDatabase = ReturnType<typeof createDatabase>
 
 /** What Better Auth sent: the emails an application would deliver. */
 export interface Outbox {
+  readonly verifications: Array<{ readonly email: string; readonly token: string }>
   readonly magicLinks: Array<{ readonly email: string; readonly token: string }>
   readonly invitations: Array<{ readonly id: string; readonly email: string }>
 }
 
-export const newOutbox = (): Outbox => ({ magicLinks: [], invitations: [] })
+export const newOutbox = (): Outbox => ({ verifications: [], magicLinks: [], invitations: [] })
 
 /** Acme, an OAuth provider the application signs people in with, which tests stand in for. */
 const ACME = {
@@ -205,7 +206,14 @@ export function createAuth(options: CreateAuthOptions) {
     database: drizzleAdapter(options.db, { provider: 'sqlite', schema }),
     baseURL: 'http://localhost',
     secret: 'better-auth-seam-test-secret-with-enough-entropy-0123',
-    emailAndPassword: { enabled: true },
+    // docs/auth.md's createAuth: a password signs in only once its address is
+    // proven, and following the link signs nobody in.
+    emailAndPassword: { enabled: true, requireEmailVerification: true },
+    emailVerification: {
+      sendVerificationEmail: async ({ user, token }) => {
+        options.outbox.verifications.push({ email: user.email, token })
+      },
+    },
     user: { additionalFields: betterAuthFields(user, { timeZone: { input: true } }) },
     session: options.session,
     rateLimit: { enabled: false },

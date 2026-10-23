@@ -29,6 +29,8 @@ export interface Bindings {
 export const paths = {
   home: '/',
   signUp: '/sign-up',
+  checkEmail: '/check-email',
+  verifyEmail: '/verify-email',
   signIn: '/sign-in',
   signInAcme: '/sign-in/acme',
   twoFactor: '/two-factor',
@@ -84,11 +86,19 @@ const SignIn = S.Struct({ email, password: currentPassword })
 const signUp = action(Effect.gen(function* () {
   const input = yield* validateRequest(SignUp)
 
+  // Signs nobody in: Better Auth emails the link that proves the address.
   return yield* betterAuthRedirect('signUpEmail', { body: input }, {
-    redirectTo: paths.dashboard,
+    redirectTo: paths.checkEmail,
     errors: (error) => ({ email: error.message }),
   })
 }))
+
+/** Proves the address and signs nobody in: the member signs in with their password next. */
+const verifyEmail = action(Effect.gen(function* () {
+  const input = yield* validateRequest(S.Struct({ token: requiredString }))
+
+  return yield* betterAuthRedirect('verifyEmail', { query: input }, { redirectTo: paths.signIn })
+}).pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired'))))
 
 const signIn = action(Effect.gen(function* () {
   const input = yield* validateRequest(SignIn)
@@ -237,6 +247,7 @@ routes
   .get(paths.signIn, action(render('Auth/SignIn')))
   .post(paths.signIn, signIn)
   .post(paths.signUp, signUp)
+  .get(paths.checkEmail, action(render('Auth/CheckEmail')))
   .post(paths.signInAcme, signInWithAcme)
   .post(paths.twoFactor, verifyTwoFactor)
   .post(paths.magicLink, sendMagicLink)
@@ -250,6 +261,7 @@ routes
 
 routes
   .get(paths.home, action(render('Home')))
+  .get(paths.verifyEmail, verifyEmail)
   .post(paths.enableTwoFactor, enableTwoFactor)
   .post(paths.organizations, createOrganization)
   .get(paths.organization, showOrganization)

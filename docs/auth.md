@@ -60,12 +60,15 @@ framework's own.
 import { betterAuth, type BetterAuthOptions } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import type { Database } from './db'
+import { paths } from './paths'
 import * as schema from './schema'
 
 export interface CreateAuthOptions {
   readonly db: Database
   readonly secret: string
   readonly baseURL: string
+  /** Delivers an email through the application's mail provider. */
+  readonly sendEmail: (email: { readonly to: string; readonly subject: string; readonly text: string }) => Promise<void>
   readonly advanced?: BetterAuthOptions['advanced']
 }
 
@@ -76,7 +79,20 @@ export function createAuth(options: CreateAuthOptions) {
     database: drizzleAdapter(options.db, { provider: 'pg', schema }),
     secret: options.secret,
     baseURL: options.baseURL,
-    emailAndPassword: { enabled: true },
+    // A password signs in only once its address is proven, so an account
+    // registered with someone else's address holds no session, password or
+    // two-factor challenge when its owner signs in by a link or a provider.
+    emailAndPassword: { enabled: true, requireEmailVerification: true },
+    // The link proves the address and signs nobody in: the member signs in next.
+    emailVerification: {
+      sendVerificationEmail: ({ user, token }) => options.sendEmail({
+        to: user.email,
+        subject: 'Confirm your email address',
+        text: `Confirm your email address to finish signing up:\n${options.baseURL}${paths.verifyEmail}?${new URLSearchParams({ token })}\n\n` +
+          'If you did not sign up, ignore this email and do not follow the link: ' +
+          'whoever signed up with your address chose its password, and confirming it would let them sign in as you.',
+      }),
+    },
     // setupWeb's auth.signInLimits limits signing in, up and every password
     // call by address and account. Better Auth's own limits stay on too, in
     // each isolate's memory, writing nothing: three sign-ins or sign-ups
@@ -119,7 +135,7 @@ headers a request handed it, calls Better Auth's own `auth.api`, as Better
 Auth documents. A refusal it throws is Better Auth's `APIError`, which code
 can recognise without importing it: its `name` is `'APIError'`, its
 `statusCode` the HTTP status and its `body.code` the reason, such as
-`USER_ALREADY_EXISTS`.
+`INVALID_EMAIL_OR_PASSWORD`.
 
 An application that loads Better Auth on first use, to keep it out of a
 Worker's startup, gives `auth.client` a wrapper whose endpoints load it.
@@ -129,6 +145,54 @@ Auth's instance, so through a wrapper they fail and say why: send those forms
 to Better Auth's handler yourself, by path, or give `auth.client` the
 instance. Importing anything from `better-auth` into a module the Worker
 loads at startup, `APIError` included, loads Better Auth with it.
+
+## Proving an address
+
+`createAuth` signs no one in by a password whose address nobody has proven.
+Signing up sets no session: Better Auth emails the link `sendEmail` delivers,
+to `paths.verifyEmail`, and the sign-up action redirects to a page asking the
+visitor to check their inbox; a password sign-in before then is refused as
+`Email not verified`. A sign-up for a registered address is answered as a new
+one is, and sends nothing, so the form tells no one who has an account. The
+mailer is the application's own: `src/email.ts` exports `sendEmail(env, { to,
+subject, text })`, which calls its mail provider's API. The link's action
+proves the address and signs nobody in; the member signs in with a password next:
+
+```ts
+// src/actions/verify-email.ts
+import { Effect, Schema as S } from 'effect'
+import { action, redirect, validateRequest } from '@popcomputer/web/effect'
+import { betterAuthRedirect } from '@popcomputer/web/auth'
+import { href } from '@popcomputer/web/paths'
+import { requiredString } from '@popcomputer/web/schema'
+import { paths } from '../paths'
+
+export const verifyEmail = action(
+  Effect.gen(function* () {
+    const input = yield* validateRequest(S.Struct({ token: requiredString }))
+
+    return yield* betterAuthRedirect('verifyEmail', { query: input }, { redirectTo: paths.login })
+  }).pipe(Effect.catchTag('ValidationError', () => redirect(href(paths.login, {}, { error: 'link_expired' }))))
+)
+```
+
+Register it for everyone, `routes.get(paths.verifyEmail, verifyEmail)`; a
+link that expired, after an hour, lands on the sign-in page with `?error=`.
+
+Without `requireEmailVerification`, someone who registers another person's
+address first is signed in, and keeps what a magic-link or provider sign-in by
+the owner does not revoke: a two-factor challenge they hold, or a password
+sign-in under way, signs them in to the account the owner then uses. Leave
+`autoSignInAfterVerification` off, or an owner who follows a link for an
+account someone else registered is signed in to it, and may keep using an
+account whose password that someone chose.
+
+One risk remains, and the email warns of it: an owner who follows the link
+for an account they never created proves the address for whoever chose its
+password, which then signs in, and a later magic-link sign-in revokes
+nothing. A password reset takes the account back: an application that adds
+one sets `emailAndPassword.revokeSessionsOnPasswordReset: true`, so a reset
+also ends the sessions the old password began.
 
 ## Limiting password guessing
 

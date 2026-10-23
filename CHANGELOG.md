@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+An application built from `docs/auth.md`'s `createAuth` adds `requireEmailVerification`, an email sender and a verify-email action, as its "Proving an address" section shows: sign-up then signs no one in until the emailed link is followed.
+
 ### Fixed
 
+- The documented Better Auth template, `docs/auth.md`'s `createAuth`, which the quick start builds, signs no one in by a password whose address nobody has proven: `emailAndPassword.requireEmailVerification: true`, and an `emailVerification.sendVerificationEmail` that emails a link to the application's `paths.verifyEmail` through a new `sendEmail` option, telling a recipient who did not sign up to ignore it, with `autoSignInAfterVerification` off. Without them, someone who registered another person's address first, in an application with magic links and two-factor as `docs/auth-plugins.md` adds them, kept the account after its owner's first sign-in by a link: Better Auth's revocation deletes the registrant's password and sessions, but not a two-factor challenge they held or a password sign-in already under way, and either signed them in to the account the owner then used. One risk remains, which `docs/auth.md` describes: an owner who follows a verification link for an account they never created proves the address for whoever chose its password. The seam tests replay both attacks, and the security suite's todo for this is now a test.
 - `auth.signInLimits` counts each password sign-in against the account its endpoint checks: the email of `/sign-in/email`, the username of `/sign-in/username` and the phone number of `/sign-in/phone-number`, which it now limits too. It read a body's `email` before its `username` whatever the endpoint, so a username sign-in that also sent a decoy email counted against the decoy, one whose email was not text or blank counted against nothing, and phone-number password sign-ins were limited only by address: each kept checking passwords, and signed in, while the account cooled down. A password sign-in whose identifier is missing, blank or not text is refused with a 400, and `betterAuthHandler` refuses a phone-number sign-in body it cannot read with a 415, as it does the others.
 
 ## [1.4.2] - 2026-10-23

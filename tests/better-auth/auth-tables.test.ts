@@ -33,9 +33,13 @@ async function documentedTables(name: string, firstLine: string): Promise<Record
   return import(file)
 }
 
-// docs/auth.md's `createAuth`: email and password, with Better Auth's own
-// limits in memory.
-const needed = getSchema({ emailAndPassword: { enabled: true }, rateLimit: { enabled: true, storage: 'memory' } })
+// docs/auth.md's `createAuth`: email and password, proven by an emailed link,
+// with Better Auth's own limits in memory.
+const needed = getSchema({
+  emailAndPassword: { enabled: true, requireEmailVerification: true },
+  emailVerification: { sendVerificationEmail: async () => {} },
+  rateLimit: { enabled: true, storage: 'memory' },
+})
 
 /** The models and columns `needed` names that `tables` lacks, by Better Auth's names. */
 function missingFrom(tables: Record<string, unknown>): string[] {

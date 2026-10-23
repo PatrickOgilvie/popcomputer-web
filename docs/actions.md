@@ -13,6 +13,7 @@ computed at runtime, such as one `href` built, is a string and passes.
 export const paths = {
   login: '/login',
   logout: '/logout',
+  verifyEmail: '/verify-email',
   authApi: '/api/auth/*',
   authCallback: '/api/auth/callback/{provider}',
   loginWithAcme: '/login/acme',
