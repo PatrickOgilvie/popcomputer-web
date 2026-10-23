@@ -1,15 +1,17 @@
-# Upgrading to @popcomputer/web 1.4.2
+# Upgrading to @popcomputer/web 1.5.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.4.2.
+`honertia` package it was renamed from, to 1.5.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
 published to npm. 1.4.0 asks each route binding to say who may load its
 record, which a lint rule reports, and 1.4.1 and 1.4.2 change nothing more.
-So the path is one jump: make the 1.0.0 changes below, install 1.4.2, give
-each binding its option as [From 1.3 to 1.4](#from-13-to-14) shows, and you
-are done.
+1.5.0 fixes what a security audit of 1.4.2 found, and asks a few applications
+to change something, which [From 1.4 to 1.5](#from-14-to-15) lists. So the
+path is one jump: make the 1.0.0 changes below, install 1.5.0, give each
+binding its option as [From 1.3 to 1.4](#from-13-to-14) shows, check the list
+in [From 1.4 to 1.5](#from-14-to-15), and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -32,9 +34,10 @@ you installed:
 7. [Changes no type error points at](#changes-no-type-error-points-at)
 8. [From 1.0 to 1.3](#from-10-to-13)
 9. [From 1.3 to 1.4](#from-13-to-14)
-10. [Tooling after the upgrade](#tooling-after-the-upgrade)
-11. [Checklist](#checklist)
-12. [A worked example](#a-worked-example)
+10. [From 1.4 to 1.5](#from-14-to-15)
+11. [Tooling after the upgrade](#tooling-after-the-upgrade)
+12. [Checklist](#checklist)
+13. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -48,7 +51,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.4.2 needs:
+- **Check the peer dependencies.** 1.5.0 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -62,12 +65,12 @@ you installed:
   Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
-- **Install 1.4.2** with the peers your application uses, removing `honertia`
+- **Install 1.5.0** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.4.2 effect@^4.0.0
+  bun add @popcomputer/web@^1.5.0 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
@@ -87,8 +90,9 @@ you installed:
 | 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.7.x | [0.7 to 1.0](#from-07-to-10) |
-| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), then [1.3 to 1.4](#from-13-to-14) |
-| 1.3.x | [1.3 to 1.4](#from-13-to-14) only |
+| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), then [1.4 to 1.5](#from-14-to-15) |
+| 1.3.x | [1.3 to 1.4](#from-13-to-14), then [1.4 to 1.5](#from-14-to-15) |
+| 1.4.x | [1.4 to 1.5](#from-14-to-15) only |
 
 `honertia` and `@popcomputer/web` share one version line, so `honertia` 0.1.45
 is "0.1.x". The 0.4 to 0.7 sections hardly apply to an application coming from
@@ -1156,6 +1160,65 @@ A guard that decides who may load a `guarded: true` record is made with
   cookie or request state. A cached page that read `Accept-Language`, say,
   renders afresh each time: give each language a path of its own to cache it.
 
+## From 1.4 to 1.5
+
+Install 1.5.0:
+
+```bash
+bun add @popcomputer/web@^1.5.0
+```
+
+1.5.0 fixes what a security audit of 1.4.2 found, and most applications
+change nothing. Check each item against yours:
+
+- **The Better Auth template.** An application built from `docs/auth.md`'s
+  `createAuth` adds `requireEmailVerification`, an email sender and a
+  verify-email action, as its "Proving an address" section shows. Sign-up
+  then signs no one in until the emailed link is followed.
+- **Better Auth's `baseURL`.** One that copied the quick start declares
+  `APP_URL: variable(S.String)` in `src/env.ts` and passes it as `baseURL`
+  (or gives Better Auth `baseURL: { allowedHosts }`), so emailed links never
+  follow the host a request arrived on.
+- **Hand-composed stacks.** One composed as `docs/lower-level.md` shows puts
+  `webDefaults()` first in its stack, for setupWeb's security headers and
+  cross-site check. `web()` now sends a private Cache-Control itself where
+  nothing set one.
+- **Access checks the page cache cannot see.** A route whose access check
+  runs in a layer not made with `guard()`, or in Hono middleware added after
+  `setupWeb`, gets `cache: 'private'`. Routes a `guard()` or
+  `routes.middleware(...)` decides for are no longer default-cached, and with
+  `setupWeb`'s `middleware` option pages are default-cached only when the
+  application sets `pageCache: true`.
+- **Basic auth from other origins.** An API client that authenticates with
+  `Basic` from another origin is listed in
+  `security.verifyOrigin.allowedOrigins`. A `Bearer` token is unaffected.
+- **Names in URLs.** A name a visitor chose that a URL carries is validated
+  with `alphaDash`: `href()`, the redirect helpers and an endpoint's `call()`
+  throw for an empty, `.` or `..` placeholder value, which answers 500 in an
+  action.
+- **Large bodies.** An action that takes uploads or JSON over 1 MiB passes
+  `validateRequest(Schema, { bodyLimit })`, or `setupWeb` takes `bodyLimit`
+  for every action. A larger body is refused with a 413.
+- **Jobs that purge.** A job that calls `purgeCache` is safe to repeat: a
+  failed purge now fails `routes.run` and `routes.scheduled`, and a queue
+  retries its message.
+
+Changes you may notice without acting on them:
+
+- Signed-in pages answer `Cache-Control: no-store`, not `private, no-cache`,
+  and are encrypted in the browser's history; the first page after sign-out
+  clears it.
+- A redirect to a `javascript:` or `data:` URL answers 500.
+- A form field's list index more than 20 past the number of items sent stays
+  a key, so `a[21]` alone fails to decode as a list. A form whose rows can be
+  removed renumbers the rows it sends.
+- `file()` sandboxes every inline body except images other than SVG, PDFs,
+  plain text, JSON, audio and video, and `text/*` no longer admits `text/rdf`.
+- A failed validation lists at most 100 fields, and the error observer
+  receives no submitted value.
+
+[CHANGELOG.md](CHANGELOG.md) has the detail of each.
+
 ## Tooling after the upgrade
 
 - **`tsconfig.json`** needs the DOM library and JSX for React pages, and
@@ -1211,7 +1274,8 @@ A guard that decides who may load a `guarded: true` record is made with
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.4.2`.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.5.0`.
+- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.

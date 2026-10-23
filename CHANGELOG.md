@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.0] - 2026-10-23
+
+This release fixes what a security audit of 1.4.2 found: one high, five medium and eleven low findings, and ten of its eleven leads. Each fix was proven by re-running the audit's own reproductions on 1.4.2 and on this release. The eleventh lead needed no change: Workers Cache keeps a cached route's variants apart, as `docs/page-cache.md` now explains.
 
 An application built from `docs/auth.md`'s `createAuth` adds `requireEmailVerification`, an email sender and a verify-email action, as its "Proving an address" section shows: sign-up then signs no one in until the emailed link is followed.
 
@@ -13,7 +15,7 @@ What else an application on 1.4.2 may need to change:
 
 - One that copied the quick start declares `APP_URL: variable(S.String)` in `src/env.ts` and passes it to Better Auth as `baseURL` (or gives Better Auth `baseURL: { allowedHosts }`), as `docs/setup.md` now does.
 - One composed by hand (`docs/lower-level.md`) puts `webDefaults()` first in its stack.
-- One whose pages a guard or route middleware decides for, and which wants them in the default page cache anyway, gives them `cache: 'private'` or its own `cache` option; with `setupWeb`'s `middleware` option, pages are default-cached only when it sets `pageCache: true`.
+- One whose access check runs in a layer not made with `guard()`, or in Hono middleware added after `setupWeb`, gives those routes `cache: 'private'`; routes a `guard()` or `routes.middleware(...)` decides for are no longer default-cached. One that passes `setupWeb` a `middleware` option and wants the default page cache sets `pageCache: true`.
 - One whose API clients authenticate with `Basic` from another origin lists that origin in `security.verifyOrigin.allowedOrigins`.
 - One that builds a URL from a name a visitor chose validates it with `alphaDash`: `href()`, the redirect helpers and an endpoint's `call()` now throw for an empty, `.` or `..` placeholder value.
 - One whose forms upload files over 1 MiB, or whose API takes JSON bodies over it, passes `bodyLimit` to those actions' `validateRequest`, or to `setupWeb` for every action.
@@ -61,6 +63,10 @@ What else an application on 1.4.2 may need to change:
 ### Changed
 
 - `docs/page-cache.md` says how Workers Cache keeps a route's cached variants apart: it keys each header `Vary` names exactly as sent, so a request with cookies is served only an entry stored for the identical `Cookie` header, never the cookieless copy, where the docs said such a request renders afresh. It also says the separation holds only behind a cache that keys on `Vary`: Cloudflare's zone cache ignores `Vary` unless a Cache Rule turns it on.
+
+### Verification
+
+- 1192 tests pass, on Better Auth 1.7.10 and Effect 4.0.5. `docs/installation.md` names both as the versions tested.
 
 ## [1.4.2] - 2026-10-23
 
