@@ -12,7 +12,7 @@ import {
   SchemaParser,
   SchemaTransformation,
 } from 'effect'
-import type { ParseOptions } from 'effect/SchemaAST'
+import type { Filter, ParseOptions } from 'effect/SchemaAST'
 import { webUrl } from '../locations.js'
 
 // =============================================================================
@@ -975,25 +975,39 @@ export const distinct = <InputSchema extends S.Constraint>(schema: InputSchema, 
   )
 
 /**
+ * A list of `schema` whose length `length` checks before its items decode,
+ * so a list over the limit is refused with the limit's message alone: Effect
+ * checks a decoded list, which a list with an invalid item never becomes, so
+ * every item's error was reported instead, however many were sent. Its
+ * encoded side is a list of any values, so a JSON codec of it passes items
+ * through in their encoded form, which is JSON for request input.
+ */
+const listWithin = <InputSchema extends S.Constraint>(
+  schema: InputSchema,
+  length: Filter<{ readonly length: number }>
+) => S.Array(schema).check(length).pipe(S.encodeTo(S.Array(S.Unknown).check(length)))
+
+/**
  * Validates array has minimum number of items.
  */
 export const minItems = <InputSchema extends S.Constraint>(
   schema: InputSchema,
   minCount: number,
   message?: string
-) => S.Array(schema).check(S.isMinLength(
+) => listWithin(schema, S.isMinLength(
   minCount,
   { message: message ?? `Must have at least ${minCount} items` }
 ))
 
 /**
- * Validates array has maximum number of items.
+ * Validates array has maximum number of items, counted before the items
+ * decode: a list over the limit is refused without decoding them.
  */
 export const maxItems = <InputSchema extends S.Constraint>(
   schema: InputSchema,
   maxCount: number,
   message?: string
-) => S.Array(schema).check(S.isMaxLength(
+) => listWithin(schema, S.isMaxLength(
   maxCount,
   { message: message ?? `Must have at most ${maxCount} items` }
 ))

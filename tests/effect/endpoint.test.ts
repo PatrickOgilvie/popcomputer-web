@@ -13,7 +13,7 @@ import { action } from '../../src/effect/action.js'
 import { notFound } from '../../src/effect/responses.js'
 import { responseHeader } from '../../src/effect/response-headers.js'
 import { call, endpoint, endpointRequest, openApi } from '../../src/endpoint.js'
-import { coercedNumber, nullableString, requiredString } from '../../src/effect/schema.js'
+import { coercedNumber, maxItems, nullableString, requiredString } from '../../src/effect/schema.js'
 import { href } from '../../src/paths.js'
 import { signedIn, testBrowser, testEnv } from '../../src/testing.js'
 
@@ -364,6 +364,18 @@ describe('openApi', () => {
     expect(at('/api/places/{place}/name', 'post').requestBody.content['application/json'].schema.properties.name).toMatchObject({
       type: 'string',
       maxLength: 40,
+    })
+  })
+
+  test('describes the items of a list whose length maxItems checks before they decode', () => {
+    const batch = openApi({
+      importPlaces: endpoint.post('/api/places/import', { body: S.Struct({ places: maxItems(S.Struct({ name: S.String }), 50) }) }),
+    }, { title: 'Places', version: '1' })
+
+    expect(JSON.parse(JSON.stringify(batch)).paths['/api/places/import'].post.requestBody.content['application/json'].schema.properties.places).toMatchObject({
+      type: 'array',
+      maxItems: 50,
+      items: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
     })
   })
 

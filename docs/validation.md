@@ -103,7 +103,10 @@ form.
   the validators also serves as a page's props schema, so a filter form's
   query and the page that shows it share one.
 - **Lists in forms**: decode a list with `S.Array(Item)`; a failing item's
-  errors are keyed by its path, as `items.2.amount`. A JSON body, a form post
+  errors are keyed by its path, as `items.2.amount`. A failed validation lists
+  at most 100 fields, then says on `form` that more were invalid. Bound a
+  list with `maxItems(Item, 50)`, which refuses a longer one with its own
+  message before decoding any item. A JSON body, a form post
   and a multipart post (which Inertia sends for a form with a file) all
   decode the same: form fields named `items[2][amount]` or `items.2.amount`
   nest into the list, and every value of a `tags[]` field, in a form or a

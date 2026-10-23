@@ -305,6 +305,15 @@ export interface FormattedSchemaErrors {
   missing: ReadonlySet<string>
 }
 
+/**
+ * The most fields one failed validation lists. Each invalid item of a list
+ * is a field of its own, so a request of thousands of invalid items would
+ * otherwise be kept, observed and answered with an error for each.
+ */
+const MAX_REPORTED_FIELDS = 100
+
+const TOO_MANY_FIELDS = `More than ${MAX_REPORTED_FIELDS} fields are invalid; the first ${MAX_REPORTED_FIELDS} are listed.`
+
 function getFormattedIssuePath(
   issue: FormattedSchemaIssue
 ): ReadonlyArray<PropertyKey> {
@@ -329,6 +338,7 @@ export function formatSchemaErrorsWithDetails<Input>(
   const details: Record<string, FieldError> = {}
   const missing = new Set<string>()
   const issues = formatSchemaIssue(error.issue).issues
+  let reported = 0
 
   for (const issue of issues) {
     // A tagged union's unknown kind belongs on its _tag, the field a form chooses it with.
@@ -337,6 +347,17 @@ export function formatSchemaErrorsWithDetails<Input>(
     const field = path.length > 0 ? path.map(String).join('.') : 'form'
 
     if (errors[field]) continue // First error wins
+
+    if (reported === MAX_REPORTED_FIELDS) {
+      if (errors.form === undefined) {
+        errors.form = TOO_MANY_FIELDS
+        details.form = { expected: `at most ${MAX_REPORTED_FIELDS} invalid fields`, message: TOO_MANY_FIELDS, path: [] }
+      }
+
+      break
+    }
+
+    reported += 1
 
     const attribute = attributes[field] ?? field
     const message = messages[field] ?? (tags === undefined ? readableMessage(issue.message) : `Choose one of: ${tags.join(', ')}`)
