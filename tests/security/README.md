@@ -11,8 +11,9 @@ every statement the database receives.
 | A guarded path spelled another way; headers that tell a framework about the request; method overrides; Host and forwarded headers | `requests.test.ts` |
 | Writes from another site, for every body type, spelling, `Origin: null` and method | `cross-site.test.ts` |
 | Undeclared fields, prototype keys, keys naming an inherited method, arrays for strings, the path's record swapped by the body or query | `input.test.ts` |
-| Uploads served back as pages; download names breaking out of their header | `served-content.test.ts` |
-| Where sign-in returns to, and where a failed form goes back to | `redirects.test.ts` |
+| Uploads served back as pages, including types a browser may read as XML, such as `text/rdf`; download names breaking out of their header | `served-content.test.ts` |
+| Where sign-in returns to, and where a failed form goes back to, from a Referer whose path begins `//`; a redirect to a `javascript:` or `data:` URL an Inertia visit would run | `redirects.test.ts` |
+| A path placeholder filled with `..`, `.` or an empty value, reaching another route or host | `redirects.test.ts`, `../paths.test.ts`, `../effect/endpoint.test.ts` |
 | Signed cookies moved or changed; page data breaking out of the HTML | `cookies-and-pages.test.ts` |
 | A shared cache keeping one visitor's response; concurrent requests seeing each other's user | `cache-and-isolation.test.ts` |
 | Error detail in production; the client address; validators made slow; dependency floors | `production.test.ts` |
