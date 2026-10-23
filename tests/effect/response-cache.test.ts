@@ -35,6 +35,7 @@ import { responseHeader } from '../../src/effect/response-headers.js'
 import { cookie } from '../../src/effect/cookies.js'
 import { betterAuthCall, loadUser } from '../../src/effect/auth.js'
 import { webServices } from '../../src/request-context.js'
+import { DEFAULT_CACHE_CONTROL } from '../../src/page-cache.js'
 import { setupWeb } from '../../src/setup.js'
 
 const recordingCacheLayer = () => {
@@ -99,7 +100,7 @@ describe('cache route option', () => {
     )
   })
 
-  test('non-GET responses get no cache headers even with the option set', async () => {
+  test('non-GET responses get only the private default even with the option set', async () => {
     const app = createApp()
 
     effectRoutes(app).post('/pricing', Effect.succeed(new Response('created', { status: 201 })), {
@@ -108,11 +109,11 @@ describe('cache route option', () => {
 
     const res = await app.request('/pricing', { method: 'POST' })
     expect(res.status).toBe(201)
-    expect(res.headers.get('Cache-Control')).toBeNull()
+    expect(res.headers.get('Cache-Control')).toBe(DEFAULT_CACHE_CONTROL)
     expect(res.headers.get('Vary')).toBeNull()
   })
 
-  test('non-2xx responses get no cache headers', async () => {
+  test('non-2xx responses get only the private default', async () => {
     const app = createApp()
 
     effectRoutes(app).get(
@@ -123,7 +124,7 @@ describe('cache route option', () => {
 
     const res = await app.request('/missing')
     expect(res.status).toBe(404)
-    expect(res.headers.get('Cache-Control')).toBeNull()
+    expect(res.headers.get('Cache-Control')).toBe(DEFAULT_CACHE_CONTROL)
   })
 
   test('partial reload requests are never stored', async () => {
@@ -576,7 +577,7 @@ describe('cache route option', () => {
     const res = await app.request('/too-many-tag-bytes')
 
     expect(res.status).toBe(200)
-    expect(res.headers.get('Cache-Control')).toBeNull()
+    expect(res.headers.get('Cache-Control')).toBe(DEFAULT_CACHE_CONTROL)
     expect(res.headers.get('Cache-Tag')).toBeNull()
   })
 
@@ -630,13 +631,13 @@ describe('cache route option', () => {
     expect(res.headers.get('Cache-Tag')).toBeNull()
   })
 
-  test('routes without the cache option are untouched', async () => {
+  test('routes without the cache option get only the private default', async () => {
     const app = createApp()
 
     effectRoutes(app).get('/plain', Effect.succeed(new Response('plain')))
 
     const res = await app.request('/plain')
-    expect(res.headers.get('Cache-Control')).toBeNull()
+    expect(res.headers.get('Cache-Control')).toBe(DEFAULT_CACHE_CONTROL)
     expect(res.headers.get('Vary')).toBeNull()
   })
 })

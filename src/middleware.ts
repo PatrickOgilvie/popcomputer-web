@@ -13,6 +13,7 @@ import type {
 import { HEADERS } from './types.js'
 import { openWebContext, type WebRequestContext } from './request-context.js'
 import { openFlash } from './flash.js'
+import { applyDefaultCacheControl } from './page-cache.js'
 import { ConfigurationError } from './effect/errors.js'
 import { webUrl } from './locations.js'
 
@@ -289,6 +290,10 @@ export function web(config: WebConfig): MiddlewareHandler {
       // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
       c.res = committed
     }
+
+    // Without privateByDefault around it, as an application composed by hand
+    // may be, web() says itself who may keep what it answers.
+    if (c.res && context.cacheControlByDefault !== true) applyDefaultCacheControl(c)
 
     // Return the response to ensure proper propagation in forwarding scenarios
     return c.res

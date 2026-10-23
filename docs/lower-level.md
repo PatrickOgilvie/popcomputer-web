@@ -48,7 +48,11 @@ app.use('/admin/*', async (c, next) => {
 Workers Cache never hands a page rendered for one visitor to the next; and
 `verifyOrigin()` refuses a state-changing request from another site with a
 JSON 403. It takes `setupWeb`'s `security` options:
-`webDefaults({ verifyOrigin: { allowedOrigins: ['myapp://'] } })`.
+`webDefaults({ verifyOrigin: { allowedOrigins: ['myapp://'] } })`. Without
+`privateByDefault()` around it, `web()` gives what it answers the same
+`Cache-Control` itself, so a stack composed before `webDefaults()` existed
+keeps its pages out of shared caches too; it still lacks the headers and the
+origin check.
 
 Add `pageCache({ version })` after `webDefaults()` and before `webServices()`
 to keep the default page cache; on a hit it answers before database and auth

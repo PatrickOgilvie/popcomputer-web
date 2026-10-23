@@ -21,8 +21,8 @@ import { guard } from '../src/effect/guard.js'
 import { responseHeader } from '../src/effect/response-headers.js'
 import { DatabaseService, RequestService, RequestStateService } from '../src/effect/services.js'
 import { dbQuery } from '../src/effect/database.js'
-import { PAGE_CACHE_HEADER, trackBindings, trackDatabase, type PageCacheStore } from '../src/page-cache.js'
-import { openWebContext } from '../src/request-context.js'
+import { PAGE_CACHE_HEADER, pageCache, trackBindings, trackDatabase, type PageCacheStore } from '../src/page-cache.js'
+import { openWebContext, webServices } from '../src/request-context.js'
 import { signedIn, testEnv } from '../src/testing.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
@@ -762,6 +762,77 @@ describe('an application composed without setupWeb', () => {
       signedIn: await cacheControl(app, '/clock', {}, testEnv(signedIn({ id: 'user-1' }), production())),
       setsCookie: await cacheControl(app, '/visit'),
     }).toEqual({ private: 'private, no-cache', signedIn: 'no-store', setsCookie: 'no-store' })
+  })
+
+  /** The stack docs/lower-level.md showed before webDefaults: web, webServices and effectBridge. */
+  const documented = (options: { readonly pageCache?: boolean } = {}) => {
+    const app = new Hono<PageCacheEnv>()
+
+    app.use('*', web({ version: '1.0.0', render: (page) => `<html>${JSON.stringify(page)}</html>` }))
+    if (options.pageCache === true) app.use('*', pageCache({ version: '1.0.0' }))
+    app.use('*', webServices<PageCacheEnv>((c) => ({
+      db: { projects: () => c.env.DB.prepare('select * from projects'), publicProjects: async () => [] },
+    })))
+    app.use('*', effectBridge())
+
+    return register(app)
+  }
+
+  test('composed as the docs showed before webDefaults, web() still says who may keep each response', async () => {
+    const app = documented()
+
+    expect({
+      signedIn: await cacheControl(app, '/dashboard', {}, testEnv(signedIn({ id: 'user-1' }), production())),
+      cookie: await cacheControl(app, '/cart', { headers: { Cookie: 'cart=cart-1' } }),
+      private: await cacheControl(app, '/clock'),
+      plain: await cacheControl(app, '/plain'),
+      json: await cacheControl(app, '/cart', { method: 'POST' }),
+    }).toEqual({
+      signedIn: 'no-store',
+      cookie: 'private, no-cache',
+      private: 'private, no-cache',
+      plain: 'private, no-cache',
+      json: 'private, no-cache',
+    })
+  })
+
+  test('composed so with the page cache, a static page is still cached, and a signed-in one is not', async () => {
+    const app = documented({ pageCache: true })
+
+    // testEnv signs in without a session cookie, so before the page is cached.
+    const signedInPage = await get(app, '/dashboard', {}, testEnv(signedIn({ id: 'user-1' }), production()))
+    const first = await get(app, '/dashboard', {}, production())
+    const second = await get(app, '/dashboard', {}, production())
+
+    expect([first.status, second.status]).toEqual(['MISS', 'HIT'])
+    expect(second.res.headers.get('Cache-Control')).toBe('public, max-age=0, must-revalidate')
+    expect(signedInPage.res.headers.get('Cache-Control')).toBe('no-store')
+  })
+})
+
+describe('under setupWeb, web() leaves the policy to privateByDefault', () => {
+  test('pages keep the headers setupWeb gives them, and a static page is still cached', async () => {
+    const { app } = createApp()
+    const env = production()
+
+    // testEnv signs in without a session cookie, so before the page is cached.
+    const signedInPage = await get(app, '/', {}, testEnv(signedIn({ id: 'user-1' }), env))
+    const first = await get(app, '/', {}, env)
+    const second = await get(app, '/', {}, env)
+
+    expect({
+      first: [first.status, first.res.headers.get('Cache-Control')],
+      second: [second.status, second.res.headers.get('Cache-Control')],
+      database: (await get(app, '/projects', {}, env)).res.headers.get('Cache-Control'),
+      signedIn: signedInPage.res.headers.get('Cache-Control'),
+      stated: (await get(app, '/stated', {}, env)).res.headers.get('Cache-Control'),
+    }).toEqual({
+      first: ['MISS', 'public, max-age=0, must-revalidate'],
+      second: ['HIT', 'public, max-age=0, must-revalidate'],
+      database: 'private, no-cache',
+      signedIn: 'no-store',
+      stated: 'public, max-age=60',
+    })
   })
 })
 

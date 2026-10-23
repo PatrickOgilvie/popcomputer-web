@@ -76,6 +76,11 @@ export interface WebRequestContext<E extends Env = Env> {
   sessionCookies?: readonly string[]
   /** pageCache() — present while a request may still be served from or stored in the page cache. */
   pageCache?: PageCacheState
+  /**
+   * privateByDefault() — set before the route runs: it gives the response a
+   * Cache-Control when it states none, so web() leaves that to it.
+   */
+  cacheControlByDefault?: boolean
   /** routes.jsonApi() — every request to the route is a JSON client. */
   jsonApi?: boolean
   /**
