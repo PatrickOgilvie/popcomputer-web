@@ -71,3 +71,46 @@ describe('the page a form goes back to', () => {
     }
   })
 })
+
+describe('a redirect to a URL a form names', () => {
+  // As a browser reads a scheme: case, a leading space and a tab inside it make no difference.
+  const scripts = ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', ' javascript:alert(1)', 'java\tscript:alert(1)', 'data:text/html,<script>alert(1)</script>']
+  const post = (app: ReturnType<typeof createApp>['app'], path: string, next: string, inertia: boolean) =>
+    app.request(`http://localhost${path}`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost', ...(inertia ? { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } : {}) },
+      body: new URLSearchParams({ next }),
+    }, as('ada'))
+
+  test('never names a javascript: or data: URL, which an Inertia visit would run on the page', async () => {
+    const { app } = createApp()
+    const answered: string[] = []
+
+    for (const path of ['/continue', '/continue-now']) {
+      for (const next of scripts) {
+        for (const inertia of [true, false]) {
+          const res = await post(app, path, next, inertia)
+          const location = res.headers.get('X-Inertia-Location') ?? res.headers.get('Location')
+
+          if (res.status !== 500 || location !== null) answered.push(`${path} ${JSON.stringify(next)} inertia=${inertia} -> ${res.status} ${location}`)
+        }
+      }
+    }
+
+    expect(answered).toEqual([])
+  })
+
+  test('to another site still sends an Inertia visit there with 409 and X-Inertia-Location', async () => {
+    const { app } = createApp()
+
+    for (const path of ['/continue', '/continue-now']) {
+      const visit = await post(app, path, 'https://pay.example/session/1', true)
+      const plain = await post(app, path, 'https://pay.example/session/1', false)
+
+      expect({ path, status: visit.status, location: visit.headers.get('X-Inertia-Location') })
+        .toEqual({ path, status: 409, location: 'https://pay.example/session/1' })
+      expect({ path, status: plain.status, location: plain.headers.get('Location') })
+        .toEqual({ path, status: 303, location: 'https://pay.example/session/1' })
+    }
+  })
+})

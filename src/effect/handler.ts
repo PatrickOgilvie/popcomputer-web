@@ -5,6 +5,7 @@
  */
 
 import { sameOriginReferer } from './referer.js'
+import { webUrl } from '../locations.js'
 import { Option, Effect, Exit, Cause, ManagedRuntime, Result } from 'effect'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
@@ -384,7 +385,7 @@ export async function errorToResponse<E extends Env>(
 
   // redirectNow: leaving the action for another page is not an error.
   if (error instanceof Redirect) {
-    return handleRedirect(error, c)
+    return handleRedirect(error, c, runtime)
   }
 
   const structured = toStructuredError(error, captureErrorContext(c))
@@ -404,10 +405,29 @@ export async function errorToResponse<E extends Env>(
 }
 
 /**
- * Handle a Redirect value (which is not an error).
+ * Handle a Redirect value (which is not an error). A redirect leads to a path
+ * or an `http:` or `https:` URL: one to any other scheme, such as a
+ * `javascript:` URL built from a visitor's input, is a defect, since an
+ * Inertia visit assigns its location to `window.location.href`.
  */
-function handleRedirect<E extends Env>(redirect: Redirect, c: HonoContext<E>): Response {
+// oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary answers a refused redirect through handleExit's defect path.
+async function handleRedirect<E extends Env>(
+  redirect: Redirect,
+  c: HonoContext<E>,
+  runtime: ManagedRuntime.ManagedRuntime<never, unknown>
+): Promise<Response> {
+  if (webUrl(redirect.url, c.req.url) === undefined) {
+    return handleExit(Exit.die(new Error(`A redirect leads to a path or an http: or https: URL, not ${schemeOf(redirect.url)}.`)), c, runtime)
+  }
+
   return c.redirect(redirect.url, redirect.status)
+}
+
+/** A refused redirect's scheme, for its defect's message without the URL a visitor may have written. */
+function schemeOf(url: string): string {
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url.replace(/[\t\n\r]/g, '').trim())?.[1]
+
+  return scheme === undefined || /^https?$/i.test(scheme) ? 'an unreadable URL' : `a ${scheme.toLowerCase()}: URL`
 }
 
 /**
@@ -455,7 +475,7 @@ async function handleExit<E extends Env>(
     const value = exit.value
 
     if (isRedirect(value)) {
-      return handleRedirect(value, c)
+      return handleRedirect(value, c, runtime)
     }
 
     return value

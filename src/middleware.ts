@@ -14,6 +14,7 @@ import { HEADERS } from './types.js'
 import { openWebContext } from './request-context.js'
 import { openFlash } from './flash.js'
 import { ConfigurationError } from './effect/errors.js'
+import { webUrl } from './locations.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
@@ -321,17 +322,19 @@ function withResponseHeaders(response: Response, added: ReadonlyArray<readonly [
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
 }
 
-/** The redirect's location when it leads to another site than the request's, which an Inertia visit cannot follow. */
+/**
+ * The redirect's location when it leads to another site than the request's,
+ * which an Inertia visit cannot follow. Only a web page qualifies: Inertia
+ * assigns the location to `window.location.href`, which would run a
+ * `javascript:` URL on the application's page, though no browser follows one
+ * from a redirect.
+ */
 function otherSiteLocation(response: Response, requestUrl: string): string | undefined {
   const location = response.status >= 300 && response.status < 400 ? response.headers.get('Location') : null
 
   if (location === null) return undefined
 
-  try {
-    const target = new URL(location, requestUrl)
+  const target = webUrl(location, requestUrl)
 
-    return target.origin === new URL(requestUrl).origin ? undefined : target.href
-  } catch {
-    return undefined
-  }
+  return target !== undefined && target.origin !== webUrl(requestUrl)?.origin ? target.href : undefined
 }

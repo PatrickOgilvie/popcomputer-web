@@ -13,6 +13,7 @@ import {
   SchemaTransformation,
 } from 'effect'
 import type { ParseOptions } from 'effect/SchemaAST'
+import { webUrl } from '../locations.js'
 
 // =============================================================================
 // String Types
@@ -441,19 +442,10 @@ export const nullableEmail = S.Unknown.pipe(
 ).pipe(S.withDecodingDefaultTypeKey(Effect.succeed(null)))
 
 // A page shows a stored link in an `href`, where any other scheme, such as
-// `javascript:` or `data:`, can run script. The scheme is read the way a
-// browser reads it, so case, leading control characters and tabs inside it
-// make no difference.
-const WEB_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:'])
+// `javascript:` or `data:`, can run script.
 const WEB_URL_MESSAGE = 'Use a link that starts with https:// or http://.'
 
-const isWebUrl = (value: string) => {
-  try {
-    return WEB_PROTOCOLS.has(new URL(value).protocol)
-  } catch {
-    return false
-  }
-}
+const isWebUrl = (value: string) => webUrl(value) !== undefined
 
 /**
  * An `http:` or `https:` URL with trimming. Every other scheme fails.

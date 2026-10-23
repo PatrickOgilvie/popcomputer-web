@@ -2,8 +2,9 @@
  * The application the security regression tests attack: each binding says
  * who may load its record, a guard decides an organization's, a form creates
  * a member's project, a signed-out form takes anyone's input as sign-in does,
- * one page is cached, and two routes redirect where a request asks. Every
- * statement the database receives is logged.
+ * one page is cached, and four routes redirect where a request asks, two of
+ * them to any URL a form names, as an application's open redirect would.
+ * Every statement the database receives is logged.
  */
 
 import { Hono } from 'hono'
@@ -17,7 +18,7 @@ import { intendedUrl } from '../../src/effect/auth.js'
 import { bound, routeBinding } from '../../src/effect/binding.js'
 import { dbMutation, dbQuery } from '../../src/effect/database.js'
 import { guard } from '../../src/effect/guard.js'
-import { back, json, notFound, redirect } from '../../src/effect/responses.js'
+import { back, json, notFound, redirect, redirectNow } from '../../src/effect/responses.js'
 import { requiredString } from '../../src/effect/schema.js'
 import { authorize } from '../../src/effect/services.js'
 import { validateRequest } from '../../src/effect/validation.js'
@@ -47,6 +48,7 @@ class CurrentMember extends Context.Service<CurrentMember, typeof memberships.$i
 
 const ProjectForm = S.Struct({ name: requiredString })
 const SignInForm = S.Struct({ email: requiredString })
+const ContinueForm = S.Struct({ next: requiredString })
 
 export function createApp() {
   const sqlite = new Database(':memory:')
@@ -136,6 +138,8 @@ export function createApp() {
     .get('/after-sign-in', action(Effect.flatMap(intendedUrl('/home'), (url) => json({ url }))))
     .post('/sign-in', action(Effect.flatMap(validateRequest(SignInForm), (input) => json(input))))
     .post('/go-back', action(back('/home')))
+    .post('/continue', action(Effect.flatMap(validateRequest(ContinueForm), (input) => redirect(input.next))))
+    .post('/continue-now', action(Effect.flatMap(validateRequest(ContinueForm), (input) => redirectNow(input.next))))
     .get('/home', action(redirect('/home')))
 
   routes.prefix('/orgs/{organization}').provide(RequireMember)
