@@ -7,9 +7,10 @@
  * dynamic, and renders on every request, as soon as producing it reads
  * anything request-specific:
  *
+ * - the database, through any use of `DatabaseService`, whether its client
+ *   reaches the database through a binding or a connection string;
  * - a Cloudflare binding on `c.env` (D1, KV, R2, Durable Objects, service
- *   bindings, AI, Hyperdrive…), which covers database reads however they are
- *   made;
+ *   bindings, AI, Hyperdrive…);
  * - request headers or the raw request through `RequestService`, or through
  *   the context a `web.services` request callback receives, or request
  *   state through `RequestStateService`;
@@ -602,6 +603,27 @@ function isBinding(value: unknown): value is object {
   return prototype !== null && prototype !== Object.prototype && prototype !== Function.prototype
 }
 
+/**
+ * The request's database client, reporting each use to the page cache, so a
+ * page that reads data renders per request however its client reaches the
+ * database: a client built from a connection string reads no binding. Only
+ * the page cache's flag is set, so a route's own `cache` option, which keeps
+ * data reads for a fixed time, still applies.
+ */
+export function trackDatabase<E extends Env, T>(c: Context<E>, db: T): T {
+  if (!(db instanceof Object)) {
+    return db
+  }
+
+  return trackBinding(db, () => {
+    const state = openWebContext(c).pageCache
+
+    if (state) {
+      state.dynamic = true
+    }
+  })
+}
+
 function trackBinding<T extends object>(binding: T, onRead: () => void): T {
   return new Proxy(binding, {
     get(target, key) {
@@ -622,8 +644,16 @@ function trackBinding<T extends object>(binding: T, onRead: () => void): T {
 
       onRead()
 
-      // Bindings are host objects whose methods need the real receiver.
-      return value instanceof Function ? value.bind(target) : value
+      // Bindings and clients are objects whose methods need the real
+      // receiver; a class is returned as itself.
+      return value instanceof Function && key !== 'constructor' ? value.bind(target) : value
+    },
+    // A client that is itself a function, as postgres.js's `sql` is; the
+    // trap runs only for one.
+    apply(target, receiver, args) {
+      onRead()
+
+      return target instanceof Function ? Reflect.apply(target, receiver, args) : undefined
     },
   })
 }

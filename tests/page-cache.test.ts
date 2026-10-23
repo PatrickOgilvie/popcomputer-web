@@ -17,7 +17,9 @@ import { forbidden, render } from '../src/effect/responses.js'
 import { guard } from '../src/effect/guard.js'
 import { responseHeader } from '../src/effect/response-headers.js'
 import { DatabaseService, RequestService, RequestStateService } from '../src/effect/services.js'
-import { PAGE_CACHE_HEADER, trackBindings, type PageCacheStore } from '../src/page-cache.js'
+import { dbQuery } from '../src/effect/database.js'
+import { PAGE_CACHE_HEADER, trackBindings, trackDatabase, type PageCacheStore } from '../src/page-cache.js'
+import { openWebContext } from '../src/request-context.js'
 import { signedIn, testEnv } from '../src/testing.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
@@ -59,12 +61,15 @@ class FakeD1 {
 type PageCacheEnv = {
   Bindings: {
     readonly DB: FakeD1
+    readonly DATABASE_URL?: string
   }
 }
 
-/** The database client the app builds from its D1 binding. */
+/** The database client the app builds from its D1 binding, or from a connection string. */
 interface PageCacheDatabase {
   readonly projects: () => { readonly sql: string }
+  /** The names of the projects anyone may see. */
+  readonly publicProjects: () => Promise<readonly string[]>
 }
 
 declare module '../src/effect/register.js' {
@@ -109,7 +114,14 @@ const createApp = (options: AppOptions = {}) => {
       // Building a client from a binding is not a read; querying it is.
       const d1 = c.env.DB
 
-      return { projects: () => d1.prepare('select * from projects') }
+      return {
+        projects: () => d1.prepare('select * from projects'),
+        publicProjects: async () => {
+          d1.prepare('select name from projects where public')
+
+          return []
+        },
+      }
     },
     pageCache: options.pageCache,
   })
@@ -504,6 +516,62 @@ describe('default page cache', () => {
   })
 })
 
+describe('a database reached through a connection string', () => {
+  /** A database server the client reaches over the network, with no binding. */
+  const server = { projects: [{ name: 'Dummy public project', public: true }] }
+
+  /** Stands in for drizzle(postgres(url)). */
+  const clientFor = (url: string): PageCacheDatabase => ({
+    projects: () => ({ sql: `select * from projects -- ${url}` }),
+    publicProjects: async () => server.projects.filter((project) => project.public).map((project) => project.name),
+  })
+
+  const createDatabaseApp = () => {
+    const app = new Hono<PageCacheEnv>()
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => `<html>${JSON.stringify(page)}</html>`,
+      database: (c) => clientFor(c.env.DATABASE_URL ?? ''),
+    })
+    const explore = Effect.flatMap(dbQuery((db) => db.publicProjects()), (names) => render('Explore', { names }))
+
+    effectRoutes(app)
+      .get('/explore', explore)
+      .get('/about', render('About'))
+      .get('/api/explore', Effect.map(dbQuery((db) => db.publicProjects()), (names) => Response.json({ names })), { cache: { maxAge: 60 } })
+
+    return app
+  }
+
+  const env = () => production({ DATABASE_URL: 'postgres://db.example.com/app', CF_VERSION_METADATA: { id: 'deploy-1' } })
+
+  test('a page that reads it renders fresh, so a record made private leaves it', async () => {
+    server.projects[0].public = true
+    const app = createDatabaseApp()
+
+    const listed = await get(app, '/explore', {}, env())
+    server.projects[0].public = false
+    const hidden = await get(app, '/explore', {}, env())
+
+    expect([listed.status, hidden.status]).toEqual(['DYNAMIC', 'DYNAMIC'])
+    expect(listed.body).toContain('Dummy public project')
+    expect(hidden.body).not.toContain('Dummy public project')
+    expect(cache.entries.size).toBe(0)
+
+    // A page that reads no data is still cached.
+    expect((await get(app, '/about', {}, env())).status).toBe('MISS')
+    expect((await get(app, '/about', {}, env())).status).toBe('HIT')
+  })
+
+  test("a route's own cache option still keeps its data reads for a fixed time", async () => {
+    server.projects[0].public = true
+    const res = await createDatabaseApp().request('/api/explore', {}, env())
+
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=60')
+    expect(await res.json()).toEqual({ names: ['Dummy public project'] })
+  })
+})
+
 describe('access checks and the default page cache', () => {
   /** Whom the access checks admit: they decide by what no cache key holds. */
   const gate = { open: true }
@@ -651,5 +719,43 @@ describe('trackBindings', () => {
     expect(env.DB.prepare('select 1')).toEqual({ sql: 'select 1' })
     expect(d1.queries).toBe(1)
     expect(reads).toBeGreaterThan(0)
+  })
+})
+
+describe('trackDatabase', () => {
+  test("reports a client's methods and calls to the page cache, and keeps its class", async () => {
+    class Client {
+      #rows = ['row']
+      rows() {
+        return this.#rows
+      }
+    }
+    // A client that is itself a function, as postgres.js's `sql` is.
+    const sql = Object.assign((strings: TemplateStringsArray, ..._values: unknown[]) => strings.join('?'), { end: () => 'ended' })
+    const app = new Hono()
+
+    app.get('/', (c) => {
+      const marks: boolean[] = []
+      const read = (use: () => unknown) => {
+        const state = { key: new Request('http://localhost/'), variant: 'html', ttl: 60, dynamic: false, routeAllowsDefault: true } as const
+        openWebContext(c).pageCache = { ...state }
+        const value = use()
+        marks.push(openWebContext(c).pageCache?.dynamic === true)
+
+        return value
+      }
+      const client = trackDatabase(c, new Client())
+      const tag = trackDatabase(c, sql)
+
+      return c.json({
+        values: [read(() => client.rows()), read(() => tag`select ${1}`), read(() => tag.end())],
+        marks,
+        isClient: client instanceof Client && client.constructor === Client,
+      })
+    })
+
+    const res = await app.request('/')
+
+    expect(await res.json()).toEqual({ values: [['row'], 'select ?', 'ended'], marks: [true, true, true], isClient: true })
   })
 })

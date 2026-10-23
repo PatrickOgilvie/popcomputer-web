@@ -5,8 +5,11 @@ Cloudflare's Cache API, skipping database, auth and rendering work, when
 producing it read nothing request-specific. A page becomes dynamic, and renders
 on every request, when it reads:
 
+- the database, through `dbQuery` or any other use of `DatabaseService`,
+  whether its client reaches the database through a binding or a
+  connection string;
 - a binding on `c.env` (D1, KV, R2, Durable Objects, service bindings, AI,
-  Hyperdrive), which covers database queries however they are made;
+  Hyperdrive);
 - a request header, the raw request or request state, through
   `RequestService` or `RequestStateService`, or through the context a
   `web.services` request callback receives;

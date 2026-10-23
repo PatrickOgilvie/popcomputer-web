@@ -14,7 +14,7 @@ import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { WebRequestContext } from '../request-context.js'
 import { openWebContext } from '../request-context.js'
-import { markPageDynamic } from '../page-cache.js'
+import { markPageDynamic, trackDatabase } from '../page-cache.js'
 import {
   ResponseCacheService,
   createWorkersResponseCacheClient,
@@ -658,8 +658,9 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     responseCacheLayer
   )
 
+  // Each use of the database is a data read, so its page renders per request.
   if (requestCtx.db !== undefined) {
-    baseLayer = Layer.merge(baseLayer, Layer.succeed(DatabaseService, requestCtx.db))
+    baseLayer = Layer.merge(baseLayer, Layer.succeed(DatabaseService, trackDatabase(c, requestCtx.db)))
   }
 
   if (requestCtx.auth !== undefined) {
