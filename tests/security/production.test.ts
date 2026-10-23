@@ -17,10 +17,10 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Hono } from 'hono'
-import { Effect, Schema as S } from 'effect'
+import { Effect, Exit, Schema as S } from 'effect'
 import { action } from '../../src/effect/action.js'
 import { parseBindings } from '../../src/effect/binding.js'
-import { alpha, alphaDash, alphaNum, email, ip, isoDate, isoDateTime, jsonString, macAddress, singleMediaType, url, uuid } from '../../src/effect/schema.js'
+import { alpha, alphaDash, alphaNum, email, ip, isoDate, isoDateTime, jsonString, macAddress, nullableEmail, singleMediaType, url, uuid } from '../../src/effect/schema.js'
 import { clientAddress } from '../../src/effect/sign-in-limits.js'
 import { setupWeb } from '../../src/setup.js'
 
@@ -83,6 +83,12 @@ describe('a validator given a long, hostile value', () => {
     ['email, local part', email, `${'a'.repeat(long)}@`],
     ['email, labels', email, `a@${'a.'.repeat(long / 2)}`],
     ['email, dashes', email, `a@${'a-'.repeat(long / 2)}!`],
+    // A domain of dots whose match fails at its end, which retried every dot
+    // against the rest of the value; the "labels" case above matches.
+    ['email, dotted domain that fails', email, `a@${'.'.repeat(long)}@`],
+    ['email, dotted domain with a space', email, `a@${'.'.repeat(long)} x`],
+    ['nullableEmail, dotted domain that fails', nullableEmail, `a@${'.'.repeat(long)}@`],
+    ['nullableEmail, dotted domain with a space', nullableEmail, `a@${'.'.repeat(long)} x`],
     ['url', url, `http://${'a'.repeat(long)}:x`],
     ['alpha', alpha, `${'a'.repeat(long)}1`],
     ['alphaDash', alphaDash, `${'a-'.repeat(long / 2)}!`],
@@ -117,6 +123,61 @@ describe('a validator given a long, hostile value', () => {
     parseBindings(`/${'{a}/'.repeat(long / 4)}`)
 
     expect(performance.now() - started).toBeLessThan(50)
+  })
+})
+
+describe('the email validators', () => {
+  // The patterns before they were made linear: each answer must stay as it was.
+  const before = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u
+  const beforeNullable = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+  const valid = (schema: typeof email | typeof nullableEmail, value: string) =>
+    Exit.isSuccess(S.decodeUnknownExit(schema)(value))
+
+  // Every string up to `length` characters over `alphabet`.
+  const strings = (alphabet: ReadonlyArray<string>, length: number): string[] => {
+    const all = ['']
+    let layer = ['']
+
+    for (let size = 1; size <= length; size++) {
+      layer = layer.flatMap((prefix) => alphabet.map((character) => prefix + character))
+      all.push(...layer)
+    }
+
+    return all
+  }
+
+  test('answer as the quadratic patterns did on every short string over the characters that matter', () => {
+    const differ: string[] = []
+
+    // The dot, the at sign and a space decide the pattern, so the strings that
+    // exercise it all are the ones over them and an ordinary character.
+    for (const value of strings(['a', '.', '@', ' '], 8)) {
+      const trimmed = value.trim().toLowerCase()
+
+      if (valid(email, value) !== before.test(trimmed)) differ.push(`email ${JSON.stringify(value)}`)
+      if (trimmed !== '' && valid(nullableEmail, value) !== beforeNullable.test(trimmed)) differ.push(`nullableEmail ${JSON.stringify(value)}`)
+    }
+
+    // Characters outside one UTF-16 unit, and a space that is not ' '.
+    for (const value of strings(['a', '.', '@', '\u{1F600}', '\u00a0'], 5)) {
+      const trimmed = value.trim().toLowerCase()
+
+      if (valid(email, value) !== before.test(trimmed)) differ.push(`email ${JSON.stringify(value)}`)
+      if (trimmed !== '' && valid(nullableEmail, value) !== beforeNullable.test(trimmed)) differ.push(`nullableEmail ${JSON.stringify(value)}`)
+    }
+
+    expect(differ).toEqual([])
+  })
+
+  test('still accept and refuse the addresses they did', () => {
+    for (const address of ['a@b.c', ' A@B.CO ', 'first.last@sub.example.com', 'a@b..c', 'a@b.c.', 'a@b.\u{1F600}']) {
+      expect({ address, email: valid(email, address), nullableEmail: valid(nullableEmail, address) }).toEqual({ address, email: true, nullableEmail: true })
+    }
+
+    for (const address of ['a', 'a@', '@b.c', 'a@b', 'a@b.', 'a@.', 'a@.b', 'a b@c.d', 'a@b c.d', 'a@@b.c', 'a@b@c.d']) {
+      expect({ address, email: valid(email, address), nullableEmail: valid(nullableEmail, address) }).toEqual({ address, email: false, nullableEmail: false })
+    }
   })
 })
 
