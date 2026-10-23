@@ -2,8 +2,9 @@
  * The application the security regression tests attack: each binding says
  * who may load its record, a guard decides an organization's, a form creates
  * a member's project, a signed-out form takes anyone's input as sign-in does,
- * one page is cached, and four routes redirect where a request asks, two of
- * them to any URL a form names, as an application's open redirect would.
+ * one page is cached, and five routes redirect where a request asks, two of
+ * them to any URL a form names, as an application's open redirect would, and
+ * one to a path filled from a form's fields.
  * Every statement the database receives is logged.
  */
 
@@ -49,6 +50,7 @@ class CurrentMember extends Context.Service<CurrentMember, typeof memberships.$i
 const ProjectForm = S.Struct({ name: requiredString })
 const SignInForm = S.Struct({ email: requiredString })
 const ContinueForm = S.Struct({ next: requiredString })
+const RepositoryForm = S.Struct({ owner: S.String, repo: S.String })
 
 export function createApp() {
   const sqlite = new Database(':memory:')
@@ -140,6 +142,7 @@ export function createApp() {
     .post('/go-back', action(back('/home')))
     .post('/continue', action(Effect.flatMap(validateRequest(ContinueForm), (input) => redirect(input.next))))
     .post('/continue-now', action(Effect.flatMap(validateRequest(ContinueForm), (input) => redirectNow(input.next))))
+    .post('/go-to-repository', action(Effect.flatMap(validateRequest(RepositoryForm), (input) => redirect('/{owner}/{repo}', input))))
     .get('/home', action(redirect('/home')))
 
   routes.prefix('/orgs/{organization}').provide(RequireMember)

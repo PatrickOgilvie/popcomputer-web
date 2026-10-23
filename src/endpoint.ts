@@ -37,6 +37,7 @@ import { Option, Schema as S } from 'effect'
 import { ErrorResponse, type ErrorResponseBody } from './effect/error-response.js'
 import type { PathParamName, PathTarget } from './paths.js'
 import type { AuthUser } from './effect/services.js'
+import { pathSegment } from './locations.js'
 
 export { openApi, type JsonValue, type OpenApiInfo } from './openapi.js'
 
@@ -289,7 +290,7 @@ function fillPath(path: string, params: Readonly<Record<string, string | number>
 
     if (value === undefined) throw new Error(`The call to ${path} lacks its '${name}' parameter.`)
 
-    return encodeURIComponent(String(value))
+    return pathSegment(value, path, name)
   })
 }
 

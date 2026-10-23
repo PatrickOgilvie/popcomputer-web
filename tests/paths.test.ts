@@ -30,6 +30,20 @@ describe('href', () => {
   test('takes no parameters for a path without placeholders', () => {
     expect(href(paths.projects)).toBe('/projects')
   })
+
+  // A URL drops '.', and the segment before '..', and an empty first segment
+  // makes the path //host: a label named '..' would reach its project's route.
+  test("throws for a value that would not be one path segment: '', '.' or '..'", () => {
+    for (const value of ['', '.', '..']) {
+      expect(() => href(paths.project, { project: value })).toThrow("cannot take")
+      expect(() => href('/{owner}/{repo}', { owner: value, repo: 'evil.example' })).toThrow('not be one path segment')
+    }
+
+    // Escaped dots stay one segment, since href encodes the '%' too.
+    expect(href(paths.project, { project: '%2e%2e' })).toBe('/projects/%252e%252e')
+    expect(href(paths.project, { project: '...' })).toBe('/projects/...')
+    expect(href(paths.project, { project: 0 })).toBe('/projects/0')
+  })
 })
 
 // Checked by `bun run test:types`, never run: href types parameters from the path.

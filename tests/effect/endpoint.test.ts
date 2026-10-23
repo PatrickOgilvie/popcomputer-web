@@ -267,6 +267,23 @@ describe('call', () => {
     expect(deleted).toMatchObject({ ok: true, status: 204, value: undefined })
   })
 
+  test("throws before sending for a parameter that would not be one path segment: '', '.' or '..'", async () => {
+    const sent: string[] = []
+    const fetch = (request: Request) => {
+      sent.push(request.url)
+
+      return Promise.resolve(new Response(null, { status: 204 }))
+    }
+
+    for (const place of ['', '.', '..']) {
+      // '/api/places/{place}/name' with '..' would be '/api/name', another route.
+      await expect(call(endpoints.rename, { params: { place }, body: { name: 'Diner' } }, { fetch })).rejects.toThrow('not be one path segment')
+      await expect(call(endpoints.deletePlace, { params: { place } }, { fetch })).rejects.toThrow('not be one path segment')
+    }
+
+    expect(sent).toEqual([])
+  })
+
   test('leaves out fields that may be null, and sends through a test browser', async () => {
     const { app } = createApp()
     const browser = testBrowser(app)

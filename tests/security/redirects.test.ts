@@ -146,3 +146,38 @@ describe('a redirect to a URL a form names', () => {
     }
   })
 })
+
+describe('a redirect to a path filled from fields a form names', () => {
+  // '/{owner}/{repo}' with an empty owner is //evil.example, another host,
+  // and a '.' or '..' repo leaves the owner's page for another route.
+  test("is a defect for a value that would not be one path segment, never a Location", async () => {
+    const { app } = createApp()
+    const answered: string[] = []
+
+    for (const [owner, repo] of [['', 'evil.example'], ['ada', '..'], ['ada', '.']]) {
+      for (const inertia of [true, false]) {
+        const res = await app.request('http://localhost/go-to-repository', {
+          method: 'POST',
+          headers: { Origin: 'http://localhost', ...(inertia ? { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } : {}) },
+          body: new URLSearchParams({ owner, repo }),
+        }, as('ada'))
+        const location = res.headers.get('X-Inertia-Location') ?? res.headers.get('Location')
+
+        if (res.status !== 500 || location !== null) answered.push(`${JSON.stringify({ owner, repo })} inertia=${inertia} -> ${res.status} ${location}`)
+      }
+    }
+
+    expect(answered).toEqual([])
+  })
+
+  test('is the filled path for values that are one segment each', async () => {
+    const { app } = createApp()
+    const res = await app.request('http://localhost/go-to-repository', {
+      method: 'POST',
+      headers: { Origin: 'http://localhost' },
+      body: new URLSearchParams({ owner: 'ada', repo: 'a/b..' }),
+    }, as('ada'))
+
+    expect({ status: res.status, location: res.headers.get('Location') }).toEqual({ status: 303, location: '/ada/a%2Fb..' })
+  })
+})

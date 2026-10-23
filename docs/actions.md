@@ -62,7 +62,11 @@ routes.get(paths.project, showProject, { name: 'projects.show' })
 `redirect(paths.project, { project: project.id })` and, in React,
 `href(paths.project, { project: project.id })` from `@popcomputer/web/paths` fill
 the path's placeholders; the parameters are typed from them, so a renamed
-placeholder is a type error at every URL built from it. A redirect leads to a
+placeholder is a type error at every URL built from it. A value fills one path
+segment: an empty one, `.` or `..` would turn the path into another route's,
+or `//host`, another site, so `href`, `redirect` and an endpoint's `call`
+throw on it, which in an action is a defect that answers 500. Validate a name
+a URL will carry with `alphaDash`, as for a slug. A redirect leads to a
 path or an `http:` or `https:` URL: one to any other scheme, such as a
 `javascript:` URL a form's `next` field names, is a defect that answers 500,
 and an Inertia visit is sent to another site only at an `http:` or `https:`

@@ -21,3 +21,21 @@ export function webUrl(value: string, base?: string): URL | undefined {
     return undefined
   }
 }
+
+/**
+ * A placeholder's value as one path segment, encoded. Encoding keeps a `/`
+ * or `?` inside the segment, but three values it leaves as they are still
+ * change the path: a URL drops a `.` segment, and the segment before a `..`
+ * one (and reads `%2e` as a dot, so escaping cannot help), and an empty first
+ * segment makes the path `//host`, another site. They throw, which in an
+ * action is a defect answering 500, rather than reach another route or host.
+ */
+export function pathSegment(value: string | number, path: string, name: string): string {
+  const segment = encodeURIComponent(String(value))
+
+  if (segment === '' || segment === '.' || segment === '..') {
+    throw new Error(`${path} cannot take ${segment === '' ? 'an empty value' : `'${segment}'`} as its '${name}' parameter: it would not be one path segment.`)
+  }
+
+  return segment
+}
