@@ -20,6 +20,7 @@
  */
 
 import type { Registered } from './effect/register.js'
+import { pathSegment } from './locations.js'
 
 type DeclaredPaths = Registered<'paths', never>
 
@@ -63,6 +64,8 @@ export type QueryParams = Readonly<Record<string, string | number | boolean | nu
 
 /**
  * Build the URL to a route path, filling its placeholders and adding a query.
+ * A placeholder's value is one path segment: an empty value, `.` or `..`,
+ * which would reach another route or another host, throws.
  *
  * @example
  * href('/projects/{project}/tasks/{task}', { project: 'p1', task: 7 }) // '/projects/p1/tasks/7'
@@ -77,7 +80,7 @@ export function href<const Path extends string>(
   const filled = path.replace(/\{([^}:]+)(?::[^}]+)?\}/g, (_placeholder, name: string) => {
     const value = Object.hasOwn(values, name) ? values[name] : undefined
 
-    return value === undefined ? `{${name}}` : encodeURIComponent(String(value))
+    return value === undefined ? `{${name}}` : pathSegment(value, path, name)
   })
 
   const search = new URLSearchParams()

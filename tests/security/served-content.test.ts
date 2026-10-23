@@ -50,6 +50,17 @@ describe('an upload', () => {
     }
   })
 
+  test('of a type a browser may read as XML, such as text/rdf, is refused under text/* and accepted only when named', async () => {
+    const xml = new TextEncoder().encode('<?xml version="1.0"?><doc xmlns:h="http://www.w3.org/1999/xhtml"><h:script>alert(1)</h:script></doc>')
+
+    for (const type of ['text/rdf', 'Text/RDF; charset=utf-8', 'text/xml', 'text/xsl']) {
+      expect({ type, decoded: (await decode(['text/*'], new File([xml], 'doc.bin', { type })))._tag }).toEqual({ type, decoded: 'Failure' })
+    }
+
+    expect((await decode(['text/rdf'], new File([xml], 'doc.rdf', { type: 'text/rdf' })))._tag).toBe('Success')
+    expect((await decode(['text/*'], new File(['a,b'], 'rows.csv', { type: 'text/csv' })))._tag).toBe('Success')
+  })
+
   test('keeps only its media type, so what is stored is one type', async () => {
     const decoded = await decode(['image/*'], new File([png], 'photo.png', { type: 'IMAGE/PNG; charset=x' }))
 
@@ -67,12 +78,41 @@ describe('a served file', () => {
   })
 
   test('that a browser runs script in is shown inline only sandboxed, and never sniffed', async () => {
-    for (const contentType of ['text/html', 'image/svg+xml', 'application/xml', 'application/rss+xml', 'text/xsl']) {
+    for (const contentType of ['text/html', 'image/svg+xml', 'application/xml', 'application/rss+xml', 'text/xsl', 'text/rdf', 'Text/RDF; charset=utf-8']) {
       const response = await Effect.runPromise(file('<x/>', { contentType }))
 
       expect({ contentType, csp: response.headers.get('Content-Security-Policy'), nosniff: response.headers.get('X-Content-Type-Options') })
         .toEqual({ contentType, csp: 'sandbox', nosniff: 'nosniff' })
     }
+  })
+
+  // No list of the types a browser reads as a page is complete: only types
+  // it shows without running script are shown inline unsandboxed.
+  test('of any type but an image, a PDF, plain text, JSON, audio or video is shown inline only sandboxed', async () => {
+    const shown = async (contentType: string, options: { readonly filename?: string; readonly headers?: HeadersInit } = {}) =>
+      (await Effect.runPromise(file('<x/>', { contentType, ...options }))).headers.get('Content-Security-Policy')
+
+    for (const contentType of [
+      'text/xml-external-parsed-entity',
+      'application/xml-external-parsed-entity',
+      'application/xml-dtd',
+      'text/vtt',
+      'text/cache-manifest',
+      'text/csv',
+      'application/javascript',
+      'application/octet-stream',
+      'application/x-unknown',
+      'image/x-anything+xml',
+    ]) {
+      expect({ contentType, csp: await shown(contentType) }).toEqual({ contentType, csp: 'sandbox' })
+    }
+
+    for (const contentType of ['image/png', 'image/jpeg', 'application/pdf', 'text/plain; charset=utf-8', 'application/json', 'audio/mpeg', 'video/mp4']) {
+      expect({ contentType, csp: await shown(contentType) }).toEqual({ contentType, csp: null })
+    }
+
+    expect(await shown('text/csv', { filename: 'rows.csv' })).toBeNull()
+    expect(await shown('text/rdf', { headers: { 'Content-Security-Policy': "default-src 'none'" } })).toBe("default-src 'none'")
   })
 
   test('names its download in one quoted value, however the name tries to break out', async () => {

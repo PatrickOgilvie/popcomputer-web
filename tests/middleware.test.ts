@@ -514,6 +514,20 @@ describe('Page middleware', () => {
       expect(res.headers.getSetCookie()).toEqual(['checkout=pending; Path=/; HttpOnly'])
     })
 
+    test('never sends an Inertia visit to a javascript: or data: URL, which Inertia would assign to window.location.href', async () => {
+      const app = createApp()
+      app.post('/continue', (c) => c.redirect(c.req.query('next') ?? '/', 303))
+      const answered: string[] = []
+
+      for (const next of ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', ' javascript:alert(1)', 'java\tscript:alert(1)', 'data:text/html,<script>alert(1)</script>']) {
+        const res = await app.request(`/continue?next=${encodeURIComponent(next)}`, { method: 'POST', headers: { [HEADERS.INERTIA]: 'true' } })
+
+        if (res.status !== 303 || res.headers.has(HEADERS.LOCATION)) answered.push(`${JSON.stringify(next)} -> ${res.status} ${res.headers.get(HEADERS.LOCATION)}`)
+      }
+
+      expect(answered).toEqual([])
+    })
+
     test('leaves a redirect to another site alone for a visit that is not Inertia, and one within the site for Inertia', async () => {
       const app = createApp()
       app.get('/away', (c) => c.redirect('https://pay.example/session/1', 302))
