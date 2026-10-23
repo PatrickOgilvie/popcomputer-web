@@ -152,4 +152,6 @@ it.
 Typed failures, defects, Hono exceptions, and not-found responses share the
 configured error boundary. Use `EffectErrorObserverService` as the integration
 point for Sentry, PostHog, or another reporting system; observation does not
-change the failure channel.
+change the failure channel. It receives every failure, a form's 422 included:
+a failed validation carries each field's message, path and code but never the
+value sent, which can be a password, a cookie or a token.

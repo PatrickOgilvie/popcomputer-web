@@ -30,12 +30,27 @@ const OptionalHeaders = Schema.optional(Schema.instanceOf(Headers))
 
 /** One field's validation failure; see FieldError. */
 const FieldErrorSchema = Schema.Struct({
-  value: Schema.Unknown,
+  value: Schema.optional(Schema.Unknown),
   expected: Schema.String,
   message: Schema.String,
   path: Schema.Array(Schema.String),
   schemaType: Schema.optional(Schema.String),
 })
+
+/**
+ * Field details without the values an application's own ValidationError may
+ * carry: the structured error reaches the error observer, and a rejected
+ * value can be a password or a token.
+ */
+function withoutValues(details: FieldErrors): FieldErrors {
+  const fields: FieldErrors = {}
+
+  for (const [name, { expected, message, path, schemaType }] of Object.entries(details)) {
+    fields[name] = schemaType === undefined ? { expected, message, path } : { expected, message, path, schemaType }
+  }
+
+  return fields
+}
 
 /**
  * Interface for errors that can be converted to structured format.
@@ -108,7 +123,7 @@ export class ValidationError extends Schema.TaggedError<ValidationError>()('Vali
         ? this.errors[fieldNames[0]]
         : `Validation failed for: ${fieldNames.join(', ')}`,
       validation: {
-        fields: this.fieldDetails ?? this.createFieldDetails(),
+        fields: this.fieldDetails === undefined ? this.createFieldDetails() : withoutValues(this.fieldDetails),
       },
     }
   }
@@ -118,7 +133,6 @@ export class ValidationError extends Schema.TaggedError<ValidationError>()('Vali
 
     for (const [field, message] of Object.entries(this.errors)) {
       details[field] = {
-        value: undefined,
         expected: 'valid value',
         message,
         path: field.split('.'),

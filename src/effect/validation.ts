@@ -101,8 +101,6 @@ interface SourceConflict {
   field: string
   existingSource: RequestValidationSource
   incomingSource: RequestValidationSource
-  existingValue: unknown
-  incomingValue: unknown
 }
 
 const DEFAULT_ORDER: ReadonlyArray<RequestValidationSource> = ['params', 'query', 'body']
@@ -142,10 +140,6 @@ function createSourceConflictValidationError(
     const message = `Conflicting values for ${conflict.field} from ${conflict.existingSource} and ${conflict.incomingSource}.`
     errors[conflict.field] = message
     fieldDetails[conflict.field] = {
-      value: {
-        [conflict.existingSource]: conflict.existingValue,
-        [conflict.incomingSource]: conflict.incomingValue,
-      },
       expected: 'a single unambiguous value from request input',
       message,
       path: conflict.field.split('.'),
@@ -193,9 +187,7 @@ function mergeRequestSources(
         continue
       }
 
-      const existingValue = merged[key]
-
-      if (Object.is(existingValue, value)) {
+      if (Object.is(merged[key], value)) {
         continue
       }
 
@@ -203,8 +195,6 @@ function mergeRequestSources(
         field: key,
         existingSource: sourceOfKey.get(key) ?? source,
         incomingSource: source,
-        existingValue,
-        incomingValue: value,
       })
     }
   }
@@ -309,8 +299,10 @@ function getValidationDataWithOptions(
 export interface FormattedSchemaErrors {
   /** Simple field -> message mapping */
   errors: Record<string, string>
-  /** Detailed field errors for structured output */
+  /** Detailed field errors for structured output, without the rejected values */
   details: Record<string, FieldError>
+  /** The fields sent empty: absent or null */
+  missing: ReadonlySet<string>
 }
 
 function getFormattedIssuePath(
@@ -323,7 +315,9 @@ function getFormattedIssuePath(
 
 /**
  * Format Effect Schema parse errors into field-level validation errors.
- * Returns both simple errors and detailed field information.
+ * Returns both simple errors and detailed field information. The details
+ * keep no submitted value: they reach the error observer, and a rejected
+ * value can be a password, or a cookie or a token in a headers schema.
  */
 export function formatSchemaErrorsWithDetails<Input>(
   error: S.SchemaError,
@@ -333,6 +327,7 @@ export function formatSchemaErrorsWithDetails<Input>(
 ): FormattedSchemaErrors {
   const errors: Record<string, string> = {}
   const details: Record<string, FieldError> = {}
+  const missing = new Set<string>()
   const issues = formatSchemaIssue(error.issue).issues
 
   for (const issue of issues) {
@@ -359,9 +354,9 @@ export function formatSchemaErrorsWithDetails<Input>(
       value = Object.getOwnPropertyDescriptor(value, segment)?.value
     }
 
-    // Create detailed field error
+    if (value === undefined || value === null) missing.add(field)
+
     details[field] = {
-      value,
       expected: issue.message,
       message: errors[field],
       path: path.map(String),
@@ -369,7 +364,7 @@ export function formatSchemaErrorsWithDetails<Input>(
     }
   }
 
-  return { errors, details }
+  return { errors, details, missing }
 }
 
 /**
@@ -442,14 +437,14 @@ export interface ValidateOptions {
 
 /**
  * Build a parse error with concrete guidance for malformed request bodies.
+ * The parser's error is not kept: its message can quote the body.
  */
 export function createBodyParseValidationError(
-  cause: unknown,
+  _cause: unknown,
   contentType: string
 ): ValidationError {
   const isJson = isJsonContentType(contentType)
   const isForm = isFormContentType(contentType)
-  const reason = cause instanceof Error ? cause.message : String(cause)
   const base = isJson ? 'Invalid JSON body' : isForm ? 'Could not parse the form body' : 'Could not read the body as JSON'
 
   const hint = isJson
@@ -464,7 +459,6 @@ export function createBodyParseValidationError(
     errors: { form: message },
     fieldDetails: {
       form: {
-        value: reason,
         expected: isJson ? 'valid JSON payload' : 'parsable request body',
         message,
         path: ['form'],
@@ -476,19 +470,19 @@ export function createBodyParseValidationError(
 }
 
 function determineValidationCode(
-  details: Record<string, FieldError>
+  { details, missing }: FormattedSchemaErrors
 ): ErrorCode {
   // Required only when every invalid field is missing; a value of the wrong
   // kind beside a missing one is a schema mismatch.
-  const missing = (field: string, detail: FieldError): boolean =>
+  const isMissing = (field: string, detail: FieldError): boolean =>
     field !== 'form' && (
-      detail.value === undefined || detail.value === null ||
-      detail.expected?.toLowerCase().includes('required') === true ||
-      detail.message?.toLowerCase().includes('required') === true
+      missing.has(field) ||
+      detail.expected.toLowerCase().includes('required') ||
+      detail.message.toLowerCase().includes('required')
     )
   const entries = Object.entries(details)
 
-  return entries.length > 0 && entries.every(([field, detail]) => missing(field, detail))
+  return entries.length > 0 && entries.every(([field, detail]) => isMissing(field, detail))
     ? ErrorCodes.VAL_001_FIELD_REQUIRED
     : ErrorCodes.VAL_004_SCHEMA_MISMATCH
 }
@@ -501,7 +495,7 @@ function runValidation<A, I, Input>(
   // Report every invalid field, so a form shows all of its errors at once.
   return S.decodeUnknownEffect(schema, { errors: 'all', ...options.parseOptions })(data).pipe(
     Effect.mapError((error) => {
-      const { errors, details } = formatSchemaErrorsWithDetails(
+      const formatted = formatSchemaErrorsWithDetails(
         error,
         data,
         options.messages,
@@ -509,9 +503,9 @@ function runValidation<A, I, Input>(
       )
 
       return new ValidationError({
-        errors,
-        fieldDetails: details,
-        code: determineValidationCode(details),
+        errors: formatted.errors,
+        fieldDetails: formatted.details,
+        code: determineValidationCode(formatted),
       })
     })
   )

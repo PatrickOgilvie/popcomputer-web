@@ -106,8 +106,12 @@ export interface StructuredError {
  * Extended error data for validation errors.
  */
 export interface FieldError {
-  /** The invalid value that was provided */
-  value: unknown
+  /**
+   * The rejected value. The framework never records it, since it can be a
+   * password, a cookie or a token, and a structured error leaves it out: the
+   * error observer, which feeds an application's telemetry, receives both.
+   */
+  value?: unknown
   /** What was expected */
   expected: string
   /** Human-readable error message */
