@@ -156,26 +156,37 @@ export function defaultCacheControl<E extends Env>(c: Context<E>, setsCookie: bo
 }
 
 /**
+ * Give the response the policy defaultCacheControl names, unless it states
+ * its own.
+ */
+export function applyDefaultCacheControl<E extends Env>(c: Context<E>): void {
+  if (c.res.headers.has('Cache-Control')) {
+    return
+  }
+
+  const result = new Response(c.res.body, c.res)
+  result.headers.set('Cache-Control', defaultCacheControl(c, result.headers.has('Set-Cookie')))
+  // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
+  c.res = result
+}
+
+/**
  * Middleware that gives every response without a Cache-Control header the
  * policy defaultCacheControl names. Workers Cache, once enabled, stores a
  * response without one for a heuristic lifetime and serves it to every
  * visitor, so a page rendered per request must say it is not shared.
  * setupWeb installs it outermost; a response that states its own policy
- * keeps it.
+ * keeps it. web() applies the same policy to its responses when this does
+ * not run around it.
  */
 export function privateByDefault<E extends Env>(): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware uses native next() promises.
   return createMiddleware<E>(async (c, next) => {
+    openWebContext(c).cacheControlByDefault = true
+
     await next()
 
-    if (c.res.headers.has('Cache-Control')) {
-      return
-    }
-
-    const result = new Response(c.res.body, c.res)
-    result.headers.set('Cache-Control', defaultCacheControl(c, result.headers.has('Set-Cookie')))
-    // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
-    c.res = result
+    applyDefaultCacheControl(c)
   })
 }
 

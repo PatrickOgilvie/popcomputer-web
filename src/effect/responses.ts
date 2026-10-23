@@ -53,10 +53,22 @@ function fillPath(path: string, args: readonly unknown[]): string {
   return href(path, ...(args as PathArguments<string>))
 }
 
-/** How `render` answers, besides the page: its status. */
+/** How `render` answers, besides the page: its status, and how the client keeps it in history. */
 export interface PageRenderOptions {
   /** 200 unless given: 404 for a page that says what is missing. */
   readonly status?: RenderOptions['status']
+  /**
+   * Whether the client encrypts this page in the browser's history. Unless
+   * given, setupWeb's `history.encrypt` decides: pages rendered to a
+   * signed-in request are encrypted.
+   */
+  readonly encryptHistory?: boolean
+  /**
+   * Whether the client forgets the key that encrypted its history, so Back
+   * cannot show earlier pages again. Unless given, the first page after the
+   * session ends clears it.
+   */
+  readonly clearHistory?: boolean
 }
 
 /**
@@ -65,11 +77,13 @@ export interface PageRenderOptions {
  * Once the application registers its pages (setupWeb's `pages`), the
  * component must be a registered page and `props` must match its schema,
  * which encodes them as JSON for the client. A page answers 200 unless the
- * options give its status.
+ * options give its status; they can also say how the client keeps the page
+ * in its history.
  *
  * @example
  * return yield* render('Projects/Show', { project, canEdit })
  * return yield* render('Signing/LinkInvalid', {}, { status: 404 })
+ * return yield* render('Account/Recovery', { codes }, { encryptHistory: true })
  */
 export function render<Component extends PageName, Props extends PagePropsShape<Props> = PageProps>(
   component: Component,
@@ -89,9 +103,17 @@ function isPageStatus(status: unknown): status is NonNullable<PageRenderOptions[
 
 /** The options `render`'s signature checked, read back from its arguments. */
 function pageRenderOptions(options: unknown): PageRenderOptions | undefined {
-  const status: unknown = options instanceof Object ? Reflect.get(options, 'status') : undefined
+  if (!(options instanceof Object)) return undefined
 
-  return isPageStatus(status) ? { status } : undefined
+  const status: unknown = Reflect.get(options, 'status')
+  const encryptHistory: unknown = Reflect.get(options, 'encryptHistory')
+  const clearHistory: unknown = Reflect.get(options, 'clearHistory')
+
+  return {
+    status: isPageStatus(status) ? status : undefined,
+    encryptHistory: typeof encryptHistory === 'boolean' ? encryptHistory : undefined,
+    clearHistory: typeof clearHistory === 'boolean' ? clearHistory : undefined,
+  }
 }
 
 /** Render a page whose name and props `render`'s signature has checked. */

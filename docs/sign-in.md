@@ -76,6 +76,15 @@ failures stay separate typed errors. Sign-up works the same way with
 signs nobody in until the emailed link proves the address, as
 [Proving an address](auth.md#proving-an-address) shows.
 
+Signing out expires the session cookie, and the page `betterAuthLogoutAction`
+redirects to clears Inertia's history: the signed-in pages, which Inertia kept
+there encrypted, cannot be shown again with Back by the next person at the
+browser ([Pages and props](pages.md)). Any answer that ends the session does
+the same for the next page: Better Auth's client signing out through
+`betterAuthHandler`, or a session lookup that finds the session revoked. A
+session cookie renamed in Better Auth, rather than given a `cookiePrefix`, is
+named in `setupWeb`'s `auth.sessionCookie` too, so its expiry is recognized.
+
 Better Auth writes the new user itself, so the application's own record of
 a member, such as a profile, is a second write. Make it on the member's first
 visit, in a guard layer on the routes that need it: a user Better Auth

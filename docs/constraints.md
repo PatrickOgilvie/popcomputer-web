@@ -81,7 +81,10 @@ them, in any order and in either case: `{ constraints: { 'org_id,user_id':
 by one of them, `{ sku: 'Taken.' }` for a key on `(company_id, sku)`, already
 matches; `constraints` is for a field that is not one of them. In
 development, the error page of a violation no mapping matched shows the
-`constraints` entry that would map it.
+`constraints` entry that would map it. The kind, columns and name come from
+the database's own report, never from the statement's values, which Drizzle's
+error repeats: a submitted value that reads like a constraint message changes
+none of them.
 
 An update of a row that is not there changes nothing and fails nothing: read
 `meta.changes` on D1, or `.returning()`, to tell. SQLite checks a `CHECK`

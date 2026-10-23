@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
-import { eq } from 'drizzle-orm'
+import { DrizzleQueryError, eq } from 'drizzle-orm'
 import { drizzle, type SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy'
 import { integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
 import { Cause, Effect, Exit, Layer, Option, Schema } from 'effect'
@@ -257,6 +257,93 @@ describe('constraint details from other drivers', () => {
 
     expect(await violationFrom(mysql)).toMatchObject({
       value: { constraint: 'unique', columns: [], constraintName: 'pages_workspace_slug_unique' },
+    })
+  })
+
+  test('reads the MySQL key name from the end, past a duplicate value naming another key', async () => {
+    const mysql = Object.assign(
+      new Error("Duplicate entry 'a' for key 'pages.other_key' for key 'pages.pages_workspace_slug_unique'"),
+      { code: 'ER_DUP_ENTRY', errno: 1062 }
+    )
+
+    expect(await violationFrom(mysql)).toMatchObject({
+      value: { constraint: 'unique', constraintName: 'pages_workspace_slug_unique' },
+    })
+  })
+
+  test('a MySQL error quoting a rejected value is a DatabaseError, whatever the value says', async () => {
+    const mysql = Object.assign(
+      new Error("Incorrect integer value: 'UNIQUE constraint failed: pages.slug' for column 'workspace_id' at row 1"),
+      { code: 'ER_TRUNCATED_WRONG_VALUE_FOR_FIELD', errno: 1366 }
+    )
+
+    expect(await violationFrom(mysql)).toMatchObject({ value: { _tag: 'DatabaseError' } })
+  })
+})
+
+describe("a value in the failed statement names no constraint, only the database's report does", () => {
+  test('a missing workspace stays a foreign-key violation', async () => {
+    const { layer } = openDatabase()
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation((db) => db.insert(pages).values({
+        workspaceId: 99,
+        slug: 'UNIQUE constraint failed: pages.workspace_id, pages.slug',
+        title: 'Orphan',
+      })).pipe(Effect.provide(layer))
+    )
+
+    expect(failureOf(exit)).toMatchObject({
+      value: { _tag: 'DatabaseConstraintViolation', constraint: 'foreign-key', columns: [] },
+    })
+  })
+
+  test('a broken CHECK stays a check violation, which uniqueFieldErrors passes through', async () => {
+    const { layer } = openDatabase()
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'UNIQUE constraint failed: pages.slug', title: '' })).pipe(
+        uniqueFieldErrors({ slug: 'A page with this slug already exists.' }),
+        Effect.provide(layer)
+      )
+    )
+
+    expect(failureOf(exit)).toMatchObject({
+      value: { _tag: 'DatabaseConstraintViolation', constraint: 'check', columns: [] },
+    })
+  })
+
+  test('a duplicate stays a unique violation on its own columns', async () => {
+    const { layer, db } = openDatabase()
+    await db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Intro' })
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation((db) => db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'CHECK constraint failed: title_not_blank:' })).pipe(
+        Effect.provide(layer)
+      )
+    )
+    const violation = Option.getOrUndefined(failureOf(exit))
+
+    assert.ok(violation instanceof DatabaseConstraintViolation)
+    expect(violation).toMatchObject({ constraint: 'unique', columns: ['workspace_id', 'slug'] })
+    expect(violation.constraintName).toBeUndefined()
+  })
+
+  test("D1's codeless report decides under Drizzle's wrapper, as D1 single statements fail", async () => {
+    // The shape Miniflare's D1 gives through drizzle-orm/d1: no code on any error.
+    const reason = 'FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY)'
+    const d1 = new Error(`D1_ERROR: ${reason}`, { cause: new Error(reason) })
+    const client = {
+      run: () => Promise.reject(new DrizzleQueryError('insert into "pages" ("workspace_id", "slug") values (?, ?)', [99, 'UNIQUE constraint failed: pages.slug'], d1)),
+    }
+    // SAFETY: the test client stands in for the database at its service seam;
+    // only the method this mutation calls exists.
+    const layer = Layer.succeed(DatabaseService, client as unknown as TestDatabase)
+
+    const exit = await Effect.runPromiseExit(dbMutation((db) => db.run('insert ...')).pipe(Effect.provide(layer)))
+
+    expect(failureOf(exit)).toMatchObject({
+      value: { _tag: 'DatabaseConstraintViolation', constraint: 'foreign-key', columns: [] },
     })
   })
 })

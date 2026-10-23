@@ -11,8 +11,9 @@ import type {
   RenderOptions,
 } from './types.js'
 import { HEADERS } from './types.js'
-import { openWebContext } from './request-context.js'
+import { openWebContext, type WebRequestContext } from './request-context.js'
 import { openFlash } from './flash.js'
+import { applyDefaultCacheControl } from './page-cache.js'
 import { ConfigurationError } from './effect/errors.js'
 import { webUrl } from './locations.js'
 
@@ -80,6 +81,8 @@ export function web(config: WebConfig): MiddlewareHandler {
     const sharedProps: Record<string, LazyPageProp> = {}
     const errors: ValidationErrorBag = {}
     const flash = openFlash(c)
+    // Whether a page this request rendered cleared the client's history.
+    let historyCleared = false
 
     const getVersion = () =>
       config.version instanceof Function ? config.version() : config.version ?? ''
@@ -179,15 +182,23 @@ export function web(config: WebConfig): MiddlewareHandler {
           ? filterPartialProps(Object.fromEntries(mergedProps), partialKeep)
           : Object.fromEntries(mergedProps)
 
+        const context = openWebContext(c)
+        const encrypt = config.history?.encrypt ?? 'signed-in'
+        // A session the lookup found ended, or one ended since the last page,
+        // leaves history its pages wrote that this visitor must not see.
+        const sessionEnded = flashed.clearHistory || endsSession(context.sessionLookupCookies ?? [], context.sessionCookies ?? [])
         const page: PageObject = {
           component,
           props: pageProps,
           url: new URL(c.req.url).pathname + new URL(c.req.url).search,
           version,
-          clearHistory: options.clearHistory,
-          encryptHistory: options.encryptHistory,
+          clearHistory: options.clearHistory ?? (sessionEnded || undefined),
+          encryptHistory: options.encryptHistory ??
+            ((encrypt === 'signed-in' ? context.authUser !== undefined : encrypt) || undefined),
           flash: flashed.flash,
         }
+
+        historyCleared ||= page.clearHistory === true
 
         const status = options.status ?? 200
 
@@ -256,6 +267,13 @@ export function web(config: WebConfig): MiddlewareHandler {
     }
 
     const context = openWebContext(c)
+
+    // A response that ends the session, as signing out does, has the next
+    // page clear the history the signed-in pages wrote.
+    if (c.res && !historyCleared && endsSession(answeredCookies(c.res, context), context.sessionCookies ?? [])) {
+      flash.clearHistory()
+    }
+
     const committed = c.res
       ? withResponseHeaders(
           withSessionLookupCookies(withResponseCookies(flash.commit(c.res), context.responseCookies), context.sessionLookupCookies),
@@ -272,6 +290,10 @@ export function web(config: WebConfig): MiddlewareHandler {
       // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
       c.res = committed
     }
+
+    // Without privateByDefault around it, as an application composed by hand
+    // may be, web() says itself who may keep what it answers.
+    if (c.res && context.cacheControlByDefault !== true) applyDefaultCacheControl(c)
 
     // Return the response to ensure proper propagation in forwarding scenarios
     return c.res
@@ -309,6 +331,44 @@ function withSessionLookupCookies(response: Response, cookies: readonly string[]
 /** A Set-Cookie header's cookie name. */
 function cookieName(setCookie: string): string {
   return setCookie.slice(0, setCookie.indexOf('=')).trim()
+}
+
+/**
+ * The cookies the response sets once web() writes those the request queued,
+ * in the order a browser applies them: its own, the application's, the
+ * session lookup's it does not set itself, and those added with responseHeader.
+ */
+function answeredCookies(response: Response, context: WebRequestContext): string[] {
+  const own = [...response.headers.getSetCookie(), ...(context.responseCookies ?? [])]
+  const set = new Set(own.map(cookieName))
+
+  return [
+    ...own,
+    ...(context.sessionLookupCookies ?? []).filter((cookie) => !set.has(cookieName(cookie))),
+    ...(context.responseHeaders ?? []).filter(([name]) => name.toLowerCase() === 'set-cookie').map(([, value]) => value),
+  ]
+}
+
+/**
+ * Whether these Set-Cookie headers, applied in order, leave the session token
+ * cookie expired: Better Auth's, under any prefix, or the one setupWeb's
+ * `auth.sessionCookie` names.
+ */
+function endsSession(setCookies: readonly string[], sessionCookies: readonly string[]): boolean {
+  const expired = new Map<string, boolean>()
+
+  for (const setCookie of setCookies) {
+    const name = cookieName(setCookie).replace(/^__(?:Secure|Host)-/, '')
+
+    if (name.endsWith('.session_token') || sessionCookies.includes(name)) {
+      const [pair = '', ...attributes] = setCookie.split(';')
+
+      expired.set(name, pair.slice(pair.indexOf('=') + 1).trim() === '' ||
+        attributes.some((attribute) => /^\s*max-age\s*=\s*(?:0|-\d+)\s*$/i.test(attribute)))
+    }
+  }
+
+  return [...expired.values()].includes(true)
 }
 
 /** The response with the headers an action or layer added with responseHeader. */

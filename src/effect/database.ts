@@ -443,7 +443,10 @@ function classifyFailure(
     ))
   }
 
-  const classified = chain.map(classifyError)
+  // Only the driver's own errors say why a statement failed: the request's
+  // values a wrapper repeats could name any constraint.
+  const reasons = chain.filter((error) => !repeatsQuery(error))
+  const classified = reasons.map(classifyError)
   const constraint = classified.find((kind) => kind !== undefined && kind !== 'unknown')
     ?? classified.find((kind) => kind !== undefined)
 
@@ -451,7 +454,7 @@ function classifyFailure(
     return Effect.fail(new DatabaseError({ operation, cause }))
   }
 
-  const details = chain.map(readConstraintDetails)
+  const details = reasons.map(readConstraintDetails)
 
   return Effect.fail(new DatabaseConstraintViolation({
     operation,
@@ -464,7 +467,7 @@ function classifyFailure(
 
 /**
  * The failure and the errors it wraps, outermost first. Drizzle wraps driver
- * errors (`Failed to run the query ...`) and keeps the driver's in `cause`.
+ * errors (`Failed query: ...`) and keeps the driver's in `cause`.
  */
 function causeChain(cause: unknown): ReadonlyArray<object> {
   const chain: object[] = []
@@ -485,6 +488,28 @@ function readString(error: object, key: string): string | undefined {
 
 function messageOf(error: object): string {
   return error instanceof Error ? error.message : ''
+}
+
+/**
+ * Whether an error is Drizzle's wrapper around the driver's
+ * (`Failed query: ...\nparams: ...`), whose message repeats the statement's
+ * bound values. PGlite's own errors carry `query` and `params` too, so the
+ * message decides.
+ */
+function repeatsQuery(error: object): boolean {
+  return messageOf(error).startsWith('Failed query: ') && Object.hasOwn(error, 'query') && Object.hasOwn(error, 'params')
+}
+
+/**
+ * Whether an error's message is SQLite's own reason, which never quotes a
+ * bound value: one with no code, as D1 reports, or a SQLITE_* code. Postgres
+ * and MySQL messages can quote the rejected value (`invalid input syntax for
+ * type uuid: "..."`), so their codes and fields decide alone.
+ */
+function speaksSqlite(error: object): boolean {
+  const code: unknown = Object.getOwnPropertyDescriptor(error, 'code')?.value
+
+  return code === undefined || (typeof code === 'string' && code.startsWith('SQLITE_'))
 }
 
 function isUnsupportedTransactionStatement(error: object): boolean {
@@ -535,6 +560,7 @@ function classifyError(error: object): Constraint | undefined {
     : undefined
 
   if (byCode !== undefined && byCode !== 'unknown') return byCode
+  if (!speaksSqlite(error)) return byCode
 
   const message = messageOf(error)
 
@@ -549,9 +575,14 @@ interface ConstraintDetails {
 /**
  * The columns and name of a violated constraint, as each driver reports them:
  * SQLite in its message, Postgres in `detail`/`column` and `constraint`
- * (`constraint_name` for postgres.js), MySQL in its message.
+ * (`constraint_name` for postgres.js), MySQL at the end of its duplicate-key
+ * message.
  */
 function readConstraintDetails(error: object): ConstraintDetails {
+  return speaksSqlite(error) ? readSqliteDetails(error) : readServerDetails(error)
+}
+
+function readSqliteDetails(error: object): ConstraintDetails {
   const message = messageOf(error)
   // A trigger's RAISE(ABORT, 'name') reports the name as the message, which
   // D1 wraps: `D1_ERROR: name: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)`.
@@ -583,6 +614,10 @@ function readConstraintDetails(error: object): ConstraintDetails {
     return { columns: [], constraintName: sqliteCheck[1] }
   }
 
+  return { columns: [] }
+}
+
+function readServerDetails(error: object): ConstraintDetails {
   const constraintName = readString(error, 'constraint') ?? readString(error, 'constraint_name')
   const detail = /^Key \(([^)]+)\)=/.exec(readString(error, 'detail') ?? '')
   const column = readString(error, 'column') ?? readString(error, 'column_name')
@@ -594,7 +629,13 @@ function readConstraintDetails(error: object): ConstraintDetails {
     }
   }
 
-  const mysql = /for key '(?:[\w]+\.)?([\w]+)'/.exec(message)
+  // `Duplicate entry 'value' for key 'table.key'`: the value comes first and
+  // may hold any text, so only the key at the end names the constraint.
+  const code: unknown = Object.getOwnPropertyDescriptor(error, 'code')?.value
+  const errno: unknown = Object.getOwnPropertyDescriptor(error, 'errno')?.value
+  const mysql = code === 'ER_DUP_ENTRY' || errno === 1062
+    ? /for key '(?:\w+\.)?(\w+)'$/.exec(messageOf(error))
+    : null
 
   return { columns: [], constraintName: mysql?.[1] }
 }

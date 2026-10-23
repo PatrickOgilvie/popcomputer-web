@@ -57,6 +57,7 @@ export {
 } from './page-cache.js'
 
 export type {
+  HistoryConfig,
   PageObject,
   WebConfig,
   WebInstance,

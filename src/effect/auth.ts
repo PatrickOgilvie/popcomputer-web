@@ -991,7 +991,8 @@ export interface BetterAuthLogoutConfig<Path extends string = string> {
  * Sign the visitor out and redirect. Signing out goes through Better Auth's
  * request handler, as every call does, and the session cookies it expires
  * reach the redirect; a sign-out Better Auth refuses, such as one without a
- * session, still expires them.
+ * session, still expires them. web() sees the session end, so the page the
+ * redirect renders clears Inertia's history of the signed-in pages.
  */
 export function betterAuthLogoutAction<const Path extends string = '/'>(
   config: BetterAuthLogoutConfig<Path> = {}
