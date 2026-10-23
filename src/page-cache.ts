@@ -15,9 +15,10 @@
  * - a route model binding (`{project}` placeholders).
  *
  * Signed-in requests, requests carrying app cookies or `Authorization`,
- * partial reloads, stale Inertia versions, and development never touch the
- * cache. Cached pages are keyed by deploy, so a deploy never serves pages
- * rendered by the previous build, and browsers always revalidate them.
+ * partial reloads, stale Inertia versions, an `X-Inertia` header other than
+ * `true` (which web() answers with the HTML document), and development never
+ * touch the cache. Cached pages are keyed by deploy, so a deploy never serves
+ * pages rendered by the previous build, and browsers always revalidate them.
  */
 
 import type { Context, Env, MiddlewareHandler } from 'hono'
@@ -86,9 +87,14 @@ export interface PageCacheStore {
   put(request: Request, response: Response): Promise<void>
 }
 
+/** What a cached page holds: the HTML document, or the Inertia page object. */
+export type PageVariant = 'html' | 'inertia'
+
 /** Per-request page-cache state, kept on the request context. */
 export interface PageCacheState {
   readonly key: Request
+  /** The variant the key names, which a response must be to be stored under it. */
+  readonly variant: PageVariant
   readonly ttl: number
   /** Set when producing the page read a binding, a header or request state. */
   dynamic: boolean
@@ -188,8 +194,9 @@ export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareH
     }
 
     const version = options.version instanceof Function ? options.version() : options.version
+    const variant = requestVariant(c)
 
-    if (!isCacheableRequest(c, version)) {
+    if (variant === undefined || !isCacheableRequest(c, version, variant)) {
       await next()
       markResponse(c, 'BYPASS')
 
@@ -198,7 +205,8 @@ export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareH
 
     const deploy = deployIdentity(c, version)
     const state: PageCacheState = {
-      key: cacheKey(c, deploy.id),
+      key: cacheKey(c, deploy.id, variant),
+      variant,
       ttl: deploy.ttl,
       dynamic: false,
       routeAllowsDefault: false,
@@ -359,7 +367,24 @@ function hasPrivateRequest<E extends Env>(c: Context<E>, sessionCookie: string |
   )
 }
 
-function isCacheableRequest<E extends Env>(c: Context<E>, version: string): boolean {
+/**
+ * The variant web() answers this request with: the Inertia page object only
+ * for `X-Inertia: true`, the HTML document without the header. Any other
+ * value (`1`, `false`, `TRUE`, empty, a repeated header) is neither, and
+ * web() answers it with the HTML document, so it never reads or fills the
+ * Inertia key.
+ */
+function requestVariant<E extends Env>(c: Context<E>): PageVariant | undefined {
+  const inertia = c.req.header(HEADERS.INERTIA)
+
+  if (inertia === undefined) {
+    return 'html'
+  }
+
+  return inertia === 'true' ? 'inertia' : undefined
+}
+
+function isCacheableRequest<E extends Env>(c: Context<E>, version: string, variant: PageVariant): boolean {
   if (c.req.header('Upgrade') !== undefined) {
     return false
   }
@@ -370,10 +395,7 @@ function isCacheableRequest<E extends Env>(c: Context<E>, version: string): bool
 
   // A stale Inertia client must reach web(), which answers 409 so the client
   // reloads with the current assets.
-  if (
-    c.req.header(HEADERS.INERTIA) !== undefined &&
-    c.req.header(HEADERS.VERSION) !== version
-  ) {
+  if (variant === 'inertia' && c.req.header(HEADERS.VERSION) !== version) {
     return false
   }
 
@@ -412,9 +434,8 @@ function deployIdentity<E extends Env>(
  * The cache key: the request URL under a prefix naming the deploy and the
  * page variant (HTML document or Inertia page object).
  */
-function cacheKey<E extends Env>(c: Context<E>, deploy: string): Request {
+function cacheKey<E extends Env>(c: Context<E>, deploy: string, variant: PageVariant): Request {
   const url = new URL(c.req.url)
-  const variant = c.req.header(HEADERS.INERTIA) === undefined ? 'html' : 'inertia'
 
   return new Request(
     `${url.origin}/__popweb/page/${encodeURIComponent(deploy)}/${variant}${url.pathname}${url.search}`
@@ -440,6 +461,7 @@ function shouldStore<E extends Env>(c: Context<E>, state: PageCacheState): boole
     openWebContext(c).authUser === undefined &&
     response.status === 200 &&
     isPageResponse(response.headers) &&
+    isVariantResponse(response.headers, state.variant) &&
     !response.headers.has('Set-Cookie') &&
     !response.headers.has('Cache-Control') &&
     // A page that varies on more than the Inertia variant depends on request
@@ -447,6 +469,16 @@ function shouldStore<E extends Env>(c: Context<E>, state: PageCacheState): boole
     (vary === null ||
       vary.split(',').every((name) => name.trim().toLowerCase() === HEADERS.INERTIA.toLowerCase()))
   )
+}
+
+/**
+ * Whether a response is the variant its key names: a page object answers
+ * `X-Inertia: true`, and the HTML document answers no X-Inertia header.
+ */
+function isVariantResponse(headers: Headers, variant: PageVariant): boolean {
+  const inertia = headers.get(HEADERS.INERTIA)
+
+  return variant === 'inertia' ? inertia === 'true' : inertia === null
 }
 
 /** The copy kept in the Cache API: fresh for `ttl`, without per-response headers. */

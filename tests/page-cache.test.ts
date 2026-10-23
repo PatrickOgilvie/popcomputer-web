@@ -166,6 +166,25 @@ const createApp = (options: AppOptions = {}) => {
       )
     )
   )
+  routes.get(
+    '/document',
+    Effect.andThen(
+      count('document'),
+      Effect.sync(() => new Response('<html>document</html>', { headers: { 'Content-Type': 'text/html' } }))
+    )
+  )
+  routes.get(
+    '/page-object',
+    Effect.andThen(
+      count('page-object'),
+      Effect.sync(
+        () =>
+          new Response('{"component":"Marked"}', {
+            headers: { 'Content-Type': 'application/json', 'X-Inertia': 'true' },
+          })
+      )
+    )
+  )
   routes.get('/api/ping', Effect.andThen(count('ping'), Effect.succeed(Response.json({ ok: true }))))
 
   return { app, renders }
@@ -362,6 +381,78 @@ describe('default page cache', () => {
 
     // web() answers 409 so the stale client reloads with current assets.
     expect((await get(app, '/', inertia('0.9.0'), env)).res.status).toBe(409)
+  })
+
+  test('an X-Inertia value other than true skips the cache and fills neither key', async () => {
+    const version = { 'X-Inertia-Version': '1.0.0' }
+    // Fetch combines a repeated header into one value, as 'true, true'.
+    const repeated = new Headers(version)
+    repeated.append('X-Inertia', 'true')
+    repeated.append('X-Inertia', 'true')
+
+    const spellings: readonly Headers[] = [
+      new Headers({ ...version, 'X-Inertia': '1' }),
+      new Headers({ ...version, 'X-Inertia': 'false' }),
+      new Headers({ ...version, 'X-Inertia': 'TRUE' }),
+      new Headers({ ...version, 'X-Inertia': '' }),
+      repeated,
+    ]
+
+    for (const headers of spellings) {
+      cache.entries.clear()
+      const { app } = createApp()
+      const env = production()
+
+      // web() answers it with the HTML document, which must not reach the key Inertia visits read.
+      const attack = await get(app, '/', { headers }, env)
+      expect(attack.status).toBe('BYPASS')
+      expect(attack.res.headers.get('Content-Type')).toContain('text/html')
+      expect(cache.entries.size).toBe(0)
+
+      const visit = await get(app, '/', inertia(), env)
+      expect(visit.status).toBe('MISS')
+      expect(visit.res.headers.get('X-Inertia')).toBe('true')
+      expect(visit.res.headers.get('Content-Type')).toContain('application/json')
+      expect(JSON.parse(visit.body)).toMatchObject({ component: 'Home' })
+
+      const cached = await get(app, '/', inertia(), env)
+      expect(cached.status).toBe('HIT')
+      expect(cached.res.headers.get('X-Inertia')).toBe('true')
+      expect(JSON.parse(cached.body)).toMatchObject({ component: 'Home' })
+    }
+  })
+
+  test('an X-Inertia value other than true does not replace a stored page object or document', async () => {
+    const { app, renders } = createApp()
+    const env = production()
+    const odd = { headers: { 'X-Inertia': '1', 'X-Inertia-Version': '1.0.0' } }
+
+    await get(app, '/', {}, env)
+    await get(app, '/', inertia(), env)
+
+    expect((await get(app, '/', odd, env)).status).toBe('BYPASS')
+    expect((await get(app, '/', inertia(), env)).status).toBe('HIT')
+    expect((await get(app, '/', {}, env)).status).toBe('HIT')
+    expect(renders.get('home')).toBe(3)
+  })
+
+  test('a response is stored only under the variant its key names', async () => {
+    const { app } = createApp()
+    const env = production()
+
+    // An Inertia visit answered with a document, not a page object.
+    const document = await get(app, '/document', inertia(), env)
+    expect(document.status).toBe('DYNAMIC')
+
+    // A full page load answered with an Inertia-marked page object.
+    const pageObject = await get(app, '/page-object', {}, env)
+    expect(pageObject.status).toBe('DYNAMIC')
+    expect(cache.entries.size).toBe(0)
+
+    // Each is still stored under the variant it is.
+    expect((await get(app, '/document', {}, env)).status).toBe('MISS')
+    expect((await get(app, '/page-object', inertia(), env)).status).toBe('MISS')
+    expect(cache.entries.size).toBe(2)
   })
 
   test('development and pageCache: false never cache', async () => {
