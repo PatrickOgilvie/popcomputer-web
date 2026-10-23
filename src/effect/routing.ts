@@ -33,7 +33,7 @@ import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
 import type { ResponseHeaders } from './response-headers.js'
-import { allowDefaultPageCache } from '../page-cache.js'
+import { allowDefaultPageCache, defaultCacheControl } from '../page-cache.js'
 import {
   applyCachePolicy,
   decideCachePolicy,
@@ -1350,6 +1350,20 @@ export class EffectRouteBuilder<
         headers.set('Cache-Control', 'no-store')
 
         return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+      }
+
+      // The route says so itself, so it holds in an application composed
+      // without setupWeb's privateByDefault: only the visitor's browser keeps
+      // the page, or no cache at all when it is someone's own or sets a cookie.
+      if (options?.cache === 'private' && response instanceof Response) {
+        const answered = withDeferredOutput(c, response)
+
+        if (answered.response.headers.has('Cache-Control')) return answered.response
+
+        const headers = new Headers(answered.response.headers)
+        headers.set('Cache-Control', defaultCacheControl(c, answered.setsCookie))
+
+        return new Response(answered.response.body, { status: answered.response.status, statusText: answered.response.statusText, headers })
       }
 
       if (typeof options?.cache !== 'object' || !(response instanceof Response)) {

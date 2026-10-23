@@ -9,9 +9,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Effect, Layer, Option, Schema as S } from 'effect'
 import { Hono, type MiddlewareHandler } from 'hono'
-import { setupWeb } from '../src/setup.js'
+import { setupWeb, webDefaults } from '../src/setup.js'
+import { web } from '../src/middleware.js'
+import { effectBridge } from '../src/effect/bridge.js'
+import { cookie } from '../src/effect/cookies.js'
 import { effectRoutes } from '../src/effect/routing.js'
 import { forbidden, render } from '../src/effect/responses.js'
 import { guard } from '../src/effect/guard.js'
@@ -699,6 +702,66 @@ describe('responses without a cache policy', () => {
     expect(second.res.headers.get('Cache-Control')).toBe('public, max-age=60')
     expect(renders.get('stated')).toBe(2)
     expect(cache.entries.size).toBe(0)
+  })
+})
+
+describe('an application composed without setupWeb', () => {
+  const cartCookie = cookie('cart', S.String)
+
+  const register = (app: Hono<PageCacheEnv>) => {
+    effectRoutes(app)
+      .get('/dashboard', render('Dashboard'))
+      .get('/clock', render('Clock', { at: 'now' }), { cache: 'private' })
+      .get('/cart', Effect.flatMap(cartCookie.read, (cart) => render('Cart', { cart: Option.getOrNull(cart) })))
+      .get('/visit', Effect.andThen(cartCookie.set('cart-1'), render('Visit')), { cache: 'private' })
+      .post('/cart', Effect.succeed(Response.json({ added: true })))
+    app.get('/plain', (c) => c.var.web.render('Home'))
+
+    return app
+  }
+
+  const stack = (defaults: boolean) => {
+    const app = new Hono<PageCacheEnv>()
+
+    if (defaults) app.use('*', webDefaults())
+    app.use('*', web({ version: '1.0.0', render: (page) => `<html>${JSON.stringify(page)}</html>` }))
+    app.use('*', effectBridge())
+
+    return register(app)
+  }
+
+  const cacheControl = async (app: Hono<PageCacheEnv>, path: string, init: RequestInit = {}, env: object = production()) =>
+    (await get(app, path, init, env)).res.headers.get('Cache-Control')
+
+  test('with webDefaults, every response says who may keep it, as under setupWeb', async () => {
+    const app = stack(true)
+
+    expect({
+      signedIn: await cacheControl(app, '/dashboard', {}, testEnv(signedIn({ id: 'user-1' }), production())),
+      private: await cacheControl(app, '/clock'),
+      cookie: await cacheControl(app, '/cart', { headers: { Cookie: 'cart=cart-1' } }),
+      plain: await cacheControl(app, '/plain'),
+    }).toEqual({ signedIn: 'no-store', private: 'private, no-cache', cookie: 'private, no-cache', plain: 'private, no-cache' })
+  })
+
+  test('with webDefaults, responses carry the security headers and a cross-site post is refused', async () => {
+    const app = stack(true)
+    const page = await get(app, '/plain', {}, production())
+    const forged = await app.request('/cart', { method: 'POST', headers: { Origin: 'https://evil.example' } }, production())
+
+    expect(page.res.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    expect(page.res.headers.get('X-Frame-Options')).toBe('DENY')
+    expect(forged.status).toBe(403)
+  })
+
+  test("without it, cache: 'private' still says so itself", async () => {
+    const app = stack(false)
+
+    expect({
+      private: await cacheControl(app, '/clock'),
+      signedIn: await cacheControl(app, '/clock', {}, testEnv(signedIn({ id: 'user-1' }), production())),
+      setsCookie: await cacheControl(app, '/visit'),
+    }).toEqual({ private: 'private, no-cache', signedIn: 'no-store', setsCookie: 'no-store' })
   })
 })
 
