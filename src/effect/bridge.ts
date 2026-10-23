@@ -14,7 +14,7 @@ import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { WebRequestContext } from '../request-context.js'
 import { openWebContext } from '../request-context.js'
-import { markPageDynamic } from '../page-cache.js'
+import { markPageDynamic, trackDatabase } from '../page-cache.js'
 import {
   ResponseCacheService,
   createWorkersResponseCacheClient,
@@ -130,7 +130,12 @@ function createRequestContext<E extends Env>(
     query: () => c.req.query(),
     queries: () => c.req.queries(),
     json: (): Promise<unknown> => c.req.json(),
-    raw: () => c.req.raw,
+    // The raw request carries every header, and Cloudflare's `cf` data.
+    raw: () => {
+      markPageDynamic(c)
+
+      return c.req.raw
+    },
     parseBody: () => c.req.parseBody({ all: true }),
     header: (name: string) => {
       markPageDynamic(c)
@@ -138,6 +143,40 @@ function createRequestContext<E extends Env>(
       return c.req.header(name)
     },
   }
+}
+
+/** The request reads a request service may make through its context that no cache key holds. */
+const OBSERVED_REQUEST_READS: ReadonlySet<PropertyKey> = new Set(['header', 'raw', 'url'])
+
+/**
+ * The context `web.services`' request callback receives. A service built from
+ * a request header, the raw request or its URL, such as a tenant read from
+ * `X-Tenant`, makes every response that uses it depend on what no cache key
+ * holds, so reading one marks the page dynamic, as RequestService does.
+ */
+export function observedRequestContext<E extends Env>(c: HonoContext<E>): HonoContext<E> {
+  // Hono's Context and HonoRequest keep private fields, so every member is
+  // read, called and written with the original as its receiver.
+  const req = new Proxy(c.req, {
+    get(target, key) {
+      if (OBSERVED_REQUEST_READS.has(key)) markPageDynamic(c)
+
+      const value: unknown = Reflect.get(target, key, target)
+
+      return value instanceof Function ? value.bind(target) : value
+    },
+  })
+
+  return new Proxy(c, {
+    get(target, key) {
+      if (key === 'req') return req
+
+      const value: unknown = Reflect.get(target, key, target)
+
+      return value instanceof Function ? value.bind(target) : value
+    },
+    set: (target, key, value) => Reflect.set(target, key, value, target),
+  })
 }
 
 /**
@@ -619,8 +658,9 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     responseCacheLayer
   )
 
+  // Each use of the database is a data read, so its page renders per request.
   if (requestCtx.db !== undefined) {
-    baseLayer = Layer.merge(baseLayer, Layer.succeed(DatabaseService, requestCtx.db))
+    baseLayer = Layer.merge(baseLayer, Layer.succeed(DatabaseService, trackDatabase(c, requestCtx.db)))
   }
 
   if (requestCtx.auth !== undefined) {
@@ -643,7 +683,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   // web.services' `request(c)`, which may read bindings that route lacks.
   if (config?.services) {
     const services = config.services
-    const customServicesLayer = Layer.suspend(() => services(c)).pipe(Layer.provide(configuration))
+    const customServicesLayer = Layer.suspend(() => services(observedRequestContext(c))).pipe(Layer.provide(configuration))
     baseLayer = Layer.merge(baseLayer, customServicesLayer)
   }
 

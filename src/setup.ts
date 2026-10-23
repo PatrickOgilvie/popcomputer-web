@@ -6,7 +6,7 @@ import type { MiddlewareHandler, Env, Context } from 'hono'
 import { Effect, type Config, type Layer, type Schema as S } from 'effect'
 import { web } from './middleware.js'
 import { activeSignInLimits, type RateLimiterName, type SignInLimitsConfig } from './effect/sign-in-limits.js'
-import { originRefusal, securityHeaders, type SecurityHeadersConfig, type VerifyOriginConfig } from './security.js'
+import { originRefusal, securityHeaders, verifyOrigin, type SecurityHeadersConfig, type VerifyOriginConfig } from './security.js'
 import type { WebConfig } from './types.js'
 import { loadUserMiddleware, shareAuthMiddleware, usersTableOf } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
@@ -97,46 +97,51 @@ export interface WebAuthOptions<
   readonly signInLimits?: SignInLimitsConfig<RateLimiterName<E extends { Bindings: infer Bindings } ? Bindings : never>>
 }
 
+/** Security hardening: setupWeb's `security` option, and webDefaults'. */
+export interface WebSecurityOptions {
+  /**
+   * CSRF defense in depth, on by default: a state-changing request whose
+   * `Origin` (or `Referer`) names another site is refused with 403. A
+   * request without either, such as a webhook or a server's, passes. List
+   * other origins allowed to post, such as a native app's, in
+   * `allowedOrigins` (see {@link VerifyOriginConfig}); `false` turns the
+   * check off. It runs before the other framework middleware, so a refused
+   * request costs no database or auth work.
+   */
+  readonly verifyOrigin?: VerifyOriginConfig | false
+  /**
+   * Headers every response gets unless it sets its own, on by default:
+   * `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+   * strict-origin-when-cross-origin`, and framing refused
+   * (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), so another site
+   * cannot frame a page to trick a visitor into clicking. `{ frames:
+   * 'same-origin' }` lets the application frame its own pages; `false`
+   * sends none of them.
+   */
+  readonly headers?: SecurityHeadersConfig | false
+}
+
 interface WebSetupOptions<E extends Env> extends WebConfig {
 
   /**
    * Additional middleware to run after the framework middleware.
-   * These run in order after effectBridge.
+   * These run in order after effectBridge. The page cache would answer
+   * before them, so with any, pages are cached only with `pageCache: true`.
    */
   middleware?: MiddlewareHandler<E>[]
 
   /** Security hardening. */
-  security?: {
-    /**
-     * CSRF defense in depth, on by default: a state-changing request whose
-     * `Origin` (or `Referer`) names another site is refused with 403. A
-     * request without either, such as a webhook or a server's, passes. List
-     * other origins allowed to post, such as a native app's, in
-     * `allowedOrigins` (see {@link VerifyOriginConfig}); `false` turns the
-     * check off. It runs before the other framework middleware, so a refused
-     * request costs no database or auth work.
-     */
-    verifyOrigin?: VerifyOriginConfig | false
-    /**
-     * Headers every response gets unless it sets its own, on by default:
-     * `X-Content-Type-Options: nosniff`, `Referrer-Policy:
-     * strict-origin-when-cross-origin`, and framing refused
-     * (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), so another site
-     * cannot frame a page to trick a visitor into clicking. `{ frames:
-     * 'same-origin' }` lets the application frame its own pages; `false`
-     * sends none of them.
-     */
-    headers?: SecurityHeadersConfig | false
-  }
+  security?: WebSecurityOptions
 
   /** Error component and environment policy for the shared error boundary. */
   errors?: ErrorHandlerConfig
 
   /**
-   * Cache static pages at the edge (default `true`). Pages that read no
-   * bindings, headers or request state are served from Cloudflare's Cache API
-   * until the next deploy; everything else renders fresh. `false` turns the
-   * page cache off for the whole app.
+   * Cache static pages at the edge (default `true`, or `false` when
+   * `middleware` is given, since a cached page is served before it runs).
+   * Pages that read no bindings, headers or request state are served from
+   * Cloudflare's Cache API until the next deploy; everything else renders
+   * fresh. `false` turns the page cache off for the whole app.
    */
   pageCache?: boolean
 
@@ -549,12 +554,16 @@ function createSetupMiddleware<
     flash: config.flash,
   }
 
+  // The application's own middleware runs after a cached page is served, so
+  // a page it would refuse is cached only when the application says so.
+  const cachesPages = config.pageCache ?? (config.middleware ?? []).length === 0
+
   const middlewares: MiddlewareHandler<E>[] = [
     // Outermost, so they see every response, including the page cache's own.
     ...(config.security?.headers === false ? [] : [securityHeaders<E>(config.security?.headers ?? {})]),
     privateByDefault<E>(),
     // A cached page is served before db/auth setup, session lookup or rendering.
-    ...(config.pageCache === false
+    ...(!cachesPages
       ? []
       : [
           pageCache<E>({
@@ -583,6 +592,11 @@ function createSetupMiddleware<
     ...(config.middleware ?? []),
   ]
 
+  return sequence(middlewares)
+}
+
+/** Middleware that runs `middlewares` in order, as one. */
+function sequence<E extends Env>(middlewares: readonly MiddlewareHandler<E>[]): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return createMiddleware<E>(async (c, next) => {
     // Mirrors Hono's compose contract: next() resolves to void, wrapper
@@ -613,6 +627,26 @@ function createSetupMiddleware<
     // Return the response for proper propagation in forwarding/proxy scenarios
     return c.res
   })
+}
+
+/**
+ * The response policy and security middleware setupWeb installs, for an
+ * application that composes its own middleware stack: the security headers,
+ * a Cache-Control for every response that states none (privateByDefault),
+ * so Workers Cache never shares a page rendered for one visitor, and origin
+ * verification, which refuses a cross-site request with a JSON 403. Register
+ * it first, before web(), so it sees every response.
+ *
+ * @example
+ * app.use('*', webDefaults({ verifyOrigin: { allowedOrigins: ['myapp://'] } }))
+ * app.use('*', web({ version, render }))
+ */
+export function webDefaults<E extends Env>(options: WebSecurityOptions = {}): MiddlewareHandler<E> {
+  return sequence([
+    ...(options.headers === false ? [] : [securityHeaders<E>(options.headers ?? {})]),
+    privateByDefault<E>(),
+    ...(options.verifyOrigin === false ? [] : [verifyOrigin<E>(options.verifyOrigin ?? {})]),
+  ])
 }
 
 /** Origin verification answered through the error boundary. */

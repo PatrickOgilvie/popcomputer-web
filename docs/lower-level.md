@@ -11,6 +11,7 @@ import {
   createVersion,
   web,
   webContext,
+  webDefaults,
   webServices,
 } from '@popcomputer/web'
 import { effectBridge } from '@popcomputer/web/effect'
@@ -22,6 +23,7 @@ type Env = { Bindings: Bindings }
 
 const app = new Hono<Env>()
 
+app.use('*', webDefaults())
 app.use('*', web({
   version: createVersion(manifest),
   render: createTemplate({ title: 'Projects' }),
@@ -38,8 +40,19 @@ app.use('/admin/*', async (c, next) => {
 })
 ```
 
-Add `pageCache({ version })` before `webServices()` to keep the default page
-cache; on a hit it answers before database and auth setup.
+`webDefaults()` comes first, so it sees every response: it is the policy
+`setupWeb` installs, as three middleware also exported on their own.
+`securityHeaders()` sends `nosniff`, a `Referrer-Policy` and refuses framing;
+`privateByDefault()` marks a response that states no `Cache-Control` as
+`private, no-cache`, or `no-store` when it is signed in or sets a cookie, so
+Workers Cache never hands a page rendered for one visitor to the next; and
+`verifyOrigin()` refuses a state-changing request from another site with a
+JSON 403. It takes `setupWeb`'s `security` options:
+`webDefaults({ verifyOrigin: { allowedOrigins: ['myapp://'] } })`.
+
+Add `pageCache({ version })` after `webDefaults()` and before `webServices()`
+to keep the default page cache; on a hit it answers before database and auth
+setup.
 
 Register routes with `effectRoutes(app)`. It cannot see which services the
 hand-written middleware provides, so it accepts actions that use any framework

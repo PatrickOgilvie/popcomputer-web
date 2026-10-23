@@ -25,6 +25,12 @@ are asked for before a guard has read it fails
 (`WEB_RTE_606_BINDING_ACCESS_INVALID`), so provide the guard before any
 other layer that reads a record.
 
+The default page cache answers before any guard runs, so it caches no page
+a guard decides for, nor one behind `routes.middleware(...)`. An access
+check made any other way that reads something the page cache does not
+track, as [Page caching](page-cache.md) lists, such as the time, needs
+`cache: 'private'` on its routes.
+
 An application that authenticates some other way, such as API keys, provides
 its own user service through a layer that fails with `UnauthorizedError`:
 `routes.provide(ApiKeyAuth)` runs it before the action, so every route

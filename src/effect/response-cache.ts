@@ -228,7 +228,11 @@ export interface CachePolicyInput {
   readonly status: number
   /** True when the request carries X-Inertia-Partial-* headers. */
   readonly isPartialReload: boolean
-  /** True when the response sets a cookie — never publicly cacheable. */
+  /**
+   * True when the response sets a cookie, or web() will write one on it
+   * (an application cookie, Better Auth's, set-auth-token, the session
+   * lookup's or the flash cookie): never stored by any cache.
+   */
   readonly setsCookie: boolean
   /**
    * True when the request carries authentication or other private state.
@@ -248,7 +252,8 @@ export interface CachePolicyInput {
 /**
  * The cache-policy decision for one response.
  * - apply: emit the given headers
- * - noStore: a partial reload or a signed-in request; forbid storage
+ * - noStore: a partial reload, a signed-in request, or a response that sets
+ *   a cookie; forbid storage
  * - skip: leave the response untouched; `warning` names a route
  *   misconfiguration worth surfacing in development
  */
@@ -299,9 +304,9 @@ export function decideCachePolicy(input: CachePolicyInput): CachePolicyDecision 
     return CachePolicyDecision.skip({})
   }
 
-  // A Set-Cookie response is per-recipient by definition.
+  // A Set-Cookie response is per-recipient by definition: no cache may keep it.
   if (input.setsCookie) {
-    return CachePolicyDecision.skip({})
+    return CachePolicyDecision.noStore()
   }
 
   // A signed-in visitor's response is their own. Cached responses vary on

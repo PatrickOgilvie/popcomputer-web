@@ -14,8 +14,10 @@
 // Setup (recommended one-liner for most apps)
 export {
   setupWeb,
+  webDefaults,
   registerErrorHandlers,
   type WebSetupConfig,
+  type WebSecurityOptions,
   type WebApplication,
   type WebRouteServices,
   type ErrorHandlerConfig,

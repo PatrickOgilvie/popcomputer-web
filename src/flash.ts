@@ -38,6 +38,8 @@ export interface FlashStore {
   setErrors(errors: Readonly<Record<string, string>>, bag?: string): void
   /** The data for the page this request renders. */
   take(): FlashedPageData
+  /** Whether committing a response of this status writes the flash cookie, to carry data or clear it. */
+  setsCookie(status: number): boolean
   /** The response with the cookie that carries data to the next request, or clears it. */
   commit(response: Response): Response
 }
@@ -69,6 +71,20 @@ export function openFlash(c: Context): FlashStore {
   const incoming = raw === undefined ? Option.none() : decodeStored(fromBase64Url(raw))
   const pending = empty()
   let delivered = false
+  const clears = raw !== undefined && !prefetch
+
+  // A request that only redirects, such as a guard sending the visitor on,
+  // renders no page: what it received goes on with the redirect, so a failed
+  // form's errors reach the page it lands on.
+  const outgoing = (status: number): MutableFlash => {
+    const redirects = status >= 300 && status < 400
+    const carried = redirects && !delivered && !prefetch ? Option.getOrElse(incoming, empty) : empty()
+
+    return {
+      errors: { ...carried.errors, ...pending.errors },
+      flash: { ...carried.flash, ...pending.flash },
+    }
+  }
 
   return {
     set(key, value) {
@@ -96,22 +112,17 @@ export function openFlash(c: Context): FlashStore {
       return data
     },
 
+    setsCookie(status) {
+      return clears || hasData(outgoing(status))
+    },
+
     commit(response) {
-      // A request that only redirects, such as a guard sending the visitor
-      // on, renders no page: what it received goes on with the redirect, so
-      // a failed form's errors reach the page it lands on.
-      const redirects = response.status >= 300 && response.status < 400
-      const carried = redirects && !delivered && !prefetch ? Option.getOrElse(incoming, empty) : empty()
-      const next: MutableFlash = {
-        errors: { ...carried.errors, ...pending.errors },
-        flash: { ...carried.flash, ...pending.flash },
-      }
-      const outgoing = Object.keys(next.errors).length > 0 || Object.keys(next.flash).length > 0
-      const clears = raw !== undefined && !prefetch
+      const next = outgoing(response.status)
+      const carries = hasData(next)
 
-      if (!outgoing && !clears) return response
+      if (!carries && !clears) return response
 
-      const cookie = outgoing
+      const cookie = carries
         ? serialize(name, toBase64Url(JSON.stringify(withinBudget(next))), {
             path: '/',
             httpOnly: true,
@@ -131,6 +142,10 @@ export function openFlash(c: Context): FlashStore {
       })
     },
   }
+}
+
+function hasData(data: MutableFlash): boolean {
+  return Object.keys(data.errors).length > 0 || Object.keys(data.flash).length > 0
 }
 
 /** Keep field errors before flash values when the data outgrows a cookie. */

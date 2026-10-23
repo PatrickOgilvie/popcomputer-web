@@ -9,14 +9,20 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { Effect } from 'effect'
+import { Context, Effect, Layer, Option, Schema as S } from 'effect'
 import { Hono, type MiddlewareHandler } from 'hono'
-import { setupWeb } from '../src/setup.js'
+import { setupWeb, webDefaults } from '../src/setup.js'
+import { web } from '../src/middleware.js'
+import { effectBridge } from '../src/effect/bridge.js'
+import { cookie } from '../src/effect/cookies.js'
 import { effectRoutes } from '../src/effect/routing.js'
-import { render } from '../src/effect/responses.js'
+import { forbidden, render } from '../src/effect/responses.js'
+import { guard } from '../src/effect/guard.js'
 import { responseHeader } from '../src/effect/response-headers.js'
 import { DatabaseService, RequestService, RequestStateService } from '../src/effect/services.js'
-import { PAGE_CACHE_HEADER, trackBindings, type PageCacheStore } from '../src/page-cache.js'
+import { dbQuery } from '../src/effect/database.js'
+import { PAGE_CACHE_HEADER, trackBindings, trackDatabase, type PageCacheStore } from '../src/page-cache.js'
+import { openWebContext } from '../src/request-context.js'
 import { signedIn, testEnv } from '../src/testing.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
@@ -58,12 +64,15 @@ class FakeD1 {
 type PageCacheEnv = {
   Bindings: {
     readonly DB: FakeD1
+    readonly DATABASE_URL?: string
   }
 }
 
-/** The database client the app builds from its D1 binding. */
+/** The database client the app builds from its D1 binding, or from a connection string. */
 interface PageCacheDatabase {
   readonly projects: () => { readonly sql: string }
+  /** The names of the projects anyone may see. */
+  readonly publicProjects: () => Promise<readonly string[]>
 }
 
 declare module '../src/effect/register.js' {
@@ -108,7 +117,14 @@ const createApp = (options: AppOptions = {}) => {
       // Building a client from a binding is not a read; querying it is.
       const d1 = c.env.DB
 
-      return { projects: () => d1.prepare('select * from projects') }
+      return {
+        projects: () => d1.prepare('select * from projects'),
+        publicProjects: async () => {
+          d1.prepare('select name from projects where public')
+
+          return []
+        },
+      }
     },
     pageCache: options.pageCache,
   })
@@ -133,6 +149,15 @@ const createApp = (options: AppOptions = {}) => {
       const request = yield* RequestService
 
       return yield* render('Greeting', { language: request.header('Accept-Language') ?? 'en' })
+    })
+  )
+  routes.get(
+    '/visitor',
+    Effect.gen(function* () {
+      yield* count('visitor')
+      const request = yield* RequestService
+
+      return yield* render('Visitor', { address: request.raw().headers.get('CF-Connecting-IP') ?? 'unknown' })
     })
   )
   routes.get(
@@ -281,7 +306,28 @@ describe('default page cache', () => {
     const env = production()
 
     expect((await get(app, '/greeting', { headers: { 'Accept-Language': 'fr' } }, env)).status).toBe('DYNAMIC')
+    expect((await get(app, '/visitor', { headers: { 'CF-Connecting-IP': '203.0.113.7' } }, env)).status).toBe('DYNAMIC')
     expect((await get(app, '/state', {}, env)).status).toBe('DYNAMIC')
+    expect(cache.entries.size).toBe(0)
+  })
+
+  test("a page using a request service built from the request's headers renders fresh", async () => {
+    class Tenant extends Context.Service<Tenant, { readonly name: string }>()('test/Tenant') {}
+
+    const app = new Hono<PageCacheEnv>()
+    const web = setupWeb(app, { version: '1.0.0', render: (page) => `<html>${JSON.stringify(page)}</html>` })
+    web.services({ request: (c) => Layer.succeed(Tenant, { name: c.req.header('X-Tenant') ?? 'public' }) })
+    effectRoutes<PageCacheEnv, Tenant>(app).get('/report', Effect.gen(function* () {
+      const tenant = yield* Tenant
+
+      return yield* render('Report', { tenant: tenant.name })
+    }))
+
+    const acme = await get(app, '/report', { headers: { 'X-Tenant': 'acme' } }, production())
+    const guest = await get(app, '/report', {}, production())
+
+    expect([acme.status, guest.status]).toEqual(['DYNAMIC', 'DYNAMIC'])
+    expect(JSON.parse(guest.body.slice('<html>'.length, -'</html>'.length)).props.tenant).toBe('public')
     expect(cache.entries.size).toBe(0)
   })
 
@@ -473,6 +519,137 @@ describe('default page cache', () => {
   })
 })
 
+describe('a database reached through a connection string', () => {
+  /** A database server the client reaches over the network, with no binding. */
+  const server = { projects: [{ name: 'Dummy public project', public: true }] }
+
+  /** Stands in for drizzle(postgres(url)). */
+  const clientFor = (url: string): PageCacheDatabase => ({
+    projects: () => ({ sql: `select * from projects -- ${url}` }),
+    publicProjects: async () => server.projects.filter((project) => project.public).map((project) => project.name),
+  })
+
+  const createDatabaseApp = () => {
+    const app = new Hono<PageCacheEnv>()
+    setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => `<html>${JSON.stringify(page)}</html>`,
+      database: (c) => clientFor(c.env.DATABASE_URL ?? ''),
+    })
+    const explore = Effect.flatMap(dbQuery((db) => db.publicProjects()), (names) => render('Explore', { names }))
+
+    effectRoutes(app)
+      .get('/explore', explore)
+      .get('/about', render('About'))
+      .get('/api/explore', Effect.map(dbQuery((db) => db.publicProjects()), (names) => Response.json({ names })), { cache: { maxAge: 60 } })
+
+    return app
+  }
+
+  const env = () => production({ DATABASE_URL: 'postgres://db.example.com/app', CF_VERSION_METADATA: { id: 'deploy-1' } })
+
+  test('a page that reads it renders fresh, so a record made private leaves it', async () => {
+    server.projects[0].public = true
+    const app = createDatabaseApp()
+
+    const listed = await get(app, '/explore', {}, env())
+    server.projects[0].public = false
+    const hidden = await get(app, '/explore', {}, env())
+
+    expect([listed.status, hidden.status]).toEqual(['DYNAMIC', 'DYNAMIC'])
+    expect(listed.body).toContain('Dummy public project')
+    expect(hidden.body).not.toContain('Dummy public project')
+    expect(cache.entries.size).toBe(0)
+
+    // A page that reads no data is still cached.
+    expect((await get(app, '/about', {}, env())).status).toBe('MISS')
+    expect((await get(app, '/about', {}, env())).status).toBe('HIT')
+  })
+
+  test("a route's own cache option still keeps its data reads for a fixed time", async () => {
+    server.projects[0].public = true
+    const res = await createDatabaseApp().request('/api/explore', {}, env())
+
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=60')
+    expect(await res.json()).toEqual({ names: ['Dummy public project'] })
+  })
+})
+
+describe('access checks and the default page cache', () => {
+  /** Whom the access checks admit: they decide by what no cache key holds. */
+  const gate = { open: true }
+  const admitted = { 'CF-Connecting-IP': '198.51.100.1', 'X-Preview-Token': 'preview' }
+  const refused = { 'CF-Connecting-IP': '203.0.113.9' }
+
+  const allowlist: MiddlewareHandler = async (c, next) => {
+    if (c.req.header('CF-Connecting-IP') !== admitted['CF-Connecting-IP']) return c.text('Forbidden', 403)
+    await next()
+  }
+
+  const createGuardedApp = (options: { readonly middleware?: MiddlewareHandler[]; readonly pageCache?: boolean } = {}) => {
+    const app = new Hono<PageCacheEnv>()
+    setupWeb(app, { version: '1.0.0', render: (page) => `<html>${JSON.stringify(page)}</html>`, ...options })
+    const routes = effectRoutes(app)
+    const secret = render('Internal', { plan: 'the launch date' })
+
+    routes.provide(guard(Effect.suspend(() => gate.open ? Effect.void : forbidden('Not from here.')))).get('/guarded', secret)
+    routes
+      .middleware(async (c, next) => {
+        if (c.req.header('X-Preview-Token') !== admitted['X-Preview-Token']) return c.text('Forbidden', 403)
+        await next()
+      })
+      .get('/preview', secret)
+    routes.get('/internal', secret)
+
+    return app
+  }
+
+  const visit = async (app: Hono<PageCacheEnv>, path: string, headers: Record<string, string>) => {
+    const { res, status, body } = await get(app, path, { headers }, production({ CF_VERSION_METADATA: { id: 'deploy-1' } }))
+
+    return { code: res.status, cache: status, secret: body.includes('the launch date') }
+  }
+
+  test('a refused visitor is refused after an admitted one, never served the cached page', async () => {
+    const cases = [
+      { path: '/guarded', app: createGuardedApp(), admit: () => { gate.open = true }, refuse: () => { gate.open = false } },
+      { path: '/preview', app: createGuardedApp(), admit: () => {}, refuse: () => {} },
+      { path: '/internal', app: createGuardedApp({ middleware: [allowlist] }), admit: () => {}, refuse: () => {} },
+    ]
+
+    for (const { path, app, admit, refuse } of cases) {
+      cache.entries.clear()
+
+      admit()
+      const first = await visit(app, path, admitted)
+      refuse()
+      const second = await visit(app, path, refused)
+      gate.open = true
+
+      expect({ path, first, second }).toEqual({
+        path,
+        first: { code: 200, cache: null, secret: true },
+        second: { code: 403, cache: null, secret: false },
+      })
+      expect(cache.entries.size).toBe(0)
+    }
+  })
+
+  test('an application that turns the page cache on behind its middleware keeps it', async () => {
+    const app = createGuardedApp({ middleware: [allowlist], pageCache: true })
+
+    expect((await visit(app, '/internal', admitted)).cache).toBe('MISS')
+    expect((await visit(app, '/internal', admitted)).cache).toBe('HIT')
+  })
+
+  test('a signed-in visit is kept out of every cache when the page cache is off', async () => {
+    const app = createGuardedApp({ middleware: [allowlist] })
+    const member = await get(app, '/internal', { headers: admitted }, testEnv(signedIn({ id: 'user-1' }), production()))
+
+    expect(member.res.headers.get('Cache-Control')).toBe('no-store')
+  })
+})
+
 describe('testEnv with the page cache', () => {
   test('a test-signed-in visit stays signed in, and its page is not stored', async () => {
     const { app } = createApp()
@@ -528,6 +705,66 @@ describe('responses without a cache policy', () => {
   })
 })
 
+describe('an application composed without setupWeb', () => {
+  const cartCookie = cookie('cart', S.String)
+
+  const register = (app: Hono<PageCacheEnv>) => {
+    effectRoutes(app)
+      .get('/dashboard', render('Dashboard'))
+      .get('/clock', render('Clock', { at: 'now' }), { cache: 'private' })
+      .get('/cart', Effect.flatMap(cartCookie.read, (cart) => render('Cart', { cart: Option.getOrNull(cart) })))
+      .get('/visit', Effect.andThen(cartCookie.set('cart-1'), render('Visit')), { cache: 'private' })
+      .post('/cart', Effect.succeed(Response.json({ added: true })))
+    app.get('/plain', (c) => c.var.web.render('Home'))
+
+    return app
+  }
+
+  const stack = (defaults: boolean) => {
+    const app = new Hono<PageCacheEnv>()
+
+    if (defaults) app.use('*', webDefaults())
+    app.use('*', web({ version: '1.0.0', render: (page) => `<html>${JSON.stringify(page)}</html>` }))
+    app.use('*', effectBridge())
+
+    return register(app)
+  }
+
+  const cacheControl = async (app: Hono<PageCacheEnv>, path: string, init: RequestInit = {}, env: object = production()) =>
+    (await get(app, path, init, env)).res.headers.get('Cache-Control')
+
+  test('with webDefaults, every response says who may keep it, as under setupWeb', async () => {
+    const app = stack(true)
+
+    expect({
+      signedIn: await cacheControl(app, '/dashboard', {}, testEnv(signedIn({ id: 'user-1' }), production())),
+      private: await cacheControl(app, '/clock'),
+      cookie: await cacheControl(app, '/cart', { headers: { Cookie: 'cart=cart-1' } }),
+      plain: await cacheControl(app, '/plain'),
+    }).toEqual({ signedIn: 'no-store', private: 'private, no-cache', cookie: 'private, no-cache', plain: 'private, no-cache' })
+  })
+
+  test('with webDefaults, responses carry the security headers and a cross-site post is refused', async () => {
+    const app = stack(true)
+    const page = await get(app, '/plain', {}, production())
+    const forged = await app.request('/cart', { method: 'POST', headers: { Origin: 'https://evil.example' } }, production())
+
+    expect(page.res.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    expect(page.res.headers.get('X-Frame-Options')).toBe('DENY')
+    expect(forged.status).toBe(403)
+  })
+
+  test("without it, cache: 'private' still says so itself", async () => {
+    const app = stack(false)
+
+    expect({
+      private: await cacheControl(app, '/clock'),
+      signedIn: await cacheControl(app, '/clock', {}, testEnv(signedIn({ id: 'user-1' }), production())),
+      setsCookie: await cacheControl(app, '/visit'),
+    }).toEqual({ private: 'private, no-cache', signedIn: 'no-store', setsCookie: 'no-store' })
+  })
+})
+
 describe('trackBindings', () => {
   test('reports binding use and keeps vars, secrets and plain objects as they are', () => {
     let reads = 0
@@ -545,5 +782,43 @@ describe('trackBindings', () => {
     expect(env.DB.prepare('select 1')).toEqual({ sql: 'select 1' })
     expect(d1.queries).toBe(1)
     expect(reads).toBeGreaterThan(0)
+  })
+})
+
+describe('trackDatabase', () => {
+  test("reports a client's methods and calls to the page cache, and keeps its class", async () => {
+    class Client {
+      #rows = ['row']
+      rows() {
+        return this.#rows
+      }
+    }
+    // A client that is itself a function, as postgres.js's `sql` is.
+    const sql = Object.assign((strings: TemplateStringsArray, ..._values: unknown[]) => strings.join('?'), { end: () => 'ended' })
+    const app = new Hono()
+
+    app.get('/', (c) => {
+      const marks: boolean[] = []
+      const read = <A>(use: () => A): A => {
+        const state = { key: new Request('http://localhost/'), variant: 'html', ttl: 60, dynamic: false, routeAllowsDefault: true } as const
+        openWebContext(c).pageCache = { ...state }
+        const value = use()
+        marks.push(openWebContext(c).pageCache?.dynamic === true)
+
+        return value
+      }
+      const client = trackDatabase(c, new Client())
+      const tag = trackDatabase(c, sql)
+
+      return c.json({
+        values: [read(() => client.rows()), read(() => tag`select ${1}`), read(() => tag.end())],
+        marks,
+        isClient: client instanceof Client && client.constructor === Client,
+      })
+    })
+
+    const res = await app.request('/')
+
+    expect(await res.json()).toEqual({ values: [['row'], 'select ?', 'ended'], marks: [true, true, true], isClient: true })
   })
 })

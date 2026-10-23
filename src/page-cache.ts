@@ -7,11 +7,13 @@
  * dynamic, and renders on every request, as soon as producing it reads
  * anything request-specific:
  *
+ * - the database, through any use of `DatabaseService`, whether its client
+ *   reaches the database through a binding or a connection string;
  * - a Cloudflare binding on `c.env` (D1, KV, R2, Durable Objects, service
- *   bindings, AI, Hyperdrive…), which covers database reads however they are
- *   made;
- * - request headers through `RequestService`, or request state through
- *   `RequestStateService`;
+ *   bindings, AI, Hyperdrive…);
+ * - request headers or the raw request through `RequestService`, or through
+ *   the context a `web.services` request callback receives, or request
+ *   state through `RequestStateService`;
  * - a route model binding (`{project}` placeholders).
  *
  * Signed-in requests, requests carrying app cookies or `Authorization`,
@@ -139,11 +141,27 @@ export function allowDefaultPageCache<E extends Env>(c: Context<E>): void {
 }
 
 /**
- * Middleware that gives every response without a Cache-Control header
- * DEFAULT_CACHE_CONTROL. Workers Cache, once enabled, stores a response
- * without one for a heuristic lifetime and serves it to every visitor, so a
- * page rendered per request must say it is not shared. setupWeb installs it
- * outermost; a response that states its own policy keeps it.
+ * The Cache-Control for a response that states none: `no-store` when it is
+ * someone's own (signed in, sent with credentials or a session cookie) or sets
+ * a cookie, such as a new session, and DEFAULT_CACHE_CONTROL otherwise.
+ */
+export function defaultCacheControl<E extends Env>(c: Context<E>, setsCookie: boolean): string {
+  const context = openWebContext(c)
+  const personal =
+    context.authUser !== undefined ||
+    c.req.header('Authorization') !== undefined ||
+    hasSessionCookie(c.req.header('Cookie'), context.sessionCookies ?? [])
+
+  return personal || setsCookie ? PRIVATE_CACHE_CONTROL : DEFAULT_CACHE_CONTROL
+}
+
+/**
+ * Middleware that gives every response without a Cache-Control header the
+ * policy defaultCacheControl names. Workers Cache, once enabled, stores a
+ * response without one for a heuristic lifetime and serves it to every
+ * visitor, so a page rendered per request must say it is not shared.
+ * setupWeb installs it outermost; a response that states its own policy
+ * keeps it.
  */
 export function privateByDefault<E extends Env>(): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware uses native next() promises.
@@ -155,8 +173,7 @@ export function privateByDefault<E extends Env>(): MiddlewareHandler<E> {
     }
 
     const result = new Response(c.res.body, c.res)
-    // A response that sets a cookie, such as a new session, is kept by no cache at all.
-    result.headers.set('Cache-Control', result.headers.has('Set-Cookie') ? 'no-store' : DEFAULT_CACHE_CONTROL)
+    result.headers.set('Cache-Control', defaultCacheControl(c, result.headers.has('Set-Cookie')))
     // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
     c.res = result
   })
@@ -586,6 +603,27 @@ function isBinding(value: unknown): value is object {
   return prototype !== null && prototype !== Object.prototype && prototype !== Function.prototype
 }
 
+/**
+ * The request's database client, reporting each use to the page cache, so a
+ * page that reads data renders per request however its client reaches the
+ * database: a client built from a connection string reads no binding. Only
+ * the page cache's flag is set, so a route's own `cache` option, which keeps
+ * data reads for a fixed time, still applies.
+ */
+export function trackDatabase<E extends Env, T>(c: Context<E>, db: T): T {
+  if (!(db instanceof Object)) {
+    return db
+  }
+
+  return trackBinding(db, () => {
+    const state = openWebContext(c).pageCache
+
+    if (state) {
+      state.dynamic = true
+    }
+  })
+}
+
 function trackBinding<T extends object>(binding: T, onRead: () => void): T {
   return new Proxy(binding, {
     get(target, key) {
@@ -606,8 +644,16 @@ function trackBinding<T extends object>(binding: T, onRead: () => void): T {
 
       onRead()
 
-      // Bindings are host objects whose methods need the real receiver.
-      return value instanceof Function ? value.bind(target) : value
+      // Bindings and clients are objects whose methods need the real
+      // receiver; a class is returned as itself.
+      return value instanceof Function && key !== 'constructor' ? value.bind(target) : value
+    },
+    // A client that is itself a function, as postgres.js's `sql` is; the
+    // trap runs only for one.
+    apply(target, receiver, args) {
+      onRead()
+
+      return target instanceof Function ? Reflect.apply(target, receiver, args) : undefined
     },
   })
 }

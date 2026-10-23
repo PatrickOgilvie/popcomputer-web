@@ -1021,15 +1021,16 @@ describe('setupWeb full configuration', () => {
     effectRoutes(app).get(
       '/projects/{project}',
       Effect.gen(function* () {
-        // The binding resolves through the schema, or the route answers an error.
+        // The binding resolves through the schema and the route's
+        // DatabaseService, or the route answers an error.
         yield* bound('project')
-        const db = yield* DatabaseService
         const auth = yield* AuthService
 
         return Response.json({
           hasAuth: 'getUser' in auth,
-          // The auth factory received the database the route's DatabaseService holds.
-          authDbIsDatabase: 'dbRef' in auth && auth.dbRef === db,
+          // The auth factory received the database the database factory made,
+          // which the route's DatabaseService reads through.
+          authDbIsDatabase: 'dbRef' in auth && auth.dbRef === mockDb,
         })
       })
     )

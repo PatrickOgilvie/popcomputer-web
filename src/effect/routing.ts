@@ -15,6 +15,7 @@ import {
   getEffectBindings,
   getEffectRuntime,
   getEffectSchema,
+  observedRequestContext,
   setEffectBridgeConfig,
   type EffectBridgeConfig,
 } from './bridge.js'
@@ -32,7 +33,7 @@ import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
 import type { ResponseHeaders } from './response-headers.js'
-import { allowDefaultPageCache } from '../page-cache.js'
+import { allowDefaultPageCache, defaultCacheControl } from '../page-cache.js'
 import {
   applyCachePolicy,
   decideCachePolicy,
@@ -52,7 +53,7 @@ import {
   type RouteCacheOptions,
 } from './response-cache.js'
 import { AuthUserService, DatabaseService, RequestService } from './services.js'
-import { isDeciding } from './guard.js'
+import { isDeciding, isGuard } from './guard.js'
 import type {
   AuthService,
   ExecutionContextService,
@@ -373,9 +374,10 @@ export interface EffectRouteOptions {
    *
    * An object caches this route's responses for a fixed time via Cloudflare
    * Workers Cache instead, data reads included. Applied to successful
-   * GET/HEAD responses only; partial reloads and signed-in requests are
-   * marked no-store, and stored responses vary on X-Inertia and Cookie, so
-   * only visitors without cookies share them. Requires
+   * GET/HEAD responses only; partial reloads, signed-in requests and
+   * responses that set a cookie are marked no-store, and stored responses
+   * vary on X-Inertia and Cookie, so only visitors without cookies share
+   * them. Requires
    * `"cache": { "enabled": true }` in wrangler config.
    */
   cache?: RouteCacheOptions | 'private' | 'no-store'
@@ -442,6 +444,51 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
     c.req.header('Authorization') !== undefined ||
     hasSessionCookie(c.req.header('Cookie'), requestCtx.sessionCookies ?? [])
   )
+}
+
+/** Headers that hand the recipient something of their own, as a cookie does. */
+const PER_RECIPIENT_HEADERS: ReadonlySet<string> = new Set(['set-cookie', 'set-auth-token'])
+
+/** A route's response as its cache policy sees it, with what web() writes on it later. */
+interface AnsweredResponse {
+  readonly response: Response
+  /** Whether the response sets a cookie, itself or through what web() writes. */
+  readonly setsCookie: boolean
+}
+
+/**
+ * The route's response with what web() writes on it once the route has
+ * answered, which its cache policy must see: the Cache-Control headers an
+ * action or layer added with responseHeader, moved onto the response, where
+ * the policy keeps a stricter one and replaces any other as it does the
+ * response's own; and whether it sets a cookie, as an application cookie,
+ * Better Auth's cookies or set-auth-token, the session lookup's renewal or
+ * expiry, or the flash cookie does.
+ */
+function withDeferredOutput<E extends Env>(c: HonoContext<E>, response: Response): AnsweredResponse {
+  const context = openWebContext(c)
+  const added = context.responseHeaders ?? []
+  const setsCookie =
+    response.headers.has('Set-Cookie') ||
+    (context.responseCookies ?? []).length > 0 ||
+    (context.sessionLookupCookies ?? []).length > 0 ||
+    added.some(([name]) => PER_RECIPIENT_HEADERS.has(name.toLowerCase())) ||
+    context.flash?.setsCookie(response.status) === true
+
+  const cacheControl = added.filter(([name]) => name.toLowerCase() === 'cache-control')
+
+  if (cacheControl.length === 0) return { response, setsCookie }
+
+  context.responseHeaders = added.filter(([name]) => name.toLowerCase() !== 'cache-control')
+
+  const headers = new Headers(response.headers)
+
+  for (const [, value] of cacheControl) headers.append('Cache-Control', value)
+
+  return {
+    response: new Response(response.body, { status: response.status, statusText: response.statusText, headers }),
+    setsCookie,
+  }
 }
 
 
@@ -991,8 +1038,15 @@ export class EffectRouteBuilder<
     let warnedIneffectiveCache = false
 
     // A bound route reads its model from the database, and an explicit cache
-    // option owns this route's caching.
-    const allowsDefaultPageCache = options?.cache === undefined && bindings.length === 0
+    // option owns this route's caching. A cached page is served before any
+    // guard or route middleware runs, so a route either one decides for is
+    // never cached by default: it may turn visitors away by what no cache key
+    // holds, such as their address or country.
+    const allowsDefaultPageCache =
+      options?.cache === undefined &&
+      bindings.length === 0 &&
+      this.middlewares.length === 0 &&
+      !layers.some(isGuard)
 
     const answersJson = this.answersJson
 
@@ -1040,7 +1094,7 @@ export class EffectRouteBuilder<
       if (requestRuntime && bridgeConfig?.services) {
         contextLayer = Layer.merge(
           contextLayer,
-          bridgeConfig.services(c).pipe(Layer.provide(bindingsConfiguration(c.env)))
+          bridgeConfig.services(observedRequestContext(c)).pipe(Layer.provide(bindingsConfiguration(c.env)))
         )
       }
 
@@ -1302,18 +1356,34 @@ export class EffectRouteBuilder<
         return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
       }
 
+      // The route says so itself, so it holds in an application composed
+      // without setupWeb's privateByDefault: only the visitor's browser keeps
+      // the page, or no cache at all when it is someone's own or sets a cookie.
+      if (options?.cache === 'private' && response instanceof Response) {
+        const answered = withDeferredOutput(c, response)
+
+        if (answered.response.headers.has('Cache-Control')) return answered.response
+
+        const headers = new Headers(answered.response.headers)
+        headers.set('Cache-Control', defaultCacheControl(c, answered.setsCookie))
+
+        return new Response(answered.response.body, { status: answered.response.status, statusText: answered.response.statusText, headers })
+      }
+
       if (typeof options?.cache !== 'object' || !(response instanceof Response)) {
         return response
       }
 
+      const answered = withDeferredOutput(c, response)
+
       const decision = decideCachePolicy({
         method: c.req.method,
-        status: response.status,
+        status: answered.response.status,
         isPartialReload: isPartialReloadRequest((name) => c.req.header(name)),
-        setsCookie: response.headers.has('Set-Cookie'),
+        setsCookie: answered.setsCookie,
         hasPrivateRequestState: hasPrivateRequestState(c),
-        existingCacheControl: response.headers.get('Cache-Control'),
-        isPage: isPageResponse(response.headers),
+        existingCacheControl: answered.response.headers.get('Cache-Control'),
+        isPage: isPageResponse(answered.response.headers),
         derivedTags: recordTags,
         options: options.cache,
       })
@@ -1329,7 +1399,7 @@ export class EffectRouteBuilder<
         console.warn(`[@popcomputer/web] Route '${c.req.path}' ${decision.warning}`)
       }
 
-      return applyCachePolicy(response, decision)
+      return applyCachePolicy(answered.response, decision)
     }
   }
 

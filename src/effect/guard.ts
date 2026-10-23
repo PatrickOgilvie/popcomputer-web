@@ -65,13 +65,30 @@ export function guard(
   find?: Effect.Effect<unknown, unknown, unknown>
 ): Layer.Layer<unknown, unknown, unknown> | Layer.Layer<never, unknown, unknown> {
   // SAFETY: The two-argument overload takes a service key and the Effect that finds its value.
-  if (find !== undefined) return Layer.provide(Layer.effect(first as Context.Key<unknown, unknown>, find), deciding)
+  if (find !== undefined) return guardLayer(Layer.effect(first as Context.Key<unknown, unknown>, find))
 
-  if (Layer.isLayer(first)) return Layer.provide(first, deciding)
+  if (Layer.isLayer(first)) return guardLayer(first)
 
   // SAFETY: The one-argument overloads take a layer, handled above, or the Effect that decides.
-  return Layer.provide(Layer.effectDiscard(first as Effect.Effect<unknown, unknown, unknown>), deciding)
+  return guardLayer(Layer.effectDiscard(first as Effect.Effect<unknown, unknown, unknown>))
 }
+
+/** The layers `guard` made. */
+const guards = new WeakSet<Layer.Layer<never, unknown, unknown>>()
+
+function guardLayer<ROut, E, RIn>(decide: Layer.Layer<ROut, E, RIn>): Layer.Layer<ROut, E, Exclude<RIn, GuardDecision>> {
+  const layer = Layer.provide(decide, deciding)
+  guards.add(layer)
+
+  return layer
+}
+
+/**
+ * Whether `guard` made this layer. The default page cache answers before
+ * any layer runs, so it caches no route a guard decides for: the guard may
+ * read what no cache key holds, such as the visitor's address or country.
+ */
+export const isGuard = (layer: Layer.Layer<never, unknown, unknown>): boolean => guards.has(layer)
 
 /** Whether the running Effect is a guard deciding. */
 export const isDeciding: Effect.Effect<boolean> = Effect.map(Effect.serviceOption(GuardDecision), Option.isSome)
