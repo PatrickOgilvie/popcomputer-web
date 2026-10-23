@@ -102,12 +102,21 @@ Other cached responses, such as JSON APIs and text, use `maxAge` and
 `staleWhileRevalidate` in `Cache-Control` for every cache.
 
 Workers Cache answers a hit before the Worker runs, so cached responses vary
-on `Cookie`: visitors without cookies share the cached copy, and a request
-with any cookie renders afresh. A signed-in member sees their own `auth.user`,
-a form that redirects back keeps its flashed errors, and neither response is
-stored. Visitors carrying only analytics cookies also miss the cache, so the
-option pays off for traffic that arrives without cookies, such as first visits
-and crawlers.
+on `X-Inertia` and `Cookie`. Workers Cache keeps one entry per value of each,
+compared exactly as sent: visitors without cookies share the cached copy, and
+a request with cookies is served only an entry stored for the identical
+`Cookie` header, never the cookieless copy. A signed-in member sees their own
+`auth.user`, a form that redirects back keeps its flashed errors, and neither
+response is stored. Visitors carrying only analytics cookies miss the shared
+copy, so the option pays off for traffic that arrives without cookies, such as
+first visits and crawlers.
+
+That separation is the cache's: it holds only behind a cache that keys on
+`Vary`, as Workers Cache does for every header named. Cloudflare's zone cache
+ignores `Vary` unless a Cache Rule turns it on, so do not put a zone cache or
+another CDN that ignores `Vary` in front of the Worker for these routes: it
+would hand the HTML document and the Inertia page object to each other's
+visitors.
 
 A bound route's cached page carries the Cache-Tag of each record it reads,
 `recordCacheTag(table, primaryKey)` such as `projects:project-1`, whichever

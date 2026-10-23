@@ -4,8 +4,8 @@
  * The response-cache policy for Cloudflare Workers Cache. The `cache`
  * route option declares intent; this module owns every correctness rule:
  * only successful GET/HEAD responses qualify, HTML and JSON page objects are
- * distinct variants (Vary: X-Inertia), a request with cookies never shares a
- * stored response (Vary: Cookie), and partial reloads are never stored.
+ * distinct variants (Vary: X-Inertia), a request with cookies never receives
+ * the cookieless copy (Vary: Cookie), and partial reloads are never stored.
  *
  * Pages (HTML documents and Inertia page objects) belong to the deploy that
  * rendered them: the document names that build's hashed assets and the page
@@ -270,8 +270,10 @@ const CACHEABLE_METHODS = new Set(['GET', 'HEAD'])
 /**
  * Workers Cache answers before the Worker runs, so a cached response must
  * name every request header it depends on: the Inertia variant, and the
- * cookies that sign a visitor in or carry a flashed form error. Requests
- * without cookies share one copy; any other request renders afresh.
+ * cookies that sign a visitor in or carry a flashed form error. Workers Cache
+ * compares each named header exactly as sent: requests without cookies share
+ * one copy, and a request with cookies is served only an entry stored for the
+ * identical Cookie header.
  */
 const CACHED_RESPONSE_VARY = `${HEADERS.INERTIA}, Cookie`
 

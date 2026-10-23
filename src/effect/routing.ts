@@ -375,8 +375,8 @@ export interface EffectRouteOptions {
    * Workers Cache instead, data reads included. Applied to successful
    * GET/HEAD responses only; partial reloads, signed-in requests and
    * responses that set a cookie are marked no-store, and stored responses
-   * vary on X-Inertia and Cookie, so only visitors without cookies share
-   * them. Requires
+   * vary on X-Inertia and Cookie, so a visitor with cookies never receives
+   * the copy visitors without cookies share. Requires
    * `"cache": { "enabled": true }` in wrangler config.
    */
   cache?: RouteCacheOptions | 'private' | 'no-store'

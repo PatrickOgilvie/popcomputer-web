@@ -58,6 +58,10 @@ What else an application on 1.4.2 may need to change:
 
 - `webDefaults()`, exported from `@popcomputer/web`: the response policy `setupWeb` installs (`securityHeaders()`, `privateByDefault()` and `verifyOrigin()`), taking `setupWeb`'s `security` options, now the exported `WebSecurityOptions`. `docs/lower-level.md` puts it first in a hand-composed stack.
 
+### Changed
+
+- `docs/page-cache.md` says how Workers Cache keeps a route's cached variants apart: it keys each header `Vary` names exactly as sent, so a request with cookies is served only an entry stored for the identical `Cookie` header, never the cookieless copy, where the docs said such a request renders afresh. It also says the separation holds only behind a cache that keys on `Vary`: Cloudflare's zone cache ignores `Vary` unless a Cache Rule turns it on.
+
 ## [1.4.2] - 2026-10-23
 
 Nothing an application on 1.4.1 needs to change. One that passed `schema: { ...schema }` to `setupWeb` to get its nested bindings working under Vite's dev server can pass `schema` again.
