@@ -29,8 +29,13 @@ import {
   type ResponseCachePurgeInput,
 } from '../../src/effect/response-cache.js'
 import { Redirect, ValidationError } from '../../src/effect/errors.js'
-import { render } from '../../src/effect/responses.js'
+import { flash, json, render } from '../../src/effect/responses.js'
 import { RequestService } from '../../src/effect/services.js'
+import { responseHeader } from '../../src/effect/response-headers.js'
+import { cookie } from '../../src/effect/cookies.js'
+import { betterAuthCall, loadUser } from '../../src/effect/auth.js'
+import { webServices } from '../../src/request-context.js'
+import { setupWeb } from '../../src/setup.js'
 
 const recordingCacheLayer = () => {
   const purges: ResponseCachePurgeInput[] = []
@@ -154,7 +159,7 @@ describe('cache route option', () => {
 
     const res = await app.request('/with-cookie')
     expect(res.status).toBe(200)
-    expect(res.headers.get('Cache-Control')).toBeNull()
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
     expect(res.headers.get('Vary')).toBeNull()
   })
 
@@ -633,6 +638,114 @@ describe('cache route option', () => {
     const res = await app.request('/plain')
     expect(res.headers.get('Cache-Control')).toBeNull()
     expect(res.headers.get('Vary')).toBeNull()
+  })
+})
+
+describe('cache route option and what web() writes after the route answers', () => {
+  const visitorCookie = cookie('visitor', S.String)
+
+  /** A stand-in for Better Auth with the anonymous and bearer plugins: each sign-in answers a new session. */
+  const anonymousAuth = {
+    api: {
+      signInAnonymous: Object.assign(
+        () => Promise.reject(new Error('sent through the handler')),
+        { path: '/sign-in/anonymous', options: { method: 'POST' } }
+      ),
+      // A session cookie under a prefix setupWeb was not told about, whose session is gone.
+      getSession: async ({ headers }: { readonly headers: Headers }) => ({
+        headers: new Headers(headers.get('Cookie')?.includes('myapp.session_token=') ? [['Set-Cookie', 'myapp.session_token=; Max-Age=0; Path=/']] : []),
+        response: null,
+      }),
+    },
+    handler: async () => new Response(JSON.stringify({ token: 'session-token', user: { id: 'anonymous-1' } }), {
+      headers: [
+        ['Content-Type', 'application/json'],
+        ['Set-Cookie', 'better-auth.session_token=session-token; Path=/; HttpOnly'],
+        ['set-auth-token', 'session-token'],
+      ],
+    }),
+  }
+
+  const register = (app: Hono) => {
+    const cached = { cache: { maxAge: 300 } }
+
+    effectRoutes(app)
+      .get('/visitor', Effect.andThen(visitorCookie.set('visitor-1'), json({ ok: true })), cached)
+      .get('/visitor-page', Effect.andThen(visitorCookie.set('visitor-1'), render('Visitor')), cached)
+      .get('/anonymous', Effect.flatMap(betterAuthCall('signInAnonymous', {}), (session) => json({ session })), cached)
+      .get('/notice', Effect.andThen(flash('notice', 'Saved.'), json({ ok: true })), cached)
+      .get('/account', Effect.andThen(responseHeader('Cache-Control', 'private'), render('Account')), cached)
+      .get('/pricing', render('Pricing'), cached)
+
+    return app
+  }
+
+  const compositions = () => {
+    const setup = new Hono()
+    setupWeb(setup, { version: '1.0.0', render: (page) => JSON.stringify(page), auth: { client: () => anonymousAuth } })
+
+    // Without setupWeb's privateByDefault, the route's own policy is all there is.
+    const manual = new Hono()
+    manual.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    manual.use('*', webServices(() => ({ auth: anonymousAuth as never })))
+    manual.use('*', loadUser())
+    manual.use('*', effectBridge())
+
+    return [['setupWeb', register(setup)], ['manual', register(manual)]] as const
+  }
+
+  const flashCookie = `popweb-flash=${btoa(JSON.stringify({ errors: { name: 'Required.' }, flash: {} })).replace(/=+$/, '')}`
+
+  test('a response that sets a cookie or its own Cache-Control later is never stored publicly', async () => {
+    const requests: ReadonlyArray<readonly [string, RequestInit, string]> = [
+      ['/visitor', {}, 'no-store'],
+      ['/visitor-page', {}, 'no-store'],
+      ['/anonymous', {}, 'no-store'],
+      ['/notice', {}, 'no-store'],
+      ['/account', {}, 'private'],
+      // The flashed errors render, and the flash cookie is cleared.
+      ['/pricing', { headers: { Cookie: flashCookie } }, 'no-store'],
+      // The session lookup expires a revoked session's cookie.
+      ['/pricing', { headers: { Cookie: 'myapp.session_token=revoked' } }, 'no-store'],
+    ]
+
+    for (const [composition, app] of compositions()) {
+      const answered = []
+
+      for (const [path, init] of requests) {
+        const res = await app.request(path, init)
+
+        answered.push({ path, status: res.status, cacheControl: res.headers.get('Cache-Control'), cdn: res.headers.get('Cloudflare-CDN-Cache-Control'), tags: res.headers.get('Cache-Tag') })
+      }
+
+      expect({ composition, answered }).toEqual({
+        composition,
+        answered: requests.map(([path, , cacheControl]) => ({ path, status: 200, cacheControl, cdn: null, tags: null })),
+      })
+
+      const anonymous = await app.request('/anonymous')
+
+      expect(anonymous.headers.getSetCookie()).toContain('better-auth.session_token=session-token; Path=/; HttpOnly')
+      expect(anonymous.headers.get('set-auth-token')).toBe('session-token')
+    }
+  })
+
+  test('a page that sets nothing later is still cached at the edge', async () => {
+    for (const [composition, app] of compositions()) {
+      const res = await app.request('/pricing')
+
+      expect({ composition, cdn: res.headers.get('Cloudflare-CDN-Cache-Control') }).toEqual({ composition, cdn: 'public, max-age=300' })
+    }
+  })
+
+  test("a route's policy replaces a looser Cache-Control the action added", async () => {
+    const app = createApp()
+
+    effectRoutes(app).get('/plans', Effect.andThen(responseHeader('Cache-Control', 'public, max-age=5'), json({ plans: [] })), { cache: { maxAge: 300 } })
+
+    const res = await app.request('/plans')
+
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=300')
   })
 })
 

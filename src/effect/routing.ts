@@ -374,9 +374,10 @@ export interface EffectRouteOptions {
    *
    * An object caches this route's responses for a fixed time via Cloudflare
    * Workers Cache instead, data reads included. Applied to successful
-   * GET/HEAD responses only; partial reloads and signed-in requests are
-   * marked no-store, and stored responses vary on X-Inertia and Cookie, so
-   * only visitors without cookies share them. Requires
+   * GET/HEAD responses only; partial reloads, signed-in requests and
+   * responses that set a cookie are marked no-store, and stored responses
+   * vary on X-Inertia and Cookie, so only visitors without cookies share
+   * them. Requires
    * `"cache": { "enabled": true }` in wrangler config.
    */
   cache?: RouteCacheOptions | 'private' | 'no-store'
@@ -443,6 +444,47 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
     c.req.header('Authorization') !== undefined ||
     hasSessionCookie(c.req.header('Cookie'), requestCtx.sessionCookies ?? [])
   )
+}
+
+/** Headers that hand the recipient something of their own, as a cookie does. */
+const PER_RECIPIENT_HEADERS: ReadonlySet<string> = new Set(['set-cookie', 'set-auth-token'])
+
+/**
+ * The route's response with what web() writes on it once the route has
+ * answered, which its cache policy must see: the Cache-Control headers an
+ * action or layer added with responseHeader, moved onto the response, where
+ * the policy keeps a stricter one and replaces any other as it does the
+ * response's own; and whether it sets a cookie, as an application cookie,
+ * Better Auth's cookies or set-auth-token, the session lookup's renewal or
+ * expiry, or the flash cookie does.
+ */
+function withDeferredOutput<E extends Env>(
+  c: HonoContext<E>,
+  response: Response
+): { readonly response: Response; readonly setsCookie: boolean } {
+  const context = openWebContext(c)
+  const added = context.responseHeaders ?? []
+  const setsCookie =
+    response.headers.has('Set-Cookie') ||
+    (context.responseCookies ?? []).length > 0 ||
+    (context.sessionLookupCookies ?? []).length > 0 ||
+    added.some(([name]) => PER_RECIPIENT_HEADERS.has(name.toLowerCase())) ||
+    context.flash?.setsCookie(response.status) === true
+
+  const cacheControl = added.filter(([name]) => name.toLowerCase() === 'cache-control')
+
+  if (cacheControl.length === 0) return { response, setsCookie }
+
+  context.responseHeaders = added.filter(([name]) => name.toLowerCase() !== 'cache-control')
+
+  const headers = new Headers(response.headers)
+
+  for (const [, value] of cacheControl) headers.append('Cache-Control', value)
+
+  return {
+    response: new Response(response.body, { status: response.status, statusText: response.statusText, headers }),
+    setsCookie,
+  }
 }
 
 
@@ -1314,14 +1356,16 @@ export class EffectRouteBuilder<
         return response
       }
 
+      const answered = withDeferredOutput(c, response)
+
       const decision = decideCachePolicy({
         method: c.req.method,
-        status: response.status,
+        status: answered.response.status,
         isPartialReload: isPartialReloadRequest((name) => c.req.header(name)),
-        setsCookie: response.headers.has('Set-Cookie'),
+        setsCookie: answered.setsCookie,
         hasPrivateRequestState: hasPrivateRequestState(c),
-        existingCacheControl: response.headers.get('Cache-Control'),
-        isPage: isPageResponse(response.headers),
+        existingCacheControl: answered.response.headers.get('Cache-Control'),
+        isPage: isPageResponse(answered.response.headers),
         derivedTags: recordTags,
         options: options.cache,
       })
@@ -1337,7 +1381,7 @@ export class EffectRouteBuilder<
         console.warn(`[@popcomputer/web] Route '${c.req.path}' ${decision.warning}`)
       }
 
-      return applyCachePolicy(response, decision)
+      return applyCachePolicy(answered.response, decision)
     }
   }
 

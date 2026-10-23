@@ -67,12 +67,15 @@ needs `cache: 'private'` on the routes it checks.
 To cache pages that do read data for a fixed time, set the route's `cache`
 option and enable Workers Cache (`"cache": { "enabled": true }` in Wrangler
 config). The option emits Workers Cache headers and tags. It does not publicly
-cache authenticated, cookie-setting, partial, failed, or mutating responses,
-nor one whose producing read a request header, a cookie or request state,
-such as an API key a route's own layer reads: none of them is part of the
-cache's key. That key is the path and query string, not the host, so a
-Worker serving several hostnames shares one cache across them: a page that
-differs by hostname does not set `cache`.
+cache authenticated, partial, failed, or mutating responses, nor one whose
+producing read a request header, a cookie or request state, such as an API key
+a route's own layer reads: none of them is part of the cache's key. That key
+is the path and query string, not the host, so a Worker serving several
+hostnames shares one cache across them: a page that differs by hostname does
+not set `cache`. A response that sets a cookie, itself or through
+`cookie(...)`, `flash`, `betterAuthCall` or the session lookup, is
+`no-store`, and a stricter `Cache-Control` an action adds with
+`responseHeader` wins over the option's.
 
 ```ts
 routes.get(paths.pricing, showPricing, {
