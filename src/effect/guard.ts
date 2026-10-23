@@ -74,7 +74,7 @@ export function guard(
 }
 
 /** The layers `guard` made. */
-const guards = new WeakSet<object>()
+const guards = new WeakSet<Layer.Layer<never, unknown, unknown>>()
 
 function guardLayer<ROut, E, RIn>(decide: Layer.Layer<ROut, E, RIn>): Layer.Layer<ROut, E, Exclude<RIn, GuardDecision>> {
   const layer = Layer.provide(decide, deciding)
@@ -88,7 +88,7 @@ function guardLayer<ROut, E, RIn>(decide: Layer.Layer<ROut, E, RIn>): Layer.Laye
  * any layer runs, so it caches no route a guard decides for: the guard may
  * read what no cache key holds, such as the visitor's address or country.
  */
-export const isGuard = (layer: object): boolean => guards.has(layer)
+export const isGuard = (layer: Layer.Layer<never, unknown, unknown>): boolean => guards.has(layer)
 
 /** Whether the running Effect is a guard deciding. */
 export const isDeciding: Effect.Effect<boolean> = Effect.map(Effect.serviceOption(GuardDecision), Option.isSome)

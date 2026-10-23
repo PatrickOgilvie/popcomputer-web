@@ -799,7 +799,7 @@ describe('trackDatabase', () => {
 
     app.get('/', (c) => {
       const marks: boolean[] = []
-      const read = (use: () => unknown) => {
+      const read = <A>(use: () => A): A => {
         const state = { key: new Request('http://localhost/'), variant: 'html', ttl: 60, dynamic: false, routeAllowsDefault: true } as const
         openWebContext(c).pageCache = { ...state }
         const value = use()

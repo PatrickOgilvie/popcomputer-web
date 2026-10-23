@@ -687,6 +687,7 @@ describe('cache route option and what web() writes after the route answers', () 
     // Without setupWeb's privateByDefault, the route's own policy is all there is.
     const manual = new Hono()
     manual.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+    // SAFETY: This test controls the value and confines the asserted contract to the boundary behavior under test.
     manual.use('*', webServices(() => ({ auth: anonymousAuth as never })))
     manual.use('*', loadUser())
     manual.use('*', effectBridge())

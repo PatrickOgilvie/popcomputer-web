@@ -449,6 +449,13 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
 /** Headers that hand the recipient something of their own, as a cookie does. */
 const PER_RECIPIENT_HEADERS: ReadonlySet<string> = new Set(['set-cookie', 'set-auth-token'])
 
+/** A route's response as its cache policy sees it, with what web() writes on it later. */
+interface AnsweredResponse {
+  readonly response: Response
+  /** Whether the response sets a cookie, itself or through what web() writes. */
+  readonly setsCookie: boolean
+}
+
 /**
  * The route's response with what web() writes on it once the route has
  * answered, which its cache policy must see: the Cache-Control headers an
@@ -458,10 +465,7 @@ const PER_RECIPIENT_HEADERS: ReadonlySet<string> = new Set(['set-cookie', 'set-a
  * Better Auth's cookies or set-auth-token, the session lookup's renewal or
  * expiry, or the flash cookie does.
  */
-function withDeferredOutput<E extends Env>(
-  c: HonoContext<E>,
-  response: Response
-): { readonly response: Response; readonly setsCookie: boolean } {
+function withDeferredOutput<E extends Env>(c: HonoContext<E>, response: Response): AnsweredResponse {
   const context = openWebContext(c)
   const added = context.responseHeaders ?? []
   const setsCookie =
