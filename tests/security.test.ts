@@ -117,6 +117,16 @@ describe('verifyOrigin', () => {
     expect(res.status).toBe(403)
   })
 
+  test('checks a request with HTTP credentials a browser attaches by itself, and passes a bearer token', async () => {
+    const post = (authorization: string) => createApp().request('https://app.test/', {
+      method: 'POST',
+      headers: { Origin: 'https://evil.test', Authorization: authorization },
+    })
+
+    expect((await post('Basic dXNlcjpwYXNz')).status).toBe(403)
+    expect((await post('Bearer key')).status).toBe(200)
+  })
+
   test('honors a custom rejection status', async () => {
     const app = createApp({ status: 419 })
 
@@ -156,13 +166,29 @@ describe('setupWeb verifies origins by default', () => {
     expect(await readError(api)).toMatchObject({ httpStatus: 403, tag: 'ForbiddenError' })
   })
 
-  test('passes a request that carries an Authorization header, which a browser never adds cross-site', async () => {
+  test('passes a request that carries a bearer token, which a browser never adds by itself', async () => {
     const res = await appWith().request('/projects', {
       method: 'POST',
       headers: { Origin: 'https://scanner.example', Authorization: 'Bearer key' },
     })
 
     expect(res.status).toBe(200)
+  })
+
+  test("refuses another site's post that carries the HTTP credentials a browser cached for the application", async () => {
+    // Behind a Basic-auth staging gate, the browser resends the gate's
+    // credentials with a form another site posts, beside the session cookie.
+    const post = (authorization: string) => appWith().request('/projects', {
+      method: 'POST',
+      headers: { Origin: 'https://evil.example', Cookie: 'better-auth.session_token=signed-in', Authorization: authorization },
+    })
+    const schemes = ['Basic c3RhZ2luZzpzZWNyZXQ=', 'basic c3RhZ2luZzpzZWNyZXQ=', 'Digest username="staging"', 'Negotiate YIIG', 'NTLM TlRMTVNT', ' Basic c3RhZ2luZw==']
+
+    for (const authorization of schemes) {
+      expect({ authorization, status: (await post(authorization)).status }).toEqual({ authorization, status: 403 })
+    }
+
+    expect((await post('Bearer key')).status).toBe(200)
   })
 
   test('verifyOrigin: false turns the check off', async () => {

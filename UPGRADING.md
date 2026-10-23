@@ -873,8 +873,9 @@ application and its tests.
 
 - **Cross-site writes are refused.** A `POST`, `PUT`, `PATCH` or `DELETE`
   whose `Origin` (or `Referer`) names another origin gets a 403. A request
-  with neither header, such as a webhook, passes, and so does one with an
-  `Authorization` header. List a native app or another site that posts in
+  with neither header, such as a webhook, passes, and so does one with a
+  token in its `Authorization` header, such as `Bearer` (not `Basic`, which
+  a browser resends by itself). List a native app or another site that posts in
   `security: { verifyOrigin: { allowedOrigins: ['https://admin.example'] } }`.
 - **API clients get JSON.** A request that asks for no HTML but sends an
   `Accept` header (`fetch`'s `*/*`) or an `Authorization` header is a JSON

@@ -9,6 +9,13 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status'
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 /**
+ * HTTP authentication's schemes, whose credentials a browser caches for an
+ * origin and attaches to its requests by itself, another site's form posts
+ * included.
+ */
+const BROWSER_AUTHORIZATION = /^\s*(basic|digest|negotiate|ntlm)\b/i
+
+/**
  * Configuration for {@link verifyOrigin}.
  */
 export interface VerifyOriginConfig {
@@ -128,8 +135,11 @@ export function verifyOrigin<E extends Env>(
  * Why a request fails origin verification, or undefined when it passes: a
  * state-changing request whose `Origin` (or `Referer`) names an origin the
  * configuration does not allow. A request with an `Authorization` header
- * passes, since a browser never attaches one to a cross-site request on its
- * own, so it cannot be forged.
+ * passes when its scheme is one a browser never attaches by itself, such as
+ * `Bearer`, so another site cannot forge it. HTTP authentication's own
+ * schemes (`Basic`, `Digest`, `Negotiate`, `NTLM`) are checked like a
+ * cookie: a browser resends the credentials it cached for the origin, as
+ * behind a Basic-auth staging gate, with a form another site posts.
  */
 export function originRefusal<E extends Env>(c: Context<E>, config: VerifyOriginConfig = {}): string | undefined {
   const methods = new Set(
@@ -137,7 +147,10 @@ export function originRefusal<E extends Env>(c: Context<E>, config: VerifyOrigin
   )
 
   if (!methods.has(c.req.method.toUpperCase())) return undefined
-  if (c.req.header('Authorization') !== undefined) return undefined
+
+  const authorization = c.req.header('Authorization')
+
+  if (authorization !== undefined && !BROWSER_AUTHORIZATION.test(authorization)) return undefined
 
   const requestOrigin = originOf(c.req.url)
 
