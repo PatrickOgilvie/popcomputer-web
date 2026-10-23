@@ -53,7 +53,7 @@ import {
   type RouteCacheOptions,
 } from './response-cache.js'
 import { AuthUserService, DatabaseService, RequestService } from './services.js'
-import { isDeciding } from './guard.js'
+import { isDeciding, isGuard } from './guard.js'
 import type {
   AuthService,
   ExecutionContextService,
@@ -992,8 +992,15 @@ export class EffectRouteBuilder<
     let warnedIneffectiveCache = false
 
     // A bound route reads its model from the database, and an explicit cache
-    // option owns this route's caching.
-    const allowsDefaultPageCache = options?.cache === undefined && bindings.length === 0
+    // option owns this route's caching. A cached page is served before any
+    // guard or route middleware runs, so a route either one decides for is
+    // never cached by default: it may turn visitors away by what no cache key
+    // holds, such as their address or country.
+    const allowsDefaultPageCache =
+      options?.cache === undefined &&
+      bindings.length === 0 &&
+      this.middlewares.length === 0 &&
+      !layers.some(isGuard)
 
     const answersJson = this.answersJson
 

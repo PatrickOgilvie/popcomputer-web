@@ -101,7 +101,8 @@ interface WebSetupOptions<E extends Env> extends WebConfig {
 
   /**
    * Additional middleware to run after the framework middleware.
-   * These run in order after effectBridge.
+   * These run in order after effectBridge. The page cache would answer
+   * before them, so with any, pages are cached only with `pageCache: true`.
    */
   middleware?: MiddlewareHandler<E>[]
 
@@ -133,10 +134,11 @@ interface WebSetupOptions<E extends Env> extends WebConfig {
   errors?: ErrorHandlerConfig
 
   /**
-   * Cache static pages at the edge (default `true`). Pages that read no
-   * bindings, headers or request state are served from Cloudflare's Cache API
-   * until the next deploy; everything else renders fresh. `false` turns the
-   * page cache off for the whole app.
+   * Cache static pages at the edge (default `true`, or `false` when
+   * `middleware` is given, since a cached page is served before it runs).
+   * Pages that read no bindings, headers or request state are served from
+   * Cloudflare's Cache API until the next deploy; everything else renders
+   * fresh. `false` turns the page cache off for the whole app.
    */
   pageCache?: boolean
 
@@ -549,12 +551,16 @@ function createSetupMiddleware<
     flash: config.flash,
   }
 
+  // The application's own middleware runs after a cached page is served, so
+  // a page it would refuse is cached only when the application says so.
+  const cachesPages = config.pageCache ?? (config.middleware ?? []).length === 0
+
   const middlewares: MiddlewareHandler<E>[] = [
     // Outermost, so they see every response, including the page cache's own.
     ...(config.security?.headers === false ? [] : [securityHeaders<E>(config.security?.headers ?? {})]),
     privateByDefault<E>(),
     // A cached page is served before db/auth setup, session lookup or rendering.
-    ...(config.pageCache === false
+    ...(!cachesPages
       ? []
       : [
           pageCache<E>({

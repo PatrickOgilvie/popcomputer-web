@@ -140,11 +140,27 @@ export function allowDefaultPageCache<E extends Env>(c: Context<E>): void {
 }
 
 /**
- * Middleware that gives every response without a Cache-Control header
- * DEFAULT_CACHE_CONTROL. Workers Cache, once enabled, stores a response
- * without one for a heuristic lifetime and serves it to every visitor, so a
- * page rendered per request must say it is not shared. setupWeb installs it
- * outermost; a response that states its own policy keeps it.
+ * The Cache-Control for a response that states none: `no-store` when it is
+ * someone's own (signed in, sent with credentials or a session cookie) or sets
+ * a cookie, such as a new session, and DEFAULT_CACHE_CONTROL otherwise.
+ */
+export function defaultCacheControl<E extends Env>(c: Context<E>, setsCookie: boolean): string {
+  const context = openWebContext(c)
+  const personal =
+    context.authUser !== undefined ||
+    c.req.header('Authorization') !== undefined ||
+    hasSessionCookie(c.req.header('Cookie'), context.sessionCookies ?? [])
+
+  return personal || setsCookie ? PRIVATE_CACHE_CONTROL : DEFAULT_CACHE_CONTROL
+}
+
+/**
+ * Middleware that gives every response without a Cache-Control header the
+ * policy defaultCacheControl names. Workers Cache, once enabled, stores a
+ * response without one for a heuristic lifetime and serves it to every
+ * visitor, so a page rendered per request must say it is not shared.
+ * setupWeb installs it outermost; a response that states its own policy
+ * keeps it.
  */
 export function privateByDefault<E extends Env>(): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware uses native next() promises.
@@ -156,8 +172,7 @@ export function privateByDefault<E extends Env>(): MiddlewareHandler<E> {
     }
 
     const result = new Response(c.res.body, c.res)
-    // A response that sets a cookie, such as a new session, is kept by no cache at all.
-    result.headers.set('Cache-Control', result.headers.has('Set-Cookie') ? 'no-store' : DEFAULT_CACHE_CONTROL)
+    result.headers.set('Cache-Control', defaultCacheControl(c, result.headers.has('Set-Cookie')))
     // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
     c.res = result
   })

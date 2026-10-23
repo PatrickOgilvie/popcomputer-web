@@ -13,7 +13,8 @@ import { Context, Effect, Layer } from 'effect'
 import { Hono, type MiddlewareHandler } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { effectRoutes } from '../src/effect/routing.js'
-import { render } from '../src/effect/responses.js'
+import { forbidden, render } from '../src/effect/responses.js'
+import { guard } from '../src/effect/guard.js'
 import { responseHeader } from '../src/effect/response-headers.js'
 import { DatabaseService, RequestService, RequestStateService } from '../src/effect/services.js'
 import { PAGE_CACHE_HEADER, trackBindings, type PageCacheStore } from '../src/page-cache.js'
@@ -500,6 +501,81 @@ describe('default page cache', () => {
     const res = await get(createApp().app, '/', {}, production())
     expect(res.res.status).toBe(200)
     expect(res.status).toBeNull()
+  })
+})
+
+describe('access checks and the default page cache', () => {
+  /** Whom the access checks admit: they decide by what no cache key holds. */
+  const gate = { open: true }
+  const admitted = { 'CF-Connecting-IP': '198.51.100.1', 'X-Preview-Token': 'preview' }
+  const refused = { 'CF-Connecting-IP': '203.0.113.9' }
+
+  const allowlist: MiddlewareHandler = async (c, next) => {
+    if (c.req.header('CF-Connecting-IP') !== admitted['CF-Connecting-IP']) return c.text('Forbidden', 403)
+    await next()
+  }
+
+  const createGuardedApp = (options: { readonly middleware?: MiddlewareHandler[]; readonly pageCache?: boolean } = {}) => {
+    const app = new Hono<PageCacheEnv>()
+    setupWeb(app, { version: '1.0.0', render: (page) => `<html>${JSON.stringify(page)}</html>`, ...options })
+    const routes = effectRoutes(app)
+    const secret = render('Internal', { plan: 'the launch date' })
+
+    routes.provide(guard(Effect.suspend(() => gate.open ? Effect.void : forbidden('Not from here.')))).get('/guarded', secret)
+    routes
+      .middleware(async (c, next) => {
+        if (c.req.header('X-Preview-Token') !== admitted['X-Preview-Token']) return c.text('Forbidden', 403)
+        await next()
+      })
+      .get('/preview', secret)
+    routes.get('/internal', secret)
+
+    return app
+  }
+
+  const visit = async (app: Hono<PageCacheEnv>, path: string, headers: Record<string, string>) => {
+    const { res, status, body } = await get(app, path, { headers }, production({ CF_VERSION_METADATA: { id: 'deploy-1' } }))
+
+    return { code: res.status, cache: status, secret: body.includes('the launch date') }
+  }
+
+  test('a refused visitor is refused after an admitted one, never served the cached page', async () => {
+    const cases = [
+      { path: '/guarded', app: createGuardedApp(), admit: () => { gate.open = true }, refuse: () => { gate.open = false } },
+      { path: '/preview', app: createGuardedApp(), admit: () => {}, refuse: () => {} },
+      { path: '/internal', app: createGuardedApp({ middleware: [allowlist] }), admit: () => {}, refuse: () => {} },
+    ]
+
+    for (const { path, app, admit, refuse } of cases) {
+      cache.entries.clear()
+
+      admit()
+      const first = await visit(app, path, admitted)
+      refuse()
+      const second = await visit(app, path, refused)
+      gate.open = true
+
+      expect({ path, first, second }).toEqual({
+        path,
+        first: { code: 200, cache: null, secret: true },
+        second: { code: 403, cache: null, secret: false },
+      })
+      expect(cache.entries.size).toBe(0)
+    }
+  })
+
+  test('an application that turns the page cache on behind its middleware keeps it', async () => {
+    const app = createGuardedApp({ middleware: [allowlist], pageCache: true })
+
+    expect((await visit(app, '/internal', admitted)).cache).toBe('MISS')
+    expect((await visit(app, '/internal', admitted)).cache).toBe('HIT')
+  })
+
+  test('a signed-in visit is kept out of every cache when the page cache is off', async () => {
+    const app = createGuardedApp({ middleware: [allowlist] })
+    const member = await get(app, '/internal', { headers: admitted }, testEnv(signedIn({ id: 'user-1' }), production()))
+
+    expect(member.res.headers.get('Cache-Control')).toBe('no-store')
   })
 })
 
