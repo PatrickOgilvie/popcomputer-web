@@ -9,6 +9,7 @@ import { describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { betterAuth } from 'better-auth'
 import { memoryAdapter } from 'better-auth/adapters/memory'
+import { phoneNumber, username } from 'better-auth/plugins'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { Effect, Schema as S } from 'effect'
@@ -17,7 +18,7 @@ import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
 import { betterAuthHandler, betterAuthRedirect } from '../../src/auth.js'
 import { validateRequest } from '../../src/effect/validation.js'
-import { currentPassword, email } from '../../src/effect/schema.js'
+import { currentPassword, email, requiredString } from '../../src/effect/schema.js'
 import { sweepSignInFailures } from '../../src/effect/sign-in-limits.js'
 import { testBrowser, testClock, testEnv, testRateLimiter, type TestRateLimiter } from '../../src/testing.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
@@ -37,6 +38,8 @@ function createAuth() {
     emailAndPassword: { enabled: true },
     rateLimit: { enabled: false },
     logger: { disabled: true },
+    // Two more doors to the same password: a username, and a phone number.
+    plugins: [username(), phoneNumber({ sendOTP: async () => {} })],
   })
 }
 
@@ -57,9 +60,21 @@ const signIn = action(Effect.gen(function* () {
   })
 }))
 
+const SignInWithPhone = S.Struct({ phoneNumber: requiredString, password: currentPassword })
+
+const signInWithPhone = action(Effect.gen(function* () {
+  const input = yield* validateRequest(SignInWithPhone)
+
+  return yield* betterAuthRedirect('signInPhoneNumber', { body: input }, {
+    redirectTo: '/home',
+    errors: (error) => ({ phoneNumber: error.message }),
+  })
+}))
+
 async function createApp(limiter: TestRateLimiter, max = 3) {
   const auth = createAuth()
-  await auth.api.signUpEmail({ body: { name: 'Ada', email: 'ada@example.com', password: 'correct horse' } })
+  const { user } = await auth.api.signUpEmail({ body: { name: 'Ada', email: 'ada@example.com', password: 'correct horse', username: 'ada' } })
+  await (await auth.$context).internalAdapter.updateUser(user.id, { phoneNumber: '+15550000001', phoneNumberVerified: true })
 
   const sqlite = new Database(':memory:')
   sqlite.run('CREATE TABLE rate_limit (id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, count INTEGER NOT NULL, last_request INTEGER NOT NULL)')
@@ -76,7 +91,7 @@ async function createApp(limiter: TestRateLimiter, max = 3) {
     },
   })
 
-  routes.post('/sign-in', signIn).all('/api/auth/*', betterAuthHandler())
+  routes.post('/sign-in', signIn).post('/sign-in/phone', signInWithPhone).all('/api/auth/*', betterAuthHandler())
 
   const time = await testClock(new Date())
   const env = testEnv(time.layer, { SIGN_IN_LIMITER: limiter })
@@ -91,6 +106,15 @@ const attempt = (browser: ReturnType<typeof testBrowser>, password: string) =>
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'ada@example.com', password }),
   })
+
+/** A call to Better Auth's API from a client address of its own, as each of a botnet's guesses is. */
+const fromAnywhere = (app: Hono, env: ReturnType<typeof testEnv>) =>
+  (path: string, body: unknown, type = 'application/json') =>
+    testBrowser(app, env).request(`/api/auth${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': type },
+      body: JSON.stringify(body),
+    })
 
 describe('sign-in limits', () => {
   test('the binding limits each client address', async () => {
@@ -216,5 +240,78 @@ describe('sign-in limits', () => {
 
     expect(res.status).toBe(500)
     expect(await res.text()).toContain('SIGN_IN_LIMITER')
+  })
+})
+
+describe('each password sign-in counts against the account its endpoint checks', () => {
+  test('a username sign-in counts against the username, whatever email it also sends', async () => {
+    const { app, env, rows } = await createApp(testRateLimiter({ limit: 100 }))
+    const api = fromAnywhere(app, env)
+
+    // Better Auth checks the username's password and drops the email.
+    for (const [index, guess] of ['guess-1', 'guess-2', 'guess-3'].entries()) {
+      expect((await api('/sign-in/username', { username: 'ada', password: guess, email: `decoy-${index}@example.net` })).status).toBe(401)
+    }
+
+    expect((await api('/sign-in/username', { username: 'ada', password: 'correct horse', email: 'decoy-4@example.net' })).status).toBe(429)
+    expect(rows()).toHaveLength(1)
+  })
+
+  test('an email that is not text, or blank, does not take a username sign-in out of its count', async () => {
+    const emails: ReadonlyArray<unknown> = [1, '', '   ', false, {}]
+    const { app, env, rows } = await createApp(testRateLimiter({ limit: 100 }), emails.length)
+    const api = fromAnywhere(app, env)
+
+    for (const [index, email] of emails.entries()) {
+      expect((await api('/sign-in/username', { username: 'ada', password: `guess-${index}`, email })).status).toBe(401)
+    }
+
+    expect((await api('/sign-in/username', { username: 'ada', password: 'correct horse', email: 1 })).status).toBe(429)
+    expect(rows()).toHaveLength(1)
+    expect(rows()[0]?.count).toBe(emails.length)
+  })
+
+  test("a phone number's password sign-ins through Better Auth's API count against it", async () => {
+    const { app, env } = await createApp(testRateLimiter({ limit: 100 }))
+    const api = fromAnywhere(app, env)
+
+    for (const guess of ['guess-1', 'guess-2', 'guess-3']) {
+      expect((await api('/sign-in/phone-number', { phoneNumber: '+15550000001', password: guess })).status).toBe(401)
+    }
+
+    expect((await api('/sign-in/phone-number', { phoneNumber: '+15550000001', password: 'correct horse' })).status).toBe(429)
+    // A body the framework cannot read is refused, so it is never an uncounted guess.
+    expect((await api('/sign-in/phone-number', { phoneNumber: '+15550000001', password: 'correct horse' }, 'text/plain')).status).toBe(415)
+  })
+
+  test("a phone number's password sign-ins through an action count against it", async () => {
+    const { app, env } = await createApp(testRateLimiter({ limit: 100 }))
+    const attemptWithPhone = (password: string) => testBrowser(app, env).request('/sign-in/phone', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phoneNumber: '+15550000001', password }),
+    })
+
+    for (const guess of ['guess-1', 'guess-2', 'guess-3']) expect((await attemptWithPhone(guess)).status).toBe(422)
+
+    expect((await attemptWithPhone('correct horse')).status).toBe(429)
+  })
+
+  test('a password sign-in that names no account is refused before a password is checked', async () => {
+    const { app, env, rows } = await createApp(testRateLimiter({ limit: 100 }), 1)
+    const api = fromAnywhere(app, env)
+    const unnamed: ReadonlyArray<readonly [string, object]> = [
+      ['/sign-in/email', { password: 'guess' }],
+      ['/sign-in/email', { email: ['ada@example.com'], password: 'guess' }],
+      ['/sign-in/username', { password: 'guess', email: 'ada@example.com' }],
+      ['/sign-in/username', { username: 1, password: 'guess' }],
+      ['/sign-in/username', { username: '   ', password: 'guess' }],
+      ['/sign-in/phone-number', { phoneNumber: null, password: 'guess' }],
+    ]
+
+    for (const [path, body] of unnamed) expect({ path, body, status: (await api(path, body)).status }).toEqual({ path, body, status: 400 })
+
+    expect(rows()).toEqual([])
+    expect((await api('/sign-in/username', { username: 'ada', password: 'correct horse' })).status).toBe(200)
   })
 })

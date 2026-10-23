@@ -21,7 +21,7 @@
 
 import type { Column, Table } from 'drizzle-orm'
 import { Clock, Context, Duration, Effect, Option } from 'effect'
-import { AuthRateLimitError } from './errors.js'
+import { AuthRateLimitError, HttpError } from './errors.js'
 import { loadDrizzle } from './binding.js'
 import { DatabaseService } from './services.js'
 
@@ -124,8 +124,21 @@ const under = (path: string, prefix: string): boolean => path === prefix || path
 export const isLimitedPath = (path: string): boolean =>
   !PROVIDER_SIGN_INS.some((prefix) => under(path, prefix)) && ADDRESS_LIMITED.some((prefix) => under(path, prefix))
 
+/**
+ * Better Auth's endpoints that sign an account in with a password, and the
+ * body field each finds the account by: a field another endpoint reads, such
+ * as an email sent to the username sign-in, names nothing it checks.
+ */
+const ACCOUNT_FIELDS = {
+  '/sign-in/email': 'email',
+  '/sign-in/username': 'username',
+  '/sign-in/phone-number': 'phoneNumber',
+} as const
+
+type PasswordSignInPath = keyof typeof ACCOUNT_FIELDS
+
 /** Whether the endpoint at `path` signs an account in with a password, whose failures are counted. */
-export const isPasswordSignIn = (path: string): boolean => path === '/sign-in/email' || path === '/sign-in/username'
+export const isPasswordSignIn = (path: string): path is PasswordSignInPath => Object.hasOwn(ACCOUNT_FIELDS, path)
 
 /** What a sign-in attempt is limited by: the client's address, and the account it names. */
 export interface SignInAttempt {
@@ -143,13 +156,30 @@ export function clientAddress(headers: Headers): string {
   return headers.get('cf-connecting-ip') ?? 'unknown'
 }
 
-/** The account a sign-in names, from its body: the email, or a username, lowercased. */
-export function accountOf(body: unknown): string | undefined {
-  if (!(body instanceof Object)) return undefined
+/**
+ * The account a password sign-in at `path` names: the field its endpoint
+ * finds the account by, trimmed and lowercased, as Better Auth lowercases an
+ * email and a username. Undefined for any other endpoint, and for a body
+ * whose field is missing, blank or not text.
+ */
+export function accountOf(path: string, body: unknown): string | undefined {
+  if (!isPasswordSignIn(path) || !(body instanceof Object)) return undefined
 
-  const named: unknown = Reflect.get(body, 'email') ?? Reflect.get(body, 'username')
+  const named: unknown = Reflect.get(body, ACCOUNT_FIELDS[path])
 
   return typeof named === 'string' && named.trim() !== '' ? named.trim().toLowerCase() : undefined
+}
+
+/**
+ * What a call to Better Auth's endpoint at `path` is limited by, given the
+ * account `accountOf` read from its body. A password sign-in that names no
+ * account is refused with a 400, before Better Auth checks its password, so
+ * no guess goes uncounted.
+ */
+export function signInAttempt(path: string, headers: Headers, account: string | undefined): Effect.Effect<SignInAttempt, HttpError> {
+  return isPasswordSignIn(path) && account === undefined
+    ? Effect.fail(new HttpError({ status: 400, message: `This sign-in names no account: send its ${ACCOUNT_FIELDS[path]} as text.` }))
+    : Effect.succeed({ path, address: clientAddress(headers), account })
 }
 
 /** A key for the account that stores no address: its SHA-256. */

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `auth.signInLimits` counts each password sign-in against the account its endpoint checks: the email of `/sign-in/email`, the username of `/sign-in/username` and the phone number of `/sign-in/phone-number`, which it now limits too. It read a body's `email` before its `username` whatever the endpoint, so a username sign-in that also sent a decoy email counted against the decoy, one whose email was not text or blank counted against nothing, and phone-number password sign-ins were limited only by address: each kept checking passwords, and signed in, while the account cooled down. A password sign-in whose identifier is missing, blank or not text is refused with a 400, and `betterAuthHandler` refuses a phone-number sign-in body it cannot read with a 415, as it does the others.
+
 ## [1.4.2] - 2026-10-23
 
 Nothing an application on 1.4.1 needs to change. One that passed `schema: { ...schema }` to `setupWeb` to get its nested bindings working under Vite's dev server can pass `schema` again.

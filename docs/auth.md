@@ -156,6 +156,13 @@ cheapest first:
   them out. Only a failure writes a row, a successful sign-in deletes it, and
   the row's key is a hash of the account, not its address.
 
+An account is what its sign-in's endpoint finds it by: the email
+`/sign-in/email` reads, the username plugin's `/sign-in/username`, or the
+phone-number plugin's `/sign-in/phone-number`, whatever other fields the body
+sends. A password sign-in whose field is missing, blank or not text is refused
+with a 400 before Better Auth checks its password. Each counts apart, so an
+account that signs in by email and by username has a budget for each.
+
 `betterAuthRedirect`, `betterAuthCall` and `betterAuthHandler` all apply the
 limits. A refused call fails with `AuthRateLimitError`, whose
 `retryAfterSeconds` the 429 sends as `Retry-After`. Rows for accounts nobody
