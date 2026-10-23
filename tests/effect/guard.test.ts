@@ -15,7 +15,7 @@ import { action } from '../../src/effect/action.js'
 import { guard } from '../../src/effect/guard.js'
 import { bound, routeBinding } from '../../src/effect/binding.js'
 import { dbQuery } from '../../src/effect/database.js'
-import { forbidden, json, notFound } from '../../src/effect/responses.js'
+import { forbidden, json, notFound, redirectNow } from '../../src/effect/responses.js'
 import { authorize } from '../../src/effect/services.js'
 import { setupWeb } from '../../src/setup.js'
 import { signedIn, testEnv } from '../../src/testing.js'
@@ -69,7 +69,8 @@ const createApp = () => {
   // This test registers no binding types, so the model is read as its row.
   const organizationOf = Effect.map(bound('organization'), S.decodeUnknownSync(S.Struct({ id: S.String })))
 
-  const findMember = Effect.gen(function* () {
+  // Finds the visitor's membership, and turns a stranger away with `refuse`.
+  const memberOr = <E>(refuse: Effect.Effect<never, E>) => Effect.gen(function* () {
     const auth = yield* authorize()
     const organization = yield* organizationOf
     const [membership] = yield* dbQuery((client) =>
@@ -80,11 +81,12 @@ const createApp = () => {
       ))
     )
 
-    if (membership === undefined) return yield* notFound('Organization')
+    if (membership === undefined) return yield* refuse
 
     return CurrentMember.of(membership)
   })
 
+  const findMember = memberOr(notFound('Organization'))
   const RequireMember = guard(CurrentMember, findMember)
 
   const can = (permission: Permission) => Effect.gen(function* () {
@@ -113,6 +115,12 @@ const createApp = () => {
   members.provide(guard(can('projects.delete'))).delete('/orgs/{organization}/projects/{project}', action(json({ deleted: true })))
   // The same permission, stated by the action.
   members.post('/orgs/{organization}/projects/{project}/archive', action(Effect.andThen(can('projects.delete'), json({ archived: true }))))
+
+  // Guards that turn a stranger away with a 403, or by sending them elsewhere.
+  routes.prefix('/closed/{organization}').provide(guard(CurrentMember, memberOr(forbidden('Members only.'))))
+    .get('/closed/{organization}/projects/{project}', showProject)
+  routes.prefix('/invite/{organization}').provide(guard(CurrentMember, memberOr(redirectNow('/request-access'))))
+    .get('/invite/{organization}/projects/{project}', showProject)
 
   // The same guard, given as a layer.
   routes.prefix('/layered/{organization}').provide(guard(Layer.effect(CurrentMember, findMember))).get('/layered/{organization}/me', whoAmI)
@@ -154,6 +162,46 @@ describe('guard()', () => {
     expect((await app.request('/orgs/acme/projects/rocket', asJson, as('ada'))).status).toBe(200)
     expect(await (await app.request('/orgs/acme/me', asJson, as('bob'))).json()).toEqual({ role: 'member' })
     expect((await app.request('/orgs/acme/projects/rocket', asJson, as('grace'))).status).toBe(404)
+  })
+
+  test("a guard that turns a stranger away answers the same for a record under the guarded one that exists and one that does not", async () => {
+    const { app, queries } = createApp()
+
+    for (const project of ['rocket', 'nope']) {
+      queries.length = 0
+      const closed = await app.request(`/closed/acme/projects/${project}`, asJson, as('grace'))
+
+      expect({ project, status: closed.status }).toEqual({ project, status: 403 })
+      // The guard decided from the organization and the membership alone.
+      expect(queries.filter((query) => query.includes('from "projects"'))).toEqual([])
+
+      const invite = await app.request(`/invite/acme/projects/${project}`, asJson, as('grace'))
+
+      expect({ project, status: invite.status, location: invite.headers.get('Location') }).toEqual({ project, status: 303, location: '/request-access' })
+    }
+
+    // The guard that answers 404 looks up the same records either way.
+    const lookups = async (project: string) => {
+      queries.length = 0
+      await app.request(`/orgs/acme/projects/${project}`, asJson, as('grace'))
+
+      return [...queries]
+    }
+
+    expect(await lookups('rocket')).toEqual(await lookups('nope'))
+
+    // A member the guard lets in gets the record, or its 404.
+    expect((await app.request('/closed/acme/projects/rocket', asJson, as('bob'))).status).toBe(200)
+    expect((await app.request('/closed/acme/projects/nope', asJson, as('bob'))).status).toBe(404)
+  })
+
+  test('a permission guard after the membership guard answers a member without it the same for a record that exists and one that does not', async () => {
+    const { app } = createApp()
+    const remove = { method: 'DELETE', ...asJson }
+
+    expect((await app.request('/orgs/acme/projects/rocket', remove, as('bob'))).status).toBe(403)
+    expect((await app.request('/orgs/acme/projects/nope', remove, as('bob'))).status).toBe(403)
+    expect((await app.request('/orgs/acme/projects/nope', asJson, as('bob'))).status).toBe(404)
   })
 
   test('a permission is a guard after the membership guard: a member without it gets a 403, one with it goes on', async () => {

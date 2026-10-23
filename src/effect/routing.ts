@@ -4,7 +4,7 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Cause, Predicate, Context, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import { Cause, Predicate, Context, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S, Semaphore } from 'effect'
 import type { Context as HonoContext, ExecutionContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { runEffectWithRuntime } from './handler.js'
 import {
@@ -406,13 +406,25 @@ interface LoadedModels {
   readonly recordTags: readonly string[]
 }
 
-/** The result of loading a route's models. */
+/**
+ * The models a request has loaded so far, parents first, which a later load
+ * goes on from: a guard's read loads the record it names and those before
+ * it, and the first read after the guards loads the rest.
+ */
+interface LoadingModels {
+  readonly models: Map<string, unknown>
+  /** Each loaded binding's row, which scopes the bindings under it. */
+  readonly rows: Map<string, object>
+  readonly recordTags: string[]
+}
+
 /** A signed-in user's id: Better Auth's are strings, or numbers when it generates serial ids. */
 type UserId = string | number | bigint
 
 const isUserId = (value: unknown): value is UserId =>
   typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint'
 
+/** The result of loading a route's models. */
 type BindingLoadOutcome =
   | LoadedModels
   | { readonly missing: string }
@@ -872,7 +884,8 @@ export class EffectRouteBuilder<
 
   /**
    * Load the route's models from the database, parents first so each child
-   * is scoped to its parent. Reports the first binding without a row.
+   * is scoped to its parent, going on from those `loaded` already holds.
+   * Reports the first binding without a row.
    */
   // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Drizzle adapter awaits native query builders sequentially to enforce parent binding scope before returning HTTP results.
   private async resolveBindings<Database>(
@@ -880,18 +893,18 @@ export class EffectRouteBuilder<
     plan: readonly CompiledRouteBinding[],
     db: Database,
     userId: UserId | undefined,
+    loaded: LoadingModels
   ): Promise<BindingLoadOutcome> {
-    if (plan.length === 0) {
-      return { models: new Map(), recordTags: [] }
+    const { models, rows, recordTags } = loaded
+    const pending = plan.filter((binding) => !rows.has(binding.param))
+
+    if (pending.length === 0) {
+      return { models, recordTags: [...recordTags] }
     }
 
     const { eq, and, isNull } = await loadDrizzle()
 
-    const models = new Map<string, S.Schema.Type<typeof S.Unknown>>()
-    const rows = new Map<string, object>()
-    const recordTags: string[] = []
-
-    for (const binding of plan) {
+    for (const binding of pending) {
       const rawParam = c.req.param(binding.param)
 
       if (!rawParam) {
@@ -1005,9 +1018,11 @@ export class EffectRouteBuilder<
         throw RouteConfigurationError.ambiguousBinding(binding.param, binding.tableName, binding.column)
       }
 
+      const model = await decodeBoundRow(binding, result)
+
       // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
       rows.set(binding.param, result)
-      models.set(binding.param, await decodeBoundRow(binding, result))
+      models.set(binding.param, model)
       const key: unknown = Object.getOwnPropertyDescriptor(result, binding.primaryKey)?.value
 
       if (key !== undefined && key !== null) {
@@ -1015,7 +1030,7 @@ export class EffectRouteBuilder<
       }
     }
 
-    return { models, recordTags }
+    return { models, recordTags: [...recordTags] }
   }
 
   private createHandler<R>(
@@ -1116,17 +1131,23 @@ export class EffectRouteBuilder<
       const decided = new Set<string>()
       const undecided = (): string | undefined => guarded.find((name) => !decided.has(name))
 
+      // The models this request has loaded, which each later load goes on
+      // from, one load at a time.
+      const loading: LoadingModels = { models: new Map(), rows: new Map(), recordTags: [] }
+      const loadingLock = Semaphore.makeUnsafe(1)
+
       // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Drizzle adapter awaits native query builders sequentially to enforce parent binding scope before returning a typed outcome.
       const loadModels = async (
         bindingSchema: object,
         parsers: RouteBindingsConfig,
         db: object,
-        userId: UserId | undefined
+        userId: UserId | undefined,
+        count: number
       ): Promise<BindingLoadOutcome> => {
         try {
           bindingPlanPromise ??= compileBindingPlan(modelBindings, bindingSchema, parsers)
 
-          return await this.resolveBindings(c, await bindingPlanPromise, db, userId)
+          return await this.resolveBindings(c, (await bindingPlanPromise).slice(0, count), db, userId, loading)
         } catch (cause) {
           // Misconfigured bindings are typed failures; anything else, such as
           // a failed query, is a defect for the error boundary.
@@ -1137,14 +1158,20 @@ export class EffectRouteBuilder<
       }
 
       // Models load through the request's DatabaseService, so a database a
-      // test provides with testEnv serves bound() as it serves dbQuery.
-      const loadAllModels = (
+      // test provides with testEnv serves bound() as it serves dbQuery. The
+      // first `count` of them load, after any loaded already.
+      const loadModelsThrough = (
         database: Option.Option<object>,
-        userId: UserId | undefined
+        userId: UserId | undefined,
+        count: number
       ): Effect.Effect<LoadedModels, BoundModelError> =>
         Effect.gen(function* () {
           if (!configuredBindings || modelBindings.length === 0) {
             return { models: new Map(), recordTags: [] }
+          }
+
+          if (loading.rows.size >= count) {
+            return { models: loading.models, recordTags: [...loading.recordTags] }
           }
 
           if (Option.isNone(database)) {
@@ -1154,7 +1181,7 @@ export class EffectRouteBuilder<
           const db = database.value
 
           const outcome = yield* Effect.promise(() =>
-            loadModels(schema ?? {}, configuredBindings, db, userId)
+            loadModels(schema ?? {}, configuredBindings, db, userId, count)
           )
 
           if ('failure' in outcome) return yield* outcome.failure
@@ -1170,21 +1197,22 @@ export class EffectRouteBuilder<
           return outcome
         })
 
-      // bound() and the route's cache tags read the same models, loaded once.
+      // bound() and the route's cache tags read the same models, each loaded once.
       const boundModelsLayer = Layer.effectContext(
         Effect.gen(function* () {
           const database = yield* Effect.serviceOption(DatabaseService)
           // The signed-in user, whose id a binding only its owner may load is
-          // looked up by, read when the models first load rather than now, so
-          // a layer the route provides, such as an API key's, has given it.
+          // looked up by, read when the models load rather than now, so a
+          // layer the route provides, such as an API key's, has given it.
           // AuthUserService holds the user and the session.
-          const load = yield* Effect.cached(Effect.gen(function* () {
+          const loadThrough = (count: number) => loadingLock.withPermits(1)(Effect.gen(function* () {
             const signedIn = yield* Effect.serviceOption(AuthUserService)
             const user: unknown = Option.isSome(signedIn) ? Reflect.get(signedIn.value, 'user') : undefined
             const userId: unknown = user instanceof Object ? Reflect.get(user, 'id') : undefined
 
-            return yield* loadAllModels(database, isUserId(userId) ? userId : undefined)
+            return yield* loadModelsThrough(database, isUserId(userId) ? userId : undefined, count)
           }))
+          const load = loadThrough(modelBindings.length)
 
           const models = BoundModels.of({
             get: (key) => {
@@ -1201,9 +1229,19 @@ export class EffectRouteBuilder<
               }
 
               return Effect.flatMap(isDeciding, (deciding) => {
-                if (deciding) decided.add(key)
+                if (deciding) {
+                  decided.add(key)
 
-                const unguarded = deciding ? undefined : undecided()
+                  // A guard decides from the record it reads and those before
+                  // it, so the records under it, such as an organization's
+                  // project, are looked up only once the guards have let the
+                  // visitor in: a visitor one turns away learns only that.
+                  const through = modelBindings.findIndex((binding) => binding.param === key) + 1
+
+                  return Effect.map(loadThrough(through), (loaded) => loaded.models.get(key))
+                }
+
+                const unguarded = undecided()
 
                 return unguarded === undefined
                   ? Effect.map(load, (loaded) => loaded.models.get(key))

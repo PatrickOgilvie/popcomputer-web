@@ -19,7 +19,9 @@ record at all is its binding's to say, with `ownedBy`, `publicWhen` or
 `public`, as [Route model binding](route-models.md#who-may-load-a-record)
 shows: a guard decides it for a rule a column cannot state, such as
 membership of an organization, whose binding says `guarded: true`. Such a
-record loads only once a guard has read it. A layer that reads it for some
+record loads only once a guard has read it, and the guard's read loads none
+of the records under it, such as the organization's project, so a stranger
+the guard turns away gets its answer whether the project exists or not. A layer that reads it for some
 other reason, such as breadcrumbs, is no guard, and a route whose records
 are asked for before a guard has read it fails
 (`WEB_RTE_606_BINDING_ACCESS_INVALID`), so provide the guard before any
