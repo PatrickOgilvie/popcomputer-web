@@ -516,11 +516,11 @@ describe('Page middleware', () => {
 
     test('never sends an Inertia visit to a javascript: or data: URL, which Inertia would assign to window.location.href', async () => {
       const app = createApp()
-      app.post('/continue', async (c) => c.redirect(String((await c.req.parseBody()).next), 303))
+      app.post('/continue', (c) => c.redirect(c.req.query('next') ?? '/', 303))
       const answered: string[] = []
 
       for (const next of ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', ' javascript:alert(1)', 'java\tscript:alert(1)', 'data:text/html,<script>alert(1)</script>']) {
-        const res = await app.request('/continue', { method: 'POST', headers: { [HEADERS.INERTIA]: 'true' }, body: new URLSearchParams({ next }) })
+        const res = await app.request(`/continue?next=${encodeURIComponent(next)}`, { method: 'POST', headers: { [HEADERS.INERTIA]: 'true' } })
 
         if (res.status !== 303 || res.headers.has(HEADERS.LOCATION)) answered.push(`${JSON.stringify(next)} -> ${res.status} ${res.headers.get(HEADERS.LOCATION)}`)
       }

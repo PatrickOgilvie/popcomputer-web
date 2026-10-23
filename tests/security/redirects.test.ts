@@ -16,6 +16,18 @@ import { as, asJson, createApp } from './app'
 /** Whether a URL, resolved as a browser resolves a Location, stays on the application's origin. */
 const staysHome = (url: string) => new URL(url, 'http://localhost/after-sign-in').origin === 'http://localhost' && !/^\s*javascript:/i.test(url)
 
+/** A same-site post's headers, as Inertia sends them for a visit when `inertia` is true. */
+const postHeaders = (inertia: boolean, headers: Readonly<Record<string, string>> = {}): Headers => {
+  const sent = new Headers({ Origin: 'http://localhost', ...headers })
+
+  if (inertia) {
+    sent.set('X-Inertia', 'true')
+    sent.set('X-Inertia-Version', '1')
+  }
+
+  return sent
+}
+
 describe('the page to return to after signing in', () => {
   test('is never another site, whatever the redirect parameter says', async () => {
     const { app } = createApp()
@@ -78,7 +90,7 @@ describe('the page a form goes back to', () => {
     const back = async (referer: string, inertia = false) => {
       const res = await app.request('http://localhost/go-back', {
         method: 'POST',
-        headers: { Referer: referer, Origin: 'http://localhost', ...(inertia ? { 'X-Inertia': 'true' } : {}) },
+        headers: postHeaders(inertia, { Referer: referer }),
       }, as('ada'))
 
       return `${res.status} ${res.headers.get('Location') ?? res.headers.get('X-Inertia-Location')}`
@@ -110,7 +122,7 @@ describe('a redirect to a URL a form names', () => {
   const post = (app: ReturnType<typeof createApp>['app'], path: string, next: string, inertia: boolean) =>
     app.request(`http://localhost${path}`, {
       method: 'POST',
-      headers: { Origin: 'http://localhost', ...(inertia ? { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } : {}) },
+      headers: postHeaders(inertia),
       body: new URLSearchParams({ next }),
     }, as('ada'))
 
@@ -158,7 +170,7 @@ describe('a redirect to a path filled from fields a form names', () => {
       for (const inertia of [true, false]) {
         const res = await app.request('http://localhost/go-to-repository', {
           method: 'POST',
-          headers: { Origin: 'http://localhost', ...(inertia ? { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } : {}) },
+          headers: postHeaders(inertia),
           body: new URLSearchParams({ owner, repo }),
         }, as('ada'))
         const location = res.headers.get('X-Inertia-Location') ?? res.headers.get('Location')
