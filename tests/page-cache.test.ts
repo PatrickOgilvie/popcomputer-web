@@ -9,7 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { Effect } from 'effect'
+import { Context, Effect, Layer } from 'effect'
 import { Hono, type MiddlewareHandler } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { effectRoutes } from '../src/effect/routing.js'
@@ -133,6 +133,15 @@ const createApp = (options: AppOptions = {}) => {
       const request = yield* RequestService
 
       return yield* render('Greeting', { language: request.header('Accept-Language') ?? 'en' })
+    })
+  )
+  routes.get(
+    '/visitor',
+    Effect.gen(function* () {
+      yield* count('visitor')
+      const request = yield* RequestService
+
+      return yield* render('Visitor', { address: request.raw().headers.get('CF-Connecting-IP') ?? 'unknown' })
     })
   )
   routes.get(
@@ -281,7 +290,28 @@ describe('default page cache', () => {
     const env = production()
 
     expect((await get(app, '/greeting', { headers: { 'Accept-Language': 'fr' } }, env)).status).toBe('DYNAMIC')
+    expect((await get(app, '/visitor', { headers: { 'CF-Connecting-IP': '203.0.113.7' } }, env)).status).toBe('DYNAMIC')
     expect((await get(app, '/state', {}, env)).status).toBe('DYNAMIC')
+    expect(cache.entries.size).toBe(0)
+  })
+
+  test("a page using a request service built from the request's headers renders fresh", async () => {
+    class Tenant extends Context.Service<Tenant, { readonly name: string }>()('test/Tenant') {}
+
+    const app = new Hono<PageCacheEnv>()
+    const web = setupWeb(app, { version: '1.0.0', render: (page) => `<html>${JSON.stringify(page)}</html>` })
+    web.services({ request: (c) => Layer.succeed(Tenant, { name: c.req.header('X-Tenant') ?? 'public' }) })
+    effectRoutes<PageCacheEnv, Tenant>(app).get('/report', Effect.gen(function* () {
+      const tenant = yield* Tenant
+
+      return yield* render('Report', { tenant: tenant.name })
+    }))
+
+    const acme = await get(app, '/report', { headers: { 'X-Tenant': 'acme' } }, production())
+    const guest = await get(app, '/report', {}, production())
+
+    expect([acme.status, guest.status]).toEqual(['DYNAMIC', 'DYNAMIC'])
+    expect(JSON.parse(guest.body.slice('<html>'.length, -'</html>'.length)).props.tenant).toBe('public')
     expect(cache.entries.size).toBe(0)
   })
 

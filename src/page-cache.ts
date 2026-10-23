@@ -10,8 +10,9 @@
  * - a Cloudflare binding on `c.env` (D1, KV, R2, Durable Objects, service
  *   bindings, AI, Hyperdrive…), which covers database reads however they are
  *   made;
- * - request headers through `RequestService`, or request state through
- *   `RequestStateService`;
+ * - request headers or the raw request through `RequestService`, or through
+ *   the context a `web.services` request callback receives, or request
+ *   state through `RequestStateService`;
  * - a route model binding (`{project}` placeholders).
  *
  * Signed-in requests, requests carrying app cookies or `Authorization`,

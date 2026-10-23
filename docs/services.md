@@ -58,7 +58,10 @@ names it in development. The `request` layer is built for each request from
 its context and bindings, when the request runs an action: a plain Hono
 route never calls `request(c)`. Anything holding a request's I/O, such as a D1, KV or
 Hyperdrive binding, belongs in `request`: Workers forbid using it from
-another request. A request service replaces an application service with the
+another request. A request service built from a request header, `c.req.raw`
+or `c.req.url`, such as a tenant named by `X-Tenant`, makes every page that
+runs it render per request, as reading a header does in an action, since no
+cache key holds them. A request service replaces an application service with the
 same tag. For services only some routes need, use `routes.provide(layer)`.
 
 A layer's type is inferred, even when it reads the database, `config` or

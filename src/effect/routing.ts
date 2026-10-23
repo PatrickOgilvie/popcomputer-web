@@ -15,6 +15,7 @@ import {
   getEffectBindings,
   getEffectRuntime,
   getEffectSchema,
+  observedRequestContext,
   setEffectBridgeConfig,
   type EffectBridgeConfig,
 } from './bridge.js'
@@ -1040,7 +1041,7 @@ export class EffectRouteBuilder<
       if (requestRuntime && bridgeConfig?.services) {
         contextLayer = Layer.merge(
           contextLayer,
-          bridgeConfig.services(c).pipe(Layer.provide(bindingsConfiguration(c.env)))
+          bridgeConfig.services(observedRequestContext(c)).pipe(Layer.provide(bindingsConfiguration(c.env)))
         )
       }
 

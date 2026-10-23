@@ -7,8 +7,9 @@ on every request, when it reads:
 
 - a binding on `c.env` (D1, KV, R2, Durable Objects, service bindings, AI,
   Hyperdrive), which covers database queries however they are made;
-- a request header or request state through `RequestService` or
-  `RequestStateService`;
+- a request header, the raw request or request state, through
+  `RequestService` or `RequestStateService`, or through the context a
+  `web.services` request callback receives;
 - a route model binding.
 
 Cached pages are keyed by deploy. Bind the version metadata so each deploy

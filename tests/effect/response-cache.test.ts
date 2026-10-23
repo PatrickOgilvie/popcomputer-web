@@ -11,8 +11,9 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Hono } from 'hono'
-import { Effect, Layer, Schema as S } from 'effect'
+import { Hono, type Context as HonoContext } from 'hono'
+import type { BlankEnv } from 'hono/types'
+import { Context, Effect, Layer, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { web } from '../../src/middleware.js'
@@ -243,6 +244,76 @@ describe('cache route option', () => {
 
       expect({ path, status: res.status, cacheControl: res.headers.get('Cache-Control') }).toEqual({ path, status: 200, cacheControl: 'no-store' })
     }
+  })
+
+  test('a response that read the raw request is never stored, from the action or a layer guarding it', async () => {
+    const app = createApp()
+    const routes = effectRoutes(app)
+    // The raw request carries every header, and Cloudflare's cf data.
+    const RawKeyAuth = Layer.effectDiscard(Effect.flatMap(RequestService, (request) => Effect.sync(() => request.raw().headers.get('X-Api-Key'))))
+
+    routes.get('/api/account', Effect.flatMap(RequestService, (request) =>
+      Effect.sync(() => Response.json({ owner: request.raw().headers.get('X-Api-Key') === 'ada-key' ? 'ada' : null }))
+    ), { cache: { maxAge: 60 } })
+    routes.provide(RawKeyAuth).get('/account', render('Account'), { cache: { maxAge: 60 } })
+
+    for (const path of ['/api/account', '/account']) {
+      const res = await app.request(path, { headers: { 'X-Api-Key': 'ada-key' } })
+
+      expect({ path, status: res.status, cacheControl: res.headers.get('Cache-Control'), cdn: res.headers.get('Cloudflare-CDN-Cache-Control') })
+        .toEqual({ path, status: 200, cacheControl: 'no-store', cdn: null })
+    }
+  })
+
+  test("a request service built from the request's headers, raw request or URL is never stored", async () => {
+    class Tenant extends Context.Service<Tenant, { readonly name: string | null }>()('test/Tenant') {}
+
+    const reads: ReadonlyArray<readonly [string, (c: HonoContext) => string | null]> = [
+      ['header', (c) => c.req.header('X-Tenant') ?? null],
+      ['raw', (c) => c.req.raw.headers.get('X-Tenant')],
+      ['url', (c) => new URL(c.req.url).hostname],
+    ]
+    const report = Effect.gen(function* () {
+      const tenant = yield* Tenant
+
+      return Response.json({ tenant: tenant.name })
+    })
+
+    for (const [read, tenantOf] of reads) {
+      const services = (c: HonoContext) => Layer.succeed(Tenant, { name: tenantOf(c) })
+
+      // web.services' request callback reaches routes through the bridge, or
+      // through the route builder's own configuration.
+      const bridged = new Hono()
+      bridged.use('*', web({ version: '1.0.0', render: (page) => JSON.stringify(page) }))
+      bridged.use('*', effectBridge({ services }))
+      effectRoutes<BlankEnv, Tenant>(bridged).get('/report', report, { cache: { maxAge: 60 } })
+
+      const routed = createApp()
+      effectRoutes(routed, { services }).get('/report', report, { cache: { maxAge: 60 } })
+
+      for (const [composition, app] of [['bridge', bridged], ['routes', routed]] as const) {
+        const res = await app.request('https://acme.example.com/report', { headers: { 'X-Tenant': 'acme' } })
+
+        expect({ read, composition, body: await res.json(), cacheControl: res.headers.get('Cache-Control') })
+          .toEqual({ read, composition, body: { tenant: expect.any(String) }, cacheControl: 'no-store' })
+      }
+    }
+  })
+
+  test('a request service that reads no request data leaves the route cacheable', async () => {
+    class Plan extends Context.Service<Plan, { readonly tier: string }>()('test/Plan') {}
+
+    const app = createApp()
+    effectRoutes(app, { services: () => Layer.succeed(Plan, { tier: 'free' }) }).get(
+      '/plans',
+      Effect.map(Plan, (plan) => Response.json(plan)),
+      { cache: { maxAge: 60 } }
+    )
+
+    const res = await app.request('/plans')
+
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=60')
   })
 
   test('requests with Authorization are never stored', async () => {
