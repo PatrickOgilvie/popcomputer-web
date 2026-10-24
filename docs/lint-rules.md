@@ -29,6 +29,7 @@ The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `no-auth-api-in-action` | `auth.api.signInEmail(...)` and Better Auth's other endpoints called from an action, which skips its rate limits | `betterAuthRedirect('signInEmail', { body }, ...)` or `betterAuthCall(...)` |
 | `no-floating-effect` | A framework call that builds an Effect, written as a statement, so nothing runs it: `dbMutation(...)`, `flash(...)`, `redirect(...)`, `cart.set(...)`, `Effect.log(...)`; and `yield` without `*` | `yield* dbMutation(...)`, or `return` it |
 | `no-module-level-mutable-state` | A module-scope `let` or `var`, or a module-scope `Map`, `Set` or array a function changes, outside tests, configuration, scripts and pages: a Worker's isolate shares it with every request, so one visitor's data can reach another's | Values inside the action, `web.services({ app })` for a service built once, `cache(key, effect, schema, { ttl, tags })` for data kept across requests |
+| `no-testing-in-production` | An import of `@popcomputer/web/testing` (whose `signedIn` signs a request in with no session) from a file that is not a test | The helpers in tests only; `authorize()` or `currentUser` in the application |
 
 ## What each rule sees
 
@@ -65,6 +66,14 @@ A limit listed here is a known boundary of the rule, not a way around it.
   this one changes, or a collection built by a function call
   (`const seen = makeCache()`). A local name that shadows a module-scope
   collection inside a function counts as the collection.
+- `no-testing-in-production`. Covers: `import`, `export ... from`,
+  `import('...')` and `require('...')` of `@popcomputer/web/testing` with the
+  source written as a string, in any file that is not a test as
+  `no-module-level-mutable-state` counts them. `import type` passes: the
+  build erases it. Does not see: a production module importing a test
+  helper that imports the testing helpers (`src/app.ts` importing
+  `./test-db`), a source built at runtime, or a re-export of the helpers
+  under another package's name.
 
 ## The Effect language service
 

@@ -21,6 +21,91 @@ import { isPagePath, isTestFile, isToolingPath, projectPath } from './files.js'
 /** The framework's entrypoint for page components, whose importers run in the browser. */
 const WEB_REACT = '@popcomputer/web/react'
 
+/** A module a file loads, and whether only its types, which the build erases. */
+interface ModuleSource {
+  readonly node: AstNode
+  readonly source: string
+  readonly typeOnly: boolean
+}
+
+interface ModuleDeclaration extends AstNode {
+  readonly source?: { readonly value?: unknown } | null
+  readonly importKind?: string
+  readonly exportKind?: string
+  readonly specifiers?: ReadonlyArray<{ readonly importKind?: string; readonly exportKind?: string }>
+}
+
+/** The node types `moduleSource` reads, which a rule visits with it. */
+const MODULE_NODES = ['ImportDeclaration', 'ExportNamedDeclaration', 'ExportAllDeclaration', 'ImportExpression', 'CallExpression'] as const
+
+/**
+ * The module a node loads, when its source is written as a string: an
+ * import, a re-export, `import('...')` or `require('...')`.
+ */
+function moduleSource(node: AstNode): ModuleSource | undefined {
+  if (node.type === 'CallExpression') {
+    const call = node as CallExpression
+    const callee = unwrap(call.callee)
+    const argument = call.arguments[0]
+
+    if (!isIdentifier(callee) || callee.name !== 'require' || argument?.type !== 'Literal') return undefined
+
+    const value = (argument as { readonly value?: unknown }).value
+
+    return typeof value === 'string' ? { node, source: value, typeOnly: false } : undefined
+  }
+
+  const declaration = node as ModuleDeclaration
+  const value = declaration.source?.value
+
+  if (typeof value !== 'string') return undefined
+
+  const specifiers = declaration.specifiers ?? []
+  const typeOnly = declaration.importKind === 'type'
+    || declaration.exportKind === 'type'
+    || (specifiers.length > 0 && specifiers.every((specifier) => (specifier.importKind ?? specifier.exportKind) === 'type'))
+
+  return { node, source: value, typeOnly }
+}
+
+/** A visitor that hands each module the file loads to `found`. */
+function visitModules(found: (source: ModuleSource) => void): Record<(typeof MODULE_NODES)[number], (node: AstNode) => void> {
+  const visit = (node: AstNode) => {
+    const source = moduleSource(node)
+
+    if (source !== undefined) found(source)
+  }
+
+  return Object.fromEntries(MODULE_NODES.map((type) => [type, visit])) as Record<(typeof MODULE_NODES)[number], (node: AstNode) => void>
+}
+
+const TESTING = '@popcomputer/web/testing'
+
+export const noTestingInProduction: LintRule = {
+  meta: {
+    type: 'problem',
+    docs: { description: "The testing helpers, which fake the session, the bindings and the database, stay in tests." },
+    messages: {
+      testing:
+        "@popcomputer/web/testing is for tests: signedIn signs a request in with no session, testEnv replaces the bindings, testD1 the database. Use it only in a test (a *.test.ts file, tests/, or the file bunfig.toml's [test] preload names), and read the visitor in the application with authorize() or currentUser.",
+    },
+  },
+  create(context) {
+    const found: ModuleSource[] = []
+
+    return {
+      ...visitModules((module) => {
+        if (!module.typeOnly && (module.source === TESTING || module.source.startsWith(`${TESTING}/`))) found.push(module)
+      }),
+      'Program:exit'() {
+        if (found.length === 0 || isTestFile(context, projectPath(context))) return
+
+        for (const { node } of found) context.report({ node, messageId: 'testing' })
+      },
+    }
+  },
+}
+
 interface VariableDeclaration extends AstNode {
   readonly type: 'VariableDeclaration'
   readonly kind: string
