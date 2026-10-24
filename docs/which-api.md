@@ -100,3 +100,12 @@ and the lint rules name it where an action reaches for something else.
 | Use the production database family | PGlite, migrated with `applyMigrations`, or a D1 database of each test's own from `testD1` | [A database for tests](test-database.md) |
 | Sign in through an OAuth provider in a test | `testOAuthProvider({ ... })`, then `signIn(browser, path, person)` | [Signing in with an OAuth provider](auth-plugins.md#signing-in-with-an-oauth-provider) |
 | Run a Queue consumer | `testBatch(bodies)` | [Scheduled and queued work](background.md#scheduled-and-queued-work) |
+
+**The agent fence**
+
+| Task | Use | See |
+| --- | --- | --- |
+| Run the checks before every commit | `.githooks/pre-commit`, installed with `git config core.hooksPath .githooks` | [The commit gate](agent-fence.md#the-commit-gate) |
+| Refuse a command that skips the gate, and ask the owner before a deploy | `popweb-fence hook` in `.claude/settings.json` or `.cursor/hooks.json` | [The command hook](agent-fence.md#the-command-hook) |
+| Check a command or an edit from an agent's own code | `commandPolicy(command, { scripts })`, `filePolicy(path)` | [Other agents](agent-fence.md#other-agents) |
+| List every disable directive, and keep the count from rising | `popweb-fence debt`, and `--check` against `lint-debt.json` | [The debt report](agent-fence.md#the-debt-report) |

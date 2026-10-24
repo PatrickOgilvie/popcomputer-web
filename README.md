@@ -35,6 +35,7 @@ Start here:
 - [Which API for which task](docs/which-api.md): the one API for each task
 - [Reading the type errors](docs/type-errors.md): what each type error means, and what to do
 - [Lint rules](docs/lint-rules.md): what each rule reports, and what to use instead
+- [The agent fence](docs/agent-fence.md): the commit gate, the command hook that refuses a bypass and asks before a deploy, and the debt report
 
 Setting up:
 
@@ -125,6 +126,9 @@ sets an application up.
 Coding agents should read `node_modules/@popcomputer/web/AGENTS.md`, a short
 rulebook naming the one API to use for each task, and the files in
 `node_modules/@popcomputer/web/docs/` as a task needs them.
+[The agent fence](docs/agent-fence.md) holds them to it with checks: a commit
+gate, a hook that refuses a command skipping it and asks the owner before a
+deploy, and a count of disable directives that only shrinks.
 
 ## Data flow
 
