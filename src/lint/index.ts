@@ -44,6 +44,7 @@ import {
   noUnscopedWrite,
   noWriteInDbQuery,
 } from './database.js'
+import { requireDisableReason } from './directives.js'
 import { noFloatingEffect } from './effects.js'
 
 export type { LintRule } from './ast.js'
@@ -73,6 +74,7 @@ export const rules: Readonly<Record<string, LintRule>> = {
   'no-module-level-mutable-state': noModuleLevelMutableState,
   'no-testing-in-production': noTestingInProduction,
   'no-server-imports-in-pages': noServerImportsInPages,
+  'require-disable-reason': requireDisableReason,
 }
 
 /** The plugin Oxlint's `jsPlugins` or ESLint's `plugins` loads. */

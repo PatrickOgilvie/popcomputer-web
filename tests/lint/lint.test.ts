@@ -99,6 +99,10 @@ describe('@popcomputer/web/lint', () => {
     expect(found(lint('invalid-bindings.ts'))).toEqual(expected('invalid-bindings.ts').sort())
   })
 
+  test('reports each comment that turns a framework rule off without a reason', () => {
+    expect(found(lint('invalid-directives.ts'))).toEqual(expected('invalid-directives.ts').sort())
+  })
+
   test('reports each Effect built and never run', () => {
     expect(found(lint('invalid-effects.ts'))).toEqual(expected('invalid-effects.ts').sort())
   })

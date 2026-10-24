@@ -31,6 +31,7 @@ The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `no-module-level-mutable-state` | A module-scope `let` or `var`, or a module-scope `Map`, `Set` or array a function changes, outside tests, configuration, scripts and pages: a Worker's isolate shares it with every request, so one visitor's data can reach another's | Values inside the action, `web.services({ app })` for a service built once, `cache(key, effect, schema, { ttl, tags })` for data kept across requests |
 | `no-testing-in-production` | An import of `@popcomputer/web/testing` (whose `signedIn` signs a request in with no session) from a file that is not a test | The helpers in tests only; `authorize()` or `currentUser` in the application |
 | `no-server-imports-in-pages` | A page or component (under `src/pages/`, or importing `@popcomputer/web/react`) importing server code: `@popcomputer/web`, `/effect`, `/auth`, `/env`, `/cache`, `/drizzle`, `drizzle-orm`, the Drizzle schema, the env module or an action | Props declared in `src/pages.ts`, `href` from `@popcomputer/web/paths`, and `import type` for types |
+| `require-disable-reason` | A comment turning off one of these rules, or every rule, with no reason after `--` | `// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`, or the API the rule names |
 
 ## What each rule sees
 
@@ -90,6 +91,18 @@ A limit listed here is a known boundary of the rule, not a way around it.
   module that imports server code itself (`../forms` importing `../db`),
   other path aliases, or server-only packages besides Drizzle, such as
   `better-auth` itself.
+- `require-disable-reason`. Covers: every `oxlint-disable`,
+  `oxlint-disable-line`, `oxlint-disable-next-line` and `eslint-disable*`
+  comment, line or block, that names a `popcomputer-web/` rule, or names no
+  rule and so turns off all of them, without words after `--` (two or more
+  dashes, with a space on each side). It reads the directives as Oxlint and
+  ESLint parse them, `sourceCode.getDisableDirectives()`, which find the
+  reason and require none. A single dash, a bare `--` or `-- .` gives no
+  reason. Does not see: a comment that turns this rule off, which hides its
+  own report, so a file-wide `/* oxlint-disable */` with no rules, as
+  generated files carry, passes; whether the reason is true; and a rule
+  turned off in the configuration, `webLint({ 'no-sql-interpolation': 'off'
+  })` or `ignorePatterns`.
 
 ## The Effect language service
 
@@ -134,7 +147,8 @@ TypeScript 5 or 6 the package is `@effect/language-service`, with
 ## Turning a rule off
 
 A line that breaks a rule on purpose says why, as
-`// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`.
+`// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`,
+and `require-disable-reason` reports one that does not.
 `webLint({ 'no-catch-all-in-action': 'warn' })` changes a rule's severity, and
 `webLint()` spreads into a larger configuration,
 `defineConfig({ ...webLint(), ignorePatterns: ['dist'] })`.
