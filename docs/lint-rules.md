@@ -28,6 +28,7 @@ The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `prefer-checked-config` | Effect's `Config.String('NAME')` and its siblings in an application of the framework | `config.string('NAME')`, which checks the name against the Worker's bindings |
 | `no-auth-api-in-action` | `auth.api.signInEmail(...)` and Better Auth's other endpoints called from an action, which skips its rate limits | `betterAuthRedirect('signInEmail', { body }, ...)` or `betterAuthCall(...)` |
 | `no-floating-effect` | A framework call that builds an Effect, written as a statement, so nothing runs it: `dbMutation(...)`, `flash(...)`, `redirect(...)`, `cart.set(...)`, `Effect.log(...)`; and `yield` without `*` | `yield* dbMutation(...)`, or `return` it |
+| `no-module-level-mutable-state` | A module-scope `let` or `var`, or a module-scope `Map`, `Set` or array a function changes, outside tests, configuration, scripts and pages: a Worker's isolate shares it with every request, so one visitor's data can reach another's | Values inside the action, `web.services({ app })` for a service built once, `cache(key, effect, schema, { ttl, tags })` for data kept across requests |
 
 ## What each rule sees
 
@@ -48,6 +49,22 @@ A limit listed here is a known boundary of the rule, not a way around it.
   never yielded, one built in an array or an object, a cookie imported under
   another name, or the framework imported through a file that re-exports it.
   The Effect language service sees all of these by type.
+- `no-module-level-mutable-state`. Covers: `let` and `export let` at module
+  scope, `var` anywhere outside a function, and a module-scope `const` holding
+  a `new Map()`, `new Set()` or an array literal that a function changes
+  (`.set`, `.add`, `.push`, `.delete` and the other mutating methods, or an
+  assignment to one of its elements), in every file but tests (`*.test.ts`,
+  `*.spec.ts`, `test-*.ts`, anything under `test/`, `tests/` or
+  `__tests__/`, and the file `bunfig.toml`'s `[test] preload` names), tools'
+  configuration (`*.config.ts`), declarations
+  (`*.d.ts`), `scripts/`, and pages (under `src/pages/`, or importing
+  `@popcomputer/web/react`), which run in one visitor's browser. A collection
+  filled as the module loads and only read after is the same for every
+  visitor, and passes. Does not see: an object literal whose properties a
+  function changes, a class's static fields, state another module holds and
+  this one changes, or a collection built by a function call
+  (`const seen = makeCache()`). A local name that shadows a module-scope
+  collection inside a function counts as the collection.
 
 ## The Effect language service
 

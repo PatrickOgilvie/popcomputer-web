@@ -12,9 +12,9 @@
  * - A fence whose first line is `// src/<path>.ts`, or `// scripts/<path>.ts`
  *   for a script beside the application, becomes that file, exactly as
  *   written. It must import everything it uses.
- * - Any other fence is a fragment. It gets a one-line prelude importing every
- *   entrypoint's public values, common Effect modules, the Quick start's `app` and the
- *   stubs in `app/src/doc-stubs.ts`, minus names the fragment declares or
+ * - Any other fence is a fragment. It gets a one-line prelude importing the
+ *   entrypoints' public values, common Effect modules, the Quick start's `app` and the
+ *   stubs in `app/src/doc-stubs.ts` that it uses, minus names the fragment declares or
  *   imports itself. A fragment that uses `yield*` outside a generator is
  *   wrapped in `Effect.gen`.
  *
@@ -156,6 +156,25 @@ function importLine(names: ReadonlyArray<string>, from: string): string {
   return names.length > 0 ? `import { ${names.join(', ')} } from '${from}'; ` : ''
 }
 
+/** Whether a fragment's source names `name`, as a word. */
+const mentions = (source: string, name: string) => new RegExp(`(?<![\\w$])${name.replaceAll('$', '\\$')}(?![\\w$])`).test(source)
+
+/**
+ * Whether a fragment is a test's: it imports `bun:test`, or uses a name of
+ * `@popcomputer/web/testing` it does not declare itself. It is written as a
+ * `*.test.ts` file, where the lint rules expect the testing helpers and a
+ * test's module state.
+ */
+function isTestFragment(fence: Fence, entrypointValues: ReadonlyMap<string, ReadonlyArray<string>>): boolean {
+  const source = fence.lines.join('\n')
+  const taken = localNames(source)
+  const testing = entrypointValues.get('@popcomputer/web/testing') ?? []
+
+  return /from ['"]bun:test['"]/.test(source)
+    || source.includes("'@popcomputer/web/testing'")
+    || testing.some((name) => !taken.has(name) && mentions(source, name))
+}
+
 function buildFragment(
   fence: Fence,
   entrypointValues: ReadonlyMap<string, ReadonlyArray<string>>,
@@ -163,9 +182,15 @@ function buildFragment(
 ): OutputLine[] {
   const source = fence.lines.join('\n')
   const taken = localNames(source)
-  const free = (names: ReadonlyArray<string>) => names.filter((name) => !taken.has(name))
+  // Only the names the fragment uses, so its imports are an application file's: the lint rules read them.
+  const free = (names: ReadonlyArray<string>) => names.filter((name) => !taken.has(name) && mentions(source, name))
 
-  const effectNames = free(['Effect', 'Duration', 'Layer', 'Context'])
+  const needsGenerator = /yield\*/.test(source) && !/function\*/.test(source)
+  // The Effect.gen a generator fragment is wrapped in needs Effect too.
+  const effectNames = [...new Set([
+    ...free(['Effect', 'Duration', 'Layer', 'Context']),
+    ...(needsGenerator && !taken.has('Effect') ? ['Effect'] : []),
+  ])]
   const fromEffect = new Set([...effectNames, 'S'])
   const prelude =
     [...entrypointValues]
@@ -175,10 +200,10 @@ function buildFragment(
       )
       .join('') +
     importLine(effectNames, 'effect') +
-    (taken.has('S') ? '' : "import { Schema as S } from 'effect'; ") +
-    (taken.has('app') ? '' : "import app from '../app'; ") +
-    (taken.has('routes') ? '' : "import { routes } from '../app'; ") +
-    (taken.has('web') ? '' : "import { web } from '../app'; ") +
+    (taken.has('S') || !mentions(source, 'S') ? '' : "import { Schema as S } from 'effect'; ") +
+    (taken.has('app') || !mentions(source, 'app') ? '' : "import app from '../app'; ") +
+    (taken.has('routes') || !mentions(source, 'routes') ? '' : "import { routes } from '../app'; ") +
+    (taken.has('web') || !mentions(source, 'web') ? '' : "import { web } from '../app'; ") +
     importLine(free(stubNames), '../doc-stubs')
 
   // Imports stay at module scope; everything after them may need wrapping.
@@ -199,7 +224,6 @@ function buildFragment(
   })
   const imports = fence.lines.slice(0, bodyStart).map(toOutput)
   const body = fence.lines.slice(bodyStart).map((line, index) => toOutput(line, bodyStart + index))
-  const needsGenerator = /yield\*/.test(source) && !/function\*/.test(source)
 
   return [
     { text: prelude },
@@ -342,7 +366,8 @@ async function main(): Promise<number> {
   for (const fence of fences) {
     const header = FILE_HEADER.exec(fence.lines[0] ?? '')
     const fragmentName = fence.document.replace(/\.md$/, '').toLowerCase().replaceAll('/', '-')
-    const file = header ? header[1] : `src/fragments/${fragmentName}-${fence.startLine}.ts`
+    const extension = isTestFragment(fence, entrypointValues) ? '.test.ts' : '.ts'
+    const file = header ? header[1] : `src/fragments/${fragmentName}-${fence.startLine}${extension}`
     const target = join(outDir, file)
 
     if (existsSync(target)) {

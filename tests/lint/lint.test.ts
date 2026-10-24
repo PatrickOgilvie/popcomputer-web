@@ -3,6 +3,10 @@
  * The framework's lint rules, run by Oxlint itself over fixtures: each line
  * of an invalid fixture names the rules it breaks in an `// expect:`
  * comment, and the valid fixture breaks none.
+ *
+ * The rules that read where a file sits (a test, a script, a page) run over
+ * fixtures/.app, a small application's files. It is hidden because some of
+ * them are named like tests, and `bun test` skips hidden folders.
  */
 
 import { beforeAll, describe, expect, test } from 'bun:test'
@@ -35,22 +39,26 @@ beforeAll(async () => {
 })
 
 interface Diagnostic {
+  readonly file: string
   readonly rule: string
   readonly line: number
   readonly message: string
 }
 
-function lint(file: string): Diagnostic[] {
-  const result = spawnSync(oxlint, ['--disable-nested-config', '--config', config, '--format', 'json', file], {
+function lint(...files: ReadonlyArray<string>): Diagnostic[] {
+  // --no-ignore: Oxlint skips a hidden folder's files otherwise.
+  const result = spawnSync(oxlint, ['--disable-nested-config', '--no-ignore', '--config', config, '--format', 'json', ...files], {
     cwd: fixtures,
     encoding: 'utf8',
   })
-  const report: { diagnostics?: ReadonlyArray<{ code: string; message: string; labels: ReadonlyArray<{ span: { line: number } }> }> } =
-    JSON.parse(result.stdout || '{}')
+  const report: {
+    diagnostics?: ReadonlyArray<{ code: string; message: string; filename: string; labels: ReadonlyArray<{ span: { line: number } }> }>
+  } = JSON.parse(result.stdout || '{}')
 
   if (result.stderr.trim() !== '' && report.diagnostics === undefined) throw new Error(result.stderr)
 
   return (report.diagnostics ?? []).map((diagnostic) => ({
+    file: diagnostic.filename,
     rule: diagnostic.code.replace(/^.*\((.*)\)$/, '$1'),
     line: diagnostic.labels[0]?.span.line ?? 0,
     message: diagnostic.message,
@@ -68,6 +76,16 @@ function expected(file: string): string[] {
 
 const found = (diagnostics: ReadonlyArray<Diagnostic>) => diagnostics.map((diagnostic) => `${diagnostic.line} ${diagnostic.rule}`).sort()
 
+/** Every file of the fixture application, from the fixtures folder. */
+const appFiles = Array.from(new Bun.Glob('.app/**/*.{ts,tsx}').scanSync({ cwd: fixtures, dot: true })).sort()
+
+/** The rules the fixture application's files expect, as `file:line rule`. */
+const expectedInApp = () =>
+  appFiles.flatMap((file) => expected(file).map((entry) => `${file}:${entry}`)).sort()
+
+const foundInApp = (diagnostics: ReadonlyArray<Diagnostic>) =>
+  diagnostics.map((diagnostic) => `${diagnostic.file}:${diagnostic.line} ${diagnostic.rule}`).sort()
+
 describe('@popcomputer/web/lint', () => {
   test('reports each database mistake on its line', () => {
     expect(found(lint('invalid-database.ts'))).toEqual(expected('invalid-database.ts').sort())
@@ -83,6 +101,11 @@ describe('@popcomputer/web/lint', () => {
 
   test('reports each Effect built and never run', () => {
     expect(found(lint('invalid-effects.ts'))).toEqual(expected('invalid-effects.ts').sort())
+  })
+
+  test("reports by where a file sits: shared state in the Worker's modules", () => {
+    expect(appFiles).toContain('.app/src/routes.test.ts')
+    expect(foundInApp(lint(...appFiles))).toEqual(expectedInApp())
   })
 
   test('accepts the patterns the framework documents', () => {

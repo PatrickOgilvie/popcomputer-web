@@ -46,10 +46,14 @@ export interface TemplateLiteral extends AstNode {
 export interface ImportDeclaration extends AstNode {
   readonly type: 'ImportDeclaration'
   readonly source: { readonly value: string }
+  /** `type` for `import type { ... }`. */
+  readonly importKind?: string
   readonly specifiers: ReadonlyArray<{
     readonly type: string
     readonly local: Identifier
     readonly imported?: { readonly type: string; readonly name?: string; readonly value?: string }
+    /** `type` for `import { type X }`. */
+    readonly importKind?: string
   }>
 }
 
