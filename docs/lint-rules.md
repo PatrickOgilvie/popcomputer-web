@@ -30,6 +30,7 @@ The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `no-floating-effect` | A framework call that builds an Effect, written as a statement, so nothing runs it: `dbMutation(...)`, `flash(...)`, `redirect(...)`, `cart.set(...)`, `Effect.log(...)`; and `yield` without `*` | `yield* dbMutation(...)`, or `return` it |
 | `no-module-level-mutable-state` | A module-scope `let` or `var`, or a module-scope `Map`, `Set` or array a function changes, outside tests, configuration, scripts and pages: a Worker's isolate shares it with every request, so one visitor's data can reach another's | Values inside the action, `web.services({ app })` for a service built once, `cache(key, effect, schema, { ttl, tags })` for data kept across requests |
 | `no-testing-in-production` | An import of `@popcomputer/web/testing` (whose `signedIn` signs a request in with no session) from a file that is not a test | The helpers in tests only; `authorize()` or `currentUser` in the application |
+| `no-server-imports-in-pages` | A page or component (under `src/pages/`, or importing `@popcomputer/web/react`) importing server code: `@popcomputer/web`, `/effect`, `/auth`, `/env`, `/cache`, `/drizzle`, `drizzle-orm`, the Drizzle schema, the env module or an action | Props declared in `src/pages.ts`, `href` from `@popcomputer/web/paths`, and `import type` for types |
 
 ## What each rule sees
 
@@ -74,6 +75,21 @@ A limit listed here is a known boundary of the rule, not a way around it.
   helper that imports the testing helpers (`src/app.ts` importing
   `./test-db`), a source built at runtime, or a re-export of the helpers
   under another package's name.
+- `no-server-imports-in-pages`. Covers: in a file under `src/pages/`, or one
+  that imports `@popcomputer/web/react` (`import type` included), an import,
+  re-export, `import()` or `require()` of the framework's server entrypoints
+  (`@popcomputer/web`, `/effect`, `/auth`, `/env`, `/cache`, `/drizzle`),
+  `drizzle-orm`, or the application's own server modules by name, relative
+  or through a `@/` or `~/` alias: a file named `schema`, `auth-schema`,
+  `env`, `db`, `auth`, `app`, `routes` or `worker`, or one in an `actions/`,
+  `schema/` or `db/` folder. `import type` and `import { type X }` pass, so
+  a form reads its action's schema as `FormInput<typeof Schema>`;
+  `@popcomputer/web/paths`, `/schema` and `/endpoint` pass. Does not see: a
+  component outside `src/pages/` that does not import
+  `@popcomputer/web/react`, a server module under another name (`./data`), a
+  module that imports server code itself (`../forms` importing `../db`),
+  other path aliases, or server-only packages besides Drizzle, such as
+  `better-auth` itself.
 
 ## The Effect language service
 

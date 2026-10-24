@@ -228,3 +228,58 @@ export const noModuleLevelMutableState: LintRule = {
     }
   },
 }
+
+/** The framework's entrypoints for the server: setupWeb, actions and the database, Better Auth, bindings and the cache. */
+const SERVER_ENTRYPOINTS = new Set([
+  '@popcomputer/web',
+  '@popcomputer/web/effect',
+  '@popcomputer/web/auth',
+  '@popcomputer/web/env',
+  '@popcomputer/web/cache',
+  '@popcomputer/web/drizzle',
+])
+
+/** The application's server modules by file name: the Drizzle schema, the env module, the database, auth, setupWeb's app, routes and the Worker. */
+const SERVER_FILES = new Set(['schema', 'auth-schema', 'env', 'db', 'auth', 'app', 'routes', 'worker'])
+
+/** The application's folders of server modules. */
+const SERVER_FOLDERS = new Set(['actions', 'schema', 'db'])
+
+/** Whether a module holds server code: one of the entrypoints, Drizzle, or an application module by its name. */
+function isServerModule(source: string): boolean {
+  if (SERVER_ENTRYPOINTS.has(source) || source === 'drizzle-orm' || source.startsWith('drizzle-orm/')) return true
+  // The application's own modules: relative, or through a `@/` or `~/` alias of src.
+  if (!/^(\.{1,2}\/|@\/|~\/)/.test(source)) return false
+
+  const parts = source.replace(/\.[cm]?[jt]sx?$/, '').split('/').filter((part) => !['.', '..', '@', '~'].includes(part))
+  const name = parts.at(-1) === 'index' ? parts.at(-2) : parts.at(-1)
+
+  return (name !== undefined && SERVER_FILES.has(name)) || parts.slice(0, -1).some((part) => SERVER_FOLDERS.has(part))
+}
+
+export const noServerImportsInPages: LintRule = {
+  meta: {
+    type: 'problem',
+    docs: { description: "A page, which runs in the browser, imports no server code." },
+    messages: {
+      server:
+        "A page runs in the visitor's browser, and {{source}} is server code (the database, sessions, the Worker's secrets): importing it ships it to the browser or breaks the build. Pass what the page shows as props declared in src/pages.ts, build URLs with href from @popcomputer/web/paths, and use `import type` for a type.",
+    },
+  },
+  create(context) {
+    const found: ModuleSource[] = []
+    let importsReact = false
+
+    return {
+      ...visitModules((module) => {
+        if (module.source === WEB_REACT) importsReact = true
+        if (!module.typeOnly && isServerModule(module.source)) found.push(module)
+      }),
+      'Program:exit'() {
+        if (found.length === 0 || !(importsReact || isPagePath(projectPath(context)))) return
+
+        for (const { node, source } of found) context.report({ node, messageId: 'server', data: { source } })
+      },
+    }
+  },
+}

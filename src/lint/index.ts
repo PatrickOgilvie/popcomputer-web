@@ -36,7 +36,7 @@ import {
   requireBackground,
 } from './actions.js'
 import { requireBindingAccess } from './bindings.js'
-import { noModuleLevelMutableState, noTestingInProduction } from './boundaries.js'
+import { noModuleLevelMutableState, noServerImportsInPages, noTestingInProduction } from './boundaries.js'
 import {
   noDatabaseServiceInAction,
   noExternalWorkInTransaction,
@@ -72,6 +72,7 @@ export const rules: Readonly<Record<string, LintRule>> = {
   'no-floating-effect': noFloatingEffect,
   'no-module-level-mutable-state': noModuleLevelMutableState,
   'no-testing-in-production': noTestingInProduction,
+  'no-server-imports-in-pages': noServerImportsInPages,
 }
 
 /** The plugin Oxlint's `jsPlugins` or ESLint's `plugins` loads. */
