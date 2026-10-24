@@ -81,6 +81,10 @@ describe('@popcomputer/web/lint', () => {
     expect(found(lint('invalid-bindings.ts'))).toEqual(expected('invalid-bindings.ts').sort())
   })
 
+  test('reports each Effect built and never run', () => {
+    expect(found(lint('invalid-effects.ts'))).toEqual(expected('invalid-effects.ts').sort())
+  })
+
   test('accepts the patterns the framework documents', () => {
     expect(lint('valid.ts')).toEqual([])
   })

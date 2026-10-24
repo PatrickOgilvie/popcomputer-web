@@ -27,6 +27,69 @@ The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `require-binding-access` | A binding that does not say who may load its record: a bare table, or `routeBinding` without `ownedBy`, `publicWhen`, `public`, `guarded` or `scope`; or a `publicWhen` value written `undefined` | `routeBinding(schema.projects, { ownedBy: 'userId' })`, or the option that says who may; `publicWhen: { isPublic: true }` |
 | `prefer-checked-config` | Effect's `Config.String('NAME')` and its siblings in an application of the framework | `config.string('NAME')`, which checks the name against the Worker's bindings |
 | `no-auth-api-in-action` | `auth.api.signInEmail(...)` and Better Auth's other endpoints called from an action, which skips its rate limits | `betterAuthRedirect('signInEmail', { body }, ...)` or `betterAuthCall(...)` |
+| `no-floating-effect` | A framework call that builds an Effect, written as a statement, so nothing runs it: `dbMutation(...)`, `flash(...)`, `redirect(...)`, `cart.set(...)`, `Effect.log(...)`; and `yield` without `*` | `yield* dbMutation(...)`, or `return` it |
+
+## What each rule sees
+
+The rules read one file's syntax. They follow its imports and the names it
+declares, but resolve no module and run no type checker, so each has limits.
+A limit listed here is a known boundary of the rule, not a way around it.
+
+- `no-floating-effect`. Covers: an expression statement, anywhere in a file,
+  that calls one of the framework's Effect constructors (the database
+  operations, `authorize`, `bound`, `validateRequest`, the response helpers,
+  `flash`, `share`, `responseHeader`, `purgeCache`, `background`,
+  `betterAuthCall`, the data cache's calls) or any of Effect's own functions
+  but its runners, through `.pipe(...)`, `void`, `&&`, `?:` and commas; a
+  cookie declaration's `.set(...)`, `.read` and `.clear`, whether declared in
+  the file or imported under a name ending in `Cookie`; and `yield` without
+  `*` before any of them. Does not see: an Effect the application's own
+  function returns (`notifyOwner(project)` as a statement), one assigned and
+  never yielded, one built in an array or an object, a cookie imported under
+  another name, or the framework imported through a file that re-exports it.
+  The Effect language service sees all of these by type.
+
+## The Effect language service
+
+The language service's `floatingEffect` diagnostic finds every Effect that is
+neither yielded nor assigned, by its type, so it sees the application's own
+functions the lint rule cannot. It reaches `tsc` only once `tsc` is patched:
+a `tsconfig.json` plugin runs in the editor's language server alone, and an
+unpatched `tsc --noEmit` passes a floating Effect with exit code 0. On
+TypeScript 7 the service ships as `@effect/tsgo`:
+
+```bash
+bun add -d @effect/tsgo
+```
+
+Name the plugin in `tsconfig.json` (its name stays `@effect/language-service`)
+and patch the installed TypeScript on every install:
+
+```json
+{
+  "compilerOptions": {
+    "plugins": [{ "name": "@effect/language-service" }]
+  }
+}
+```
+
+```json
+{
+  "scripts": { "prepare": "effect-tsgo patch" }
+}
+```
+
+`tsc --noEmit` then fails with `effect(floatingEffect)` on the statement, in
+`.ts` and `.tsx` files alike: `floatingEffect` is an error by default, and an
+Effect error sets `tsc`'s exit code unless the plugin's
+`ignoreEffectErrorsInTscExitCode` says otherwise. It also reports `yield`
+without `*` (`missingStarInYieldEffectGen`). `bun install` runs `prepare`;
+an install with scripts turned off, such as `bun install --ignore-scripts` in
+a CI job, leaves `tsc` unpatched, passing floating Effects again. On
+TypeScript 5 or 6 the package is `@effect/language-service`, with
+`"prepare": "effect-language-service patch"`.
+
+## Turning a rule off
 
 A line that breaks a rule on purpose says why, as
 `// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`.

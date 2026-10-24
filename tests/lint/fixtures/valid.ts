@@ -8,10 +8,12 @@ import {
   background,
   bound,
   config,
+  cookie,
   dbMutation,
   dbQuery,
   dbTransaction,
   file,
+  flash,
   json,
   RequestService,
   routeBinding,
@@ -38,10 +40,23 @@ export const archive = action(Effect.gen(function* () {
   yield* background('notify', Effect.promise(() => fetch('https://hooks.example/archived')))
   yield* Effect.void.pipe(Effect.catchTag('NoSuchElementError', () => Effect.void))
 
-  void [rows, signature, raw]
+  // An Effect kept to run later, run for each item, or returned from a helper runs where it is yielded.
+  const audit = dbMutation((db) => db.insert(tasks).values({ id: 't2', projectId: project.id }))
+  yield* audit
+  yield* Effect.forEach(rows, (row) => dbMutation((db) => db.delete(tasks).where(eq(tasks.id, row.id))))
+  const notify = () => flash('success', 'Archived.')
+  yield* notify()
+  const theme = yield* themeCookie.read
+  yield* themeCookie.set('dark')
+  const seen = new Map<string, number>()
+  seen.set(project.id, 1)
+
+  void [rows, signature, raw, theme, seen]
 
   return yield* json({ ok: true })
 }))
+
+const themeCookie = cookie('theme', S.String, { path: '/' })
 
 export const download = action(file('a,b', { contentType: 'text/csv', filename: 'export.csv' }))
 

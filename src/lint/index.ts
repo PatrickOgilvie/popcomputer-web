@@ -43,6 +43,7 @@ import {
   noUnscopedWrite,
   noWriteInDbQuery,
 } from './database.js'
+import { noFloatingEffect } from './effects.js'
 
 export type { LintRule } from './ast.js'
 
@@ -67,6 +68,7 @@ export const rules: Readonly<Record<string, LintRule>> = {
   'no-auth-api-in-action': noAuthApiInAction,
   'prefer-checked-config': preferCheckedConfig,
   'require-binding-access': requireBindingAccess,
+  'no-floating-effect': noFloatingEffect,
 }
 
 /** The plugin Oxlint's `jsPlugins` or ESLint's `plugins` loads. */
