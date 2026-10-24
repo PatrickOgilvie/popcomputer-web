@@ -70,8 +70,10 @@ written in the file, and nothing a helper in another module does.
   visitor, and passes. Does not see: an object literal whose properties a
   function changes, a class's static fields, state another module holds and
   this one changes, or a collection built by a function call
-  (`const seen = makeCache()`). A local name that shadows a module-scope
-  collection inside a function counts as the collection.
+  (`const seen = makeCache()`). It counts as the collection a local name
+  that shadows one inside a function, and as the Worker's a browser module
+  outside `src/pages/` that does not import `@popcomputer/web/react`, such
+  as a client entry: say why on its disable comment.
 - `no-testing-in-production`. Covers: `import`, `export ... from`,
   `import('...')` and `require('...')` of `@popcomputer/web/testing` with the
   source written as a string, in any file that is not a test as
