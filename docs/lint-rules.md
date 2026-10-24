@@ -6,7 +6,8 @@ not declared. The rules in `@popcomputer/web/lint` report the mistakes types
 cannot see, the ones a reviewer has to know to look for. They apply where a
 file uses the framework: the action rules to files that import `action`, the
 database rules inside `dbQuery`, `dbMutation`, `dbTransaction` and `dbBatch`,
-the binding rule to `setupWeb`'s `bindings` and `routeBinding`.
+the binding rule to `setupWeb`'s `bindings` and `routeBinding`, and the
+rules about where code runs by where a file sits: a test, a script, a page.
 The examples in `docs/`, the README and `AGENTS.md` pass them.
 
 | Rule | Reports | Use instead |
@@ -32,12 +33,15 @@ The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `no-testing-in-production` | An import of `@popcomputer/web/testing` (whose `signedIn` signs a request in with no session) from a file that is not a test | The helpers in tests only; `authorize()` or `currentUser` in the application |
 | `no-server-imports-in-pages` | A page or component (under `src/pages/`, or importing `@popcomputer/web/react`) importing server code: `@popcomputer/web`, `/effect`, `/auth`, `/env`, `/cache`, `/drizzle`, `drizzle-orm`, the Drizzle schema, the env module or an action | Props declared in `src/pages.ts`, `href` from `@popcomputer/web/paths`, and `import type` for types |
 | `require-disable-reason` | A comment turning off one of these rules, or every rule, with no reason after `--` | `// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`, or the API the rule names |
+| `explain-security-loosening` (a warning) | A setting that weakens a protection the framework gives: `routeBinding(table, { public: true })`, `betterAuthHandler({ settable: [...] })`, `verifyOrigin`'s `allowedOrigins` or `verifyOrigin: false`, `security.headers: false`, a `bodyLimit` over 1 MiB, `history: { encrypt: false }` or `encryptHistory: false`, and `betterAuth` with password sign-in but no `requireEmailVerification: true`, or with `autoSignInAfterVerification: true` | The default, or a reasoned disable comment where it is set, which puts the choice before a reviewer |
 
 ## What each rule sees
 
 The rules read one file's syntax. They follow its imports and the names it
 declares, but resolve no module and run no type checker, so each has limits.
 A limit listed here is a known boundary of the rule, not a way around it.
+The notes cover six of the rules; the others see the calls their row names,
+written in the file, and nothing a helper in another module does.
 
 - `no-floating-effect`. Covers: an expression statement, anywhere in a file,
   that calls one of the framework's Effect constructors (the database
@@ -59,9 +63,9 @@ A limit listed here is a known boundary of the rule, not a way around it.
   assignment to one of its elements), in every file but tests (`*.test.ts`,
   `*.spec.ts`, `test-*.ts`, anything under `test/`, `tests/` or
   `__tests__/`, and the file `bunfig.toml`'s `[test] preload` names), tools'
-  configuration (`*.config.ts`), declarations
-  (`*.d.ts`), `scripts/`, and pages (under `src/pages/`, or importing
-  `@popcomputer/web/react`), which run in one visitor's browser. A collection
+  configuration (`*.config.ts`), declarations (`*.d.ts`), `scripts/`, and
+  pages (under `src/pages/`, or importing `@popcomputer/web/react`), which
+  run in one visitor's browser. A collection
   filled as the module loads and only read after is the same for every
   visitor, and passes. Does not see: an object literal whose properties a
   function changes, a class's static fields, state another module holds and
@@ -103,6 +107,21 @@ A limit listed here is a known boundary of the rule, not a way around it.
   generated files carry, passes; whether the reason is true; and a rule
   turned off in the configuration, `webLint({ 'no-sql-interpolation': 'off'
   })` or `ignorePatterns`.
+- `explain-security-loosening`. Covers: in a file that imports
+  `@popcomputer/web`, `/effect` or `/auth`, the settings above written as
+  literals: `public: true` in `routeBinding`'s options or a binding object
+  with a `schema`; a `settable` other than `[]` in `betterAuthHandler`'s
+  options; `allowedOrigins` other than `[]` under any `verifyOrigin` key or
+  in `verifyOrigin(...)`; `verifyOrigin: false`; `headers: false` under
+  `security`; any `bodyLimit` whose value is a number over 1 MiB, written
+  as a literal, arithmetic on literals or a `const` holding one;
+  `encrypt: false` under `history` and `encryptHistory: false`; and, in
+  `betterAuth({ ... })` from `better-auth`, `emailAndPassword` with
+  `enabled: true` and no `requireEmailVerification: true`, or
+  `emailVerification.autoSignInAfterVerification: true`. Does not see: a
+  setting built at runtime or spread in from another object, a `bodyLimit`
+  read from a binding, or `betterAuth` called through a wrapper or with its
+  options in a variable.
 
 ## The Effect language service
 
@@ -149,6 +168,9 @@ TypeScript 5 or 6 the package is `@effect/language-service`, with
 A line that breaks a rule on purpose says why, as
 `// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`,
 and `require-disable-reason` reports one that does not.
+`explain-security-loosening` is a warning: a setting it reports may be
+meant, and the reasoned disable comment is how it is acknowledged, so the
+next reader sees why the protection is weaker there.
 `webLint({ 'no-catch-all-in-action': 'warn' })` changes a rule's severity, and
 `webLint()` spreads into a larger configuration,
 `defineConfig({ ...webLint(), ignorePatterns: ['dist'] })`.

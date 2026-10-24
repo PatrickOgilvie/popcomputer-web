@@ -79,6 +79,7 @@ export const web = setupWeb(new Hono(), {
   bindings: {
     project: routeBinding(projects, { ownedBy: 'userId' }),
     showcase: routeBinding(projects, { publicWhen: { isPublic: true } }),
+    // oxlint-disable-next-line popcomputer-web/explain-security-loosening -- every listing is published to anyone by design
     listing: routeBinding(projects, { public: true }),
     task: routeBinding(tasks, { scope: { project: { foreignKey: 'projectId' } } }),
     note: { schema: tasks, ownedBy: 'userId' },

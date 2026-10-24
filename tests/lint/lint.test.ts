@@ -40,6 +40,7 @@ beforeAll(async () => {
 
 interface Diagnostic {
   readonly file: string
+  readonly severity: string
   readonly rule: string
   readonly line: number
   readonly message: string
@@ -52,13 +53,20 @@ function lint(...files: ReadonlyArray<string>): Diagnostic[] {
     encoding: 'utf8',
   })
   const report: {
-    diagnostics?: ReadonlyArray<{ code: string; message: string; filename: string; labels: ReadonlyArray<{ span: { line: number } }> }>
+    diagnostics?: ReadonlyArray<{
+      code: string
+      message: string
+      severity: string
+      filename: string
+      labels: ReadonlyArray<{ span: { line: number } }>
+    }>
   } = JSON.parse(result.stdout || '{}')
 
   if (result.stderr.trim() !== '' && report.diagnostics === undefined) throw new Error(result.stderr)
 
   return (report.diagnostics ?? []).map((diagnostic) => ({
     file: diagnostic.filename,
+    severity: diagnostic.severity,
     rule: diagnostic.code.replace(/^.*\((.*)\)$/, '$1'),
     line: diagnostic.labels[0]?.span.line ?? 0,
     message: diagnostic.message,
@@ -103,6 +111,13 @@ describe('@popcomputer/web/lint', () => {
     expect(found(lint('invalid-directives.ts'))).toEqual(expected('invalid-directives.ts').sort())
   })
 
+  test('reports each setting that weakens a protection, as a warning', () => {
+    const diagnostics = lint('invalid-security.ts')
+
+    expect(found(diagnostics)).toEqual(expected('invalid-security.ts').sort())
+    expect(new Set(diagnostics.map((diagnostic) => diagnostic.severity))).toEqual(new Set(['warning']))
+  })
+
   test('reports each Effect built and never run', () => {
     expect(found(lint('invalid-effects.ts'))).toEqual(expected('invalid-effects.ts').sort())
   })
@@ -131,6 +146,8 @@ describe('@popcomputer/web/lint', () => {
     expect(Object.keys(lint.rules)).toHaveLength(Object.keys(plugin.rules).length)
     expect(lint.rules['popcomputer-web/no-catch-all-in-action']).toBe('warn')
     expect(lint.rules['popcomputer-web/no-unscoped-write']).toBe('error')
+    expect(lint.rules['popcomputer-web/explain-security-loosening']).toBe('warn')
+    expect(webLint({ 'explain-security-loosening': 'error' }).rules['popcomputer-web/explain-security-loosening']).toBe('error')
     expect(lint.jsPlugins).toEqual([{ name: 'popcomputer-web', specifier: '@popcomputer/web/lint' }])
   })
 })
