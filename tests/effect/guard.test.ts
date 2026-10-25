@@ -267,7 +267,11 @@ describe('guard()', () => {
           const res = await app.request(`/${route}/acme/projects/${project}`, asJson, as(id))
 
           expect({ route, id, project, status: res.status }).toEqual({ route, id, project, status: 500 })
-          expect(await res.json()).toMatchObject({ code: 'WEB_RTE_606_BINDING_ACCESS_INVALID' })
+          expect(await res.json()).toMatchObject({
+            code: 'WEB_RTE_606_BINDING_ACCESS_INVALID',
+            message: expect.stringContaining('before a guard(...) read it and let the visitor in'),
+            fixes: [{ description: expect.stringContaining('Layer.merge') }],
+          })
           // The project is never looked up before the guard has let the visitor in.
           expect(queries.filter((query) => query.includes('from "projects"'))).toEqual([])
         }

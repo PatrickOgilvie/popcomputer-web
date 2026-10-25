@@ -637,11 +637,14 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     })
   }
 
-  /** Create an error for a route whose records were asked for before a guard read its guarded one. */
+  /**
+   * Create an error for a route whose records were asked for before a guard
+   * that read its guarded one had let the visitor in.
+   */
   static guardedWithoutGuard(binding: string): RouteConfigurationError {
     return new RouteConfigurationError({
-      message: `Route binding "${binding}" is guarded: true, but this route's records were asked for before a guard(...) read it, so nothing had decided who may load it.`,
-      hint: `Wrap the layer that decides in guard(...), as guard(CurrentMember, Effect.gen(...)), have it read bound('${binding}'), and provide it to every route whose path names {${binding}}, before any other layer that reads a record.`,
+      message: `Route binding "${binding}" is guarded: true, but this route's records were asked for before a guard(...) read it and let the visitor in, so nothing had decided who may load it.`,
+      hint: `Wrap the layer that decides in guard(...), as guard(CurrentMember, Effect.gen(...)), have it read bound('${binding}'), and provide it on its own to every route whose path names {${binding}}, before any other layer that reads a record: one built beside it with Layer.merge, or a guard that reads a record under {${binding}}, comes after it.`,
       binding,
       code: ErrorCodes.RTE_606_BINDING_ACCESS_INVALID,
     })
