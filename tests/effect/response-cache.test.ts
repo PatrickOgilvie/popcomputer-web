@@ -31,7 +31,7 @@ import {
 } from '../../src/effect/response-cache.js'
 import { Redirect, ValidationError } from '../../src/effect/errors.js'
 import { flash, forbidden, json, redirectNow, render } from '../../src/effect/responses.js'
-import { RequestService } from '../../src/effect/services.js'
+import { DatabaseService, RequestService } from '../../src/effect/services.js'
 import { responseHeader } from '../../src/effect/response-headers.js'
 import { cookie } from '../../src/effect/cookies.js'
 import { betterAuthCall, loadUser } from '../../src/effect/auth.js'
@@ -673,6 +673,56 @@ describe('cache route option', () => {
     const res = await app.request('/plain')
     expect(res.headers.get('Cache-Control')).toBe(DEFAULT_CACHE_CONTROL)
     expect(res.headers.get('Vary')).toBeNull()
+  })
+})
+
+describe('cache route option and the hooks setupWeb hands the request', () => {
+  test("a header setupWeb's middleware, its database factory or its template reads is never stored", async () => {
+    // A gate by country: an admitted visitor's answer must not reach one it turns away.
+    const geoGate: MiddlewareHandler = async (c, next) => {
+      if (c.req.header('CF-IPCountry') !== 'NZ') return c.text('Unavailable here.', 451)
+      await next()
+    }
+    const geo = new Hono()
+    setupWeb(geo, { version: '1.0.0', render: (page) => JSON.stringify(page), middleware: [geoGate] })
+      .routes.get('/deals', Effect.succeed(Response.json({ deals: ['kiwifruit'] })), { cache: { maxAge: 60 } })
+
+    // A database chosen by the tenant a header names.
+    const tenants = new Hono()
+    setupWeb(tenants, { version: '1.0.0', render: (page) => JSON.stringify(page), database: (c) => ({ tenant: c.req.header('X-Tenant') ?? 'none' }) })
+      .routes.get('/revenue', Effect.map(DatabaseService, (db) => Response.json(db)), { cache: { maxAge: 60 } })
+
+    // A template that localizes the document from Accept-Language.
+    const localized = new Hono()
+    setupWeb(localized, {
+      version: '1.0.0',
+      render: (page, c) => `<html lang="${c?.req.header('Accept-Language')?.startsWith('de') ? 'de' : 'en'}">${JSON.stringify(page)}</html>`,
+    }).routes.get('/welcome', render('Welcome'), { cache: { maxAge: 60 } })
+
+    const visits: ReadonlyArray<{ readonly name: string; readonly app: Hono; readonly path: string; readonly headers: Record<string, string> }> = [
+      { name: 'middleware', app: geo, path: '/deals', headers: { 'CF-IPCountry': 'NZ' } },
+      { name: 'database', app: tenants, path: '/revenue', headers: { 'X-Tenant': 'acme' } },
+      { name: 'template', app: localized, path: '/welcome', headers: { 'Accept-Language': 'de-DE' } },
+    ]
+
+    for (const { name, app, path, headers } of visits) {
+      const res = await app.request(path, { headers })
+
+      expect({ name, status: res.status, cacheControl: res.headers.get('Cache-Control'), cdn: res.headers.get('Cloudflare-CDN-Cache-Control') })
+        .toEqual({ name, status: 200, cacheControl: 'no-store', cdn: null })
+    }
+  })
+
+  test("setupWeb's middleware that reads only the path leaves a route cacheable", async () => {
+    const pathGate: MiddlewareHandler = async (c, next) => {
+      if (c.req.path.startsWith('/internal')) return c.notFound()
+      await next()
+    }
+    const app = new Hono()
+    setupWeb(app, { version: '1.0.0', render: (page) => JSON.stringify(page), middleware: [pathGate] })
+      .routes.get('/deals', Effect.succeed(Response.json({ deals: ['kiwifruit'] })), { cache: { maxAge: 60 } })
+
+    expect((await app.request('/deals')).headers.get('Cache-Control')).toBe('public, max-age=60')
   })
 })
 

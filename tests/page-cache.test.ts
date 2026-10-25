@@ -354,6 +354,22 @@ describe('default page cache', () => {
     expect(cache.entries.size).toBe(0)
   })
 
+  test('a page whose template reads a request header renders fresh', async () => {
+    const app = new Hono<PageCacheEnv>()
+    const { routes } = setupWeb(app, {
+      version: '1.0.0',
+      render: (page, c) => `<html lang="${c?.req.header('Accept-Language')?.startsWith('de') ? 'de' : 'en'}">${JSON.stringify(page)}</html>`,
+    })
+    routes.get('/welcome', render('Welcome'))
+
+    const german = await get(app, '/welcome', { headers: { 'Accept-Language': 'de-DE' } }, production())
+    const english = await get(app, '/welcome', { headers: { 'Accept-Language': 'en-US' } }, production())
+
+    expect([german.status, english.status]).toEqual(['DYNAMIC', 'DYNAMIC'])
+    expect(english.body).toContain('lang="en"')
+    expect(cache.entries.size).toBe(0)
+  })
+
   test('respects Cache-Control and cookies added by middleware outside setupWeb', async () => {
     const noStore = createApp({
       outer: async (c, next) => {

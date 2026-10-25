@@ -13,7 +13,7 @@ import type {
 import { HEADERS } from './types.js'
 import { openWebContext, type WebRequestContext } from './request-context.js'
 import { openFlash } from './flash.js'
-import { applyDefaultCacheControl } from './page-cache.js'
+import { applyDefaultCacheControl, observedRequestContext } from './page-cache.js'
 import { ConfigurationError } from './effect/errors.js'
 import { webUrl } from './locations.js'
 
@@ -216,7 +216,9 @@ export function web(config: WebConfig): MiddlewareHandler {
           })
         }
 
-        const html = await config.render(page, c)
+        // A template that reads a request header, such as Accept-Language,
+        // makes the document depend on what no cache key holds.
+        const html = await config.render(page, observedRequestContext(c))
 
         return c.html(html, status, {
           'Vary': HEADERS.INERTIA,

@@ -12,8 +12,8 @@ on every request, when it reads:
   Hyperdrive);
 - a request header, the raw request or request state, through
   `RequestService` or `RequestStateService`, or through the context a
-  `web.services` request callback, `routes.middleware(...)` or
-  `prefixMiddleware(...)` receives;
+  `web.services` request callback, `routes.middleware(...)`,
+  `prefixMiddleware(...)` or the `render` template receives;
 - a route model binding.
 
 Cached pages are keyed by deploy. Bind the version metadata so each deploy
@@ -72,8 +72,12 @@ option and enable Workers Cache (`"cache": { "enabled": true }` in Wrangler
 config). The option emits Workers Cache headers and tags. It does not publicly
 cache authenticated, partial, failed, or mutating responses, nor one whose
 producing read a request header, a cookie or request state, such as an API key
-a route's own layer or middleware reads before calling `next()`: none of them
-is part of the cache's key. That key
+a route's own layer or middleware reads before calling `next()`, a country
+`setupWeb`'s `middleware` checks, a tenant its `database` factory picks the
+database by, or a language the `render` template localizes from: none of
+them is part of the cache's key. A header the `database` factory reads keeps
+every response of the request out of shared caches, since any of them may
+use the database. That key
 is the path and query string, not the host, so a Worker serving several
 hostnames shares one cache across them: a page that differs by hostname does
 not set `cache`. A response that sets a cookie, itself or through

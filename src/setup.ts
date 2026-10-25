@@ -11,7 +11,7 @@ import type { WebConfig } from './types.js'
 import { loadUserMiddleware, shareAuthMiddleware, usersTableOf } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
 import { readTestDatabase } from './effect/test-env.js'
-import { pageCache, privateByDefault } from './page-cache.js'
+import { markRouteCacheDynamic, observedRequestContext, pageCache, privateByDefault } from './page-cache.js'
 import type {
   AuthService,
   DatabaseService,
@@ -523,8 +523,9 @@ function createSetupMiddleware<
       // bring its own database (testEnv's `database`).
       const testDatabase = readTestDatabase(c.env)
       // SAFETY: testEnv types the database as DatabaseType, which the
-      // application's registration makes this setup's DB.
-      const db = testDatabase === undefined ? config.database?.(c) : testDatabase as DB
+      // application's registration makes this setup's DB. A header the
+      // factory reads keeps a route's own cache option from sharing responses.
+      const db = testDatabase === undefined ? config.database?.(observedRequestContext(c, { mark: markRouteCacheDynamic })) : testDatabase as DB
 
       if (db !== undefined) {
         // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
@@ -600,7 +601,9 @@ function createSetupMiddleware<
       schema: config.auth?.share,
     }),
     effectBridge<E, never>(effectConfig),
-    ...(config.middleware ?? []),
+    // A header the application's middleware reads keeps a route's own cache
+    // option from sharing the response; `pageCache: true` still caches pages.
+    ...(config.middleware ?? []).map((middleware): MiddlewareHandler<E> => (c, next) => middleware(observedRequestContext(c, { mark: markRouteCacheDynamic }), next)),
   ]
 
   return sequence(middlewares)
