@@ -105,10 +105,18 @@ export function activeSignInLimits(config: SignInLimitsConfig, bindings: object)
   }
 }
 
-/** Better Auth's paths a client address is limited on: signing in and up, and every password and verification call, except a sign-in through an identity provider. */
+/**
+ * Better Auth's paths a client address is limited on: signing in and up, and
+ * every password and verification call, except a sign-in through an identity
+ * provider. `/verify-password` and `/delete-user` check the signed-in
+ * account's password, as `/change-password` does: a stolen session must not
+ * guess it unlimited. The seam suite fails on an endpoint of Better Auth's
+ * that takes a password and is missing here.
+ */
 const ADDRESS_LIMITED = [
   '/sign-in', '/sign-up', '/change-password', '/change-email', '/reset-password', '/request-password-reset',
   '/forget-password', '/send-verification-email', '/verify-email', '/email-otp', '/two-factor', '/magic-link', '/phone-number',
+  '/verify-password', '/delete-user',
 ]
 
 /**
@@ -158,16 +166,53 @@ export function clientAddress(headers: Headers): string {
 
 /**
  * The account a password sign-in at `path` names: the field its endpoint
- * finds the account by, trimmed and lowercased, as Better Auth lowercases an
- * email and a username. Undefined for any other endpoint, and for a body
- * whose field is missing, blank or not text.
+ * finds the account by, as the endpoint normalizes it. An email or a phone
+ * number is trimmed and lowercased, as Better Auth lowercases an email; a
+ * username is normalized by the username plugin's own normalizer, so every
+ * spelling an application's `usernameNormalization` folds together counts
+ * against one account. `betterAuth` is the registered Better Auth's options.
+ * Undefined for any other endpoint, and for a body whose field is missing,
+ * blank or not text.
  */
-export function accountOf(path: string, body: unknown): string | undefined {
+export function accountOf(path: string, body: unknown, betterAuth?: unknown): string | undefined {
   if (!isPasswordSignIn(path) || !(body instanceof Object)) return undefined
 
   const named: unknown = Reflect.get(body, ACCOUNT_FIELDS[path])
 
-  return typeof named === 'string' && named.trim() !== '' ? named.trim().toLowerCase() : undefined
+  if (typeof named !== 'string' || named.trim() === '') return undefined
+
+  return path === '/sign-in/username' ? usernameOf(named, betterAuth) : named.trim().toLowerCase()
+}
+
+const property = (value: unknown, key: string): unknown => value instanceof Object ? Reflect.get(value, key) : undefined
+
+/**
+ * A username as the username plugin's `/sign-in/username` looks it up: by
+ * the normalizer its username field transforms input with (the plugin's
+ * `usernameNormalization`, or lowercasing), applied once more first when its
+ * `validationOrder.username` is `'pre-normalization'`. Undefined when the
+ * normalizer throws or returns no text, so the sign-in is refused before a
+ * password is checked; lowercased without the plugin, whose endpoint is then
+ * missing.
+ */
+function usernameOf(name: string, betterAuth: unknown): string | undefined {
+  const plugins: unknown = property(betterAuth, 'plugins')
+  const plugin: unknown = Array.isArray(plugins) ? plugins.find((each: unknown) => property(each, 'id') === 'username') : undefined
+  const transform = property(property(property(property(property(plugin, 'schema'), 'user'), 'fields'), 'username'), 'transform')
+  const normalizer: unknown = property(transform, 'input')
+
+  if (!(normalizer instanceof Function)) return name.toLowerCase()
+
+  const twice = property(property(property(plugin, 'options'), 'validationOrder'), 'username') === 'pre-normalization'
+
+  try {
+    const once: unknown = Reflect.apply(normalizer, transform, [name])
+    const normalized: unknown = twice && typeof once === 'string' ? Reflect.apply(normalizer, transform, [once]) : once
+
+    return typeof normalized === 'string' ? normalized : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -234,20 +279,52 @@ const counts = Effect.flatMap(Effect.serviceOption(DatabaseService), (db) =>
 )
 
 /**
+ * Whether the registered Better Auth keeps its own request counts through
+ * its database adapter, `rateLimit: { storage: 'database' }`. Each rollover
+ * of one of its windows then deletes every row of its rateLimit model older
+ * than its longest window, a minute by default, the account failure counts
+ * kept here among them. Which table that model is the adapter decides, so a
+ * `modelName` of its own is no proof the counts are spared.
+ */
+function prunesCounts(betterAuth: unknown): boolean {
+  const rateLimit = property(betterAuth, 'rateLimit')
+
+  if (property(rateLimit, 'enabled') === false || property(rateLimit, 'customStorage') !== undefined) return false
+
+  // Better Auth's default: its secondary storage when it has one, else memory.
+  const storage = property(rateLimit, 'storage') ?? (property(betterAuth, 'secondaryStorage') === undefined ? 'memory' : 'secondary-storage')
+
+  return storage !== 'memory' && storage !== 'secondary-storage'
+}
+
+/**
  * Run a call to Better Auth within the sign-in limits: the address, and for a
  * password sign-in the account, are counted on the Rate Limiting binding,
  * and a sign-in during the account's cooldown is refused before the call; a
  * failed sign-in (401) is counted, and a successful one clears the count.
- * Without `auth.signInLimits`, the call runs as it is.
+ * Without `auth.signInLimits`, the call runs as it is. `betterAuth` is the
+ * registered Better Auth's options: with limits whose storage would delete
+ * the counts, every call fails, naming the fix.
  */
 export function withinSignInLimits<E, R>(
   attempt: SignInAttempt,
-  call: Effect.Effect<Response, E, R>
+  call: Effect.Effect<Response, E, R>,
+  betterAuth: unknown
 ): Effect.Effect<Response, E | AuthRateLimitError, R> {
   return Effect.gen(function* () {
     const configured = yield* Effect.serviceOption(SignInLimits)
 
-    if (Option.isNone(configured) || !isLimitedPath(attempt.path)) return yield* call
+    if (Option.isNone(configured)) return yield* call
+
+    if (prunesCounts(betterAuth)) {
+      return yield* Effect.die(new Error(
+        "auth.signInLimits counts each account's failed sign-ins in a rateLimit table, and Better Auth's rateLimit " +
+          "storage 'database' deletes that table's rows by age, the counts among them. Keep Better Auth's limits in " +
+          "memory, betterAuth({ rateLimit: { enabled: true, storage: 'memory' } }), or in its secondary storage."
+      ))
+    }
+
+    if (!isLimitedPath(attempt.path)) return yield* call
 
     const limits = configured.value
 

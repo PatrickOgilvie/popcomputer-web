@@ -3,25 +3,16 @@
 The Better Auth helpers cover session loading, authenticated and guest routes,
 form actions, logout, and public user projection.
 
-`authorize()` can be called in two ways. Use it without a predicate when the
-route only requires a signed-in user:
+`authorize()` requires a signed-in user and returns the parsed `{ user,
+session }`. Given a predicate, it also requires the route's own rule:
 
 ```ts
 const auth = yield* authorize()
+const verified = yield* authorize(({ user }) => user.emailVerified)
 ```
 
-Pass a predicate when the route has an additional authorization rule. The
-helper still returns the parsed `{ user, session }` value when the predicate
-succeeds:
-
-```ts
-const auth = yield* authorize(
-  ({ user }) => user.emailVerified
-)
-```
-
-If there is no signed-in user, both forms fail with `UnauthorizedError`. If the
-predicate returns `false`, the second form fails with `ForbiddenError`.
+Without a signed-in user, both fail with `UnauthorizedError`; when the
+predicate returns `false`, the second fails with `ForbiddenError`.
 
 `auth.session` decodes Better Auth's session response into the signed-in
 user, so a dependency response is never trusted because it looks
@@ -52,8 +43,8 @@ framework's own.
 
 ## Better Auth's client
 
-`setupWeb`'s `auth.client` builds Better Auth from a small factory beside
-`src/db.ts`, which the [Quick start](setup.md#3-configure-the-application-once-and-register-it) shows:
+`setupWeb`'s `auth.client` builds Better Auth, on [its tables](auth-tables.md),
+from a small factory beside `src/db.ts`, which the [Quick start](setup.md#3-configure-the-application-once-and-register-it) shows:
 
 ```ts
 // src/auth.ts
@@ -96,7 +87,8 @@ export function createAuth(options: CreateAuthOptions) {
     },
     // setupWeb's auth.signInLimits limits signing in, up and every password
     // call by address and account. Better Auth's own limits stay on too, in
-    // each isolate's memory, writing nothing: three sign-ins or sign-ups
+    // each isolate's memory (its 'database' storage deletes the accounts'
+    // counts, so auth.signInLimits refuses it): three sign-ins or sign-ups
     // from one address in ten seconds, and its other endpoints. They are on
     // by default only when NODE_ENV is 'production', which a Worker's is not.
     rateLimit: { enabled: true, storage: 'memory' },
@@ -119,8 +111,6 @@ export function createStatelessAuth(options: CreateStatelessAuthOptions) {
 }
 ```
 
-Its tables are in [Better Auth's tables](auth-tables.md).
-
 The `backgroundTasks` object has Better Auth's
 `advanced.backgroundTasks` shape. Passing it through makes session refreshes,
 email callbacks, and plugin work part of the request lifecycle: Workers use
@@ -138,15 +128,6 @@ can recognise without importing it: its `name` is `'APIError'`, its
 `statusCode` the HTTP status and its `body.code` the reason, such as
 `INVALID_EMAIL_OR_PASSWORD`.
 
-An application that loads Better Auth on first use, to keep it out of a
-Worker's startup, gives `auth.client` a wrapper whose endpoints load it.
-Signing out with `betterAuthLogoutAction` works through such a wrapper.
-`betterAuthRedirect` and `betterAuthCall` find the endpoint's path on Better
-Auth's instance, so through a wrapper they fail and say why: send those forms
-to Better Auth's handler yourself, by path, or give `auth.client` the
-instance. Importing anything from `better-auth` into a module the Worker
-loads at startup, `APIError` included, loads Better Auth with it.
-
 ## Proving an address
 
 `createAuth` signs no one in by a password whose address nobody has proven.
@@ -156,37 +137,55 @@ visitor to check their inbox; a password sign-in before then is refused as
 `Email not verified`. A sign-up for a registered address is answered as a new
 one is, and sends nothing, so the form tells no one who has an account. The
 mailer is the application's own: `src/email.ts` exports `sendEmail(env, { to,
-subject, text })`, which calls its mail provider's API. The link's action
-proves the address and signs nobody in; the member signs in with a password next:
+subject, text })`, which calls its mail provider's API. The link opens a page
+whose button posts its token back, so a mail scanner that fetches the link
+proves nothing. The post proves the address and signs nobody in; the member
+signs in with a password next:
 
 ```ts
 // src/actions/verify-email.ts
 import { Effect, Schema as S } from 'effect'
-import { action, redirect, validateRequest } from '@popcomputer/web/effect'
+import { action, redirect, render, validateRequest } from '@popcomputer/web/effect'
 import { betterAuthRedirect } from '@popcomputer/web/auth'
 import { href } from '@popcomputer/web/paths'
 import { requiredString } from '@popcomputer/web/schema'
 import { paths } from '../paths'
 
+const Link = S.Struct({ token: requiredString })
+const expired = () => redirect(href(paths.login, {}, { error: 'link_expired' }))
+
+export const showVerifyEmail = action(
+  Effect.gen(function* () {
+    const input = yield* validateRequest(Link)
+
+    return yield* render('Auth/VerifyEmail', input)
+  }).pipe(Effect.catchTag('ValidationError', expired))
+)
+
 export const verifyEmail = action(
   Effect.gen(function* () {
-    const input = yield* validateRequest(S.Struct({ token: requiredString }))
+    const input = yield* validateRequest(Link)
 
     return yield* betterAuthRedirect('verifyEmail', { query: input }, { redirectTo: paths.login })
-  }).pipe(Effect.catchTag('ValidationError', () => redirect(href(paths.login, {}, { error: 'link_expired' }))))
+  }).pipe(Effect.catchTag('ValidationError', expired))
 )
 ```
 
-Register it for everyone, `routes.get(paths.verifyEmail, verifyEmail)`; a
-link that expired, after an hour, lands on the sign-in page with `?error=`.
+Register both for everyone, `routes.get(paths.verifyEmail, showVerifyEmail)`
+and `.post(paths.verifyEmail, verifyEmail)`, beside the page
+`'Auth/VerifyEmail': S.Struct({ token: S.String })`; a link that expired,
+after an hour, lands on the sign-in page with `?error=`. Email this page's
+link, not Better Auth's own `url`, which proves the address on any fetch. A
+link Better Auth's `user.changeEmail` sends to a new address completes only
+signed in to the account that asked to move there: Better Auth would sign
+anyone else who follows it in to that account, so the framework sends them
+to sign in.
 
 Without `requireEmailVerification`, someone who registers another person's
-address first is signed in, and keeps what a magic-link or provider sign-in by
-the owner does not revoke: a two-factor challenge they hold, or a password
-sign-in under way, signs them in to the account the owner then uses. Leave
-`autoSignInAfterVerification` off, or an owner who follows a link for an
-account someone else registered is signed in to it, and may keep using an
-account whose password that someone chose.
+address first is signed in, and keeps what the owner's magic-link or provider
+sign-in does not revoke: a two-factor challenge or a password sign-in under
+way. Leave `autoSignInAfterVerification` off, or an owner who follows a link
+for an account someone else registered is signed in to it.
 
 One risk remains, and the email warns of it: an owner who follows the link
 for an account they never created proves the address for whoever chose its
@@ -221,12 +220,13 @@ cheapest first:
   them out. Only a failure writes a row, a successful sign-in deletes it, and
   the row's key is a hash of the account, not its address.
 
-An account is what its sign-in's endpoint finds it by: the email
-`/sign-in/email` reads, the username plugin's `/sign-in/username`, or the
-phone-number plugin's `/sign-in/phone-number`, whatever other fields the body
-sends. A password sign-in whose field is missing, blank or not text is refused
-with a 400 before Better Auth checks its password. Each counts apart, so an
-account that signs in by email and by username has a budget for each.
+An account is what its sign-in's endpoint finds it by, whatever else the body
+sends: the email `/sign-in/email` reads, the phone-number plugin's
+`/sign-in/phone-number`, or the username plugin's `/sign-in/username` as its
+`usernameNormalization` folds it, so the spellings it folds share one count.
+A password sign-in whose field is missing, blank or not text is refused with
+a 400 before its password is checked. Each door counts apart: an account that
+signs in by email and by username has a budget for each.
 
 `betterAuthRedirect`, `betterAuthCall` and `betterAuthHandler` all apply the
 limits. A refused call fails with `AuthRateLimitError`, whose

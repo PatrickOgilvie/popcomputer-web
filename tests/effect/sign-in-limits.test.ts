@@ -16,10 +16,11 @@ import { Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
-import { betterAuthHandler, betterAuthRedirect } from '../../src/auth.js'
+import { betterAuthCall, betterAuthHandler, betterAuthRedirect } from '../../src/auth.js'
+import { json } from '../../src/effect/responses.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { currentPassword, email, requiredString } from '../../src/effect/schema.js'
-import { sweepSignInFailures } from '../../src/effect/sign-in-limits.js'
+import { accountOf, sweepSignInFailures } from '../../src/effect/sign-in-limits.js'
 import { testBrowser, testClock, testEnv, testRateLimiter, type TestRateLimiter } from '../../src/testing.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
@@ -30,16 +31,25 @@ const rateLimit = sqliteTable('rate_limit', {
   lastRequest: integer('last_request').notNull(),
 })
 
-function createAuth() {
+/** How the application configures what the limits read of Better Auth. */
+interface AuthOptions {
+  /** The username plugin's options, such as its usernameNormalization. */
+  readonly username?: Parameters<typeof username>[0]
+  /** Better Auth's own limits, off unless a test turns them on. */
+  readonly rateLimit?: { readonly enabled?: boolean; readonly storage?: 'memory' | 'database'; readonly modelName?: string }
+}
+
+function createAuth(options: AuthOptions = {}) {
   return betterAuth({
-    database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
+    database: memoryAdapter({ user: [], session: [], account: [], verification: [], rateLimit: [] }),
     baseURL: 'http://localhost',
     secret: 'sign-in-limits-test-secret-with-enough-entropy-0123',
     emailAndPassword: { enabled: true },
-    rateLimit: { enabled: false },
+    user: { deleteUser: { enabled: true } },
+    rateLimit: options.rateLimit ?? { enabled: false },
     logger: { disabled: true },
     // Two more doors to the same password: a username, and a phone number.
-    plugins: [username(), phoneNumber({ sendOTP: async () => {} })],
+    plugins: [username(options.username), phoneNumber({ sendOTP: async () => {} })],
   })
 }
 
@@ -71,8 +81,15 @@ const signInWithPhone = action(Effect.gen(function* () {
   })
 }))
 
-async function createApp(limiter: TestRateLimiter, max = 3) {
-  const auth = createAuth()
+const confirmPassword = action(Effect.gen(function* () {
+  const input = yield* validateRequest(S.Struct({ password: currentPassword }))
+  yield* betterAuthCall('verifyPassword', { body: input }, { errors: (error) => ({ password: error.message }) })
+
+  return yield* json({ confirmed: true })
+}))
+
+async function createApp(limiter: TestRateLimiter, max = 3, options: AuthOptions = {}) {
+  const auth = createAuth(options)
   const { user } = await auth.api.signUpEmail({ body: { name: 'Ada', email: 'ada@example.com', password: 'correct horse', username: 'ada' } })
   await (await auth.$context).internalAdapter.updateUser(user.id, { phoneNumber: '+15550000001', phoneNumberVerified: true })
 
@@ -91,7 +108,11 @@ async function createApp(limiter: TestRateLimiter, max = 3) {
     },
   })
 
-  routes.post('/sign-in', signIn).post('/sign-in/phone', signInWithPhone).all('/api/auth/*', betterAuthHandler({ settable: [] }))
+  routes
+    .post('/sign-in', signIn)
+    .post('/sign-in/phone', signInWithPhone)
+    .post('/confirm-password', confirmPassword)
+    .all('/api/auth/*', betterAuthHandler({ settable: [] }))
 
   const time = await testClock(new Date())
   const env = testEnv(time.layer, { SIGN_IN_LIMITER: limiter })
@@ -205,6 +226,20 @@ describe('sign-in limits', () => {
     expect((await viaApi('/sign-in/email', 'application/json', 'correct horse')).status).toBe(429)
   })
 
+  test('a body Better Auth would read as a form, though it is JSON before its first semicolon, is refused uncounted', async () => {
+    const { app, env, rows } = await createApp(testRateLimiter({ limit: 100 }))
+    const type = 'x/application/json+json;a=b, application/x-www-form-urlencoded'
+    // As JSON it names a decoy; as the form Better Auth reads, ada.
+    const guess = (index: number) => testBrowser(app, env).request('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'Content-Type': type },
+      body: JSON.stringify({ email: `decoy-${index}@example.net`, p: `&${new URLSearchParams({ email: 'ada@example.com', password: `guess-${index}` })}&` }),
+    })
+
+    expect([(await guess(1)).status, (await guess(2)).status, (await guess(3)).status]).toEqual([415, 415, 415])
+    expect(rows()).toEqual([])
+  })
+
   test('a sign-in through an identity provider is not counted against the address', async () => {
     const limiter = testRateLimiter({ limit: 1 })
     const { app, env } = await createApp(limiter)
@@ -255,6 +290,28 @@ describe('each password sign-in counts against the account its endpoint checks',
 
     expect((await api('/sign-in/username', { username: 'ada', password: 'correct horse', email: 'decoy-4@example.net' })).status).toBe(429)
     expect(rows()).toHaveLength(1)
+  })
+
+  test("every spelling the username plugin's usernameNormalization folds together counts against one account", async () => {
+    // The application's normalizer drops separators, so all of these find ada.
+    const usernameNormalization = (name: string) => name.toLowerCase().replaceAll('.', '').replaceAll('_', '')
+    const { app, env, rows } = await createApp(testRateLimiter({ limit: 100 }), 3, { username: { usernameNormalization } })
+    const api = fromAnywhere(app, env)
+
+    for (const [index, spelling] of ['a.da', 'Ad_a', 'a_d.a'].entries()) {
+      expect((await api('/sign-in/username', { username: spelling, password: `guess-${index}` })).status).toBe(401)
+    }
+
+    expect((await api('/sign-in/username', { username: 'a.d.a', password: 'correct horse' })).status).toBe(429)
+    expect(rows()).toHaveLength(1)
+  })
+
+  test("the username is normalized as often as the plugin's validationOrder has its endpoint normalize it", () => {
+    // Strips one leading x, so normalizing twice, as 'pre-normalization' has the endpoint do, finds a different account.
+    const plugin = username({ usernameNormalization: (name) => name.replace(/^x/, ''), validationOrder: { username: 'pre-normalization' } })
+
+    expect(accountOf('/sign-in/username', { username: 'xxada' }, { plugins: [plugin] })).toBe('ada')
+    expect(accountOf('/sign-in/username', { username: 'xxada' }, { plugins: [username({ usernameNormalization: (name) => name.replace(/^x/, '') })] })).toBe('xada')
   })
 
   test('an email that is not text, or blank, does not take a username sign-in out of its count', async () => {
@@ -313,5 +370,68 @@ describe('each password sign-in counts against the account its endpoint checks',
 
     expect(rows()).toEqual([])
     expect((await api('/sign-in/username', { username: 'ada', password: 'correct horse' })).status).toBe(200)
+  })
+})
+
+describe("Better Auth's other checks of the signed-in account's password", () => {
+  /** A browser signed in through Better Auth's API, which counts one call against its address. */
+  const signedIn = async (app: Hono, env: ReturnType<typeof testEnv>) => {
+    const browser = testBrowser(app, env)
+    const res = await browser.request('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ada@example.com', password: 'correct horse' }),
+    })
+
+    expect(res.status).toBe(200)
+
+    return browser
+  }
+
+  test('a session guessing its password is counted against its address, through the API and through an action', async () => {
+    const { app, env } = await createApp(testRateLimiter({ limit: 3 }), 100)
+    const guess = (browser: ReturnType<typeof testBrowser>, path: string) => browser.request(path, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: 'guess' }),
+    })
+    const statuses: Record<string, ReadonlyArray<number>> = {}
+
+    for (const path of ['/api/auth/verify-password', '/api/auth/delete-user', '/confirm-password']) {
+      const browser = await signedIn(app, env)
+      statuses[path] = [(await guess(browser, path)).status, (await guess(browser, path)).status, (await guess(browser, path)).status]
+    }
+
+    expect(statuses).toEqual({
+      '/api/auth/verify-password': [400, 400, 429],
+      '/api/auth/delete-user': [400, 400, 429],
+      '/confirm-password': [422, 422, 429],
+    })
+  })
+})
+
+describe("Better Auth's own limits beside the sign-in limits", () => {
+  const signInFrom = (app: Hono, env: ReturnType<typeof testEnv>) => testBrowser(app, env).request('/api/auth/sign-in/email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'ada@example.com', password: 'correct horse' }),
+  })
+
+  test("Better Auth's database storage, which deletes the table's rows by age, is refused, whatever its model's name", async () => {
+    for (const rateLimit of [{ enabled: true, storage: 'database' }, { storage: 'database', modelName: 'rate_limit' }] as const) {
+      const { app, time } = await createApp(testRateLimiter({ limit: 100 }), 3, { rateLimit })
+      const res = await signInFrom(app, testEnv(time.layer, { SIGN_IN_LIMITER: testRateLimiter({ limit: 100 }), ENVIRONMENT: 'development' }))
+
+      expect(res.status).toBe(500)
+      expect(await res.text()).toContain("storage: 'memory'")
+    }
+  })
+
+  test('its memory storage, or none, leaves the counts alone and signs in', async () => {
+    for (const rateLimit of [{ enabled: true, storage: 'memory' }, { enabled: false, storage: 'database' }] as const) {
+      const { app, env } = await createApp(testRateLimiter({ limit: 100 }), 3, { rateLimit })
+
+      expect((await signInFrom(app, env)).status).toBe(200)
+    }
   })
 })

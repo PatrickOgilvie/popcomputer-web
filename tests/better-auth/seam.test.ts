@@ -9,13 +9,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { betterAuth } from 'better-auth'
+import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { getSchema } from 'better-auth/db'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { Redacted, Schema as S } from 'effect'
 import { testBrowser, testEnv } from '../../src/testing.js'
 import { betterAuthSession } from '../../src/auth.js'
+import { isLimitedPath } from '../../src/effect/sign-in-limits.js'
 import { tableSchema } from '../../src/schema.js'
-import { acme, createAuth, createDatabase, newOutbox, schema, type CreateAuthOptions } from './fixture.js'
+import { acme, createAuth, createDatabase, newOutbox, schema, SECRET, type CreateAuthOptions } from './fixture.js'
 import { app } from './app.js'
 
 const repoRoot = join(import.meta.dir, '..', '..')
@@ -30,9 +33,9 @@ function setup(session?: CreateAuthOptions['session']) {
   const env = testEnv({ OUTBOX: outbox, SESSION: session, APP_URL: 'http://localhost' }, { database: db })
   const browser = () => testBrowser(app, env)
 
-  /** Follow the link Better Auth last emailed to prove `email`. */
+  /** Press the button on the page of the link Better Auth last emailed to prove `email`. */
   const verifyEmail = (client: Browser, email: string) =>
-    client.request(`/verify-email?token=${outbox.verifications.filter((sent) => sent.email === email).at(-1)?.token}`)
+    client.request('/verify-email', form({ token: outbox.verifications.filter((sent) => sent.email === email).at(-1)?.token ?? '' }))
 
   /** A member, as the template makes one: sign up, prove the address by its emailed link, and sign in. */
   const join = async (client: Browser, email: string, name?: string) => {
@@ -97,6 +100,26 @@ describe('tables', () => {
     }
 
     expect(missing).toEqual([])
+  })
+})
+
+describe('sign-in limits', () => {
+  test("every endpoint of Better Auth's and the plugins' that checks a password is limited per client address", () => {
+    const auth = createAuth({ db: createDatabase(), outbox: newOutbox() })
+    // An admin's create-user sets a new user's password; it checks none.
+    const setsPassword = new Set(['/admin/create-user'])
+    const unlimited = Object.values(auth.api).flatMap((endpoint: object) => {
+      const path: unknown = Reflect.get(endpoint, 'path')
+      const options: unknown = Reflect.get(endpoint, 'options')
+      const body: unknown = options instanceof Object ? Reflect.get(options, 'body') : undefined
+      // The endpoint's body schema, a zod object, lists its fields as its `shape`.
+      const fields: unknown = body instanceof Object ? Reflect.get(body, 'shape') : undefined
+      const checksPassword = fields instanceof Object && (Object.hasOwn(fields, 'password') || Object.hasOwn(fields, 'currentPassword'))
+
+      return typeof path === 'string' && checksPassword && !setsPassword.has(path) && !isLimitedPath(path) ? [path] : []
+    })
+
+    expect(unlimited).toEqual([])
   })
 })
 
@@ -181,6 +204,20 @@ describe('signing up, in and out', () => {
 
     // Each is refused before Better Auth writes the user, or by Better Auth, which finds no such endpoint.
     expect(tried.filter((attempt) => attempt.status < 400)).toEqual([])
+  })
+
+  test('a body whose type Better Auth would read as a form, though it is JSON before its first semicolon, is refused', async () => {
+    const { browser, db } = setup()
+    // Better Auth reads JSON only for a type that starts application/ and ends json, and a form for any type naming one.
+    const type = 'x/application/json+json;a=b, application/x-www-form-urlencoded'
+    const signUp = { name: 'Eve', email: 'eve@example.com', password: 'correct horse battery' }
+    // As JSON it sets no timeZone; as a form it does.
+    const body = JSON.stringify({ ...signUp, p: `&${new URLSearchParams({ ...signUp, timeZone: 'Mars/Olympus' })}&` })
+
+    const res = await browser().request('/api/auth/sign-up/email', { method: 'POST', headers: { 'Content-Type': type, Origin: 'http://localhost' }, body })
+
+    expect(res.status).toBe(415)
+    expect(await db.select().from(schema.user)).toEqual([])
   })
 
   test("a wrong password is refused with Better Auth's message on the email field", async () => {
@@ -534,6 +571,34 @@ describe("an account registered with someone else's address", () => {
     expect(await Promise.all([attacker, ...racers, retried].map(async (client) => (await me(client)).status))).toEqual([401, 401, 401, 401, 401])
   })
 
+  test("a fetch of the emailed link, as a mail scanner makes, proves nothing: only its page's button does", async () => {
+    const { browser, db, outbox } = setup()
+    await signUp(browser(), 'victim@example.com', 'Mallory')
+    const token = outbox.verifications.at(-1)?.token ?? ''
+    const proven = () => db.select({ emailVerified: schema.user.emailVerified }).from(schema.user).where(eq(schema.user.email, 'victim@example.com')).get()
+    const scanner = browser()
+
+    const fetched = await scanner.request(`/verify-email?token=${token}`)
+    const checked = await scanner.request(`/verify-email?token=${token}`, { method: 'HEAD' })
+
+    expect([fetched.status, checked.status]).toEqual([200, 200])
+    expect(proven()).toEqual({ emailVerified: false })
+
+    // Mallory's password still signs no one in.
+    const early = await browser().request('/sign-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ email: 'victim@example.com', password: 'correct horse battery' }),
+    })
+
+    expect((await early.json()).errors).toEqual({ email: 'Email not verified' })
+
+    const confirmed = await browser().request('/verify-email', form({ token }))
+
+    expect(confirmed.headers.get('Location')).toBe('/sign-in')
+    expect(proven()).toEqual({ emailVerified: true })
+  })
+
   test("a phone number its registrant sends with the sign-up is refused, so no texted code signs in to the owner's account", async () => {
     const { browser, db, outbox } = setup()
     const phone = '+15550009999'
@@ -561,6 +626,89 @@ describe("an account registered with someone else's address", () => {
     expect(verified.status).toBe(200)
     expect((await me(victim)).body).toMatchObject({ email: 'victim@example.com' })
     expect((await me(later)).body?.id).not.toBe((await me(victim)).body?.id)
+  })
+})
+
+describe('a link that moves an account to a new address', () => {
+  /** Follow the link through the application's page, or through Better Auth's own endpoint. */
+  const doors = {
+    page: (client: Browser, token: string) => client.request('/verify-email', form({ token })),
+    api: (client: Browser, token: string) => client.request(`/api/auth/verify-email?token=${token}`),
+  }
+
+  for (const [door, follow] of Object.entries(doors)) {
+    test(`signs in no one who follows it through the ${door}, and moves the account only in the browser of the account that asked`, async () => {
+      const { browser, db, outbox, join } = setup()
+      const mallory = browser()
+      await join(mallory, 'mallory@example.com', 'Mallory')
+      const asked = await mallory.request('/api/auth/change-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+        body: JSON.stringify({ newEmail: 'victim@example.com' }),
+      })
+      const token = outbox.verifications.filter((sent) => sent.email === 'victim@example.com').at(-1)?.token ?? ''
+      const users = () => db.select({ email: schema.user.email, emailVerified: schema.user.emailVerified }).from(schema.user).all()
+      const sessions = () => db.select().from(schema.session).all().length
+
+      expect(asked.status).toBe(200)
+
+      // The address's holder follows the link Better Auth sent there.
+      const follower = browser()
+      const followed = await follow(follower, token)
+
+      expect(setsSession(followed)).toBe(false)
+      expect((await me(follower)).status).toBe(401)
+      expect(users()).toEqual([{ email: 'mallory@example.com', emailVerified: true }])
+      expect(sessions()).toBe(1)
+
+      // Mallory, in the browser she asked from, completes the move in the session she has.
+      await follow(mallory, token)
+
+      expect(users()).toEqual([{ email: 'victim@example.com', emailVerified: true }])
+      expect(sessions()).toBe(1)
+    })
+  }
+})
+
+describe('upgrading from 1.4', () => {
+  /** The SQL step UPGRADING.md's 1.4-to-1.5 section gives, as an application copies it. */
+  const upgradeStep = () => {
+    const upgrading = readFileSync(join(repoRoot, 'UPGRADING.md'), 'utf8')
+    const section = upgrading.slice(upgrading.indexOf('## From 1.4 to 1.5'), upgrading.indexOf('## Tooling after the upgrade'))
+
+    return /```sql\n([\s\S]*?)\n\s*```/.exec(section)?.[1]?.trim()
+  }
+
+  test("UPGRADING.md's step ends the sessions 1.4's template gave registrations nobody proved, and keeps proven members'", async () => {
+    const { browser, db, join } = setup()
+    // 1.4's template, on the same tables and secret: a sign-up was signed in at once, proving nothing.
+    const legacy = betterAuth({
+      database: drizzleAdapter(db, { provider: 'sqlite', schema }),
+      baseURL: 'http://localhost',
+      secret: SECRET,
+      emailAndPassword: { enabled: true },
+      logger: { disabled: true },
+    })
+    const signedUp = await legacy.handler(new Request('http://localhost/api/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Mallory', email: 'victim@example.com', password: 'correct horse battery' }),
+    }))
+    const registrant = browser()
+    registrant.setCookie(SESSION, signedUp.headers.getSetCookie().find((cookie) => cookie.startsWith(`${SESSION}=`))?.split(';')[0]?.slice(SESSION.length + 1) ?? '')
+    const member = browser()
+    await join(member, 'ada@example.com')
+
+    // Upgraded, the session still signs Mallory in on the address she never proved.
+    expect((await me(registrant)).body).toMatchObject({ email: 'victim@example.com' })
+
+    const step = upgradeStep()
+
+    expect(step).toBeString()
+    db.run(sql.raw(step ?? ''))
+
+    expect((await me(registrant)).status).toBe(401)
+    expect((await me(member)).body).toMatchObject({ email: 'ada@example.com' })
   })
 })
 
