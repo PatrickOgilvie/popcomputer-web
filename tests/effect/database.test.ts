@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
-import { DrizzleQueryError, eq } from 'drizzle-orm'
+import { DrizzleQueryError, eq, sql } from 'drizzle-orm'
 import { drizzle, type SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy'
 import { integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
 import { Cause, Effect, Exit, Layer, Option, Schema } from 'effect'
@@ -327,6 +327,78 @@ describe("a value in the failed statement names no constraint, only the database
     assert.ok(violation instanceof DatabaseConstraintViolation)
     expect(violation).toMatchObject({ constraint: 'unique', columns: ['workspace_id', 'slug'] })
     expect(violation.constraintName).toBeUndefined()
+  })
+
+  // SQLite's errors other than a constraint's quote the bound value they
+  // reject: `JSON path error near '...'`, FTS5's `no such column: ...`.
+  test('a JSON path SQLite rejects stays a DatabaseError, which uniqueFieldErrors passes through', async () => {
+    const { layer, db } = openDatabase()
+    await db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Intro' })
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation((db) => db.run(sql`update pages set title = json_set('{}', ${'"UNIQUE constraint failed: pages.slug'}, 1)`)).pipe(
+        uniqueFieldErrors({ slug: 'A page with this slug already exists.' }),
+        Effect.provide(layer)
+      )
+    )
+
+    expect(failureOf(exit)).toMatchObject({ value: { _tag: 'DatabaseError', operation: 'mutation' } })
+  })
+
+  test('a JSON path naming a CHECK stays a DatabaseError, which constraintFieldErrors passes through', async () => {
+    const { layer, db } = openDatabase()
+    await db.insert(pages).values({ workspaceId: 1, slug: 'intro', title: 'Intro' })
+
+    const exit = await Effect.runPromiseExit(
+      dbMutation((db) => db.run(sql`update pages set title = json_remove('{}', ${'["CHECK constraint failed: title_not_blank:'})`)).pipe(
+        constraintFieldErrors({ title_not_blank: { title: 'A page needs a title.' } }),
+        Effect.provide(layer)
+      )
+    )
+
+    expect(failureOf(exit)).toMatchObject({ value: { _tag: 'DatabaseError', operation: 'mutation' } })
+  })
+
+  test("a search FTS5 rejects stays dbQuery's DatabaseError, not a defect claiming a write", async () => {
+    const { layer, sqlite } = openDatabase()
+    sqlite.run('CREATE VIRTUAL TABLE page_search USING fts5(body)')
+
+    const exit = await Effect.runPromiseExit(
+      dbQuery((db) => db.all(sql`select * from page_search where page_search match ${'"UNIQUE constraint failed: pages.slug" : x'}`)).pipe(
+        Effect.catchTag('DatabaseError', () => Effect.succeed('handled')),
+        Effect.provide(layer)
+      )
+    )
+
+    expect(exit).toEqual(Exit.succeed('handled'))
+  })
+
+  test("a value D1 quotes before its SQLITE_ERROR result names no constraint, even one ending with D1's own", async () => {
+    // The shape Miniflare's D1 gives for a JSON path it rejects: no code, and
+    // the result after the value.
+    const reason = "bad JSON path: '\"UNIQUE constraint failed: pages.slug: SQLITE_CONSTRAINT': SQLITE_ERROR"
+    const client = { run: () => Promise.reject(new Error(`D1_ERROR: ${reason}`, { cause: new Error(reason) })) }
+    // SAFETY: the test client stands in for the database at its service seam;
+    // only the method this mutation calls exists.
+    const layer = Layer.succeed(DatabaseService, client as unknown as TestDatabase)
+
+    const exit = await Effect.runPromiseExit(dbMutation((db) => db.run('update ...')).pipe(Effect.provide(layer)))
+
+    expect(failureOf(exit)).toMatchObject({ value: { _tag: 'DatabaseError' } })
+  })
+
+  test("D1's report of a named CHECK, as Miniflare gives it, still names its rule", async () => {
+    const reason = 'CHECK constraint failed: title_not_blank: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)'
+    const client = { run: () => Promise.reject(new Error(`D1_ERROR: ${reason}`, { cause: new Error(reason) })) }
+    // SAFETY: the test client stands in for the database at its service seam;
+    // only the method this mutation calls exists.
+    const layer = Layer.succeed(DatabaseService, client as unknown as TestDatabase)
+
+    const exit = await Effect.runPromiseExit(dbMutation((db) => db.run('insert ...')).pipe(Effect.provide(layer)))
+
+    expect(failureOf(exit)).toMatchObject({
+      value: { _tag: 'DatabaseConstraintViolation', constraint: 'check', constraintName: 'title_not_blank' },
+    })
   })
 
   test("D1's codeless report decides under Drizzle's wrapper, as D1 single statements fail", async () => {

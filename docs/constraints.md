@@ -84,7 +84,10 @@ development, the error page of a violation no mapping matched shows the
 `constraints` entry that would map it. The kind, columns and name come from
 the database's own report, never from the statement's values, which Drizzle's
 error repeats: a submitted value that reads like a constraint message changes
-none of them.
+none of them. On SQLite, only a constraint's report counts, a
+`SQLITE_CONSTRAINT` code or D1's message ending in that result: its other
+errors, such as a JSON path or a search it rejects, quote the value and stay
+a `DatabaseError`.
 
 An update of a row that is not there changes nothing and fails nothing: read
 `meta.changes` on D1, or `.returning()`, to tell. SQLite checks a `CHECK`

@@ -501,15 +501,34 @@ function repeatsQuery(error: object): boolean {
 }
 
 /**
- * Whether an error's message is SQLite's own reason, which never quotes a
- * bound value: one with no code, as D1 reports, or a SQLITE_* code. Postgres
- * and MySQL messages can quote the rejected value (`invalid input syntax for
- * type uuid: "..."`), so their codes and fields decide alone.
+ * Whether an error comes from SQLite: one with no code, as D1 reports, or a
+ * SQLITE_* code. Postgres and MySQL messages can quote the rejected value
+ * (`invalid input syntax for type uuid: "..."`), so their codes and fields
+ * decide alone.
  */
 function speaksSqlite(error: object): boolean {
   const code: unknown = Object.getOwnPropertyDescriptor(error, 'code')?.value
 
   return code === undefined || (typeof code === 'string' && code.startsWith('SQLITE_'))
+}
+
+/** The result D1 appends to SQLite's message for a broken constraint, after any text the message quotes. */
+const D1_CONSTRAINT_RESULT = /: SQLITE_CONSTRAINT(?: \(extended: SQLITE_CONSTRAINT_[A-Z]+\))?$/
+
+/**
+ * Whether an error is SQLite's report of a broken constraint, whose message
+ * names the constraint and quotes no bound value: a SQLITE_CONSTRAINT* code
+ * (bun:sqlite, better-sqlite3, libsql), or no code and a message ending with
+ * the SQLITE_CONSTRAINT result D1 appends. SQLite's other errors can quote
+ * bound values (`JSON path error near '...'`, FTS5's `no such column: ...`),
+ * so their messages name no constraint, whatever they quote.
+ */
+function sqliteConstraintReport(error: object): boolean {
+  const code: unknown = Object.getOwnPropertyDescriptor(error, 'code')?.value
+
+  if (code !== undefined) return typeof code === 'string' && code.startsWith('SQLITE_CONSTRAINT')
+
+  return D1_CONSTRAINT_RESULT.test(messageOf(error))
 }
 
 function isUnsupportedTransactionStatement(error: object): boolean {
@@ -560,7 +579,8 @@ function classifyError(error: object): Constraint | undefined {
     : undefined
 
   if (byCode !== undefined && byCode !== 'unknown') return byCode
-  if (!speaksSqlite(error)) return byCode
+  // Only SQLite's constraint report names a constraint in its message.
+  if (!sqliteConstraintReport(error)) return byCode
 
   const message = messageOf(error)
 
@@ -579,7 +599,9 @@ interface ConstraintDetails {
  * message.
  */
 function readConstraintDetails(error: object): ConstraintDetails {
-  return speaksSqlite(error) ? readSqliteDetails(error) : readServerDetails(error)
+  if (sqliteConstraintReport(error)) return readSqliteDetails(error)
+
+  return speaksSqlite(error) ? { columns: [] } : readServerDetails(error)
 }
 
 function readSqliteDetails(error: object): ConstraintDetails {
