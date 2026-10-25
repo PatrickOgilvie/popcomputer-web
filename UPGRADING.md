@@ -1,17 +1,20 @@
-# Upgrading to @popcomputer/web 1.5.0
+# Upgrading to @popcomputer/web 1.6.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.5.0.
+`honertia` package it was renamed from, to 1.6.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
 published to npm. 1.4.0 asks each route binding to say who may load its
 record, which a lint rule reports, and 1.4.1 and 1.4.2 change nothing more.
 1.5.0 fixes what a security audit of 1.4.2 found, and asks a few applications
-to change something, which [From 1.4 to 1.5](#from-14-to-15) lists. So the
-path is one jump: make the 1.0.0 changes below, install 1.5.0, give each
-binding its option as [From 1.3 to 1.4](#from-13-to-14) shows, check the list
-in [From 1.4 to 1.5](#from-14-to-15), and you are done.
+to change something, which [From 1.4 to 1.5](#from-14-to-15) lists. 1.6.0
+fixes what a second audit found in 1.5.0's changes and adds lint rules, which
+[From 1.5 to 1.6](#from-15-to-16) lists. So the path is one jump: make the
+1.0.0 changes below, install 1.6.0, give each binding its option as
+[From 1.3 to 1.4](#from-13-to-14) shows, check the lists in
+[From 1.4 to 1.5](#from-14-to-15) and [From 1.5 to 1.6](#from-15-to-16), and
+you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -35,9 +38,10 @@ you installed:
 8. [From 1.0 to 1.3](#from-10-to-13)
 9. [From 1.3 to 1.4](#from-13-to-14)
 10. [From 1.4 to 1.5](#from-14-to-15)
-11. [Tooling after the upgrade](#tooling-after-the-upgrade)
-12. [Checklist](#checklist)
-13. [A worked example](#a-worked-example)
+11. [From 1.5 to 1.6](#from-15-to-16)
+12. [Tooling after the upgrade](#tooling-after-the-upgrade)
+13. [Checklist](#checklist)
+14. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -51,7 +55,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.5.0 needs:
+- **Check the peer dependencies.** 1.6.0 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -65,12 +69,12 @@ you installed:
   Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
-- **Install 1.5.0** with the peers your application uses, removing `honertia`
+- **Install 1.6.0** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.5.0 effect@^4.0.0
+  bun add @popcomputer/web@^1.6.0 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
@@ -90,9 +94,10 @@ you installed:
 | 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.7.x | [0.7 to 1.0](#from-07-to-10) |
-| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), then [1.4 to 1.5](#from-14-to-15) |
-| 1.3.x | [1.3 to 1.4](#from-13-to-14), then [1.4 to 1.5](#from-14-to-15) |
-| 1.4.x | [1.4 to 1.5](#from-14-to-15) only |
+| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), then [1.5 to 1.6](#from-15-to-16) |
+| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), then [1.5 to 1.6](#from-15-to-16) |
+| 1.4.x | [1.4 to 1.5](#from-14-to-15), then [1.5 to 1.6](#from-15-to-16) |
+| 1.5.x | [1.5 to 1.6](#from-15-to-16) only |
 
 `honertia` and `@popcomputer/web` share one version line, so `honertia` 0.1.45
 is "0.1.x". The 0.4 to 0.7 sections hardly apply to an application coming from
@@ -1175,11 +1180,8 @@ change nothing. Check each item against yours:
   `createAuth` adds `requireEmailVerification`, an email sender and a
   verify-email action, as its "Proving an address" section shows. Sign-up
   then signs no one in until the emailed link is followed. The link opens a
-  page whose button posts its token: an application that adopted 1.5.0's
-  single `routes.get(paths.verifyEmail, verifyEmail)`, which proved the
-  address on any fetch of the link, a mail scanner's included, registers
-  `showVerifyEmail` there and `verifyEmail` on `.post`, and declares the
-  `Auth/VerifyEmail` page.
+  page whose button posts its token, so a mail scanner's fetch of it proves
+  nothing.
 
   1.4's template signed every sign-up in and proved no address, so a session
   it gave someone who registered another person's address still signs them
@@ -1204,13 +1206,6 @@ change nothing. Check each item against yours:
   `APP_URL: variable(S.String)` in `src/env.ts` and passes it as `baseURL`
   (or gives Better Auth `baseURL: { allowedHosts }`), so emailed links never
   follow the host a request arrived on.
-- **Better Auth's limits in the database.** An application with
-  `auth.signInLimits` whose `betterAuth` sets `rateLimit: { storage:
-  'database' }`, as the README before 1.0 did, sets `storage: 'memory'`.
-  Better Auth's database storage deletes the rows of its `rateLimit` table by
-  age, the account counts among them, so every request now fails with a
-  message naming the fix until it changes, as a misconfigured env does: the
-  first request in development or a test shows it, not only a sign-in.
 - **Hand-composed stacks.** One composed as `docs/lower-level.md` shows puts
   `webDefaults()` first in its stack, for setupWeb's security headers and
   cross-site check. `web()` now sends a private Cache-Control itself where
@@ -1248,6 +1243,101 @@ Changes you may notice without acting on them:
   plain text, JSON, audio and video, and `text/*` no longer admits `text/rdf`.
 - A failed validation lists at most 100 fields, and the error observer
   receives no submitted value.
+
+[CHANGELOG.md](CHANGELOG.md) has the detail of each.
+
+## From 1.5 to 1.6
+
+Install 1.6.0:
+
+```bash
+bun add @popcomputer/web@^1.6.0
+```
+
+1.6.0 fixes what a second security audit found in the changes 1.5.0 made,
+and adds lint rules and the agent fence. Most applications change only what
+the new lint rules report. Check each item against yours:
+
+- **The new lint rules.** `webLint()` turns on six new rules:
+  `no-floating-effect`, `no-module-level-mutable-state`,
+  `no-testing-in-production`, `no-server-imports-in-pages` and
+  `require-disable-reason` as errors, and `explain-security-loosening` as a
+  warning. Run `bunx oxlint` and fix what they report. A setting that weakens
+  a protection on purpose keeps its warning, or takes
+  `// oxlint-disable-next-line popcomputer-web/explain-security-loosening -- <reason>`.
+  [Lint rules](docs/lint-rules.md) describes each.
+- **Plugin fields in `settable`.** Browser code that sets a plugin's user
+  field through Better Auth's API, such as signing up with the username
+  plugin's `username`, names it: `betterAuthHandler({ settable: ['username'] })`.
+  `betterAuthHandler` now refuses plugins' user fields that `settable` does
+  not name, as it refuses the application's own `input: true` fields.
+- **The verification link.** An application that adopted 1.5.0's single
+  `routes.get(paths.verifyEmail, verifyEmail)`, which proved the address on
+  any fetch of the link, a mail scanner's included, registers
+  `showVerifyEmail` there and `verifyEmail` on `.post`, and declares the
+  `Auth/VerifyEmail` page, as `docs/auth.md` shows.
+- **Sessions from 1.4.** An application that came from 1.4 under 1.5.0's
+  guide runs, once, the SQL in [From 1.4 to 1.5](#from-14-to-15)'s template
+  item. It ends the sessions 1.4's template gave users whose address nobody
+  proved, which still sign them in.
+- **Better Auth's limits in the database.** An application with
+  `auth.signInLimits` whose `betterAuth` sets `rateLimit: { storage:
+  'database' }`, as the README before 1.0 did, sets `storage: 'memory'`.
+  Better Auth's database storage deletes the rows of its `rateLimit` table by
+  age, the account counts among them, so every request now fails with a
+  message naming the fix until it changes, as a misconfigured env does: the
+  first request in development or a test shows it, not only a sign-in.
+- **Guards beside other layers.** A guard is provided on its own, before any
+  layer or guard that reads a record under the one it decides for. A layer
+  merged beside a guard (`Layer.merge(guard(...), Breadcrumbs)`) that reads
+  such a record, or a guard that reads a record under a guarded one before
+  that record's own guard, now answers 500 `WEB_RTE_606_BINDING_ACCESS_INVALID`
+  for everyone, members included, and runs no query.
+- **Binding options that say nothing.** A route binding whose access option
+  has an empty value, such as `ownedBy` read from an absent setting, or
+  `public: false`, fails when `setupWeb` is called, with
+  `WEB_RTE_606_BINDING_ACCESS_INVALID`. Give it the option that says who may
+  load its record.
+- **Organization slugs.** An application using Better Auth's organization
+  plugin refuses slugs that are not `alphaDash` in its `organizationHooks`,
+  as `docs/auth-plugins.md` shows: the plugin accepts `..`. `href()` and the
+  redirect helpers now leave such a placeholder unfilled instead of throwing,
+  so one stored value breaks only its own link.
+- **Error telemetry.** An error observer that read a concrete value from
+  `context.request.url`, `context.route.params` or the Referer now gets
+  `[redacted]` values, the route's pattern and the Referer's origin.
+
+Changes you may notice without acting on them:
+
+- Every page rendered to a visitor who is not signed in clears Inertia's
+  history, and with it the prefetch cache, and so does the first page after
+  signing in.
+- A page rendered to a user that the application's own layer gives as
+  `AuthUserService` is encrypted in history and answers `no-store`, as a
+  Better Auth session's page does.
+- A request header read by `setupWeb`'s `middleware`, its `database`
+  factory, its `render` template, `routes.middleware(...)` or
+  `prefixMiddleware(...)` makes a `cache: { maxAge }` route answer
+  `no-store`. The default page cache no longer stores a page a guard decides
+  for, however the guard was composed, or a page under `prefixMiddleware`.
+- An error thrown by `setupWeb`'s middleware gets the response policy's
+  headers.
+- `betterAuthHandler` answers 415 to a sign-in or a call that writes the user
+  whose `Content-Type` is not plainly JSON or a form.
+- A change-email link completes only in a browser signed in to the account
+  that asked; a signed-out visitor who follows it is sent to sign in.
+  `betterAuthRedirect`, `betterAuthCall` and `betterAuthHandler` can fail
+  with `UnauthorizedError`.
+- `/verify-password` and `/delete-user` are limited per client address, and
+  a username sign-in counts against the account the plugin's normalizer
+  finds.
+- A request of more than 1000 values is validated up to its first invalid
+  field.
+- `file()` sandboxes a download whose type is not inert.
+- A SQLite error that is not a constraint's is always a `DatabaseError`.
+- `redirectNow`, and work given to `runInBackground` or `schedule`, purge
+  what they name; `purgeCache` from work that outlived its request is a
+  defect.
 
 [CHANGELOG.md](CHANGELOG.md) has the detail of each.
 
@@ -1298,6 +1388,11 @@ Changes you may notice without acting on them:
   }
   ```
 
+- **The agent fence.** [`docs/agent-fence.md`](docs/agent-fence.md) sets up
+  a commit gate that runs the type check, the lint rules and the tests, a
+  hook that stops an agent skipping it, and a count of the comments that turn
+  a rule off, from `@popcomputer/web/fence` and the `popweb-fence` command.
+
 - **Point your agents at the rules.** Have your project's `AGENTS.md` (and
   `CLAUDE.md`) point at `node_modules/@popcomputer/web/AGENTS.md`, which
   matches the installed version. In Claude Code, you can also copy
@@ -1306,8 +1401,8 @@ Changes you may notice without acting on them:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.5.0`.
-- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15) that applies to your application is done.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.6.0`.
+- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15) and [From 1.5 to 1.6](#from-15-to-16) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
