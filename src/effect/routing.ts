@@ -381,8 +381,9 @@ export interface EffectRouteOptions {
    */
   cache?: RouteCacheOptions | 'private' | 'no-store'
   /**
-   * After this route's effect succeeds (any Redirect, or a Response below
-   * 400), purge these Workers Cache tags. `true` purges the record of each
+   * After this route's effect succeeds (any Redirect, including the one
+   * `redirectNow` leaves with, or a Response below 400), purge these Workers
+   * Cache tags. `true` purges the record of each
    * of the route's model bindings, the tag every cached page that reads it
    * carries (see recordCacheTag), and the table of its last binding:
    * PUT /projects/{project} purges `projects:{id}` and `projects`. Records
@@ -1331,7 +1332,16 @@ export class EffectRouteBuilder<
         Response | Redirect,
         AppError | ResponseCachePurgeError,
         R | ResponseCacheService | RouteRecords | PendingPurges | PendingCacheTags
-      > = effect
+      > = effect.pipe(
+        // redirectNow leaves the action with a Redirect failure. It ends the
+        // action as redirect() does and keeps what the action wrote, so the
+        // route answers it as the Redirect value: its purges run below, and
+        // the boundary answers with the same redirect.
+        Effect.catchIf(
+          (error): error is Redirect => error instanceof Redirect,
+          (redirect) => Effect.succeed(redirect)
+        )
+      )
 
       // A cacheable page is tagged with the records its route read, so a
       // write to any of them purges it.

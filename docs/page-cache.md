@@ -153,8 +153,8 @@ creates a record under its parent, such as `POST /threads/{thread}/posts`,
 are the parent and its table (`threads`), not the new post's. When an action
 creates or changes another record, such as a reply's post or the listing an
 accepted offer sold, it adds that record's tag with `purgeCache`. The route purges it after the action
-succeeds, together with its own `purges` if it has any, and not at all when
-the action fails:
+succeeds, or leaves with `redirectNow`, together with its own `purges` if it
+has any, and not at all when the action fails:
 
 ```ts
 yield* purgeCache(recordCacheTag('projects', 'project-1'), 'projects')

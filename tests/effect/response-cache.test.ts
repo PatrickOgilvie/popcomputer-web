@@ -29,7 +29,7 @@ import {
   type ResponseCachePurgeInput,
 } from '../../src/effect/response-cache.js'
 import { Redirect, ValidationError } from '../../src/effect/errors.js'
-import { flash, json, render } from '../../src/effect/responses.js'
+import { flash, forbidden, json, redirectNow, render } from '../../src/effect/responses.js'
 import { RequestService } from '../../src/effect/services.js'
 import { responseHeader } from '../../src/effect/response-headers.js'
 import { cookie } from '../../src/effect/cookies.js'
@@ -921,6 +921,28 @@ describe('purges route option', () => {
 
     // Each tag once, and nothing for the action that failed.
     expect(purges).toEqual([{ tags: ['offers', 'listings', 'listings:listing-1'] }])
+  })
+
+  test('an action that leaves with redirectNow after its write purges as one that returns redirect()', async () => {
+    const { purges, layer } = recordingCacheLayer()
+    const app = createApp()
+
+    effectRoutes(app, { services: () => layer })
+      .put(
+        '/posts/post-1/hide',
+        // A helper that sends the visitor elsewhere once the post is hidden.
+        Effect.andThen(purgeCache(recordCacheTag('posts', 'post-1')), redirectNow('/')),
+        { purges: ['posts'] }
+      )
+      .put('/posts/post-1/pin', Effect.andThen(purgeCache('pins'), forbidden('Only editors pin posts.')), { purges: ['posts'] })
+
+    const hidden = await app.request('/posts/post-1/hide', { method: 'PUT' })
+    const pinned = await app.request('/posts/post-1/pin', { method: 'PUT' })
+
+    expect({ status: hidden.status, location: hidden.headers.get('Location') }).toEqual({ status: 303, location: '/' })
+    expect(pinned.status).toBe(403)
+    // The route's purges and the action's, once; nothing for the refusal.
+    expect(purges).toEqual([{ tags: ['posts', 'posts:post-1'] }])
   })
 
   test('static purge tags are used verbatim', async () => {
