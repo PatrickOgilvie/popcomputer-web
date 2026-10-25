@@ -428,11 +428,25 @@ describe("Better Auth's own limits beside the sign-in limits", () => {
   test("Better Auth's database storage, which deletes the table's rows by age, is refused, whatever its model's name", async () => {
     for (const rateLimit of [{ enabled: true, storage: 'database' }, { storage: 'database', modelName: 'rate_limit' }] as const) {
       const { app, time } = await createApp(testRateLimiter({ limit: 100 }), 3, { rateLimit })
-      const res = await signInFrom(app, testEnv(time.layer, { SIGN_IN_LIMITER: testRateLimiter({ limit: 100 }), ENVIRONMENT: 'development' }))
+      const env = testEnv(time.layer, { SIGN_IN_LIMITER: testRateLimiter({ limit: 100 }), ENVIRONMENT: 'development' })
+      const res = await signInFrom(app, env)
 
       expect(res.status).toBe(500)
       expect(await res.text()).toContain("storage: 'memory'")
     }
+  })
+
+  test('the database storage is refused on the first request of any kind, as a misconfigured env is, not only when someone signs in', async () => {
+    const { app, time, routes } = await createApp(testRateLimiter({ limit: 100 }), 3, { rateLimit: { enabled: true, storage: 'database' } })
+    const env = testEnv(time.layer, { SIGN_IN_LIMITER: testRateLimiter({ limit: 100 }), ENVIRONMENT: 'development' })
+
+    // A request that never reaches Better Auth: a path no route serves.
+    const res = await app.request('/nothing-here', undefined, env)
+
+    expect(res.status).toBe(500)
+    expect(await res.text()).toContain("storage: 'memory'")
+    // A job run through the app fails too, so a queue retries and a cron run is recorded as failed.
+    await expect(routes.run(Effect.succeed('done'), env)).rejects.toThrow("storage: 'memory'")
   })
 
   test('its memory storage, or none, leaves the counts alone and signs in', async () => {

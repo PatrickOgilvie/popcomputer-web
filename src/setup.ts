@@ -5,7 +5,7 @@ import type { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
 import { Effect, type Config, type Layer, type Schema as S } from 'effect'
 import { web } from './middleware.js'
-import { activeSignInLimits, type RateLimiterName, type SignInLimitsConfig } from './effect/sign-in-limits.js'
+import { activeSignInLimits, signInLimitsStorageError, type RateLimiterName, type SignInLimitsConfig } from './effect/sign-in-limits.js'
 import { originRefusal, securityHeaders, verifyOrigin, type SecurityHeadersConfig, type VerifyOriginConfig } from './security.js'
 import type { WebConfig } from './types.js'
 import { loadUserMiddleware, shareAuthMiddleware, usersTableOf } from './effect/auth.js'
@@ -544,8 +544,23 @@ function createSetupMiddleware<
           services: { readonly db?: DB; readonly backgroundTasks: AuthBackgroundTasks }
         ) => Auth
 
+        const auth = createAuth(c, db === undefined ? { backgroundTasks } : { db, backgroundTasks })
+
+        // Better Auth is built per request, from the request's bindings, so
+        // this is the first point its options can be read: a rate-limit
+        // storage that would delete the sign-in counts fails every request,
+        // and routes.run, as a misconfigured env does.
+        if (config.auth.signInLimits !== undefined) {
+          const storageError = signInLimitsStorageError(Object.getOwnPropertyDescriptor(auth, 'options')?.value)
+
+          if (storageError !== undefined) {
+            failRun(c.req.raw, storageError)
+            throw storageError
+          }
+        }
+
         // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
-        requestCtx.auth = createAuth(c, db === undefined ? { backgroundTasks } : { db, backgroundTasks }) as AuthType
+        requestCtx.auth = auth as AuthType
       }
 
       await next()

@@ -298,6 +298,23 @@ function prunesCounts(betterAuth: unknown): boolean {
 }
 
 /**
+ * The configuration error for `auth.signInLimits` beside a Better Auth whose
+ * rate-limit storage would delete the counts, or none. `betterAuth` is the
+ * registered Better Auth's options. setupWeb checks it as it builds Better
+ * Auth for each request, so a misconfigured application fails on its first
+ * request of any kind, as a misconfigured env does, not only on a sign-in.
+ */
+export function signInLimitsStorageError(betterAuth: unknown): Error | undefined {
+  if (!prunesCounts(betterAuth)) return undefined
+
+  return new Error(
+    "auth.signInLimits counts each account's failed sign-ins in a rateLimit table, and Better Auth's rateLimit " +
+      "storage 'database' deletes that table's rows by age, the counts among them. Keep Better Auth's limits in " +
+      "memory, betterAuth({ rateLimit: { enabled: true, storage: 'memory' } }), or in its secondary storage."
+  )
+}
+
+/**
  * Run a call to Better Auth within the sign-in limits: the address, and for a
  * password sign-in the account, are counted on the Rate Limiting binding,
  * and a sign-in during the account's cooldown is refused before the call; a
@@ -316,13 +333,11 @@ export function withinSignInLimits<E, R>(
 
     if (Option.isNone(configured)) return yield* call
 
-    if (prunesCounts(betterAuth)) {
-      return yield* Effect.die(new Error(
-        "auth.signInLimits counts each account's failed sign-ins in a rateLimit table, and Better Auth's rateLimit " +
-          "storage 'database' deletes that table's rows by age, the counts among them. Keep Better Auth's limits in " +
-          "memory, betterAuth({ rateLimit: { enabled: true, storage: 'memory' } }), or in its secondary storage."
-      ))
-    }
+    // setupWeb refuses this before any route runs; this guards a call made
+    // with the limits but outside setupWeb's own request setup.
+    const storageError = signInLimitsStorageError(betterAuth)
+
+    if (storageError !== undefined) return yield* Effect.die(storageError)
 
     if (!isLimitedPath(attempt.path)) return yield* call
 

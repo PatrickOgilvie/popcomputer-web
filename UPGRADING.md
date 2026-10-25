@@ -1208,9 +1208,9 @@ change nothing. Check each item against yours:
   `auth.signInLimits` whose `betterAuth` sets `rateLimit: { storage:
   'database' }`, as the README before 1.0 did, sets `storage: 'memory'`.
   Better Auth's database storage deletes the rows of its `rateLimit` table by
-  age, the account counts among them, so every call the framework sends
-  Better Auth, signing in among them, now fails with a message naming the fix
-  until it changes.
+  age, the account counts among them, so every request now fails with a
+  message naming the fix until it changes, as a misconfigured env does: the
+  first request in development or a test shows it, not only a sign-in.
 - **Hand-composed stacks.** One composed as `docs/lower-level.md` shows puts
   `webDefaults()` first in its stack, for setupWeb's security headers and
   cross-site check. `web()` now sends a private Cache-Control itself where
