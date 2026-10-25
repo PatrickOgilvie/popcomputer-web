@@ -90,6 +90,8 @@ rulebook naming the one API to use for each task, and the files in
 the rulebook from the application's own `AGENTS.md` or `CLAUDE.md`. The same
 rules ship as a Claude skill in `skills/popcomputer-web/SKILL.md`; copy that
 directory into `~/.claude/skills/` or a project's `.claude/skills/`.
+[The agent fence](agent-fence.md) makes the rules that matter most checks
+an agent cannot skip: the commit gate, the command hook and the debt report.
 
 Effect and Hono are peer dependencies so an application owns one Effect runtime
 and one Hono type identity. `better-auth` and `drizzle-orm` are optional peers:

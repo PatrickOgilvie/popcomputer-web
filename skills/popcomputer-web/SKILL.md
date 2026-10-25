@@ -242,7 +242,10 @@ TypeScript example here and in `docs/` type-checks against the package.
     `routes.provide`), stand in for an OAuth provider with `testOAuthProvider({ ... })`
     and sign people in through it with `signIn(browser, path, person)`, and move time with `testClock()`, which works when rules read the
     time through Effect's `Clock` or `DateTime.now`; `time.settle(request)`
-    runs a request whose retries wait on the clock.
+    runs a request whose retries wait on the clock. A new test must fail
+    when the behaviour it covers is reverted: plant the bug first (undo the
+    fix, or break the rule), watch the test fail, then restore the code. A
+    test that passes either way checks nothing.
 13. **Declare every JSON endpoint once, as a contract,** in `src/endpoints.ts`:
     `endpoint.post(paths.apiProjects, { body, success, status: 201, errors:
     { 409: SlugTaken } })` from `@popcomputer/web/endpoint`, with `query`,
@@ -270,6 +273,8 @@ Better Auth integration; `@popcomputer/web/cache` for the KV cache;
 `@popcomputer/web/env` for `defineEnv`, `secret`, `variable` and
 `checkEnv`, in the Worker and in scripts alike;
 `@popcomputer/web/lint` for `webLint`, in `oxlint.config.ts`;
+`@popcomputer/web/fence` for `commandPolicy` and `disableDirectives`,
+behind the `popweb-fence` command an agent's hook and the commit gate run;
 `@popcomputer/web/react` for page component types; `@popcomputer/web/paths`
 for `href`, in React and actions alike; `@popcomputer/web/testing` in tests.
 
@@ -371,3 +376,46 @@ while `setupWeb` has a database factory, mean one value in its configuration
 has a type error, such as a page schema using a deleted import: TypeScript
 then infers none of the configuration's types. Fix the first error inside the
 `setupWeb` call.
+
+## The fence
+
+The rules that matter most are also checks, which `docs/agent-fence.md`
+sets up: the commit gate runs the type check, the lint rules, the tests and
+`popweb-fence debt --check` before every commit, and the agent's command
+hook refuses a command that skips the gate and asks the owner before one
+that needs them. When an enforced check and a paragraph disagree, the check
+wins: follow it, and fix the paragraph. When a check fails, fix what it
+reports; never skip the gate (`git commit --no-verify`, `-n`, `HUSKY=0`, a
+changed `core.hooksPath`) or loosen a check to get a green result. The debt
+report counts every comment that turns a rule off, and the count only
+shrinks: `popweb-fence debt --update` records a lower count, and only the
+owner raises it. When a bad pattern recurs, add the lint rule that reports
+it before cleaning it up, so the cleanup cannot come undone: in the
+application's `oxlint.config.ts` for its own code, in `webLint` for a
+mistake any application could make.
+
+## Boundaries and sign-off
+
+What an agent may change alone, and what needs the owner. Copy this section
+into the application's own `AGENTS.md` and add the application's own
+steps; until then, these hold.
+
+- **An agent may, alone:** write and change actions, routes, pages,
+  services, schemas, migrations and their tests; run them against the local
+  database (`wrangler d1 migrations apply --local`, `wrangler dev`) and
+  build with `wrangler deploy --dry-run`; add or tighten a test, a lint rule
+  or a binding's access; fix the code a rule reports, lowering the debt;
+  edit the documentation and `AGENTS.md`, except this section; commit
+  locally once the gate passes.
+- **Needs the owner's sign-off:** a deploy (`wrangler deploy`, `wrangler
+  versions deploy`, `wrangler rollback`); remote D1 migrations, and any
+  other `--remote` read or write; secrets (`wrangler secret put`);
+  publishing a package; a push; loosening `oxlint.config.ts` or a
+  `webLint` severity, or raising the debt count; changing the commit gate
+  or the agent's hooks; and widening access: who may load a record (a
+  binding moved from `ownedBy` to `publicWhen`, `public` or `guarded`), the
+  user fields `betterAuthHandler`'s `settable` names, `verifyOrigin`'s
+  `allowedOrigins`, a raised `bodyLimit`, or `history.encrypt` turned off.
+
+The command hook asks the owner before the steps it can see. Ask before the
+others yourself, and say what the change widens.

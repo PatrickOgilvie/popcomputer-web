@@ -62,11 +62,19 @@
       "import": "./dist/env.js",
       "default": "./dist/env.js"
     },
+    "./fence": {
+      "types": "./dist/fence/index.d.ts",
+      "import": "./dist/fence/index.js",
+      "default": "./dist/fence/index.js"
+    },
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js",
       "default": "./dist/testing.js"
     }
+  },
+  "bin": {
+    "popweb-fence": "./dist/fence/cli.js"
   },
   "files": [
     "dist",
