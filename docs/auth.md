@@ -52,8 +52,8 @@ framework's own.
 
 ## Better Auth's client
 
-`setupWeb`'s `auth.client` builds Better Auth from a small factory beside
-`src/db.ts`, which the [Quick start](setup.md#3-configure-the-application-once-and-register-it) shows:
+`setupWeb`'s `auth.client` builds Better Auth, on [its tables](auth-tables.md),
+from a small factory beside `src/db.ts`, which the [Quick start](setup.md#3-configure-the-application-once-and-register-it) shows:
 
 ```ts
 // src/auth.ts
@@ -118,8 +118,6 @@ export function createStatelessAuth(options: CreateStatelessAuthOptions) {
   return betterAuth({ secret: options.secret, advanced: options.advanced })
 }
 ```
-
-Its tables are in [Better Auth's tables](auth-tables.md).
 
 The `backgroundTasks` object has Better Auth's
 `advanced.backgroundTasks` shape. Passing it through makes session refreshes,
@@ -221,12 +219,13 @@ cheapest first:
   them out. Only a failure writes a row, a successful sign-in deletes it, and
   the row's key is a hash of the account, not its address.
 
-An account is what its sign-in's endpoint finds it by: the email
-`/sign-in/email` reads, the username plugin's `/sign-in/username`, or the
-phone-number plugin's `/sign-in/phone-number`, whatever other fields the body
-sends. A password sign-in whose field is missing, blank or not text is refused
-with a 400 before Better Auth checks its password. Each counts apart, so an
-account that signs in by email and by username has a budget for each.
+An account is what its sign-in's endpoint finds it by, whatever else the body
+sends: the email `/sign-in/email` reads, the phone-number plugin's
+`/sign-in/phone-number`, or the username plugin's `/sign-in/username` as its
+`usernameNormalization` folds it, so the spellings it folds share one count.
+A password sign-in whose field is missing, blank or not text is refused with
+a 400 before its password is checked. Each door counts apart: an account that
+signs in by email and by username has a budget for each.
 
 `betterAuthRedirect`, `betterAuthCall` and `betterAuthHandler` all apply the
 limits. A refused call fails with `AuthRateLimitError`, whose

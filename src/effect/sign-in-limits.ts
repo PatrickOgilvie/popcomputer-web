@@ -166,16 +166,53 @@ export function clientAddress(headers: Headers): string {
 
 /**
  * The account a password sign-in at `path` names: the field its endpoint
- * finds the account by, trimmed and lowercased, as Better Auth lowercases an
- * email and a username. Undefined for any other endpoint, and for a body
- * whose field is missing, blank or not text.
+ * finds the account by, as the endpoint normalizes it. An email or a phone
+ * number is trimmed and lowercased, as Better Auth lowercases an email; a
+ * username is normalized by the username plugin's own normalizer, so every
+ * spelling an application's `usernameNormalization` folds together counts
+ * against one account. `betterAuth` is the registered Better Auth's options.
+ * Undefined for any other endpoint, and for a body whose field is missing,
+ * blank or not text.
  */
-export function accountOf(path: string, body: unknown): string | undefined {
+export function accountOf(path: string, body: unknown, betterAuth?: unknown): string | undefined {
   if (!isPasswordSignIn(path) || !(body instanceof Object)) return undefined
 
   const named: unknown = Reflect.get(body, ACCOUNT_FIELDS[path])
 
-  return typeof named === 'string' && named.trim() !== '' ? named.trim().toLowerCase() : undefined
+  if (typeof named !== 'string' || named.trim() === '') return undefined
+
+  return path === '/sign-in/username' ? usernameOf(named, betterAuth) : named.trim().toLowerCase()
+}
+
+const property = (value: unknown, key: string): unknown => value instanceof Object ? Reflect.get(value, key) : undefined
+
+/**
+ * A username as the username plugin's `/sign-in/username` looks it up: by
+ * the normalizer its username field transforms input with (the plugin's
+ * `usernameNormalization`, or lowercasing), applied once more first when its
+ * `validationOrder.username` is `'pre-normalization'`. Undefined when the
+ * normalizer throws or returns no text, so the sign-in is refused before a
+ * password is checked; lowercased without the plugin, whose endpoint is then
+ * missing.
+ */
+function usernameOf(name: string, betterAuth: unknown): string | undefined {
+  const plugins: unknown = property(betterAuth, 'plugins')
+  const plugin: unknown = Array.isArray(plugins) ? plugins.find((each: unknown) => property(each, 'id') === 'username') : undefined
+  const transform = property(property(property(property(property(plugin, 'schema'), 'user'), 'fields'), 'username'), 'transform')
+  const normalizer: unknown = property(transform, 'input')
+
+  if (!(normalizer instanceof Function)) return name.toLowerCase()
+
+  const twice = property(property(property(plugin, 'options'), 'validationOrder'), 'username') === 'pre-normalization'
+
+  try {
+    const once: unknown = Reflect.apply(normalizer, transform, [name])
+    const normalized: unknown = twice && typeof once === 'string' ? Reflect.apply(normalizer, transform, [once]) : once
+
+    return typeof normalized === 'string' ? normalized : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**

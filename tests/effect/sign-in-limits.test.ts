@@ -20,7 +20,7 @@ import { betterAuthCall, betterAuthHandler, betterAuthRedirect } from '../../src
 import { json } from '../../src/effect/responses.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { currentPassword, email, requiredString } from '../../src/effect/schema.js'
-import { sweepSignInFailures } from '../../src/effect/sign-in-limits.js'
+import { accountOf, sweepSignInFailures } from '../../src/effect/sign-in-limits.js'
 import { testBrowser, testClock, testEnv, testRateLimiter, type TestRateLimiter } from '../../src/testing.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
@@ -31,7 +31,13 @@ const rateLimit = sqliteTable('rate_limit', {
   lastRequest: integer('last_request').notNull(),
 })
 
-function createAuth() {
+/** How the application configures what the limits read of Better Auth. */
+interface AuthOptions {
+  /** The username plugin's options, such as its usernameNormalization. */
+  readonly username?: Parameters<typeof username>[0]
+}
+
+function createAuth(options: AuthOptions = {}) {
   return betterAuth({
     database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
     baseURL: 'http://localhost',
@@ -41,7 +47,7 @@ function createAuth() {
     rateLimit: { enabled: false },
     logger: { disabled: true },
     // Two more doors to the same password: a username, and a phone number.
-    plugins: [username(), phoneNumber({ sendOTP: async () => {} })],
+    plugins: [username(options.username), phoneNumber({ sendOTP: async () => {} })],
   })
 }
 
@@ -80,8 +86,8 @@ const confirmPassword = action(Effect.gen(function* () {
   return yield* json({ confirmed: true })
 }))
 
-async function createApp(limiter: TestRateLimiter, max = 3) {
-  const auth = createAuth()
+async function createApp(limiter: TestRateLimiter, max = 3, options: AuthOptions = {}) {
+  const auth = createAuth(options)
   const { user } = await auth.api.signUpEmail({ body: { name: 'Ada', email: 'ada@example.com', password: 'correct horse', username: 'ada' } })
   await (await auth.$context).internalAdapter.updateUser(user.id, { phoneNumber: '+15550000001', phoneNumberVerified: true })
 
@@ -268,6 +274,28 @@ describe('each password sign-in counts against the account its endpoint checks',
 
     expect((await api('/sign-in/username', { username: 'ada', password: 'correct horse', email: 'decoy-4@example.net' })).status).toBe(429)
     expect(rows()).toHaveLength(1)
+  })
+
+  test("every spelling the username plugin's usernameNormalization folds together counts against one account", async () => {
+    // The application's normalizer drops separators, so all of these find ada.
+    const usernameNormalization = (name: string) => name.toLowerCase().replaceAll('.', '').replaceAll('_', '')
+    const { app, env, rows } = await createApp(testRateLimiter({ limit: 100 }), 3, { username: { usernameNormalization } })
+    const api = fromAnywhere(app, env)
+
+    for (const [index, spelling] of ['a.da', 'Ad_a', 'a_d.a'].entries()) {
+      expect((await api('/sign-in/username', { username: spelling, password: `guess-${index}` })).status).toBe(401)
+    }
+
+    expect((await api('/sign-in/username', { username: 'a.d.a', password: 'correct horse' })).status).toBe(429)
+    expect(rows()).toHaveLength(1)
+  })
+
+  test("the username is normalized as often as the plugin's validationOrder has its endpoint normalize it", () => {
+    // Strips one leading x, so normalizing twice, as 'pre-normalization' has the endpoint do, finds a different account.
+    const plugin = username({ usernameNormalization: (name) => name.replace(/^x/, ''), validationOrder: { username: 'pre-normalization' } })
+
+    expect(accountOf('/sign-in/username', { username: 'xxada' }, { plugins: [plugin] })).toBe('ada')
+    expect(accountOf('/sign-in/username', { username: 'xxada' }, { plugins: [username({ usernameNormalization: (name) => name.replace(/^x/, '') })] })).toBe('xada')
   })
 
   test('an email that is not text, or blank, does not take a username sign-in out of its count', async () => {

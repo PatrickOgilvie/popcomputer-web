@@ -695,7 +695,7 @@ function callEndpoint(
     }
 
     const { path } = yield* Effect.try({ try: () => endpointOf(auth, name), catch: (cause) => cause }).pipe(Effect.orDie)
-    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, input.body))
+    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, input.body, auth.options))
 
     const response = yield* withinSignInLimits(
       attempt,
@@ -968,7 +968,7 @@ export function betterAuthHandler(
       }
     }
 
-    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, body))
+    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, body, auth.options))
     const response = yield* withinSignInLimits(
       attempt,
       Effect.tryPromise({
