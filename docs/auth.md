@@ -175,7 +175,11 @@ Register both for everyone, `routes.get(paths.verifyEmail, showVerifyEmail)`
 and `.post(paths.verifyEmail, verifyEmail)`, beside the page
 `'Auth/VerifyEmail': S.Struct({ token: S.String })`; a link that expired,
 after an hour, lands on the sign-in page with `?error=`. Email this page's
-link, not Better Auth's own `url`, which proves the address on any fetch.
+link, not Better Auth's own `url`, which proves the address on any fetch. A
+link Better Auth's `user.changeEmail` sends to a new address completes only
+signed in to the account that asked to move there: Better Auth would sign
+anyone else who follows it in to that account, so the framework sends them
+to sign in.
 
 Without `requireEmailVerification`, someone who registers another person's
 address first is signed in, and keeps what the owner's magic-link or provider

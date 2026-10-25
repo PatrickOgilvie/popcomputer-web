@@ -626,6 +626,47 @@ describe("an account registered with someone else's address", () => {
   })
 })
 
+describe('a link that moves an account to a new address', () => {
+  /** Follow the link through the application's page, or through Better Auth's own endpoint. */
+  const doors = {
+    page: (client: Browser, token: string) => client.request('/verify-email', form({ token })),
+    api: (client: Browser, token: string) => client.request(`/api/auth/verify-email?token=${token}`),
+  }
+
+  for (const [door, follow] of Object.entries(doors)) {
+    test(`signs in no one who follows it through the ${door}, and moves the account only in the browser of the account that asked`, async () => {
+      const { browser, db, outbox, join } = setup()
+      const mallory = browser()
+      await join(mallory, 'mallory@example.com', 'Mallory')
+      const asked = await mallory.request('/api/auth/change-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+        body: JSON.stringify({ newEmail: 'victim@example.com' }),
+      })
+      const token = outbox.verifications.filter((sent) => sent.email === 'victim@example.com').at(-1)?.token ?? ''
+      const users = () => db.select({ email: schema.user.email, emailVerified: schema.user.emailVerified }).from(schema.user).all()
+      const sessions = () => db.select().from(schema.session).all().length
+
+      expect(asked.status).toBe(200)
+
+      // The address's holder follows the link Better Auth sent there.
+      const follower = browser()
+      const followed = await follow(follower, token)
+
+      expect(setsSession(followed)).toBe(false)
+      expect((await me(follower)).status).toBe(401)
+      expect(users()).toEqual([{ email: 'mallory@example.com', emailVerified: true }])
+      expect(sessions()).toBe(1)
+
+      // Mallory, in the browser she asked from, completes the move in the session she has.
+      await follow(mallory, token)
+
+      expect(users()).toEqual([{ email: 'victim@example.com', emailVerified: true }])
+      expect(sessions()).toBe(1)
+    })
+  }
+})
+
 describe('signing in with another provider', () => {
   test('an Inertia visit is sent to the provider as Inertia asks for another site', async () => {
     const { browser } = setup()

@@ -685,12 +685,51 @@ function readEndpointResult(response: Response): Effect.Effect<unknown> {
   })
 }
 
+/**
+ * Whether a token on Better Auth's `/verify-email` link moves an account to a
+ * new address, as the link its `user.changeEmail` emails that address does,
+ * rather than proving a sign-up's or confirming the move from the old one.
+ * Its payload is read here unverified; Better Auth verifies it.
+ */
+function movesAccount(token: unknown): boolean {
+  if (typeof token !== 'string') return false
+
+  try {
+    const binary = atob((token.split('.')[1] ?? '').replace(/-/g, '+').replace(/_/g, '/'))
+    const payload: unknown = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0))))
+
+    if (!(payload instanceof Object)) return false
+
+    const updateTo: unknown = Reflect.get(payload, 'updateTo')
+
+    return typeof updateTo === 'string' && updateTo !== '' && Reflect.get(payload, 'requestType') !== 'change-email-confirmation'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Refuse a signed-out visitor a link that moves an account to a new address:
+ * Better Auth signs whoever follows one with no session in to the account
+ * that asked, so the holder of the new address would land in it. A signed-in
+ * visitor goes on, and Better Auth refuses any but that account.
+ */
+function signedInToMove(path: string, tokens: ReadonlyArray<unknown>): Effect.Effect<void, UnauthorizedError> {
+  if (path !== '/verify-email' || !tokens.some(movesAccount)) return Effect.void
+
+  return Effect.flatMap(Effect.serviceOption(AuthUserService), (user) =>
+    Option.isSome(user)
+      ? Effect.void
+      : Effect.fail(new UnauthorizedError({ message: 'Sign in to the account that asked to change its address, then follow the link again.' }))
+  )
+}
+
 /** Call an endpoint through the handler, with its failures classified and its cookies kept for the response. */
 function callEndpoint(
   name: string,
   input: { readonly body?: unknown; readonly query?: unknown },
   errors: ((error: BetterAuthActionError) => Record<string, string>) | undefined
-): Effect.Effect<{ readonly result: unknown; readonly response: Response }, AuthRedirect | ValidationError | AuthRateLimitError | HttpError, RequestService | AuthService> {
+): Effect.Effect<{ readonly result: unknown; readonly response: Response }, AuthRedirect | ValidationError | AuthRateLimitError | HttpError | UnauthorizedError, RequestService | AuthService> {
   return Effect.gen(function* () {
     const auth = yield* AuthService
     const request = yield* RequestService
@@ -701,6 +740,9 @@ function callEndpoint(
     }
 
     const { path } = yield* Effect.try({ try: () => endpointOf(auth, name), catch: (cause) => cause }).pipe(Effect.orDie)
+
+    yield* signedInToMove(path, [input.query instanceof Object ? Reflect.get(input.query, 'token') : undefined])
+
     const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, input.body, optionsOf(auth)))
 
     const response = yield* withinSignInLimits(
@@ -767,7 +809,7 @@ export function betterAuthRedirect<
   options: BetterAuthRedirectOptions<BetterAuthEndpointResult<Name>, E, R, Path>
 ): Effect.Effect<
   Response,
-  AuthRedirect | ValidationError | AuthRateLimitError | HttpError | E,
+  AuthRedirect | ValidationError | AuthRateLimitError | HttpError | UnauthorizedError | E,
   RequestService | AuthService | R
 > {
   return Effect.gen(function* () {
@@ -804,7 +846,7 @@ export function betterAuthCall<const Name extends BetterAuthEndpoint>(
   endpoint: Name,
   input: BetterAuthEndpointInput<Name>,
   options: { readonly errors?: (error: BetterAuthActionError) => Readonly<Record<string, string | undefined>> } = {}
-): Effect.Effect<BetterAuthEndpointResult<Name>, AuthRedirect | ValidationError | AuthRateLimitError | HttpError, RequestService | AuthService> {
+): Effect.Effect<BetterAuthEndpointResult<Name>, AuthRedirect | ValidationError | AuthRateLimitError | HttpError | UnauthorizedError, RequestService | AuthService> {
   return callEndpoint(endpoint, input, definedErrors(options.errors)).pipe(
     // SAFETY: the endpoint's JSON body is what auth.api's endpoint returns.
     Effect.map(({ result }) => result as BetterAuthEndpointResult<Name>),
@@ -928,7 +970,7 @@ const ENDPOINT_INPUT_KEYS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
  */
 export function betterAuthHandler(
   ...[options]: BetterAuthHandlerArguments
-): Effect.Effect<Response, HttpError | AuthRateLimitError, RequestService | AuthService> {
+): Effect.Effect<Response, HttpError | AuthRateLimitError | UnauthorizedError, RequestService | AuthService> {
   const settable = new Set<string>(options?.settable ?? [])
 
   return Effect.gen(function* () {
@@ -947,6 +989,9 @@ export function betterAuthHandler(
     }
 
     const path = yield* Effect.promise(() => handlerPath(auth, raw))
+
+    yield* signedInToMove(path, new URL(raw.url).searchParams.getAll('token'))
+
     // Better Auth reads whole every body it is handed, so it is handed the
     // body read within the limit, in a request of its own; `raw` stays the
     // request the framework knows.

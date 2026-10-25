@@ -222,7 +222,8 @@ export function createAuth(options: CreateAuthOptions) {
         options.outbox.verifications.push({ email: user.email, token })
       },
     },
-    user: { additionalFields: betterAuthFields(user, { timeZone: { input: true } }) },
+    // A member may move their account to another address, which its emailed link proves.
+    user: { additionalFields: betterAuthFields(user, { timeZone: { input: true } }), changeEmail: { enabled: true } },
     session: options.session,
     rateLimit: { enabled: false },
     logger: { disabled: true },
