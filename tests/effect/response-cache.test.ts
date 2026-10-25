@@ -11,7 +11,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Hono, type Context as HonoContext } from 'hono'
+import { Hono, type Context as HonoContext, type MiddlewareHandler } from 'hono'
 import type { BlankEnv } from 'hono/types'
 import { Cause, Context, Effect, Exit, Layer, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
@@ -306,6 +306,39 @@ describe('cache route option', () => {
           .toEqual({ read, composition, body: { tenant: expect.any(String) }, cacheControl: 'no-store' })
       }
     }
+  })
+
+  test('a header that route or prefix middleware decides from is never stored; a path it reads leaves the route cacheable', async () => {
+    // An API key gate: the key holder's answer must not reach a keyless visitor.
+    const keyGate: MiddlewareHandler = async (c, next) => {
+      if (c.req.header('X-Api-Key') !== 'ada-key') return c.text('Unauthorized', 401)
+      await next()
+    }
+    const rawKeyGate: MiddlewareHandler = async (c, next) => {
+      if (c.req.raw.headers.get('X-Api-Key') !== 'ada-key') return c.text('Unauthorized', 401)
+      await next()
+    }
+    const pathGate: MiddlewareHandler = async (c, next) => {
+      if (c.req.path.endsWith('/hidden')) return c.notFound()
+      await next()
+    }
+    const stats = Effect.succeed(Response.json({ revenue: 1200 }))
+
+    const app = createApp()
+    const routes = effectRoutes(app)
+
+    routes.middleware(keyGate).get('/api/stats', stats, { cache: { maxAge: 60 } })
+    routes.middleware(rawKeyGate).get('/api/raw-stats', stats, { cache: { maxAge: 60 } })
+    routes.prefix('/partners').prefixMiddleware(keyGate).get('/partners/stats', stats, { cache: { maxAge: 60 } })
+    routes.middleware(pathGate).get('/api/public-stats', stats, { cache: { maxAge: 60 } })
+
+    for (const path of ['/api/stats', '/api/raw-stats', '/partners/stats']) {
+      const res = await app.request(path, { headers: { 'X-Api-Key': 'ada-key' } })
+
+      expect({ path, status: res.status, cacheControl: res.headers.get('Cache-Control') }).toEqual({ path, status: 200, cacheControl: 'no-store' })
+    }
+
+    expect((await app.request('/api/public-stats')).headers.get('Cache-Control')).toBe('public, max-age=60')
   })
 
   test('a request service that reads no request data leaves the route cacheable', async () => {

@@ -15,7 +15,7 @@ import {
   getEffectBindings,
   getEffectRuntime,
   getEffectSchema,
-  observedRequestContext,
+  serviceRequestContext,
   setEffectBridgeConfig,
   type EffectBridgeConfig,
 } from './bridge.js'
@@ -32,7 +32,7 @@ import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
 import type { ResponseHeaders } from './response-headers.js'
-import { allowDefaultPageCache, defaultCacheControl, keepPageOutOfCache } from '../page-cache.js'
+import { allowDefaultPageCache, defaultCacheControl, keepPageOutOfCache, observedRequestContext } from '../page-cache.js'
 import {
   applyCachePolicy,
   decideCachePolicy,
@@ -726,6 +726,8 @@ export class EffectRouteBuilder<
    * Add Hono middleware that runs before the Effect handler.
    * Use this for middleware that needs to redirect or short-circuit requests
    * before the Effect computation runs (e.g., auth redirects, rate limiting).
+   * A header or the raw request it reads keeps the route's response out of
+   * shared caches, as one read through RequestService does.
    *
    * @example
    * ```typescript
@@ -776,11 +778,13 @@ export class EffectRouteBuilder<
     ...handlers: MiddlewareHandler<E>[]
   ): this {
     // A cached page is served before this middleware runs, and it may turn
-    // visitors away, so no page under the prefix is cached by default.
+    // visitors away, so no page under the prefix is cached by default; a
+    // header it reads keeps a route's own cache option from sharing the
+    // response, as one read through RequestService does.
     const checked = handlers.map((handler): MiddlewareHandler<E> => (c, next) => {
       keepPageOutOfCache(c)
 
-      return handler(c, next)
+      return handler(observedRequestContext(c), next)
     })
 
     if (this.pathPrefix) {
@@ -1127,7 +1131,7 @@ export class EffectRouteBuilder<
       if (requestRuntime && bridgeConfig?.services) {
         contextLayer = Layer.merge(
           contextLayer,
-          bridgeConfig.services(observedRequestContext(c)).pipe(Layer.provide(bindingsConfiguration(c.env)))
+          bridgeConfig.services(serviceRequestContext(c)).pipe(Layer.provide(bindingsConfiguration(c.env)))
         )
       }
 
@@ -1547,11 +1551,14 @@ export class EffectRouteBuilder<
         ...handlers: MiddlewareHandler<E>[]
       ) => void
 
-      register(
-        fullPath,
-        ...this.middlewares,
-        handler
+      // Route middleware reads the request through the observed context, so
+      // a header it decides from, such as an API key, keeps a cached route's
+      // response out of shared caches, as RequestService's reads do.
+      const observed = this.middlewares.map(
+        (middleware): MiddlewareHandler<E> => (c, next) => middleware(observedRequestContext(c), next)
       )
+
+      register(fullPath, ...observed, handler)
     } else {
       this.app[method](fullPath, handler)
     }
