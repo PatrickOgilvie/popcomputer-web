@@ -79,9 +79,15 @@ signs nobody in until the emailed link proves the address, as
 Signing out expires the session cookie, and the page `betterAuthLogoutAction`
 redirects to clears Inertia's history: the signed-in pages, which Inertia kept
 there encrypted, cannot be shown again with Back by the next person at the
-browser ([Pages and props](pages.md)). Any answer that ends the session does
-the same for the next page: Better Auth's client signing out through
-`betterAuthHandler`, or a session lookup that finds the session revoked. A
+browser ([Pages and props](pages.md)). Every page rendered to a visitor who is
+not signed in clears it, in any tab, however the session ended: in another
+tab, by its cookie's expiry, or where a prefetch or a JSON answer saw it end.
+For the next member to sign in at that browser, the first page after any
+answer that ends the session or starts another clears it, through any JSON
+answers between: Better Auth's client signing in or out through
+`betterAuthHandler`, or a lookup that finds the session revoked. That first
+page reaches one tab: a tab whose next page goes to the new member after
+another tab showed one still shows the previous member's pages with Back. A
 session cookie renamed in Better Auth, rather than given a `cookiePrefix`, is
 named in `setupWeb`'s `auth.sessionCookie` too, so its expiry is recognized.
 

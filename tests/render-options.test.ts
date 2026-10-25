@@ -11,7 +11,8 @@ import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
 import { render } from '../src/effect/responses.js'
-import { signedIn, testEnv } from '../src/testing.js'
+import { responseHeader } from '../src/effect/response-headers.js'
+import { signedIn, testBrowser, testEnv } from '../src/testing.js'
 import type { HistoryConfig } from '../src/types.js'
 
 /** A clause of a contract, as a domain model declares it: an interface, recursive. */
@@ -86,9 +87,10 @@ describe("a page's history", () => {
   const historyOf = async (app: Hono, path: string, env?: ReturnType<typeof member>) =>
     S.decodeUnknownSync(PageHistory)(await (await app.request(path, inertia, env)).json())
 
-  test('is encrypted for a signed-in request, and not for a guest, unless setupWeb says otherwise', async () => {
+  test('is encrypted for a signed-in request, and cleared for a guest, unless setupWeb says otherwise', async () => {
     expect(await historyOf(historyApp(), '/account', member())).toEqual({ encryptHistory: true, clearHistory: undefined })
-    expect(await historyOf(historyApp(), '/account')).toEqual({ encryptHistory: undefined, clearHistory: undefined })
+    // A guest's tab may hold the key a session that ended out of its sight left.
+    expect(await historyOf(historyApp(), '/account')).toEqual({ encryptHistory: undefined, clearHistory: true })
     expect(await historyOf(historyApp({ encrypt: true }), '/account')).toEqual({ encryptHistory: true, clearHistory: undefined })
     expect(await historyOf(historyApp({ encrypt: false }), '/account', member())).toEqual({ encryptHistory: undefined, clearHistory: undefined })
   })
@@ -96,6 +98,23 @@ describe("a page's history", () => {
   test("follows render's own options over the default", async () => {
     expect(await historyOf(historyApp({ encrypt: false }), '/recovery')).toEqual({ encryptHistory: true, clearHistory: true })
     expect(await historyOf(historyApp(), '/public', member())).toEqual({ encryptHistory: false, clearHistory: undefined })
+  })
+
+  test('is cleared by the page the client shows, not by a prefetched one it may never show', async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page), history: { encrypt: true } })
+    const endsTheSession = responseHeader('Set-Cookie', 'better-auth.session_token=; Path=/; Max-Age=0')
+
+    routes
+      .get('/signed-out', action(Effect.andThen(endsTheSession, render('Home', {}, { clearHistory: true }))))
+      .get('/account', action(render('Account/Show')))
+
+    const browser = testBrowser(app)
+    // Inertia keeps a prefetched page, and shows it only when that URL is visited.
+    await browser.request('/signed-out', { headers: { ...inertia.headers, Purpose: 'prefetch' } })
+    const shown = S.decodeUnknownSync(PageHistory)(await (await browser.request('/account', inertia)).json())
+
+    expect(shown).toEqual({ encryptHistory: true, clearHistory: true })
   })
 
   test('is in the HTML document of a first visit too', async () => {

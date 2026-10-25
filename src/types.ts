@@ -53,8 +53,11 @@ export interface WebConfig {
   /**
    * How pages keep their props in the browser's history. Pages rendered to a
    * signed-in request are encrypted there unless this says otherwise, and the
-   * first page after the session ends clears it, so Back after sign-out
-   * cannot show the previous user's pages.
+   * first page after the session ends or another starts clears it, as does
+   * every page rendered to a visitor who is not signed in, so Back after
+   * sign-out cannot show the previous user's pages. A tab whose next page
+   * goes to another signed-in user is cleared only when that page is the
+   * first since the switch: one shown first in another tab took the clear.
    */
   history?: HistoryConfig
 }
