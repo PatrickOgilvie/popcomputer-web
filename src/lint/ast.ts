@@ -46,10 +46,14 @@ export interface TemplateLiteral extends AstNode {
 export interface ImportDeclaration extends AstNode {
   readonly type: 'ImportDeclaration'
   readonly source: { readonly value: string }
+  /** `type` for `import type { ... }`. */
+  readonly importKind?: string
   readonly specifiers: ReadonlyArray<{
     readonly type: string
     readonly local: Identifier
     readonly imported?: { readonly type: string; readonly name?: string; readonly value?: string }
+    /** `type` for `import { type X }`. */
+    readonly importKind?: string
   }>
 }
 
@@ -75,6 +79,23 @@ export interface Property extends AstNode {
 export interface YieldExpression extends AstNode {
   readonly type: 'YieldExpression'
   readonly argument: AstNode | null
+  /** Whether it is `yield*`. */
+  readonly delegate: boolean
+}
+
+/** A comment, which a rule may report as it reports a node. */
+export interface Comment {
+  readonly type: 'Line' | 'Block' | 'Shebang'
+  readonly value: string
+  readonly range: readonly [number, number]
+}
+
+/** A comment that turns rules off, as Oxlint and ESLint parse it: `value` lists the rules, `justification` follows ` -- `. */
+export interface DisableDirective {
+  readonly type: 'disable' | 'enable' | 'disable-line' | 'disable-next-line'
+  readonly node: Comment
+  readonly value: string
+  readonly justification: string
 }
 
 /** A fix: the replacement of a node's text. */
@@ -84,7 +105,7 @@ export interface Fixer {
 
 /** What a rule reports: the node, the message's id and its data, and a fix. */
 export interface Report {
-  readonly node: AstNode
+  readonly node: AstNode | Comment
   readonly messageId: string
   readonly data?: Readonly<Record<string, string>>
   readonly fix?: (fixer: Fixer) => unknown
@@ -92,6 +113,15 @@ export interface Report {
 
 /** The rule's view of the file it checks. */
 export interface RuleContext {
+  /** The file's absolute path. */
+  readonly filename: string
+  /** The directory the linter runs in, which file paths are read from. */
+  readonly cwd: string
+  readonly sourceCode: {
+    getAllComments(): ReadonlyArray<Comment>
+    /** Oxlint's and ESLint's own parse of the file's disable directives. */
+    getDisableDirectives?(): { readonly directives: ReadonlyArray<DisableDirective> }
+  }
   report(report: Report): void
 }
 
@@ -259,6 +289,12 @@ export const WEB_EFFECT = new Set(['@popcomputer/web/effect'])
 
 /** The framework's entrypoint for `setupWeb`. */
 export const WEB = new Set(['@popcomputer/web'])
+
+/** The framework's entrypoint for the Better Auth integration. */
+export const WEB_AUTH = new Set(['@popcomputer/web/auth'])
+
+/** The framework's entrypoint for the KV data cache. */
+export const WEB_CACHE = new Set(['@popcomputer/web/cache'])
 
 /** Effect's entrypoints a file imports `Effect` from. */
 export const EFFECT = new Set(['effect', 'effect/Effect'])

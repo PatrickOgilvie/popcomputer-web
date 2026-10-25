@@ -12,7 +12,8 @@
  * A rule applies where a file uses the framework, with nothing to configure:
  * the action rules to files that import `action`, the database rules inside
  * `dbQuery`, `dbMutation`, `dbTransaction` and `dbBatch`, the binding rule
- * to `setupWeb`'s `bindings` and `routeBinding`.
+ * to `setupWeb`'s `bindings` and `routeBinding`, and the rules about where
+ * code runs by where a file sits: a test, a script, a page.
  *
  * @example
  * // oxlint.config.ts
@@ -36,6 +37,7 @@ import {
   requireBackground,
 } from './actions.js'
 import { requireBindingAccess } from './bindings.js'
+import { noModuleLevelMutableState, noServerImportsInPages, noTestingInProduction } from './boundaries.js'
 import {
   noDatabaseServiceInAction,
   noExternalWorkInTransaction,
@@ -43,6 +45,9 @@ import {
   noUnscopedWrite,
   noWriteInDbQuery,
 } from './database.js'
+import { requireDisableReason } from './directives.js'
+import { noFloatingEffect } from './effects.js'
+import { explainSecurityLoosening } from './security.js'
 
 export type { LintRule } from './ast.js'
 
@@ -67,6 +72,12 @@ export const rules: Readonly<Record<string, LintRule>> = {
   'no-auth-api-in-action': noAuthApiInAction,
   'prefer-checked-config': preferCheckedConfig,
   'require-binding-access': requireBindingAccess,
+  'no-floating-effect': noFloatingEffect,
+  'no-module-level-mutable-state': noModuleLevelMutableState,
+  'no-testing-in-production': noTestingInProduction,
+  'no-server-imports-in-pages': noServerImportsInPages,
+  'require-disable-reason': requireDisableReason,
+  'explain-security-loosening': explainSecurityLoosening,
 }
 
 /** The plugin Oxlint's `jsPlugins` or ESLint's `plugins` loads. */
@@ -87,8 +98,16 @@ export interface WebLintConfig {
 }
 
 /**
- * An Oxlint configuration with every rule on as an error. Pass the severity
- * of a rule to change it, as `{ 'no-catch-all-in-action': 'warn' }`.
+ * The rules on as warnings unless configured otherwise: a setting that
+ * weakens a protection may be meant, and is acknowledged with a reasoned
+ * disable comment rather than refused.
+ */
+const WARNINGS: ReadonlySet<string> = new Set(['explain-security-loosening'])
+
+/**
+ * An Oxlint configuration with every rule on, as an error but
+ * `explain-security-loosening`, a warning. Pass the severity of a rule to
+ * change it, as `{ 'no-catch-all-in-action': 'warn' }`.
  *
  * @example
  * export default defineConfig({ ...webLint(), ignorePatterns: ['dist'] })
@@ -97,7 +116,7 @@ export function webLint(severities: Readonly<Record<string, RuleSeverity>> = {})
   const configured: Record<string, RuleSeverity> = {}
 
   for (const name of Object.keys(rules)) {
-    configured[`${PLUGIN_NAME}/${name}`] = Object.hasOwn(severities, name) ? severities[name] : 'error'
+    configured[`${PLUGIN_NAME}/${name}`] = Object.hasOwn(severities, name) ? severities[name] : WARNINGS.has(name) ? 'warn' : 'error'
   }
 
   return { jsPlugins: [{ name: PLUGIN_NAME, specifier: '@popcomputer/web/lint' }], rules: configured }

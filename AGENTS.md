@@ -320,7 +320,13 @@ has `errors.name` (a JSON request gets a `422`).
 
 Run the application's type check (`tsc --noEmit`), the package's lint rules
 (`bunx oxlint`, with `oxlint.config.ts` exporting
-`defineConfig(webLint())` from `@popcomputer/web/lint`) and `bun test`. Each
+`defineConfig(webLint())` from `@popcomputer/web/lint`) and `bun test`. Let
+the type check run the Effect language service, whose `floatingEffect` fails
+it on any Effect neither yielded nor assigned, where the lint rule sees only
+the framework's calls: `bun add -d @effect/tsgo`, `"plugins": [{ "name":
+"@effect/language-service" }]` in `tsconfig.json`'s `compilerOptions`, and
+`"prepare": "effect-tsgo patch"` in `package.json`, since `tsc` ignores the
+plugin until it is patched (`docs/lint-rules.md` has the details). Each
 lint message names the API to use instead; fix the code rather than
 disabling the rule, and when a line breaks one on purpose, say why in the
 disable comment. A type error
