@@ -26,9 +26,15 @@ const ACCESS = new Set(['ownedBy', 'public', 'publicWhen', 'guarded', 'scope'])
 
 const isProperty = (node: AstNode): node is Property => node.type === 'Property'
 
+/** Whether a value is written `undefined` or `void ...`, which says nothing. */
+const isUndefinedLiteral = (node: AstNode): boolean =>
+  (isIdentifier(node) && node.name === 'undefined') ||
+  (node.type === 'UnaryExpression' && 'operator' in node && node.operator === 'void')
+
 /**
  * Whether an options object says who may load the record: undefined when a
- * spread may say it, which the rule cannot see.
+ * spread may say it, which the rule cannot see. An option written
+ * `undefined` says nothing.
  */
 function declaresAccess(options: ObjectExpression): boolean | undefined {
   let spread = false
@@ -44,7 +50,7 @@ function declaresAccess(options: ObjectExpression): boolean | undefined {
 
     // A scope names the parent it loads under; an empty one names none.
     if (name === 'scope' && isObject(value) && value.properties.length === 0) continue
-    if (name !== undefined && ACCESS.has(name)) return true
+    if (name !== undefined && ACCESS.has(name) && !isUndefinedLiteral(value)) return true
   }
 
   return spread ? undefined : false
@@ -63,17 +69,22 @@ function undefinedPublicWhen(options: ObjectExpression): string | undefined {
     if (!isObject(values)) return undefined
 
     for (const entry of values.properties) {
-      if (!isProperty(entry)) continue
-
-      const value = unwrap(entry.value)
-      const isUndefined = (isIdentifier(value) && value.name === 'undefined')
-        || (value.type === 'UnaryExpression' && 'operator' in value && value.operator === 'void')
-
-      if (isUndefined) return keyName(entry) ?? 'column'
+      if (isProperty(entry) && isUndefinedLiteral(unwrap(entry.value))) return keyName(entry) ?? 'column'
     }
   }
 
   return undefined
+}
+
+/** The access options an options object writes `undefined`, which setupWeb refuses. */
+function undefinedOptions(options: ObjectExpression): Property[] {
+  return options.properties.filter((property): property is Property => {
+    if (!isProperty(property)) return false
+
+    const name = keyName(property)
+
+    return name !== undefined && ACCESS.has(name) && isUndefinedLiteral(unwrap(property.value))
+  })
 }
 
 export const requireBindingAccess: LintRule = {
@@ -87,6 +98,8 @@ export const requireBindingAccess: LintRule = {
         "Use routeBinding(table, options) for binding \"{{name}}\", to say who may load its record: { ownedBy: 'userId' } for its owner only, { publicWhen: { visibility: 'public' } } for anyone when its columns hold those values, { public: true } for anyone, { guarded: true } when a guard layer decides, or scope when it is only loaded under its parent.",
       undefinedValue:
         "Use the value that makes a record public for \"{{column}}\", as publicWhen: { {{column}}: true }: undefined says none, and on a SQLite boolean column it matches the private records.",
+      undefinedOption:
+        "Use a value for {{option}}, as ownedBy: 'userId' or guarded: true, or leave it out: undefined says nothing about who may load the record, so setupWeb refuses it.",
     },
   },
   create(context) {
@@ -111,14 +124,20 @@ export const requireBindingAccess: LintRule = {
       CallExpression(node: CallExpression) {
         if (isRouteBinding(node)) {
           const options = node.arguments[1] === undefined ? undefined : unwrap(node.arguments[1])
+          const unset = isObject(options) ? undefinedOptions(options) : []
 
-          if (options === undefined || (isObject(options) && declaresAccess(options) === false)) {
+          // An option written undefined is reported as itself.
+          if (unset.length === 0 && (options === undefined || (isObject(options) && declaresAccess(options) === false))) {
             context.report({ node, messageId: 'access' })
           }
 
           const column = isObject(options) ? undefinedPublicWhen(options) : undefined
 
           if (column !== undefined) context.report({ node, messageId: 'undefinedValue', data: { column } })
+
+          for (const option of unset) {
+            context.report({ node: option, messageId: 'undefinedOption', data: { option: keyName(option) ?? 'option' } })
+          }
 
           return
         }
@@ -144,9 +163,15 @@ export const requireBindingAccess: LintRule = {
             if (isRouteBinding(definition) || (isIdentifier(definition) && bindings.has(definition.name))) continue
 
             const column = isObject(definition) ? undefinedPublicWhen(definition) : undefined
+            const unset = isObject(definition) ? undefinedOptions(definition) : []
 
             if (column !== undefined) context.report({ node: binding, messageId: 'undefinedValue', data: { column } })
-            if (isObject(definition) && declaresAccess(definition) !== false) continue
+
+            for (const option of unset) {
+              context.report({ node: option, messageId: 'undefinedOption', data: { option: keyName(option) ?? 'option' } })
+            }
+
+            if (unset.length > 0 || (isObject(definition) && declaresAccess(definition) !== false)) continue
 
             context.report({ node: binding, messageId: 'bare', data: { name: keyName(binding) ?? 'binding' } })
           }

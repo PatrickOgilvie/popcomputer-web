@@ -21,6 +21,11 @@ export const web = setupWeb(new Hono(), {
     unscoped: routeBinding(schema.tasks, { scope: {} }), // expect: require-binding-access
     shared: routeBinding(schema.projects, { publicWhen: { isPublic: undefined } }), // expect: require-binding-access
     hidden: { schema: schema.projects, publicWhen: { isPublic: void 0 } }, // expect: require-binding-access
+    owned: routeBinding(schema.projects, { ownedBy: undefined }), // expect: require-binding-access
+    open: routeBinding(schema.projects, { publicWhen: void 0 }), // expect: require-binding-access
+    decided: { schema: schema.projects, guarded: undefined }, // expect: require-binding-access
+    nested: routeBinding(schema.tasks, { scope: undefined }), // expect: require-binding-access
+    both: routeBinding(schema.projects, { ownedBy: 'userId', scope: undefined }), // expect: require-binding-access
   },
 })
 

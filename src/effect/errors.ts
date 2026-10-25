@@ -860,6 +860,31 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     })
   }
 
+  /**
+   * Create an error for a binding that names an access option with a value
+   * that says nothing, such as an absent setting's undefined: read as no
+   * option, the binding would load any record for anyone.
+   */
+  static bindingAccessUnsaid(binding: string, option: string, value: unknown): RouteConfigurationError {
+    const given = value === undefined || value === null || typeof value === 'boolean' || typeof value === 'number'
+      ? String(value)
+      : `a ${typeof value}`
+    const fix = option === 'ownedBy'
+      ? "Give ownedBy the column that holds its owner's user id, as ownedBy: 'userId'"
+      : option === 'public' || option === 'guarded'
+        ? `Give ${option}: true, the only value it takes`
+        : option === 'publicWhen'
+          ? "Give publicWhen the values that make a record public, as publicWhen: { visibility: 'public' }"
+          : "Give scope the parent binding it loads under, as scope: { organization: { foreignKey: 'organizationId' } }"
+
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" gives ${option} the value ${given}, which says nothing about who may load its record: read as no option, it would load any record for anyone.`,
+      hint: `${fix}, or leave the option out. When the value comes from settings or another module, make sure it is set before setupWeb is called.`,
+      binding,
+      code: ErrorCodes.RTE_606_BINDING_ACCESS_INVALID,
+    })
+  }
+
   /** Create an error for a binding whose lookup column matched more than one row. */
   static ambiguousBinding(binding: string, table: string, column: string): RouteConfigurationError {
     return new RouteConfigurationError({

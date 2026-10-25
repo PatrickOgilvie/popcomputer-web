@@ -446,6 +446,31 @@ describe('who may load a binding', () => {
     expect(compiled.access).toEqual({ publicWhen: { isPublic: true } })
   })
 
+  test('an access option that is undefined is refused before any route can load a record by it', async () => {
+    // SAFETY: settings whose keys are typed but absent at runtime, which the types cannot see.
+    const settings = {} as { readonly ownerColumn: 'userId'; readonly guarded: true }
+
+    for (const definition of [
+      routeBinding(projects, { ownedBy: settings.ownerColumn }),
+      routeBinding(projects, { guarded: settings.guarded }),
+      routeBinding(projects, { publicWhen: undefined }),
+    ]) {
+      await expect(compileBindingPlan([{ param: 'shared', column: 'id' }], { projects }, { shared: definition }))
+        .rejects.toMatchObject({
+          message: expect.stringContaining('Route binding "shared" gives'),
+          code: ErrorCodes.RTE_606_BINDING_ACCESS_INVALID,
+        })
+    }
+
+    const [compiled] = await compileBindingPlan(
+      [{ param: 'shared', column: 'id' }],
+      { projects },
+      { shared: routeBinding(projects, { ownedBy: 'userId' }) }
+    )
+
+    expect(compiled.access).toEqual({ ownedBy: 'userId' })
+  })
+
   test('public loads any record for anyone', async () => {
     const { app } = createApp()
 
@@ -505,6 +530,43 @@ describe('who may load a binding', () => {
         assert(error instanceof RouteConfigurationError)
         expect(error.code).toBe(ErrorCodes.RTE_606_BINDING_ACCESS_INVALID)
         expect(error.hint).toContain('publicWhen: { isPublic: true }')
+      }
+    })
+
+    test('an access option whose value says nothing, such as an absent setting, which would load any record for anyone', () => {
+      interface Settings {
+        readonly ownerColumn: 'userId'
+        readonly sharedWhen: { readonly isPublic: true }
+        readonly guarded: true
+        readonly scope: { readonly project: { readonly foreignKey: 'userId' } }
+      }
+      // SAFETY: settings whose keys are typed but absent at runtime, as after a rename, which the types cannot see.
+      const settings = {} as Settings
+
+      expect(setup({ project: routeBinding(projects, { ownedBy: settings.ownerColumn }) }))
+        .toThrow('Route binding "project" gives ownedBy the value undefined, which says nothing about who may load its record')
+      expect(setup({ project: { schema: projects, ownedBy: settings.ownerColumn } })).toThrow('gives ownedBy the value undefined')
+      expect(setup({ project: routeBinding(projects, { ownedBy: undefined }) })).toThrow('gives ownedBy the value undefined')
+      expect(setup({ project: routeBinding(projects, { publicWhen: settings.sharedWhen }) })).toThrow('gives publicWhen the value undefined')
+      expect(setup({ project: routeBinding(projects, { guarded: settings.guarded }) })).toThrow('gives guarded the value undefined')
+      expect(setup({ project: routeBinding(projects, { ownedBy: 'userId', scope: settings.scope }) })).toThrow('gives scope the value undefined')
+      // SAFETY: an untyped setting, as JSON configuration gives; the types allow only true.
+      expect(setup({ project: routeBinding(projects, { public: false as true }) })).toThrow('gives public the value false')
+      // SAFETY: As above.
+      expect(setup({ project: routeBinding(projects, { guarded: false as true }) })).toThrow('gives guarded the value false')
+
+      expect(setup({ project: routeBinding(projects, { ownedBy: 'userId' }) })).not.toThrow()
+      expect(setup({ project: routeBinding(projects, { guarded: true }) })).not.toThrow()
+      expect(setup({ project: routeBinding(projects, { public: true }) })).not.toThrow()
+
+      try {
+        setup({ project: routeBinding(projects, { ownedBy: settings.ownerColumn }) })()
+        assert.fail('setupWeb accepted an ownedBy that says nothing')
+      } catch (error) {
+        assert(error instanceof RouteConfigurationError)
+        expect(error.code).toBe(ErrorCodes.RTE_606_BINDING_ACCESS_INVALID)
+        expect(error.hint).toContain("ownedBy: 'userId'")
+        expect(error.hint).toContain('before setupWeb is called')
       }
     })
 
