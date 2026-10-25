@@ -111,8 +111,24 @@ describe('a served file', () => {
       expect({ contentType, csp: await shown(contentType) }).toEqual({ contentType, csp: null })
     }
 
-    expect(await shown('text/csv', { filename: 'rows.csv' })).toBeNull()
     expect(await shown('text/rdf', { headers: { 'Content-Security-Policy': "default-src 'none'" } })).toBe("default-src 'none'")
+  })
+
+  // Content-Disposition is the only other control on a download, and a web
+  // view without a download handler may show the body in its place.
+  test('sandboxes a download of an active upload, and leaves an inert one as it is', async () => {
+    const shown = async (contentType: string, options: { readonly filename: string; readonly headers?: HeadersInit }) =>
+      (await Effect.runPromise(file('<x/>', { contentType, ...options }))).headers.get('Content-Security-Policy')
+
+    for (const contentType of ['text/html', 'image/svg+xml', 'application/xhtml+xml', 'text/xml', 'text/rdf', 'text/csv', 'application/octet-stream']) {
+      expect({ contentType, csp: await shown(contentType, { filename: 'shared.bin' }) }).toEqual({ contentType, csp: 'sandbox' })
+    }
+
+    for (const contentType of ['application/pdf', 'image/png', 'text/plain', 'application/json', 'audio/mpeg', 'video/mp4']) {
+      expect({ contentType, csp: await shown(contentType, { filename: 'shared.bin' }) }).toEqual({ contentType, csp: null })
+    }
+
+    expect(await shown('text/html', { filename: 'page.html', headers: { 'Content-Security-Policy': "default-src 'none'" } })).toBe("default-src 'none'")
   })
 
   test('names its download in one quoted value, however the name tries to break out', async () => {

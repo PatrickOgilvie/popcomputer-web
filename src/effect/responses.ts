@@ -232,8 +232,8 @@ export interface FileOptions {
   readonly contentType: string
   /**
    * Offer the body as a download with this file name. Without it, browsers
-   * show the body inline, sandboxed unless it is an image other than SVG, a
-   * PDF, plain text, JSON, audio or video.
+   * show the body inline. Either way it is sandboxed unless it is an image
+   * other than SVG, a PDF, plain text, JSON, audio or video.
    */
   readonly filename?: string
   readonly status?: number
@@ -274,11 +274,14 @@ export function file<E = never, R = never>(
 
     if (options.filename !== undefined) {
       headers.set('Content-Disposition', contentDisposition(options.filename))
-    } else if (!isInertContentType(contentType) && !headers.has('Content-Security-Policy')) {
-      // Only a type a browser shows without running script, such as an image
-      // or a PDF, is shown inline as it is. A page, an SVG, or a type a
-      // browser may read as one, such as `text/rdf`, runs without script,
-      // forms or the origin.
+    }
+
+    // Only a type a browser shows without running script, such as an image
+    // or a PDF, is served as it is. A page, an SVG, or a type a browser may
+    // read as one, such as `text/rdf`, runs without script, forms or the
+    // origin, a download too: a web view that shows an attachment in place
+    // of downloading it would otherwise run it on the application's origin.
+    if (!isInertContentType(contentType) && !headers.has('Content-Security-Policy')) {
       headers.set('Content-Security-Policy', 'sandbox')
     }
 
