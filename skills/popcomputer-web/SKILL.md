@@ -168,8 +168,8 @@ TypeScript example here and in `docs/` type-checks against the package.
    with `account: { accountLinking: { disableImplicitLinking: true } }` and
    `onAPIError: { errorURL }` in `betterAuth`; register
    `routes.all(paths.authApi, betterAuthHandler({ settable }))` only for
-   Better Auth's client SDK, naming the `input: true` user fields visitors may
-   set there. On D1, Better Auth writes each row in its own statement: write
+   Better Auth's client SDK, naming the user fields visitors may set there,
+   the application's `input: true` ones and plugins' such as `phoneNumber`. On D1, Better Auth writes each row in its own statement: write
    rows that must exist together, such as an organization and its owner, in
    your own `dbBatch`. Make the application's
    own record of a new member on their first visit, in a guard layer, since

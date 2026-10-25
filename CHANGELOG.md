@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+An application whose browser code sets a plugin's user field through Better Auth's API, such as signing up with the username plugin's `username`, names it in `betterAuthHandler`'s `settable`: `betterAuthHandler({ settable: ['username'] })`.
+
+### Security
+
+- `betterAuthHandler` refuses the user fields Better Auth's plugins add, such as the phone-number plugin's `phoneNumber` and the username plugin's `username`, unless `settable` names them, as it refuses the application's own `input: true` fields. It read only `user.additionalFields`, while Better Auth's sign-up takes every plugin's user fields too, so `settable: []` let a visitor sign up with someone else's address and a phone number they held. The phone-number plugin's verify signs in whoever holds the number's code without reading `emailVerified`, and the owner's first magic-link sign-in left the number on the account: the registrant's next texted code signed them in to the owner's verified account. `/phone-number/verify` still takes the number its code proves, and `settable`'s type now names plugin fields, so TypeScript asks for `settable` once the phone-number or username plugin is on.
+
 ## [1.5.0] - 2026-10-23
 
 This release fixes what a security audit of 1.4.2 found: one high, five medium and eleven low findings, and ten of its eleven leads. Each fix was proven by re-running the audit's own reproductions on 1.4.2 and on this release. The eleventh lead needed no change: Workers Cache keeps a cached route's variants apart, as `docs/page-cache.md` now explains.

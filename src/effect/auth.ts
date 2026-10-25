@@ -808,25 +808,37 @@ export function betterAuthCall<const Name extends BetterAuthEndpoint>(
 /** The options the registered Better Auth was configured with. */
 type AuthOptions = AuthType extends { readonly options: infer Options } ? Options : never
 
-type InputFieldsOf<Options> = Options extends { readonly user?: { readonly additionalFields?: infer Fields } }
-  ? { readonly [Name in keyof NonNullable<Fields>]: NonNullable<Fields>[Name] extends { readonly input: false } ? never : Name }[keyof NonNullable<Fields>] & string
+/** The names in a Better Auth field map whose `input` is not false. */
+type InputNamesOf<Fields> = {
+  readonly [Name in keyof NonNullable<Fields>]: NonNullable<Fields>[Name] extends { readonly input: false } ? never : Name
+}[keyof NonNullable<Fields>] & string
+
+/** The user fields a plugin's schema adds that a visitor may set. */
+type PluginInputFieldsOf<Plugin> = Plugin extends { readonly schema?: { readonly user?: { readonly fields?: infer Fields } } }
+  ? InputNamesOf<Fields>
   : never
+
+type InputFieldsOf<Options> =
+  | (Options extends { readonly user?: { readonly additionalFields?: infer Fields } } ? InputNamesOf<Fields> : never)
+  | (Options extends { readonly plugins?: ReadonlyArray<infer Plugin> } ? PluginInputFieldsOf<Plugin> : never)
 
 /**
  * The user fields a visitor may set at sign-up, as the registered Better
- * Auth's `user.additionalFields` declares them: each whose `input` is not
- * false.
+ * Auth declares them: its `user.additionalFields` and its plugins' user
+ * fields, such as the phone-number plugin's `phoneNumber`, each whose `input`
+ * is not false.
  */
 export type BetterAuthInputField = [AuthOptions] extends [never] ? string : InputFieldsOf<AuthOptions>
 
 /** Options for {@link betterAuthHandler}. */
 export interface BetterAuthHandlerOptions {
   /**
-   * The user fields declared `input: true` that a visitor may set through
-   * Better Auth's own API, at sign-up, on a first email-OTP sign-in or
-   * phone-number verification, and later with its update-user, where the
-   * application's actions do not validate them. A request setting any other
-   * is refused.
+   * The user fields a visitor may set through Better Auth's own API, at
+   * sign-up, on a first email-OTP sign-in or phone-number verification, and
+   * later with its update-user, where the application's actions do not
+   * validate them: the application's fields declared `input: true`, and its
+   * plugins' fields, such as the phone-number plugin's `phoneNumber` or the
+   * username plugin's `username`. A request setting any other is refused.
    */
   readonly settable: ReadonlyArray<BetterAuthInputField>
 }
@@ -849,17 +861,42 @@ const USER_WRITING_ENDPOINTS = new Set(['/update-user', '/sign-in/email-otp', '/
 
 const writesUser = (path: string): boolean => path.startsWith('/sign-up/') || USER_WRITING_ENDPOINTS.has(path)
 
-/** The user fields Better Auth lets a visitor set: its `additionalFields` whose `input` is not false. */
+/**
+ * The user fields Better Auth lets a visitor set, merged as its
+ * `getFields(options, 'user', 'input')` merges them: the application's
+ * `user.additionalFields`, then each plugin's `schema.user.fields`, each whose
+ * `input` is not false. A plugin's field, such as the phone-number plugin's
+ * `phoneNumber`, is written at sign-up like the application's own.
+ */
 function inputUserFields(auth: BetterAuthInstance): ReadonlyArray<string> {
-  const user: unknown = auth.options === undefined ? undefined : Reflect.get(auth.options, 'user')
-  const fields: unknown = user instanceof Object ? Reflect.get(user, 'additionalFields') : undefined
+  const options: unknown = auth.options
+  const user: unknown = options instanceof Object ? Reflect.get(options, 'user') : undefined
+  const plugins: unknown = options instanceof Object ? Reflect.get(options, 'plugins') : undefined
+  const pluginFields = (Array.isArray(plugins) ? plugins : []).map((plugin: unknown) => {
+    const schema: unknown = plugin instanceof Object ? Reflect.get(plugin, 'schema') : undefined
+    const users: unknown = schema instanceof Object ? Reflect.get(schema, 'user') : undefined
 
-  if (!(fields instanceof Object)) return []
+    return users instanceof Object ? Reflect.get(users, 'fields') : undefined
+  })
+  // A later declaration of a name replaces an earlier one, as in Better Auth.
+  const fields: Record<string, unknown> = Object.assign(
+    {},
+    ...[user instanceof Object ? Reflect.get(user, 'additionalFields') : undefined, ...pluginFields]
+      .filter((declared) => declared instanceof Object)
+  )
 
   return Object.entries(fields)
     .filter(([, field]) => !(field instanceof Object && Reflect.get(field, 'input') === false))
     .map(([name]) => name)
 }
+
+/**
+ * Body keys an endpoint reads as its own input, not as user fields to write:
+ * phone-number verify's `phoneNumber` is the number its code proves.
+ */
+const ENDPOINT_INPUT_KEYS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['/phone-number/verify', new Set(['phoneNumber'])],
+])
 
 /**
  * Forward the request to Better Auth's own API, for browser code that calls
@@ -872,13 +909,14 @@ function inputUserFields(auth: BetterAuthInstance): ReadonlyArray<string> {
  *
  * It exposes every endpoint Better Auth and its plugins define, including
  * sign-up, update-user and the plugin sign-ins that create a user (email
- * OTP, phone-number verify), which write user fields declared `input: true`
- * without the application's validation. Name the ones a visitor may set there
- * in `settable`, which TypeScript asks for once the registered Better Auth
- * declares any; a request setting another is refused with a 400. A body
- * over setupWeb's `bodyLimit` is refused with a 413 before Better Auth reads
- * it. A server-rendered app that signs users in with `betterAuthRedirect`
- * needs it only for OAuth callbacks.
+ * OTP, phone-number verify), which write user fields without the
+ * application's validation: those declared `input: true`, and plugins' own,
+ * such as `phoneNumber`. Name the ones a visitor may set there in `settable`,
+ * which TypeScript asks for once the registered Better Auth declares any; a
+ * request setting another is refused with a 400. A body over setupWeb's
+ * `bodyLimit` is refused with a 413 before Better Auth reads it. A
+ * server-rendered app that signs users in with `betterAuthRedirect` needs it
+ * only for OAuth callbacks.
  */
 export function betterAuthHandler(
   ...[options]: BetterAuthHandlerArguments
@@ -918,7 +956,9 @@ export function betterAuthHandler(
     const body = read?.body
 
     if (writesUser(path) && body instanceof Object) {
-      const refused = inputUserFields(auth).filter((field) => !settable.has(field) && Object.hasOwn(body, field))
+      const own = ENDPOINT_INPUT_KEYS.get(path)
+      const refused = inputUserFields(auth).filter((field) =>
+        !settable.has(field) && own?.has(field) !== true && Object.hasOwn(body, field))
 
       if (refused.length > 0) {
         return yield* new HttpError({

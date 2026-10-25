@@ -23,6 +23,14 @@ other, typed from the registered client. Where they meet the application:
   link's first sign-in revokes the password and sessions of an account someone
   else registered with that address, not a two-factor challenge they hold or a
   password sign-in under way, as [Proving an address](auth.md#proving-an-address) says.
+- Phone numbers: `requireEmailVerification` gates passwords only. The
+  phone-number plugin's verify signs in whoever holds a number's code, whether
+  or not anyone has proven the address, and the owner's first sign-in by a
+  link leaves the number on the account. So no sign-up sets one:
+  `betterAuthHandler` refuses `phoneNumber` unless `settable` names it, as it
+  refuses every plugin's user field, and the sign-up action's schema leaves it
+  out. A member adds a number once signed in, through `/phone-number/verify`
+  with `updatePhoneNumber: true`.
 - Organizations: the plugin's `member` table is the membership a guard reads,
   as [Roles belong to memberships](guards.md#roles-belong-to-memberships-read-by-a-guard)
   shows, with the organization bound by its route, its binding saying the

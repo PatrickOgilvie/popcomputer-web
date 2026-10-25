@@ -533,6 +533,35 @@ describe("an account registered with someone else's address", () => {
     expect((await me(victim)).body).toMatchObject({ email: 'victim@example.com' })
     expect(await Promise.all([attacker, ...racers, retried].map(async (client) => (await me(client)).status))).toEqual([401, 401, 401, 401, 401])
   })
+
+  test("a phone number its registrant sends with the sign-up is refused, so no texted code signs in to the owner's account", async () => {
+    const { browser, db, outbox } = setup()
+    const phone = '+15550009999'
+    const api = (client: Browser, path: string, body: Readonly<Record<string, string>>) =>
+      client.request(`/api/auth${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+        body: JSON.stringify(body),
+      })
+    // The phone-number plugin's field, unlike the application's own, has no `input: false`, so Better Auth would store it.
+    const signedUp = await api(browser(), '/sign-up/email', { name: 'Mallory', email: 'victim@example.com', password: 'correct horse battery', phoneNumber: phone })
+
+    expect(signedUp.status).toBe(400)
+    expect((await signedUp.json()).message).toContain('phoneNumber')
+    expect(await db.select().from(schema.user).where(eq(schema.user.email, 'victim@example.com'))).toEqual([])
+
+    const victim = browser()
+    await victim.request('/magic-link', form({ email: 'victim@example.com' }))
+    await victim.request(`/magic-link/verify?token=${outbox.magicLinks.at(-1)?.token}`)
+    // Mallory's texted code, once the owner holds the address, makes a user of its own.
+    const later = browser()
+    await api(later, '/phone-number/send-otp', { phoneNumber: phone })
+    const verified = await api(later, '/phone-number/verify', { phoneNumber: phone, code: outbox.codes.filter((sent) => sent.to === phone).at(-1)?.code ?? '' })
+
+    expect(verified.status).toBe(200)
+    expect((await me(victim)).body).toMatchObject({ email: 'victim@example.com' })
+    expect((await me(later)).body?.id).not.toBe((await me(victim)).body?.id)
+  })
 })
 
 describe('signing in with another provider', () => {

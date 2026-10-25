@@ -280,4 +280,8 @@ routes
 void betterAuthHandler()
 // @ts-expect-error settable names only the fields a visitor may set: role is the admin plugin's, never input.
 void betterAuthHandler({ settable: ['role'] })
+// @ts-expect-error phoneNumberVerified is the phone-number plugin's, never input.
+void betterAuthHandler({ settable: ['phoneNumberVerified'] })
 void betterAuthHandler({ settable: ['timeZone'] })
+// A plugin's field a visitor may set, such as the phone-number plugin's, is named here too.
+void betterAuthHandler({ settable: ['phoneNumber'] })

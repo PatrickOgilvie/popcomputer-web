@@ -91,7 +91,7 @@ async function createApp(limiter: TestRateLimiter, max = 3) {
     },
   })
 
-  routes.post('/sign-in', signIn).post('/sign-in/phone', signInWithPhone).all('/api/auth/*', betterAuthHandler())
+  routes.post('/sign-in', signIn).post('/sign-in/phone', signInWithPhone).all('/api/auth/*', betterAuthHandler({ settable: [] }))
 
   const time = await testClock(new Date())
   const env = testEnv(time.layer, { SIGN_IN_LIMITER: limiter })
