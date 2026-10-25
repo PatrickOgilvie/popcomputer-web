@@ -226,9 +226,17 @@ describe('sign-in limits', () => {
     expect((await viaApi('/sign-in/email', 'application/json', 'correct horse')).status).toBe(429)
   })
 
-  test('a body Better Auth would read as a form, though it is JSON before its first semicolon, is refused uncounted', async () => {
+  // Each type is JSON to a parser that trims or splits it one way, and a form
+  // to Better Auth's: a leading U+00A0, U+000B or U+000C is not HTTP
+  // whitespace, so Headers keep it and String#trim removes it.
+  test.each([
+    'x/application/json+json;a=b, application/x-www-form-urlencoded',
+    ' application/json; a=application/x-www-form-urlencoded',
+    '\u000bapplication/json; a=application/x-www-form-urlencoded',
+    '\u000capplication/json; a=application/x-www-form-urlencoded',
+    ' application/vnd.api+json; a=application/x-www-form-urlencoded',
+  ])('a body Better Auth would read as a form, though it reads as JSON another way, is refused uncounted (%j)', async (type) => {
     const { app, env, rows } = await createApp(testRateLimiter({ limit: 100 }))
-    const type = 'x/application/json+json;a=b, application/x-www-form-urlencoded'
     // As JSON it names a decoy; as the form Better Auth reads, ada.
     const guess = (index: number) => testBrowser(app, env).request('/api/auth/sign-in/email', {
       method: 'POST',

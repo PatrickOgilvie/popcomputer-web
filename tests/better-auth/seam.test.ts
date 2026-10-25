@@ -206,10 +206,16 @@ describe('signing up, in and out', () => {
     expect(tried.filter((attempt) => attempt.status < 400)).toEqual([])
   })
 
-  test('a body whose type Better Auth would read as a form, though it is JSON before its first semicolon, is refused', async () => {
+  // Better Auth reads JSON only for a type that starts application/ and ends
+  // json, and a form for any type naming one; String#trim also removes a
+  // leading U+00A0, U+000B or U+000C, which Headers keep.
+  test.each([
+    'x/application/json+json;a=b, application/x-www-form-urlencoded',
+    ' application/json; a=application/x-www-form-urlencoded',
+    '\u000bapplication/json; a=application/x-www-form-urlencoded',
+    '\u000capplication/json; a=application/x-www-form-urlencoded',
+  ])('a body whose type Better Auth would read as a form, though it reads as JSON another way, is refused (%j)', async (type) => {
     const { browser, db } = setup()
-    // Better Auth reads JSON only for a type that starts application/ and ends json, and a form for any type naming one.
-    const type = 'x/application/json+json;a=b, application/x-www-form-urlencoded'
     const signUp = { name: 'Eve', email: 'eve@example.com', password: 'correct horse battery' }
     // As JSON it sets no timeZone; as a form it does.
     const body = JSON.stringify({ ...signUp, p: `&${new URLSearchParams({ ...signUp, timeZone: 'Mars/Olympus' })}&` })
