@@ -112,7 +112,10 @@ form.
   query and the page that shows it share one.
 - **Lists in forms**: decode a list with `S.Array(Item)`; a failing item's
   errors are keyed by its path, as `items.2.amount`. A failed validation lists
-  at most 100 fields, then says on `form` that more were invalid. Bound a
+  at most 100 fields, then says on `form` that more were invalid. A request
+  of more than 1000 values stops at its first invalid field and says so on
+  `form`, since checking every one would hold an issue per item in memory;
+  `parseOptions: { errors: 'all' }` asks for every one. Bound a
   list with `maxItems(Item, 50)`, which refuses a longer one with its own
   message before decoding any item. A JSON body, a form post
   and a multipart post (which Inertia sends for a form with a file) all

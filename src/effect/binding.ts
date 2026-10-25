@@ -147,6 +147,31 @@ function undefinedPublicWhen(definition: RouteBindingAccess<string, AnyRow>): st
   return Object.entries(definition.publicWhen ?? {}).find(([, value]) => value === undefined)?.[0]
 }
 
+/** The options that say who may load a binding's record, and `scope`, under which its parent's say. */
+const NAMED_ACCESS = ['ownedBy', 'public', 'publicWhen', 'guarded', 'scope'] as const
+
+/**
+ * The access option a binding names with a value that says nothing, such as
+ * an absent setting's undefined or `public: false`: read as no option, it
+ * would load any record for anyone.
+ */
+function unsaidAccessOption(definition: RouteBindingDefinition): { readonly option: string; readonly value: unknown } | undefined {
+  for (const option of NAMED_ACCESS) {
+    if (!(option in definition)) continue
+
+    const value: unknown = definition[option]
+    const says = option === 'ownedBy'
+      ? typeof value === 'string'
+      : option === 'public' || option === 'guarded'
+        ? value === true
+        : value instanceof Object
+
+    if (!says) return { option, value }
+  }
+
+  return undefined
+}
+
 /** The access options a binding gives, by name: a valid binding gives at most one. */
 function accessOptionsOf(definition: RouteBindingAccess<string, AnyRow>): readonly string[] {
   return (['ownedBy', 'public', 'publicWhen', 'guarded'] as const).filter((key) => definition[key] !== undefined)
@@ -261,6 +286,10 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: obj
     }
 
     const source = bindingTableOf(config) ?? config.schema
+    const unsaid = unsaidAccessOption(config)
+
+    if (unsaid !== undefined) throw RouteConfigurationError.bindingAccessUnsaid(name, unsaid.option, unsaid.value).atStartup()
+
     const access = accessOptionsOf(config)
 
     if (access.length > 1) throw RouteConfigurationError.bindingAccessConflict(name, access).atStartup()
@@ -590,6 +619,9 @@ export async function compileBindingPlan<Schema extends object>(
       ? config
       : { schema: config }
     const source = bindingSource(config)
+    const unsaid = unsaidAccessOption(definition)
+
+    if (unsaid !== undefined) throw RouteConfigurationError.bindingAccessUnsaid(binding.param, unsaid.option, unsaid.value)
 
     const tableName = bindingTableName(binding, configured, schema)
     const sourceTable = bindingTableOf(config)

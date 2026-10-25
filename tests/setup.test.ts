@@ -10,6 +10,7 @@
 
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
+import { createMiddleware } from 'hono/factory'
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- These teardown tests must yield the actual Hono/SDK Promise event loop; advancing an Effect TestClock cannot flush that native work.
 import { scheduler } from 'node:timers/promises'
 import { Context, Option, Deferred, Effect, Layer, Redacted, Schema as S } from 'effect'
@@ -25,7 +26,8 @@ import {
 } from '../src/effect/services.js'
 import { RequireAuthLayer } from '../src/effect/auth.js'
 import { bound } from '../src/effect/binding.js'
-import { NotFoundError } from '../src/effect/errors.js'
+import { HttpError, NotFoundError } from '../src/effect/errors.js'
+import { signedIn, testEnv } from '../src/testing.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
 // =============================================================================
@@ -1225,5 +1227,89 @@ describe('setupWeb application services', () => {
     })))
 
     expect(await (await app.request('/greeting')).json()).toBe('from request')
+  })
+})
+
+// setupWeb runs its policy members and the application's middleware as one
+// Hono middleware: an error one of them throws is answered there, inside the
+// members that set the response's policy.
+describe("an error setupWeb's own middleware throws", () => {
+  // An access check in setupWeb's middleware option, as an application runs one.
+  const refuse = createMiddleware(async (c, next) => {
+    if (c.req.path === '/w/acme') throw new NotFoundError({ resource: 'workspace' })
+    if (c.req.path === '/w/gone') throw new HttpError({ status: 410, message: 'This workspace is archived.' })
+
+    await next()
+  })
+
+  const user = {
+    id: 'user-1',
+    email: 'ada@example.com',
+    name: 'Ada',
+    emailVerified: true,
+    image: null,
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
+  }
+  const session = {
+    id: 'session-1',
+    userId: 'user-1',
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+    expiresAt: new Date('2027-01-01T00:00:00Z'),
+    token: 'dummy-session-token',
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    // oxlint-disable-next-line effecttsgo/global-date -- Fixed native Date fixture exercises the public Date/Better Auth contract; it does not read the clock.
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
+  }
+  // A session lookup that extends the session, renewing its cookie.
+  const renewed = 'better-auth.session_token=dummy-session-token.sig; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800'
+
+  const createApp = () => {
+    const app = new Hono<TestEnv>()
+    setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      auth: {
+        client: () => ({
+          api: {
+            getSession: async () => ({ headers: new Headers({ 'Set-Cookie': renewed }), response: { user, session } }),
+          },
+        }),
+      },
+      middleware: [refuse],
+    })
+
+    return app
+  }
+
+  const signedInRequest = { headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1', Cookie: 'better-auth.session_token=dummy-session-token.sig' } }
+
+  test("answers a signed-in visitor's 404 or 410 with the response policy: no-store, the security headers and the renewed session", async () => {
+    for (const [path, status] of [['/w/acme', 404], ['/w/gone', 410]] as const) {
+      const res = await createApp().request(path, signedInRequest, { ENVIRONMENT: 'production' })
+
+      expect({
+        path,
+        status: res.status,
+        cacheControl: res.headers.get('Cache-Control'),
+        frames: res.headers.get('X-Frame-Options'),
+        nosniff: res.headers.get('X-Content-Type-Options'),
+        renewed: res.headers.getSetCookie().includes(renewed),
+      }).toEqual({ path, status, cacheControl: 'no-store', frames: 'DENY', nosniff: 'nosniff', renewed: true })
+    }
+  })
+
+  test("answers a signed-in test request's error page no-store, and a guest's private", async () => {
+    const app = new Hono<TestEnv>()
+    setupWeb(app, { version: '1', render: (page) => JSON.stringify(page), middleware: [refuse] })
+
+    const member = await app.request('/w/acme', {}, testEnv(signedIn({ id: 'user-1' }), { ENVIRONMENT: 'production' }))
+    const guest = await app.request('/w/acme', {}, { ENVIRONMENT: 'production' })
+
+    expect([member.status, member.headers.get('Cache-Control')]).toEqual([404, 'no-store'])
+    expect([guest.status, guest.headers.get('Cache-Control'), guest.headers.get('X-Frame-Options')]).toEqual([404, 'private, no-cache', 'DENY'])
   })
 })

@@ -82,8 +82,7 @@ describe('a failed validation in production', () => {
   const secondPassword = 'P520-dummy-second-password'
   const sessionCookie = 'better-auth.session_token=P520-DUMMY-SESSION'
   const bearer = 'Bearer P520-DUMMY-BEARER'
-  // The conflict's query value stays in the context's URL, as the request named it.
-  const secrets = [shortPassword, firstPassword, secondPassword, 'P520-DUMMY-SESSION', 'P520-DUMMY-BEARER', 'P520-body']
+  const secrets = [shortPassword, firstPassword, secondPassword, 'P520-DUMMY-SESSION', 'P520-DUMMY-BEARER', 'P520-body', 'P520-query']
 
   const SignUp = S.Struct({ email: requiredString, password: password({ min: 12 }), passwordConfirmation: S.String }).check(
     S.makeFilter((input) => input.password === input.passwordConfirmation, { message: 'The passwords do not match.' })
@@ -321,5 +320,71 @@ describe('the libraries the package composes', () => {
       expect({ name, range, allowsVulnerable: Bun.semver.satisfies(vulnerable, range), allowsFixed: Bun.semver.satisfies(fixed, range) })
         .toEqual({ name, range, allowsVulnerable: false, allowsFixed: true })
     }
+  })
+})
+
+// A reset link the application builds from Better Auth's token puts it in the
+// page's URL, which a failed form posted from that page names as its Referer.
+describe('a failed request in production', () => {
+  const token = 'P5-12-DUMMY-RESET-TOKEN'
+  const Reset = S.Struct({ token: requiredString, password: password({ min: 12 }) })
+  const reset = action(Effect.gen(function* () {
+    yield* validateRequest(Reset)
+
+    return yield* json(S.Struct({ ok: S.Boolean }), { ok: true })
+  }))
+
+  const createApp = (observed: EffectErrorEvent[]) => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) }).services({
+      app: Layer.succeed(EffectErrorObserverService, EffectErrorObserverService.of({
+        observe: (event) => Effect.sync(() => void observed.push(event)),
+      })),
+    })
+
+    routes
+      .post('/reset-password', reset)
+      .post('/reset/{token}', reset)
+      .get('/reset/{token}/boom', action(Effect.die(new Error('The reset store is down.'))))
+
+    return app
+  }
+
+  const send = (app: Hono, path: string, init: RequestInit) =>
+    app.request(path, init, testEnv({ ENVIRONMENT: 'production' }))
+  const form = (body: Readonly<Record<string, string>>, referer: string): RequestInit => ({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'http://localhost', Referer: referer },
+    body: new URLSearchParams(body).toString(),
+  })
+
+  test('hands the error observer no value its URL or Referer carries, such as a reset token, and keeps its route', async () => {
+    const observed: EffectErrorEvent[] = []
+    const app = createApp(observed)
+    const page = `http://localhost/reset-password?token=${token}`
+
+    const query = await send(app, '/reset-password', form({ token, password: 'short' }, page))
+    const path = await send(app, `/reset/${token}`, form({ token, password: 'short' }, `http://localhost/reset/${token}`))
+    const defect = await send(app, `/reset/${token}/boom?token=${token}`, { headers: { Accept: 'application/json' } })
+
+    expect([query.status, path.status, defect.status]).toEqual([303, 303, 500])
+    // The failed form still goes back to its page, which reads its Referer itself.
+    expect(query.headers.get('Location')).toBe(`/reset-password?token=${token}`)
+    expect(observed).toHaveLength(3)
+    expect(observed.filter((event) => JSON.stringify(event.structured).includes(token))).toEqual([])
+    expect(observed.map((event) => event.structured?.context)).toEqual([
+      {
+        route: { method: 'POST', path: '/reset-password', params: {} },
+        request: { url: 'http://localhost/reset-password', headers: expect.objectContaining({ referer: 'http://localhost' }) },
+      },
+      {
+        route: { method: 'POST', path: '/reset/:token', params: { token: '[redacted]' } },
+        request: { url: 'http://localhost/reset/:token', headers: expect.objectContaining({ referer: 'http://localhost' }) },
+      },
+      {
+        route: { method: 'GET', path: '/reset/:token/boom', params: { token: '[redacted]' } },
+        request: { url: 'http://localhost/reset/:token/boom?token=[redacted]', headers: expect.any(Object) },
+      },
+    ])
   })
 })

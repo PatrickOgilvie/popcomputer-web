@@ -45,10 +45,13 @@ application without `pages` passes props of any declared shape, interfaces
 included, whose values JSON carries.
 
 Inertia keeps each page's props in the tab's history, and Back shows them
-again without asking the server. A page rendered to a signed-in request is
-encrypted there, and the first page after the session ends clears the
-history, so the next person at the browser cannot page back through the
-previous user's pages ([Signing in and out](sign-in.md)). `setupWeb`'s
+again without asking the server. A page rendered to a signed-in request, the
+session's user or one a layer the route provides gives as `AuthUserService`,
+is encrypted there and answered `no-store`. Every page rendered to a visitor
+who is not signed in clears the history, as does the first page after a
+session ends or another starts, so the next person at the browser cannot
+page back through the previous user's pages ([Signing in and
+out](sign-in.md)). Clearing also empties Inertia's prefetch cache. `setupWeb`'s
 `history: { encrypt: true }` encrypts every page and `false` none;
 `render('Account/Codes', props, { encryptHistory: true, clearHistory: true })`
 decides for one page. Inertia encrypts only over HTTPS or on localhost, and

@@ -38,7 +38,12 @@ other, typed from the registered client. Where they meet the application:
   Check a role in the
   guard or the action before calling the plugin's endpoint, so a member
   without it gets a 403: the plugin's own refusal fails as a rejection does,
-  sending the form back with its message.
+  sending the form back with its message. The plugin stores any slug, `..`
+  and `{organization}` included, and `betterAuthHandler` forwards its create
+  and update as they are: refuse a slug `alphaDash` would refuse in
+  `organizationHooks.beforeCreateOrganization` and `beforeUpdateOrganization`,
+  as your own actions do with `alphaDash`, since `href` leaves a `..` slug's
+  link unfilled.
 - Writes that must happen together: Better Auth writes each row in its own
   statement, which on D1 is never a transaction. The organization plugin's
   `createOrganization` checks the slug is free, writes the organization, then

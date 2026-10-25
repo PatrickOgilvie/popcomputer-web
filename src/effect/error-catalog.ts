@@ -461,7 +461,7 @@ export const ErrorCatalog = {
     category: 'routing',
     title: 'Route Binding Access Invalid',
     messageTemplate:
-      'Route binding "{binding}" gives more than one of ownedBy, public, publicWhen and guarded, a publicWhen with no column, or a publicWhen value that is undefined.',
+      'Route binding "{binding}" gives more than one of ownedBy, public, publicWhen and guarded, an access option whose value says nothing, such as undefined, a publicWhen with no column, or a publicWhen value that is undefined.',
     httpStatus: 500,
     defaultFixes: [],
   },

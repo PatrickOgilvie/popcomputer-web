@@ -8,7 +8,9 @@
  * server-side sessions; a request that only redirects passes them on. Data
  * set during a request that renders a page goes into that page directly.
  * The same cookie tells the next page to clear Inertia's history once the
- * session ends.
+ * session ends or another starts: that flag goes on through every answer
+ * until a page the client shows takes it, and outlives the minute flash
+ * data keeps.
  */
 
 import type { Context } from 'hono'
@@ -86,10 +88,16 @@ export function openFlash(c: Context): FlashStore {
 
   // A request that only redirects, such as a guard sending the visitor on,
   // renders no page: what it received goes on with the redirect, so a failed
-  // form's errors reach the page it lands on.
+  // form's errors reach the page it lands on. A prefetch leaves all of it
+  // for the visit, and any other answer that is no page, such as JSON, the
+  // history's clear, which only a page can apply.
   const outgoing = (status: number): MutableFlash => {
-    const redirects = status >= 300 && status < 400
-    const carried = redirects && !delivered && !prefetch ? Option.getOrElse(incoming, empty) : empty()
+    const previous = Option.getOrElse(incoming, empty)
+    const carried = delivered
+      ? empty()
+      : prefetch || (status >= 300 && status < 400)
+        ? previous
+        : { ...empty(), clearHistory: previous.clearHistory }
 
     return {
       errors: { ...carried.errors, ...pending.errors },
@@ -97,6 +105,11 @@ export function openFlash(c: Context): FlashStore {
       clearHistory: carried.clearHistory || pending.clearHistory,
     }
   }
+
+  // Whether the answer writes the cookie: to carry data, or to clear what
+  // this request received. A prefetch writes it only to add to it.
+  const writes = (status: number): boolean =>
+    prefetch ? hasData(pending) : clears || hasData(outgoing(status))
 
   return {
     set(key, value) {
@@ -130,22 +143,22 @@ export function openFlash(c: Context): FlashStore {
     },
 
     setsCookie(status) {
-      return clears || hasData(outgoing(status))
+      return writes(status)
     },
 
     commit(response) {
-      const next = outgoing(response.status)
-      const carries = hasData(next)
+      if (!writes(response.status)) return response
 
-      if (!carries && !clears) return response
-
-      const cookie = carries
-        ? serialize(name, toBase64Url(stored(withinBudget(next))), {
+      const next = withinBudget(outgoing(response.status))
+      const cookie = hasData(next)
+        // The history's clear waits for the page that applies it, however
+        // long: until the browser closes, as the tab's key does.
+        ? serialize(name, toBase64Url(stored(next)), {
             path: '/',
             httpOnly: true,
             secure,
             sameSite: 'Lax',
-            maxAge: MAX_AGE_SECONDS,
+            ...(next.clearHistory ? {} : { maxAge: MAX_AGE_SECONDS }),
           })
         : serialize(name, '', { path: '/', httpOnly: true, secure, sameSite: 'Lax', maxAge: 0 })
 

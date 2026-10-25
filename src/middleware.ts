@@ -13,7 +13,7 @@ import type {
 import { HEADERS } from './types.js'
 import { openWebContext, type WebRequestContext } from './request-context.js'
 import { openFlash } from './flash.js'
-import { applyDefaultCacheControl } from './page-cache.js'
+import { applyDefaultCacheControl, markPageDynamic } from './page-cache.js'
 import { ConfigurationError } from './effect/errors.js'
 import { webUrl } from './locations.js'
 
@@ -81,7 +81,10 @@ export function web(config: WebConfig): MiddlewareHandler {
     const sharedProps: Record<string, LazyPageProp> = {}
     const errors: ValidationErrorBag = {}
     const flash = openFlash(c)
-    // Whether a page this request rendered cleared the client's history.
+    // An Inertia prefetch, which the client keeps and shows only if that URL
+    // is visited.
+    const prefetch = c.req.header('Purpose') === 'prefetch'
+    // Whether a page this request rendered, and the client shows, cleared its history.
     let historyCleared = false
 
     const getVersion = () =>
@@ -184,21 +187,35 @@ export function web(config: WebConfig): MiddlewareHandler {
 
         const context = openWebContext(c)
         const encrypt = config.history?.encrypt ?? 'signed-in'
-        // A session the lookup found ended, or one ended since the last page,
-        // leaves history its pages wrote that this visitor must not see.
-        const sessionEnded = flashed.clearHistory || endsSession(context.sessionLookupCookies ?? [], context.sessionCookies ?? [])
+        // Signed in by the session lookup, or by a layer the action's
+        // runtime has, such as an application's own session.
+        const signedIn = options.signedIn === true || context.authUser !== undefined
+        // A session the lookup found ended, or one ended or started since the
+        // last page, leaves history the previous session's pages wrote.
+        const sessionChanged = flashed.clearHistory || endsSession(context.sessionLookupCookies ?? [], context.sessionCookies ?? [])
+        // While signed-in pages are the encrypted ones, every page rendered to
+        // a visitor who is not signed in clears the history, however the
+        // session ended: in another tab, by the cookie's expiry, or where a
+        // prefetch or a JSON answer saw it end.
+        const signedOut = encrypt === 'signed-in' && !signedIn
         const page: PageObject = {
           component,
           props: pageProps,
           url: new URL(c.req.url).pathname + new URL(c.req.url).search,
           version,
-          clearHistory: options.clearHistory ?? (sessionEnded || undefined),
+          clearHistory: options.clearHistory ?? ((sessionChanged || signedOut) || undefined),
           encryptHistory: options.encryptHistory ??
-            ((encrypt === 'signed-in' ? context.authUser !== undefined : encrypt) || undefined),
+            ((encrypt === 'signed-in' ? signedIn : encrypt) || undefined),
           flash: flashed.flash,
         }
 
-        historyCleared ||= page.clearHistory === true
+        historyCleared ||= page.clearHistory === true && !prefetch
+
+        if (signedIn) {
+          // The page is the visitor's own, which no cache may keep.
+          context.signedIn = true
+          markPageDynamic(c)
+        }
 
         const status = options.status ?? 200
 
@@ -268,10 +285,16 @@ export function web(config: WebConfig): MiddlewareHandler {
 
     const context = openWebContext(c)
 
-    // A response that ends the session, as signing out does, has the next
-    // page clear the history the signed-in pages wrote.
-    if (c.res && !historyCleared && endsSession(answeredCookies(c.res, context), context.sessionCookies ?? [])) {
-      flash.clearHistory()
+    // A response that ends the session, as signing out does, or starts
+    // another, as signing in does, has the next page clear the history the
+    // previous session's pages wrote.
+    if (c.res && !historyCleared) {
+      const answered = answeredCookies(c.res, context)
+      const sessionCookies = context.sessionCookies ?? []
+
+      if (endsSession(answered, sessionCookies) || startsSession(answered, sessionCookies, c.req.header('Cookie'))) {
+        flash.clearHistory()
+      }
     }
 
     const committed = c.res
@@ -349,26 +372,58 @@ function answeredCookies(response: Response, context: WebRequestContext): string
   ]
 }
 
+/** A session token cookie as a response leaves it: its value, unless it expires it. */
+interface SessionCookieState {
+  readonly value: string
+  readonly expired: boolean
+}
+
 /**
- * Whether these Set-Cookie headers, applied in order, leave the session token
- * cookie expired: Better Auth's, under any prefix, or the one setupWeb's
+ * The session token cookies these Set-Cookie headers leave, applied in order,
+ * by name: Better Auth's, under any prefix, or the one setupWeb's
  * `auth.sessionCookie` names.
  */
-function endsSession(setCookies: readonly string[], sessionCookies: readonly string[]): boolean {
-  const expired = new Map<string, boolean>()
+function sessionCookieStates(setCookies: readonly string[], sessionCookies: readonly string[]): Map<string, SessionCookieState> {
+  const states = new Map<string, SessionCookieState>()
 
   for (const setCookie of setCookies) {
-    const name = cookieName(setCookie).replace(/^__(?:Secure|Host)-/, '')
+    const name = cookieName(setCookie)
+    const unprefixed = name.replace(/^__(?:Secure|Host)-/, '')
 
-    if (name.endsWith('.session_token') || sessionCookies.includes(name)) {
+    if (unprefixed.endsWith('.session_token') || sessionCookies.includes(unprefixed)) {
       const [pair = '', ...attributes] = setCookie.split(';')
+      const value = pair.slice(pair.indexOf('=') + 1).trim()
 
-      expired.set(name, pair.slice(pair.indexOf('=') + 1).trim() === '' ||
-        attributes.some((attribute) => /^\s*max-age\s*=\s*(?:0|-\d+)\s*$/i.test(attribute)))
+      states.set(name, {
+        value,
+        expired: value === '' || attributes.some((attribute) => /^\s*max-age\s*=\s*(?:0|-\d+)\s*$/i.test(attribute)),
+      })
     }
   }
 
-  return [...expired.values()].includes(true)
+  return states
+}
+
+/** Whether these Set-Cookie headers, applied in order, leave the session token cookie expired. */
+function endsSession(setCookies: readonly string[], sessionCookies: readonly string[]): boolean {
+  return [...sessionCookieStates(setCookies, sessionCookies).values()].some((state) => state.expired)
+}
+
+/**
+ * Whether these Set-Cookie headers leave the session token cookie holding
+ * another value than the request sent: a new session, as signing in starts,
+ * not the same one renewed.
+ */
+function startsSession(setCookies: readonly string[], sessionCookies: readonly string[], cookieHeader: string | undefined): boolean {
+  const sent = new Map<string, string>()
+
+  for (const pair of (cookieHeader ?? '').split(';')) {
+    const separator = pair.indexOf('=')
+
+    if (separator > 0) sent.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim())
+  }
+
+  return [...sessionCookieStates(setCookies, sessionCookies)].some(([name, state]) => !state.expired && sent.get(name) !== state.value)
 }
 
 /** The response with the headers an action or layer added with responseHeader. */

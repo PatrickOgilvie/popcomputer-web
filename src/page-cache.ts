@@ -149,6 +149,7 @@ export function defaultCacheControl<E extends Env>(c: Context<E>, setsCookie: bo
   const context = openWebContext(c)
   const personal =
     context.authUser !== undefined ||
+    context.signedIn === true ||
     c.req.header('Authorization') !== undefined ||
     hasSessionCookie(c.req.header('Cookie'), context.sessionCookies ?? [])
 

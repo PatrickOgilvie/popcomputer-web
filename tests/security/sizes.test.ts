@@ -59,15 +59,15 @@ const empty = (count: number) => Array.from({ length: count }, () => ({}))
 describe('a list longer than its maxItems', () => {
   test("is refused with the limit's message alone, however many of its items are invalid", async () => {
     const app = createApp()
+    const stopped = 'This request sends more than 1000 values, so validation stopped at its first invalid field.'
 
-    for (const count of [51, 16_000]) {
+    for (const [count, errors] of [
+      [51, { items: 'Must have at most 50 items' }],
+      [16_000, { items: 'Must have at most 50 items', form: stopped }],
+    ] as const) {
       const res = await post(app, '/orders', { items: empty(count) })
 
-      expect({ count, status: res.status, errors: (await res.json()).errors }).toEqual({
-        count,
-        status: 422,
-        errors: { items: 'Must have at most 50 items' },
-      })
+      expect({ count, status: res.status, errors: (await res.json()).errors }).toEqual({ count, status: 422, errors })
     }
   })
 
@@ -84,10 +84,10 @@ describe('a list longer than its maxItems', () => {
   })
 })
 
-describe('a list of thousands of invalid items', () => {
+describe('a list of hundreds of invalid items', () => {
   test('lists at most 100 fields and says more were invalid, in the 422 and to the error observer', async () => {
     const observed: EffectErrorEvent[] = []
-    const res = await post(createApp(observed), '/lines', { lines: empty(16_000) })
+    const res = await post(createApp(observed), '/lines', { lines: empty(400) })
     const body = await res.json()
     const fields = Object.keys(body.errors)
 
@@ -98,10 +98,31 @@ describe('a list of thousands of invalid items', () => {
     expect(Object.keys(observed[0].structured?.validation?.fields ?? {})).toEqual(fields)
     expect(observed[0].structured?.message.length).toBeLessThan(3_000)
   })
+})
+
+// Effect keeps an issue for each invalid item until the report is built,
+// whatever the report then lists: a 1 MiB body of empty items held some
+// 170 MiB of one isolate's memory while it validated.
+describe('a list of thousands of invalid items', () => {
+  const firstOnly = {
+    'lines.0.amount': 'This field is required',
+    form: 'This request sends more than 1000 values, so validation stopped at its first invalid field.',
+  }
+
+  test('stops at the first invalid field and says so, up to a body at the limit', async () => {
+    const app = createApp()
+
+    // 349,518 empty items is a JSON body just under 1 MiB.
+    for (const count of [2_000, 16_000, 349_518]) {
+      const res = await post(app, '/lines', { lines: empty(count) })
+
+      expect({ count, status: res.status, errors: (await res.json()).errors }).toEqual({ count, status: 422, errors: firstOnly })
+    }
+  })
 
   test('is answered the same size whatever the count', async () => {
     const app = createApp()
-    const sizes = await Promise.all([1_000, 16_000].map(async (count) => (await (await post(app, '/lines', { lines: empty(count) })).text()).length))
+    const sizes = await Promise.all([2_000, 16_000].map(async (count) => (await (await post(app, '/lines', { lines: empty(count) })).text()).length))
 
     expect(sizes[0]).toBe(sizes[1])
     expect(sizes[1]).toBeLessThan(50_000)
@@ -114,7 +135,19 @@ describe('a list of thousands of invalid items', () => {
       body: Array.from({ length: 2_000 }, (_, index) => `lines[${index}][amount]=x`).join('&'),
     }, testEnv({ ENVIRONMENT: 'production' }))
 
-    expect(Object.keys((await res.json()).errors)).toHaveLength(101)
+    expect((await res.json()).errors).toEqual({ ...firstOnly, 'lines.0.amount': 'Expected a number' })
+  })
+
+  test('still lists each invalid field when the action asks for every error', async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+    routes.post('/lines', action(Effect.gen(function* () {
+      yield* validateRequest(Lines, { parseOptions: { errors: 'all' } })
+
+      return yield* json(Ok, { ok: true })
+    })))
+
+    expect(Object.keys((await (await post(app, '/lines', { lines: empty(2_000) })).json()).errors)).toHaveLength(101)
   })
 })
 

@@ -72,10 +72,11 @@ answers a CORS preflight, with `noContent(headers)` for its 204.
 Serve an upload back with `file(bytes, { contentType, filename })`: the
 `filename` makes it a download, and `file` always sends
 `X-Content-Type-Options: nosniff`, so the browser keeps to the declared type.
-Without a file name, it shows only an image other than SVG, a PDF, plain
-text, JSON, audio or video as it is: any other body, such as HTML, SVG or
-XML, gets `Content-Security-Policy: sandbox`, unless the response's
-`headers` set their own policy. A `contentType` that is not one media
+It serves only an image other than SVG, a PDF, plain text, JSON, audio or
+video as it is: any other body, such as HTML, SVG or XML, gets
+`Content-Security-Policy: sandbox`, a download too, since a web view may show
+an attachment in place of saving it, unless the response's `headers` set
+their own policy. A `contentType` that is not one media
 type, such as `image/png;x=,text/html`, which a browser reads by its last
 type, is sent as `application/octet-stream`; `upload()` refuses such a file,
 and keeps only its media type, so store `file.type` as it decodes. Name the

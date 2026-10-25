@@ -10,6 +10,7 @@ import { Cause, Context, Effect, Layer, Option, Schema as S, Stream } from 'effe
 import { observeOrLog } from './error-observer.js'
 import { href, type PathArguments, type PathTarget } from '../paths.js'
 import {
+  AuthUserService,
   PageService,
   ResponseFactoryService,
   RequestService,
@@ -126,12 +127,15 @@ function renderPage(
     const page = yield* PageService
     const encoded = yield* encodePageProps(page.pages, component, props)
     const sharing = yield* Effect.serviceOption(PageSharing)
+    // The user the action's runtime gives, whichever layer gave it: the
+    // session lookup's, a route's own layer's, or web.services'.
+    const user = yield* Effect.serviceOption(AuthUserService)
 
     if (Option.isSome(sharing)) {
       yield* sharing.value.share
     }
 
-    return yield* Effect.promise(() => page.render(component, encoded, options))
+    return yield* Effect.promise(() => page.render(component, encoded, { ...options, signedIn: Option.isSome(user) }))
   }).pipe(Effect.withSpan('Web.render', { attributes: { component } }))
 }
 
@@ -232,8 +236,8 @@ export interface FileOptions {
   readonly contentType: string
   /**
    * Offer the body as a download with this file name. Without it, browsers
-   * show the body inline, sandboxed unless it is an image other than SVG, a
-   * PDF, plain text, JSON, audio or video.
+   * show the body inline. Either way it is sandboxed unless it is an image
+   * other than SVG, a PDF, plain text, JSON, audio or video.
    */
   readonly filename?: string
   readonly status?: number
@@ -274,11 +278,14 @@ export function file<E = never, R = never>(
 
     if (options.filename !== undefined) {
       headers.set('Content-Disposition', contentDisposition(options.filename))
-    } else if (!isInertContentType(contentType) && !headers.has('Content-Security-Policy')) {
-      // Only a type a browser shows without running script, such as an image
-      // or a PDF, is shown inline as it is. A page, an SVG, or a type a
-      // browser may read as one, such as `text/rdf`, runs without script,
-      // forms or the origin.
+    }
+
+    // Only a type a browser shows without running script, such as an image
+    // or a PDF, is served as it is. A page, an SVG, or a type a browser may
+    // read as one, such as `text/rdf`, runs without script, forms or the
+    // origin, a download too: a web view that shows an attachment in place
+    // of downloading it would otherwise run it on the application's origin.
+    if (!isInertContentType(contentType) && !headers.has('Content-Security-Policy')) {
       headers.set('Content-Security-Policy', 'sandbox')
     }
 

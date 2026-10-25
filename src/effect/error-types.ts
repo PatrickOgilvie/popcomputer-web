@@ -40,7 +40,7 @@ export interface RouteContext {
   method: string
   /** Route path pattern (e.g., "/projects/:project") */
   path: string
-  /** Resolved route parameters */
+  /** The route's parameters, by name, their values redacted: a value can be a token */
   params: Record<string, string>
 }
 
@@ -48,7 +48,10 @@ export interface RouteContext {
  * Request information when error occurred.
  */
 export interface RequestContext {
-  /** Full request URL */
+  /**
+   * The request URL with the values it carries redacted: its origin, its
+   * route's pattern for a path with parameters, and its query's names
+   */
   url: string
   /** Relevant headers (filtered for security) */
   headers: SafeHeaders

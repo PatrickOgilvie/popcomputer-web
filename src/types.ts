@@ -53,8 +53,11 @@ export interface WebConfig {
   /**
    * How pages keep their props in the browser's history. Pages rendered to a
    * signed-in request are encrypted there unless this says otherwise, and the
-   * first page after the session ends clears it, so Back after sign-out
-   * cannot show the previous user's pages.
+   * first page after the session ends or another starts clears it, as does
+   * every page rendered to a visitor who is not signed in, so Back after
+   * sign-out cannot show the previous user's pages. A tab whose next page
+   * goes to another signed-in user is cleared only when that page is the
+   * first since the switch: one shown first in another tab took the clear.
    */
   history?: HistoryConfig
 }
@@ -73,6 +76,15 @@ export interface HistoryConfig {
 export interface RenderOptions {
   clearHistory?: boolean
   encryptHistory?: boolean
+  /**
+   * That the page goes to a signed-in visitor, whoever signed them in:
+   * `render` says so when the action's AuthUserService gives a user, from
+   * the session lookup, a layer the route provides or web.services. A page
+   * also goes to one when the session lookup found one. A signed-in page is
+   * encrypted in history under the default `history.encrypt`, and answered
+   * no-store.
+   */
+  signedIn?: boolean
   /**
    * The response's status, 200 unless given: 404 for a page that says what
    * is missing, as a visit and as the Inertia page object alike.

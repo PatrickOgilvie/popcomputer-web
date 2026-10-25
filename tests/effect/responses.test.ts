@@ -190,12 +190,12 @@ describe('file', () => {
     expect(response.headers.get('Content-Security-Policy')).toBe('sandbox')
   })
 
-  test('shows a type a browser runs script in, such as an SVG, without script', async () => {
+  test('shows a type a browser runs script in, such as an SVG, without script, inline or as a download', async () => {
     const inline = await Effect.runPromise(file('<svg/>', { contentType: 'image/svg+xml' }))
     const download = await Effect.runPromise(file('<svg/>', { contentType: 'image/svg+xml', filename: 'logo.svg' }))
 
     expect(inline.headers.get('Content-Security-Policy')).toBe('sandbox')
-    expect(download.headers.get('Content-Security-Policy')).toBeNull()
+    expect(download.headers.get('Content-Security-Policy')).toBe('sandbox')
     expect(download.headers.get('Content-Disposition')).toStartWith('attachment;')
   })
 })

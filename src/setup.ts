@@ -127,6 +127,9 @@ interface WebSetupOptions<E extends Env> extends WebConfig {
    * Additional middleware to run after the framework middleware.
    * These run in order after effectBridge. The page cache would answer
    * before them, so with any, pages are cached only with `pageCache: true`.
+   * An error one throws, such as a `NotFoundError`, is answered with the
+   * error page there, so it keeps the response policy: its Cache-Control,
+   * security headers and the session's cookies.
    */
   middleware?: MiddlewareHandler<E>[]
 
@@ -603,17 +606,27 @@ function createSetupMiddleware<
     ...(config.middleware ?? []),
   ]
 
-  return sequence(middlewares)
+  // A member's error is answered where it was thrown, so the members around
+  // it, the response policy among them, still see the error page.
+  return sequence(middlewares, createErrorHandlers<E>(config.errors).onError)
 }
 
-/** Middleware that runs `middlewares` in order, as one. */
-function sequence<E extends Env>(middlewares: readonly MiddlewareHandler<E>[]): MiddlewareHandler<E> {
+/**
+ * Middleware that runs `middlewares` in order, as one. Given `onError`, an
+ * Error a member throws is answered through it at that member, as Hono
+ * answers each middleware's, so the members before it see the answer.
+ */
+function sequence<E extends Env>(
+  middlewares: readonly MiddlewareHandler<E>[],
+  onError?: (error: Error, c: Context<E>) => Response | Promise<Response>
+): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   return createMiddleware<E>(async (c, next) => {
     // Mirrors Hono's compose contract: next() resolves to void, wrapper
     // middleware observe downstream responses via c.res after awaiting it,
-    // and a middleware that returns a Response (without finalizing the
-    // context) has that response adopted — exactly like hono/compose.
+    // a middleware that returns a Response (without finalizing the context)
+    // has that response adopted, and a thrown Error is answered at the
+    // middleware that threw it — exactly like hono/compose.
     // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
     const dispatch = async (i: number): Promise<void> => {
       if (i >= middlewares.length) {
@@ -622,12 +635,24 @@ function sequence<E extends Env>(middlewares: readonly MiddlewareHandler<E>[]): 
         return
       }
 
-      // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
-      const res = await middlewares[i](c, async () => {
-        await dispatch(i + 1)
-      })
+      let res: Response | void
+      let failed = false
 
-      if (res instanceof Response && !c.finalized) {
+      try {
+        // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
+        res = await middlewares[i](c, async () => {
+          await dispatch(i + 1)
+        })
+      } catch (error) {
+        if (!(error instanceof Error) || onError === undefined) throw error
+
+        // oxlint-disable-next-line no-param-reassign -- Hono records the error a middleware threw on the context, as compose does.
+        c.error = error
+        res = await onError(error, c)
+        failed = true
+      }
+
+      if (res instanceof Response && (!c.finalized || failed)) {
         // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
         c.res = res
       }
