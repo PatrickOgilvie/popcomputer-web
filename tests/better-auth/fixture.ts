@@ -209,11 +209,14 @@ export interface CreateAuthOptions {
   readonly session?: { readonly updateAge?: number; readonly cookieCache?: { readonly enabled: boolean; readonly maxAge?: number } }
 }
 
+/** The application's Better Auth secret, which signs its session cookies whatever its template. */
+export const SECRET = 'better-auth-seam-test-secret-with-enough-entropy-0123'
+
 export function createAuth(options: CreateAuthOptions) {
   return betterAuth({
     database: drizzleAdapter(options.db, { provider: 'sqlite', schema }),
     baseURL: options.baseURL ?? 'http://localhost',
-    secret: 'better-auth-seam-test-secret-with-enough-entropy-0123',
+    secret: SECRET,
     // docs/auth.md's createAuth: a password signs in only once its address is
     // proven, and following the link signs nobody in.
     emailAndPassword: { enabled: true, requireEmailVerification: true },

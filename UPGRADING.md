@@ -1180,6 +1180,26 @@ change nothing. Check each item against yours:
   address on any fetch of the link, a mail scanner's included, registers
   `showVerifyEmail` there and `verifyEmail` on `.post`, and declares the
   `Auth/VerifyEmail` page.
+
+  1.4's template signed every sign-up in and proved no address, so a session
+  it gave someone who registered another person's address still signs them
+  in after the upgrade. Right after the new template is deployed, end the
+  sessions of every user whose address is unproven, once: as a migration
+  applied after the deploy, or on D1 with
+  `wrangler d1 execute DB --remote --file end-unproven-sessions.sql`.
+
+  ```sql
+  DELETE FROM session WHERE user_id IN (SELECT id FROM "user" WHERE email_verified = false);
+  ```
+
+  Every member who joined under 1.4 is unproven too, so their password is
+  refused until they prove their address. Give `emailVerification`
+  `sendOnSignIn: true`, which emails them the link when their password is
+  right; whoever chose an account's password can then have its address sent
+  a link at will, so keep the email's warning. Or have them sign in by magic
+  link, which proves the address and revokes a password someone else chose,
+  then set a password by a reset. Never mark existing users verified in bulk:
+  that proves every address someone else registered under 1.4.
 - **Better Auth's `baseURL`.** One that copied the quick start declares
   `APP_URL: variable(S.String)` in `src/env.ts` and passes it as `baseURL`
   (or gives Better Auth `baseURL: { allowedHosts }`), so emailed links never

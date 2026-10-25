@@ -9,14 +9,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { betterAuth } from 'better-auth'
+import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { getSchema } from 'better-auth/db'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { Redacted, Schema as S } from 'effect'
 import { testBrowser, testEnv } from '../../src/testing.js'
 import { betterAuthSession } from '../../src/auth.js'
 import { isLimitedPath } from '../../src/effect/sign-in-limits.js'
 import { tableSchema } from '../../src/schema.js'
-import { acme, createAuth, createDatabase, newOutbox, schema, type CreateAuthOptions } from './fixture.js'
+import { acme, createAuth, createDatabase, newOutbox, schema, SECRET, type CreateAuthOptions } from './fixture.js'
 import { app } from './app.js'
 
 const repoRoot = join(import.meta.dir, '..', '..')
@@ -665,6 +667,48 @@ describe('a link that moves an account to a new address', () => {
       expect(sessions()).toBe(1)
     })
   }
+})
+
+describe('upgrading from 1.4', () => {
+  /** The SQL step UPGRADING.md's 1.4-to-1.5 section gives, as an application copies it. */
+  const upgradeStep = () => {
+    const upgrading = readFileSync(join(repoRoot, 'UPGRADING.md'), 'utf8')
+    const section = upgrading.slice(upgrading.indexOf('## From 1.4 to 1.5'), upgrading.indexOf('## Tooling after the upgrade'))
+
+    return /```sql\n([\s\S]*?)\n\s*```/.exec(section)?.[1]?.trim()
+  }
+
+  test("UPGRADING.md's step ends the sessions 1.4's template gave registrations nobody proved, and keeps proven members'", async () => {
+    const { browser, db, join } = setup()
+    // 1.4's template, on the same tables and secret: a sign-up was signed in at once, proving nothing.
+    const legacy = betterAuth({
+      database: drizzleAdapter(db, { provider: 'sqlite', schema }),
+      baseURL: 'http://localhost',
+      secret: SECRET,
+      emailAndPassword: { enabled: true },
+      logger: { disabled: true },
+    })
+    const signedUp = await legacy.handler(new Request('http://localhost/api/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Mallory', email: 'victim@example.com', password: 'correct horse battery' }),
+    }))
+    const registrant = browser()
+    registrant.setCookie(SESSION, signedUp.headers.getSetCookie().find((cookie) => cookie.startsWith(`${SESSION}=`))?.split(';')[0]?.slice(SESSION.length + 1) ?? '')
+    const member = browser()
+    await join(member, 'ada@example.com')
+
+    // Upgraded, the session still signs Mallory in on the address she never proved.
+    expect((await me(registrant)).body).toMatchObject({ email: 'victim@example.com' })
+
+    const step = upgradeStep()
+
+    expect(step).toBeString()
+    db.run(sql.raw(step ?? ''))
+
+    expect((await me(registrant)).status).toBe(401)
+    expect((await me(member)).body).toMatchObject({ email: 'ada@example.com' })
+  })
 })
 
 describe('signing in with another provider', () => {
