@@ -54,13 +54,15 @@ should show, such as a signed preview, `cache: 'no-store'`, which keeps it
 out of every cache, the browser's included. `pageCache: false` in `setupWeb`
 turns page caching off for the whole application.
 
-A cached page is served before guards and middleware run, so a route
-provided a `guard(...)` or given `routes.middleware(...)` is never cached by
-default, and with `setupWeb`'s `middleware` option pages are cached only with
+A cached page is served before guards and middleware run, so a page a
+`guard(...)` decides for is never cached by default, however the guard was
+composed before it was provided (`Layer.merge`, `Layer.provide`), nor one
+behind `routes.middleware(...)` or under `prefixMiddleware(...)`; with
+`setupWeb`'s `middleware` option pages are cached only with
 `pageCache: true`. An access check made any other way, such as a layer that
-is not a guard or Hono middleware added after `setupWeb`, that decides from
-anything the list above does not name, such as the time or Hono's context,
-needs `cache: 'private'` on the routes it checks.
+is not a guard or Hono middleware the application adds with `app.use` after
+`setupWeb`, that decides from anything the list above does not name, such as
+the time or Hono's context, needs `cache: 'private'` on the routes it checks.
 
 ## Time-based caching with Workers Cache
 

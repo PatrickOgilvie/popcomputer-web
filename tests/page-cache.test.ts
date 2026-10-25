@@ -575,6 +575,9 @@ describe('a database reached through a connection string', () => {
   })
 })
 
+/** A service a guard is composed with. */
+class Plan extends Context.Service<Plan, string>()('test/Plan') {}
+
 describe('access checks and the default page cache', () => {
   /** Whom the access checks admit: they decide by what no cache key holds. */
   const gate = { open: true }
@@ -592,7 +595,19 @@ describe('access checks and the default page cache', () => {
     const routes = effectRoutes(app)
     const secret = render('Internal', { plan: 'the launch date' })
 
-    routes.provide(guard(Effect.suspend(() => gate.open ? Effect.void : forbidden('Not from here.')))).get('/guarded', secret)
+    const gateGuard = guard(Effect.suspend(() => gate.open ? Effect.void : forbidden('Not from here.')))
+
+    routes.provide(gateGuard).get('/guarded', secret)
+    // The same guard, composed into another layer before it is provided.
+    routes.provide(Layer.merge(gateGuard, Layer.succeed(Plan, 'pro'))).get('/merged', secret)
+    routes.provide(gateGuard.pipe(Layer.provide(Layer.succeed(Plan, 'pro')))).get('/composed', secret)
+    // Middleware the route builder gives the routes under a prefix.
+    routes.prefix('/staff')
+      .prefixMiddleware(async (c, next) => {
+        if (!gate.open) return c.text('Forbidden', 403)
+        await next()
+      })
+      .get('/staff', secret)
     routes
       .middleware(async (c, next) => {
         if (c.req.header('X-Preview-Token') !== admitted['X-Preview-Token']) return c.text('Forbidden', 403)
@@ -611,13 +626,20 @@ describe('access checks and the default page cache', () => {
   }
 
   test('a refused visitor is refused after an admitted one, never served the cached page', async () => {
+    const opens = { admit: () => { gate.open = true }, refuse: () => { gate.open = false } }
+    // A check the route knows of when it is registered keeps its pages out of
+    // the cache's consideration; one found as it runs makes them dynamic. A
+    // refusal that is no page, such as middleware's text, is neither.
     const cases = [
-      { path: '/guarded', app: createGuardedApp(), admit: () => { gate.open = true }, refuse: () => { gate.open = false } },
-      { path: '/preview', app: createGuardedApp(), admit: () => {}, refuse: () => {} },
-      { path: '/internal', app: createGuardedApp({ middleware: [allowlist] }), admit: () => {}, refuse: () => {} },
+      { path: '/guarded', app: createGuardedApp(), ...opens, found: [null, null] },
+      { path: '/merged', app: createGuardedApp(), ...opens, found: ['DYNAMIC', 'DYNAMIC'] },
+      { path: '/composed', app: createGuardedApp(), ...opens, found: ['DYNAMIC', 'DYNAMIC'] },
+      { path: '/staff', app: createGuardedApp(), ...opens, found: ['DYNAMIC', null] },
+      { path: '/preview', app: createGuardedApp(), admit: () => {}, refuse: () => {}, found: [null, null] },
+      { path: '/internal', app: createGuardedApp({ middleware: [allowlist] }), admit: () => {}, refuse: () => {}, found: [null, null] },
     ]
 
-    for (const { path, app, admit, refuse } of cases) {
+    for (const { path, app, admit, refuse, found } of cases) {
       cache.entries.clear()
 
       admit()
@@ -628,8 +650,8 @@ describe('access checks and the default page cache', () => {
 
       expect({ path, first, second }).toEqual({
         path,
-        first: { code: 200, cache: null, secret: true },
-        second: { code: 403, cache: null, secret: false },
+        first: { code: 200, cache: found[0], secret: true },
+        second: { code: 403, cache: found[1], secret: false },
       })
       expect(cache.entries.size).toBe(0)
     }

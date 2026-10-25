@@ -32,7 +32,7 @@ import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
 import type { ResponseHeaders } from './response-headers.js'
-import { allowDefaultPageCache, defaultCacheControl } from '../page-cache.js'
+import { allowDefaultPageCache, defaultCacheControl, keepPageOutOfCache } from '../page-cache.js'
 import {
   applyCachePolicy,
   decideCachePolicy,
@@ -754,7 +754,9 @@ export class EffectRouteBuilder<
    * Attach Hono middleware to the builder's whole prefix, including paths
    * that match no route. Use this for cross-cutting response policy (error
    * redaction, envelope shaping, security headers) that must also apply to
-   * 404s — per-route `.middleware()` never runs when no route matches.
+   * 404s — per-route `.middleware()` never runs when no route matches. A
+   * cached page would be served before it runs, so pages under the prefix
+   * are not cached by default.
    *
    * Registers immediately against the current prefix, so call it after
    * `.prefix()`:
@@ -772,14 +774,22 @@ export class EffectRouteBuilder<
   prefixMiddleware(
     ...handlers: MiddlewareHandler<E>[]
   ): this {
+    // A cached page is served before this middleware runs, and it may turn
+    // visitors away, so no page under the prefix is cached by default.
+    const checked = handlers.map((handler): MiddlewareHandler<E> => (c, next) => {
+      keepPageOutOfCache(c)
+
+      return handler(c, next)
+    })
+
     if (this.pathPrefix) {
       const prefix = toHonoPath(this.pathPrefix)
 
       // Two patterns: '/api/*' does not match '/api' itself in Hono
-      this.app.use(prefix, ...handlers)
-      this.app.use(`${prefix}/*`, ...handlers)
+      this.app.use(prefix, ...checked)
+      this.app.use(`${prefix}/*`, ...checked)
     } else {
-      this.app.use('/*', ...handlers)
+      this.app.use('/*', ...checked)
     }
 
     return this
@@ -1281,9 +1291,12 @@ export class EffectRouteBuilder<
             ),
           })
 
-          // The guarded records a guard read are decided once it has let the
-          // visitor in.
+          // Every guard starts and ends its decision here, however it was
+          // composed: the page cache, which answers before any guard runs,
+          // keeps none of its pages, and the guarded records it read are
+          // decided once it has let the visitor in.
           const verdicts = GuardVerdicts.of({
+            start: Effect.sync(() => keepPageOutOfCache(c)),
             confirm: (reads) => Effect.sync(() => {
               for (const key of reads) decided.add(key)
             }),

@@ -128,6 +128,19 @@ export function markPageDynamic<E extends Env>(c: Context<E>): void {
 }
 
 /**
+ * Keep this request's page out of the default page cache: an access check
+ * ran, such as a guard or prefix middleware, that a cached page, served
+ * before it runs, would skip. A route's own `cache` option is unaffected.
+ */
+export function keepPageOutOfCache<E extends Env>(c: Context<E>): void {
+  const state = openWebContext(c).pageCache
+
+  if (state) {
+    state.dynamic = true
+  }
+}
+
+/**
  * Record that the route handling this request allows default page caching.
  * Effect routes call this; plain Hono handlers never do, so they are never
  * cached by default.

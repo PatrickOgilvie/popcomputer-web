@@ -17,12 +17,15 @@ export class GuardDecision extends Context.Service<GuardDecision, {
 }>()('@popcomputer/web/GuardDecision') {}
 
 /**
- * The request's guards, which the route provides: the records a guard read
- * are decided once it lets the visitor in.
+ * The request's guards, which the route provides: every guard starts its
+ * decision through it, however the layer it made was composed, and the
+ * records a guard read are decided once it lets the visitor in.
  *
  * @internal
  */
 export class GuardVerdicts extends Context.Service<GuardVerdicts, {
+  /** A guard starts deciding: the page it guards is no shared cache's to keep. */
+  readonly start: Effect.Effect<void>
   /** A guard let the visitor in: the guarded records it read are decided. */
   readonly confirm: (reads: ReadonlySet<string>) => Effect.Effect<void>
 }>()('@popcomputer/web/GuardVerdicts') {}
@@ -89,10 +92,13 @@ export function guard(
 const guards = new WeakSet<Layer.Layer<never, unknown, unknown>>()
 
 function guardLayer<ROut, E, RIn>(decide: Layer.Layer<ROut, E, RIn>): Layer.Layer<ROut, E, Exclude<RIn, GuardDecision>> {
-  // Each request builds the layer anew, with a decision of its own.
+  // Each request builds the layer anew, inside whatever layer it was composed
+  // into, so the route sees every guard decide, however it was provided.
   const layer = Layer.unwrap(Effect.gen(function* () {
     const verdicts = yield* Effect.serviceOption(GuardVerdicts)
     const decision = GuardDecision.of({ reads: new Set() })
+
+    if (Option.isSome(verdicts)) yield* verdicts.value.start
 
     return decide.pipe(
       Layer.provide(Layer.succeed(GuardDecision, decision)),
@@ -108,9 +114,11 @@ function guardLayer<ROut, E, RIn>(decide: Layer.Layer<ROut, E, RIn>): Layer.Laye
 }
 
 /**
- * Whether `guard` made this layer. The default page cache answers before
- * any layer runs, so it caches no route a guard decides for: the guard may
- * read what no cache key holds, such as the visitor's address or country.
+ * Whether `guard` made this layer, as it was provided. The default page cache
+ * answers before any layer runs, so it caches no route a guard decides for:
+ * the guard may read what no cache key holds, such as the visitor's address
+ * or country. A guard composed into another layer is found when it decides,
+ * through GuardVerdicts.
  */
 export const isGuard = (layer: Layer.Layer<never, unknown, unknown>): boolean => guards.has(layer)
 

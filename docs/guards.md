@@ -31,7 +31,8 @@ such as the project, before the organization's guard has decided. So
 provide the guard on its own, before any other layer that reads a record.
 
 The default page cache answers before any guard runs, so it caches no page
-a guard decides for, nor one behind `routes.middleware(...)`. An access
+a guard decides for, however the guard was composed before it was provided,
+nor one behind `routes.middleware(...)` or `prefixMiddleware(...)`. An access
 check made any other way that reads something the page cache does not
 track, as [Page caching](page-cache.md) lists, such as the time, needs
 `cache: 'private'` on its routes.
