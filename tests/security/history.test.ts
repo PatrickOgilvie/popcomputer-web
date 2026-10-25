@@ -37,7 +37,7 @@ async function member() {
   const credentials = { email: 'ada@example.com', password: 'correct horse battery' }
 
   await browser.request('/sign-up', form({ name: 'Ada Lovelace', timeZone: 'Europe/London', ...credentials }))
-  await browser.request(`/verify-email?token=${outbox.verifications.at(-1)?.token}`)
+  await browser.request('/verify-email', form({ token: outbox.verifications.at(-1)?.token ?? '' }))
   await browser.request('/sign-in', form(credentials))
 
   return { browser, db }
