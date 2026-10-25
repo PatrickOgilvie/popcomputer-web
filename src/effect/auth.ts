@@ -590,6 +590,12 @@ function isBetterAuthInstance(auth: unknown): auth is BetterAuthInstance {
 }
 
 /**
+ * The options an instance was built with, which the sign-in limits read,
+ * whatever type the registered auth client gives the instance.
+ */
+const optionsOf = (auth: BetterAuthInstance): unknown => auth.options
+
+/**
  * Better Auth's own endpoints the framework calls by itself, by their path
  * under its base path, for an `auth.api` that does not say: a wrapper that
  * loads Better Auth on first use, to keep it out of a Worker's startup, gives
@@ -695,12 +701,12 @@ function callEndpoint(
     }
 
     const { path } = yield* Effect.try({ try: () => endpointOf(auth, name), catch: (cause) => cause }).pipe(Effect.orDie)
-    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, input.body, auth.options))
+    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, input.body, optionsOf(auth)))
 
     const response = yield* withinSignInLimits(
       attempt,
       sendToBetterAuth(() => sendThroughHandler(auth, raw, name, input)),
-      auth.options
+      optionsOf(auth)
     ).pipe(
       Effect.flatMap(inspectBetterAuthResponse),
       Effect.mapError((failure) => failure instanceof AuthRateLimitError ? failure : toAuthActionError(failure, errors))
@@ -970,14 +976,14 @@ export function betterAuthHandler(
       }
     }
 
-    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, body, auth.options))
+    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, body, optionsOf(auth)))
     const response = yield* withinSignInLimits(
       attempt,
       Effect.tryPromise({
         try: (): Promise<Response> => Promise.resolve(auth.handler(forwarded)),
         catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
       }),
-      auth.options
+      optionsOf(auth)
     )
 
     // Better Auth's own server error is the application's to answer, with its
