@@ -685,6 +685,12 @@ function readEndpointResult(response: Response): Effect.Effect<unknown> {
   })
 }
 
+/** The claims of Better Auth's email verification token that say what its link does. */
+const decodeVerificationClaims = S.decodeUnknownOption(S.fromJsonString(S.Struct({
+  updateTo: S.optional(S.String),
+  requestType: S.optional(S.String),
+})))
+
 /**
  * Whether a token on Better Auth's `/verify-email` link moves an account to a
  * new address, as the link its `user.changeEmail` emails that address does,
@@ -694,18 +700,19 @@ function readEndpointResult(response: Response): Effect.Effect<unknown> {
 function movesAccount(token: unknown): boolean {
   if (typeof token !== 'string') return false
 
+  let payload: string
+
   try {
     const binary = atob((token.split('.')[1] ?? '').replace(/-/g, '+').replace(/_/g, '/'))
-    const payload: unknown = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0))))
-
-    if (!(payload instanceof Object)) return false
-
-    const updateTo: unknown = Reflect.get(payload, 'updateTo')
-
-    return typeof updateTo === 'string' && updateTo !== '' && Reflect.get(payload, 'requestType') !== 'change-email-confirmation'
+    payload = new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)))
   } catch {
     return false
   }
+
+  return Option.match(decodeVerificationClaims(payload), {
+    onNone: () => false,
+    onSome: (claims) => (claims.updateTo ?? '') !== '' && claims.requestType !== 'change-email-confirmation',
+  })
 }
 
 /**

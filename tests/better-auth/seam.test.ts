@@ -112,8 +112,9 @@ describe('sign-in limits', () => {
       const path: unknown = Reflect.get(endpoint, 'path')
       const options: unknown = Reflect.get(endpoint, 'options')
       const body: unknown = options instanceof Object ? Reflect.get(options, 'body') : undefined
-      const shape: unknown = body instanceof Object ? Reflect.get(body, 'shape') : undefined
-      const checksPassword = shape instanceof Object && (Object.hasOwn(shape, 'password') || Object.hasOwn(shape, 'currentPassword'))
+      // The endpoint's body schema, a zod object, lists its fields as its `shape`.
+      const fields: unknown = body instanceof Object ? Reflect.get(body, 'shape') : undefined
+      const checksPassword = fields instanceof Object && (Object.hasOwn(fields, 'password') || Object.hasOwn(fields, 'currentPassword'))
 
       return typeof path === 'string' && checksPassword && !setsPassword.has(path) && !isLimitedPath(path) ? [path] : []
     })
