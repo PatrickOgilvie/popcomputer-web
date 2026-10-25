@@ -77,6 +77,15 @@ export interface RenderOptions {
   clearHistory?: boolean
   encryptHistory?: boolean
   /**
+   * That the page goes to a signed-in visitor, whoever signed them in:
+   * `render` says so when the action's AuthUserService gives a user, from
+   * the session lookup, a layer the route provides or web.services. A page
+   * also goes to one when the session lookup found one. A signed-in page is
+   * encrypted in history under the default `history.encrypt`, and answered
+   * no-store.
+   */
+  signedIn?: boolean
+  /**
    * The response's status, 200 unless given: 404 for a page that says what
    * is missing, as a visit and as the Inertia page object alike.
    */

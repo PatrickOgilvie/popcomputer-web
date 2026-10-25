@@ -10,6 +10,7 @@ import { Cause, Context, Effect, Layer, Option, Schema as S, Stream } from 'effe
 import { observeOrLog } from './error-observer.js'
 import { href, type PathArguments, type PathTarget } from '../paths.js'
 import {
+  AuthUserService,
   PageService,
   ResponseFactoryService,
   RequestService,
@@ -126,12 +127,15 @@ function renderPage(
     const page = yield* PageService
     const encoded = yield* encodePageProps(page.pages, component, props)
     const sharing = yield* Effect.serviceOption(PageSharing)
+    // The user the action's runtime gives, whichever layer gave it: the
+    // session lookup's, a route's own layer's, or web.services'.
+    const user = yield* Effect.serviceOption(AuthUserService)
 
     if (Option.isSome(sharing)) {
       yield* sharing.value.share
     }
 
-    return yield* Effect.promise(() => page.render(component, encoded, options))
+    return yield* Effect.promise(() => page.render(component, encoded, { ...options, signedIn: Option.isSome(user) }))
   }).pipe(Effect.withSpan('Web.render', { attributes: { component } }))
 }
 

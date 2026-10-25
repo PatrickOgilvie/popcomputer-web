@@ -10,7 +10,7 @@ import { Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
-import { render } from '../src/effect/responses.js'
+import { redirect, render } from '../src/effect/responses.js'
 import { responseHeader } from '../src/effect/response-headers.js'
 import { signedIn, testBrowser, testEnv } from '../src/testing.js'
 import type { HistoryConfig } from '../src/types.js'
@@ -121,6 +121,64 @@ describe("a page's history", () => {
     const res = await historyApp().request('/account', {}, member())
 
     expect(await res.text()).toContain('"encryptHistory":true')
+  })
+})
+
+// docs/guards.md: an application that signs visitors in another way gives
+// its own AuthUserService through a layer, which authorize() and ownedBy
+// bindings accept. Its pages are as much a signed-in user's.
+describe("pages for a user the application's own layer signs in", () => {
+  const inertia = { 'X-Inertia': 'true', 'X-Inertia-Version': '1' }
+  const PageHistory = S.Struct({ component: S.String, encryptHistory: S.optional(S.Boolean), clearHistory: S.optional(S.Boolean) })
+  const historyOf = async (res: Response) => S.decodeUnknownSync(PageHistory)(await res.json())
+  // The application's own session, here a fixed member; in production it
+  // reads the application's cookie.
+  const AppSession = signedIn({ id: 'lin', name: 'Lin' })
+  const page = (component: string) => action(render(component))
+
+  const createApp = () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    routes.provide(AppSession).get('/statement', page('Statement'))
+    routes.get('/login', page('Auth/Login'))
+    routes.post('/logout', action(Effect.andThen(responseHeader('Set-Cookie', 'sid=; Path=/; Max-Age=0'), redirect('/login'))))
+
+    return app
+  }
+
+  const createServicesApp = () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) }).services({ request: () => AppSession })
+
+    routes.get('/statement', page('Statement'))
+
+    return app
+  }
+
+  // Production: the bindings alone, without testEnv's seam, which copies a
+  // test's user onto the request.
+  const production = { ENVIRONMENT: 'production' }
+
+  test("are encrypted in history and answered no-store, as the session lookup's are, a page or a first visit", async () => {
+    for (const app of [createApp(), createServicesApp()]) {
+      const visit = await app.request('/statement', { headers: inertia }, production)
+      const document = await app.request('/statement', {}, production)
+
+      expect(await historyOf(visit)).toEqual({ component: 'Statement', encryptHistory: true, clearHistory: undefined })
+      expect([visit.headers.get('Cache-Control'), document.headers.get('Cache-Control')]).toEqual(['no-store', 'no-store'])
+      expect(await document.text()).toContain('"encryptHistory":true')
+    }
+  })
+
+  test("are cleared by the page the application's own sign-out leads to", async () => {
+    const browser = testBrowser(createApp(), production)
+    await browser.request('/statement', { headers: inertia })
+
+    const signedOut = await browser.request('/logout', { method: 'POST', headers: { ...inertia, Origin: 'http://localhost' } })
+
+    expect(signedOut.status).toBe(303)
+    expect(await historyOf(await browser.follow(signedOut))).toEqual({ component: 'Auth/Login', clearHistory: true })
   })
 })
 

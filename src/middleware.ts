@@ -13,7 +13,7 @@ import type {
 import { HEADERS } from './types.js'
 import { openWebContext, type WebRequestContext } from './request-context.js'
 import { openFlash } from './flash.js'
-import { applyDefaultCacheControl } from './page-cache.js'
+import { applyDefaultCacheControl, markPageDynamic } from './page-cache.js'
 import { ConfigurationError } from './effect/errors.js'
 import { webUrl } from './locations.js'
 
@@ -187,7 +187,9 @@ export function web(config: WebConfig): MiddlewareHandler {
 
         const context = openWebContext(c)
         const encrypt = config.history?.encrypt ?? 'signed-in'
-        const signedIn = context.authUser !== undefined
+        // Signed in by the session lookup, or by a layer the action's
+        // runtime has, such as an application's own session.
+        const signedIn = options.signedIn === true || context.authUser !== undefined
         // A session the lookup found ended, or one ended or started since the
         // last page, leaves history the previous session's pages wrote.
         const sessionChanged = flashed.clearHistory || endsSession(context.sessionLookupCookies ?? [], context.sessionCookies ?? [])
@@ -208,6 +210,12 @@ export function web(config: WebConfig): MiddlewareHandler {
         }
 
         historyCleared ||= page.clearHistory === true && !prefetch
+
+        if (signedIn) {
+          // The page is the visitor's own, which no cache may keep.
+          context.signedIn = true
+          markPageDynamic(c)
+        }
 
         const status = options.status ?? 200
 

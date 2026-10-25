@@ -31,6 +31,12 @@ export interface WebRequestContext<E extends Env = Env> {
   /** loadUser() — present only when the request carries a valid session */
   authUser?: AuthUser
   /**
+   * web()'s render — a page went to a visitor the action's AuthUserService
+   * signed in, whichever layer gave it: the session lookup, a layer the
+   * route provides, or web.services.
+   */
+  signedIn?: boolean
+  /**
    * Set when producing the response read a request header, a cookie or
    * request state, none of which a shared cache's key holds: a route's
    * `cache` option then stores nothing.
