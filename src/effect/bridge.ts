@@ -20,6 +20,7 @@ import {
   createWorkersResponseCacheClient,
   createUnavailableResponseCacheClient,
   resolveWorkersCachePurgeApi,
+  withOwnPurges,
   type WorkersCachePurgeApi,
 } from './response-cache.js'
 import {
@@ -434,23 +435,27 @@ function createExecutionContextSupervisor(
   const external = createExternalPromiseTracker()
   let drainPromise: Promise<void> | undefined
 
+  // The work runs beside the action and may outlive it, so what it names with
+  // purgeCache is its own to purge once it succeeds.
   const schedule = <A, E, R>(
     operation: string,
     effect: Effect.Effect<A, E, R>
   ): Effect.Effect<void, never, R> =>
-    Effect.flatMap(Effect.context<R>(), (context) =>
-      Effect.sync(() => {
-        const running = Effect.runPromise(
-          makeObservedBackground(operation, effect).pipe(Effect.provide(context))
-        )
+    Effect.flatMap(withOwnPurges(effect), (owned) =>
+      Effect.flatMap(Effect.context<R>(), (context) =>
+        Effect.sync(() => {
+          const running = Effect.runPromise(
+            makeObservedBackground(operation, owned).pipe(Effect.provide(context))
+          )
 
-        const tracked: Promise<void> = running.then(() => {
-          pending.delete(tracked)
+          const tracked: Promise<void> = running.then(() => {
+            pending.delete(tracked)
+          })
+
+          pending.add(tracked)
+          ctx.waitUntil(tracked)
         })
-
-        pending.add(tracked)
-        ctx.waitUntil(tracked)
-      })
+      )
     )
 
   const client: ExecutionContextClient = {
@@ -497,8 +502,10 @@ function createInlineExecutionContextSupervisor(): BackgroundSupervisor {
       // oxlint-disable-next-line no-floating-promises -- external owns this promise and its rejection; the request awaits external.drain() before disposing services.
       external.track(promise)
     },
-    runInBackground: (effect) => makeObservedBackground('background', effect),
-    schedule: (operation, effect) => makeObservedBackground(operation, effect),
+    // Inline, the work runs before the action's own purges are taken; it
+    // still purges what it names itself, as it would in a Worker.
+    runInBackground: (effect) => Effect.flatMap(withOwnPurges(effect), (owned) => makeObservedBackground('background', owned)),
+    schedule: (operation, effect) => Effect.flatMap(withOwnPurges(effect), (owned) => makeObservedBackground(operation, owned)),
   }
 
   return {

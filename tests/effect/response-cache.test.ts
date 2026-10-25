@@ -13,13 +13,14 @@
 import { describe, test, expect } from 'bun:test'
 import { Hono, type Context as HonoContext } from 'hono'
 import type { BlankEnv } from 'hono/types'
-import { Context, Effect, Layer, Schema as S } from 'effect'
+import { Cause, Context, Effect, Exit, Layer, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import {
   createWorkersResponseCacheClient,
+  makePendingPurges,
   PAGE_CACHE_TAG,
   ResponseCachePurgeError,
   ResponseCacheService,
@@ -943,6 +944,17 @@ describe('purges route option', () => {
     expect(pinned.status).toBe(403)
     // The route's purges and the action's, once; nothing for the refusal.
     expect(purges).toEqual([{ tags: ['posts', 'posts:post-1'] }])
+  })
+
+  test('a tag added once the pending purges were taken is a defect, not dropped unseen', async () => {
+    const pending = makePendingPurges()
+
+    await Effect.runPromise(pending.add(['posts']))
+    expect(await Effect.runPromise(pending.take)).toEqual(['posts'])
+
+    const late = await Effect.runPromiseExit(pending.add(['posts:post-1']))
+
+    expect(Exit.isFailure(late) && Cause.hasDies(late.cause)).toBe(true)
   })
 
   test('static purge tags are used verbatim', async () => {
