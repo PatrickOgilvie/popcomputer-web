@@ -226,6 +226,20 @@ describe('sign-in limits', () => {
     expect((await viaApi('/sign-in/email', 'application/json', 'correct horse')).status).toBe(429)
   })
 
+  test('a body Better Auth would read as a form, though it is JSON before its first semicolon, is refused uncounted', async () => {
+    const { app, env, rows } = await createApp(testRateLimiter({ limit: 100 }))
+    const type = 'x/application/json+json;a=b, application/x-www-form-urlencoded'
+    // As JSON it names a decoy; as the form Better Auth reads, ada.
+    const guess = (index: number) => testBrowser(app, env).request('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'Content-Type': type },
+      body: JSON.stringify({ email: `decoy-${index}@example.net`, p: `&${new URLSearchParams({ email: 'ada@example.com', password: `guess-${index}` })}&` }),
+    })
+
+    expect([(await guess(1)).status, (await guess(2)).status, (await guess(3)).status]).toEqual([415, 415, 415])
+    expect(rows()).toEqual([])
+  })
+
   test('a sign-in through an identity provider is not counted against the address', async () => {
     const limiter = testRateLimiter({ limit: 1 })
     const { app, env } = await createApp(limiter)

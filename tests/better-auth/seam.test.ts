@@ -203,6 +203,20 @@ describe('signing up, in and out', () => {
     expect(tried.filter((attempt) => attempt.status < 400)).toEqual([])
   })
 
+  test('a body whose type Better Auth would read as a form, though it is JSON before its first semicolon, is refused', async () => {
+    const { browser, db } = setup()
+    // Better Auth reads JSON only for a type that starts application/ and ends json, and a form for any type naming one.
+    const type = 'x/application/json+json;a=b, application/x-www-form-urlencoded'
+    const signUp = { name: 'Eve', email: 'eve@example.com', password: 'correct horse battery' }
+    // As JSON it sets no timeZone; as a form it does.
+    const body = JSON.stringify({ ...signUp, p: `&${new URLSearchParams({ ...signUp, timeZone: 'Mars/Olympus' })}&` })
+
+    const res = await browser().request('/api/auth/sign-up/email', { method: 'POST', headers: { 'Content-Type': type, Origin: 'http://localhost' }, body })
+
+    expect(res.status).toBe(415)
+    expect(await db.select().from(schema.user)).toEqual([])
+  })
+
   test("a wrong password is refused with Better Auth's message on the email field", async () => {
     const { browser, join } = setup()
     await join(browser(), 'ada@example.com')

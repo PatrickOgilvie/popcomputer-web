@@ -167,7 +167,10 @@ for the ones visitors may set there, `betterAuthHandler({ settable: ['timeZone']
 and the handler refuses a request setting any other with a 400; `settable: []`
 keeps every field to the application's own forms. It reads a body within
 setupWeb's `bodyLimit`, as `validateRequest` does, and answers a larger one
-with a 413 before Better Auth reads it.
+with a 413 before Better Auth reads it. A sign-in or a call that writes user
+fields is read as Better Auth will read it, so its body is JSON, typed
+`application/json` or `application/*+json`, or a form; any other is refused
+with a 415.
 
 ## The sign-in page
 

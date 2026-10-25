@@ -915,7 +915,8 @@ const ENDPOINT_INPUT_KEYS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
  * such as `phoneNumber`. Name the ones a visitor may set there in `settable`,
  * which TypeScript asks for once the registered Better Auth declares any; a
  * request setting another is refused with a 400. A body over setupWeb's
- * `bodyLimit` is refused with a 413 before Better Auth reads it. A
+ * `bodyLimit` is refused with a 413 before Better Auth reads it, and one of
+ * those calls or a sign-in in a type other than JSON or a form with a 415. A
  * server-rendered app that signs users in with `betterAuthRedirect` needs it
  * only for OAuth callbacks.
  */
@@ -1021,14 +1022,24 @@ function withinBodyLimit(request: Request, limit: number): Effect.Effect<Request
 }
 
 /**
- * A JSON or form body, read from a copy, by its media type in any case; none
- * for any other type, or one that does not parse.
+ * A JSON media type that Better Auth's body parser (better-call's `getBody`)
+ * reads as JSON too: it tests the whole header against this pattern anchored
+ * only at its start, and reads a form from any other header naming one, so
+ * `x/y+json; application/x-www-form-urlencoded` would be JSON here and a form
+ * there.
+ */
+const JSON_MEDIA_TYPE = /^application\/([a-z0-9.+-]*\+)?json$/
+
+/**
+ * A JSON or form body, read from a copy, by its media type in any case,
+ * exactly as Better Auth will read it; none for any other type, or one that
+ * does not parse.
  */
 async function bodyOf(request: Request): Promise<{ readonly body: unknown } | undefined> {
   const media = (request.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase()
 
   try {
-    if (media === 'application/json' || media.endsWith('+json')) return { body: await request.clone().json() }
+    if (JSON_MEDIA_TYPE.test(media)) return { body: await request.clone().json() }
     if (media === 'application/x-www-form-urlencoded' || media === 'multipart/form-data') {
       return { body: Object.fromEntries(await request.clone().formData()) }
     }
