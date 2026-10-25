@@ -32,6 +32,7 @@ export const pages = {
   'Projects/Index': S.Struct({ projects: S.Array(ProjectSummary), next: S.NullOr(ProjectCursor) }),
   'Projects/Show': S.Struct({ project: Project }),
   'Auth/Login': S.Struct({}),
+  'Auth/VerifyEmail': S.Struct({ token: S.String }),
   Dashboard: S.Struct({}),
 }
 ```
@@ -187,6 +188,7 @@ import { createInertiaApp } from '@inertiajs/react'
 import type { PageName } from '@popcomputer/web/effect'
 import type { WebPage } from '@popcomputer/web/react'
 import Login from './pages/Auth/Login'
+import VerifyEmail from './pages/Auth/VerifyEmail'
 import Dashboard from './pages/Dashboard'
 import ErrorPage from './pages/Error'
 import ProjectsIndex from './pages/Projects/Index'
@@ -196,6 +198,7 @@ const components: { readonly [Name in PageName]: WebPage<Name> } = {
   'Projects/Index': ProjectsIndex,
   'Projects/Show': ProjectsShow,
   'Auth/Login': Login,
+  'Auth/VerifyEmail': VerifyEmail,
   Dashboard,
 }
 

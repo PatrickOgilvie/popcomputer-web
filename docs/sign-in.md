@@ -142,6 +142,15 @@ signs a request in without a Better Auth session, so a Better Auth endpoint
 that needs one, such as deleting the account, is tested after a real sign-in
 through `testBrowser`.
 
+An application that loads Better Auth on first use, to keep it out of a
+Worker's startup, gives `auth.client` a wrapper whose endpoints load it, and
+`betterAuthLogoutAction` works through it. `betterAuthRedirect` and
+`betterAuthCall` find the endpoint's path on Better Auth's instance, so
+through a wrapper they fail and say why: send those forms to Better Auth's
+handler yourself, by path, or give `auth.client` the instance. Importing
+anything from `better-auth` into a module the Worker loads at startup,
+`APIError` included, loads Better Auth with it.
+
 A signed-out visitor to a guarded page is redirected with 302 on a page load
 and 303 on an Inertia visit, as Inertia requires; a test asserts the
 `Location`, `/login?redirect=...`, rather than the status. A form posted
@@ -209,4 +218,28 @@ const Login: WebPage<'Auth/Login'> = () => {
 }
 
 export default Login
+```
+
+## The page that proves an address
+
+The link a sign-up emails opens this page ([Proving an address](auth.md#proving-an-address)).
+Only its button proves the address, so a mail scanner's fetch proves nothing:
+
+```tsx
+// src/pages/Auth/VerifyEmail.tsx
+import { useForm } from '@inertiajs/react'
+import type { WebPage } from '@popcomputer/web/react'
+import { paths } from '../../paths'
+
+const VerifyEmail: WebPage<'Auth/VerifyEmail'> = ({ token }) => {
+  const form = useForm({ token })
+
+  return (
+    <form onSubmit={(event) => { event.preventDefault(); form.post(paths.verifyEmail) }}>
+      <button type="submit" disabled={form.processing}>Confirm my email address</button>
+    </form>
+  )
+}
+
+export default VerifyEmail
 ```

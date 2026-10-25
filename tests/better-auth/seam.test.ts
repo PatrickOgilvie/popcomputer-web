@@ -31,9 +31,9 @@ function setup(session?: CreateAuthOptions['session']) {
   const env = testEnv({ OUTBOX: outbox, SESSION: session, APP_URL: 'http://localhost' }, { database: db })
   const browser = () => testBrowser(app, env)
 
-  /** Follow the link Better Auth last emailed to prove `email`. */
+  /** Press the button on the page of the link Better Auth last emailed to prove `email`. */
   const verifyEmail = (client: Browser, email: string) =>
-    client.request(`/verify-email?token=${outbox.verifications.filter((sent) => sent.email === email).at(-1)?.token}`)
+    client.request('/verify-email', form({ token: outbox.verifications.filter((sent) => sent.email === email).at(-1)?.token ?? '' }))
 
   /** A member, as the template makes one: sign up, prove the address by its emailed link, and sign in. */
   const join = async (client: Browser, email: string, name?: string) => {
@@ -566,6 +566,34 @@ describe("an account registered with someone else's address", () => {
 
     expect((await me(victim)).body).toMatchObject({ email: 'victim@example.com' })
     expect(await Promise.all([attacker, ...racers, retried].map(async (client) => (await me(client)).status))).toEqual([401, 401, 401, 401, 401])
+  })
+
+  test("a fetch of the emailed link, as a mail scanner makes, proves nothing: only its page's button does", async () => {
+    const { browser, db, outbox } = setup()
+    await signUp(browser(), 'victim@example.com', 'Mallory')
+    const token = outbox.verifications.at(-1)?.token ?? ''
+    const proven = () => db.select({ emailVerified: schema.user.emailVerified }).from(schema.user).where(eq(schema.user.email, 'victim@example.com')).get()
+    const scanner = browser()
+
+    const fetched = await scanner.request(`/verify-email?token=${token}`)
+    const checked = await scanner.request(`/verify-email?token=${token}`, { method: 'HEAD' })
+
+    expect([fetched.status, checked.status]).toEqual([200, 200])
+    expect(proven()).toEqual({ emailVerified: false })
+
+    // Mallory's password still signs no one in.
+    const early = await browser().request('/sign-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ email: 'victim@example.com', password: 'correct horse battery' }),
+    })
+
+    expect((await early.json()).errors).toEqual({ email: 'Email not verified' })
+
+    const confirmed = await browser().request('/verify-email', form({ token }))
+
+    expect(confirmed.headers.get('Location')).toBe('/sign-in')
+    expect(proven()).toEqual({ emailVerified: true })
   })
 
   test("a phone number its registrant sends with the sign-up is refused, so no texted code signs in to the owner's account", async () => {

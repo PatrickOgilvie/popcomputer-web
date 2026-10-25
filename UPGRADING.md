@@ -1174,7 +1174,12 @@ change nothing. Check each item against yours:
 - **The Better Auth template.** An application built from `docs/auth.md`'s
   `createAuth` adds `requireEmailVerification`, an email sender and a
   verify-email action, as its "Proving an address" section shows. Sign-up
-  then signs no one in until the emailed link is followed.
+  then signs no one in until the emailed link is followed. The link opens a
+  page whose button posts its token: an application that adopted 1.5.0's
+  single `routes.get(paths.verifyEmail, verifyEmail)`, which proved the
+  address on any fetch of the link, a mail scanner's included, registers
+  `showVerifyEmail` there and `verifyEmail` on `.post`, and declares the
+  `Auth/VerifyEmail` page.
 - **Better Auth's `baseURL`.** One that copied the quick start declares
   `APP_URL: variable(S.String)` in `src/env.ts` and passes it as `baseURL`
   (or gives Better Auth `baseURL: { allowedHosts }`), so emailed links never

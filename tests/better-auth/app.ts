@@ -95,9 +95,18 @@ const signUp = action(Effect.gen(function* () {
   })
 }))
 
+const VerifyLink = S.Struct({ token: requiredString })
+
+/** The emailed link's page, whose button posts the token back: a fetch of the link proves nothing. */
+const showVerifyEmail = action(Effect.gen(function* () {
+  const input = yield* validateRequest(VerifyLink)
+
+  return yield* render('Auth/VerifyEmail', input)
+}).pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired'))))
+
 /** Proves the address and signs nobody in: the member signs in with their password next. */
 const verifyEmail = action(Effect.gen(function* () {
-  const input = yield* validateRequest(S.Struct({ token: requiredString }))
+  const input = yield* validateRequest(VerifyLink)
 
   return yield* betterAuthRedirect('verifyEmail', { query: input }, { redirectTo: paths.signIn })
 }).pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired'))))
@@ -263,7 +272,8 @@ routes
 
 routes
   .get(paths.home, action(render('Home')))
-  .get(paths.verifyEmail, verifyEmail)
+  .get(paths.verifyEmail, showVerifyEmail)
+  .post(paths.verifyEmail, verifyEmail)
   .post(paths.enableTwoFactor, enableTwoFactor)
   .post(paths.organizations, createOrganization)
   .get(paths.organization, showOrganization)
