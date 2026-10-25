@@ -444,7 +444,8 @@ export interface ValidateOptions {
 
   /**
    * Effect Schema ParseOptions passed to the decode call. Validation reports
-   * every invalid field (`errors: 'all'`) unless this says otherwise.
+   * every invalid field (`errors: 'all'`) unless this says otherwise, or the
+   * request sends more than 1000 values, when it reports the first.
    * Use `{ onExcessProperty: 'error' }` to reject request payloads that
    * carry fields the schema does not declare (mass-assignment hardening).
    *
@@ -540,13 +541,46 @@ function determineValidationCode(
     : ErrorCodes.VAL_004_SCHEMA_MISMATCH
 }
 
+/**
+ * The most values a request may send for validation to report every invalid
+ * one. Effect keeps an issue for each invalid value, and for each field each
+ * invalid item lacks, until the report is built: a 1 MiB body of empty items
+ * held some 170 MiB while it validated. Past this, validation stops at the
+ * first invalid field.
+ */
+const MAX_VALUES_CHECKED_IN_FULL = 1000
+
+const TOO_MANY_VALUES = `This request sends more than ${MAX_VALUES_CHECKED_IN_FULL} values, so validation stopped at its first invalid field.`
+
+/** Whether the input holds more than `limit` values, counted without walking past the limit. */
+function holdsMoreValuesThan(input: unknown, limit: number): boolean {
+  const pending: unknown[] = [input]
+  let count = 1
+
+  while (pending.length > 0) {
+    const value = pending.pop()
+    const children: readonly unknown[] = Array.isArray(value) ? value : value instanceof Object ? Object.values(value) : []
+
+    count += children.length
+
+    if (count > limit) return true
+
+    for (const child of children) pending.push(child)
+  }
+
+  return false
+}
+
 function runValidation<A, I, Input>(
   schema: S.Codec<A, I>,
   data: Input,
   options: ValidateOptions
 ): Effect.Effect<A, ValidationError, never> {
-  // Report every invalid field, so a form shows all of its errors at once.
-  return S.decodeUnknownEffect(schema, { errors: 'all', ...options.parseOptions })(data).pipe(
+  // Report every invalid field, so a form shows all of its errors at once,
+  // unless the request sends too many values to keep an issue for each.
+  const many = options.parseOptions?.errors === undefined && holdsMoreValuesThan(data, MAX_VALUES_CHECKED_IN_FULL)
+
+  return S.decodeUnknownEffect(schema, { errors: many ? 'first' : 'all', ...options.parseOptions })(data).pipe(
     Effect.mapError((error) => {
       const formatted = formatSchemaErrorsWithDetails(
         error,
@@ -554,11 +588,17 @@ function runValidation<A, I, Input>(
         options.messages,
         options.attributes
       )
+      const code = determineValidationCode(formatted)
+
+      if (many && formatted.errors.form === undefined) {
+        formatted.errors.form = TOO_MANY_VALUES
+        formatted.details.form = { expected: `at most ${MAX_VALUES_CHECKED_IN_FULL} values`, message: TOO_MANY_VALUES, path: [] }
+      }
 
       return new ValidationError({
         errors: formatted.errors,
         fieldDetails: formatted.details,
-        code: determineValidationCode(formatted),
+        code,
       })
     })
   )
