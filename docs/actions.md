@@ -64,9 +64,12 @@ routes.get(paths.project, showProject, { name: 'projects.show' })
 the path's placeholders; the parameters are typed from them, so a renamed
 placeholder is a type error at every URL built from it. A value fills one path
 segment: an empty one, `.` or `..` would turn the path into another route's,
-or `//host`, another site, so `href`, `redirect` and an endpoint's `call`
-throw on it, which in an action is a defect that answers 500. Validate a name
-a URL will carry with `alphaDash`, as for a slug. A redirect leads to a
+or `//host`, another site, and a URL reads `%2e` as a dot, so no escape keeps
+one. `href` and `redirect` leave such a placeholder unfilled, as a missing
+value, `/orgs/{organization}`: the link stays on its route and site, and one
+stored slug of `..` breaks only its own link, never a page or job listing
+others. An endpoint's `call` throws on it. Validate a name a URL will carry
+with `alphaDash`, as for a slug, which also refuses `{` and `}`. A redirect leads to a
 path or an `http:` or `https:` URL: one to any other scheme, such as a
 `javascript:` URL a form's `next` field names, is a defect that answers 500,
 and an Inertia visit is sent to another site only at an `http:` or `https:`

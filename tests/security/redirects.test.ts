@@ -162,9 +162,10 @@ describe('a redirect to a URL a form names', () => {
 describe('a redirect to a path filled from fields a form names', () => {
   // '/{owner}/{repo}' with an empty owner is //evil.example, another host,
   // and a '.' or '..' repo leaves the owner's page for another route.
-  test("is a defect for a value that would not be one path segment, never a Location", async () => {
+  test("leaves a value that would not be one path segment unfilled, so its Location stays on the route and site", async () => {
     const { app } = createApp()
     const answered: string[] = []
+    const expected: Readonly<Record<string, string>> = { '': '/{owner}/evil.example', '..': '/ada/{repo}', '.': '/ada/{repo}' }
 
     for (const [owner, repo] of [['', 'evil.example'], ['ada', '..'], ['ada', '.']]) {
       for (const inertia of [true, false]) {
@@ -174,8 +175,11 @@ describe('a redirect to a path filled from fields a form names', () => {
           body: new URLSearchParams({ owner, repo }),
         }, as('ada'))
         const location = res.headers.get('X-Inertia-Location') ?? res.headers.get('Location')
+        const reached = location === null ? undefined : new URL(location, 'http://localhost/')
 
-        if (res.status !== 500 || location !== null) answered.push(`${JSON.stringify({ owner, repo })} inertia=${inertia} -> ${res.status} ${location}`)
+        if (res.status !== 303 || location !== expected[owner === '' ? '' : repo] || reached?.origin !== 'http://localhost') {
+          answered.push(`${JSON.stringify({ owner, repo })} inertia=${inertia} -> ${res.status} ${location}`)
+        }
       }
     }
 
