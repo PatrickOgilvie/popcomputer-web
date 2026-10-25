@@ -36,7 +36,7 @@ remember the check:
 | `ownedBy: 'userId'` | The signed-in user whose id the column holds, a column that references the users table's `id` | The 404 a missing record gets. A signed-out visitor is asked to sign in, before the database is asked |
 | `publicWhen: { isPublic: true }` | Anyone, when its columns hold these values, each typed by its column, as `{ visibility: 'public' }` | 404, its owner included |
 | `public: true` | Anyone, signed in or not | Nobody else |
-| `guarded: true` | Anyone the route's guard lets through, as a membership guard lets in an organization's members. The record loads only once a `guard(...)` the route is provided has read it: asked for first by an action or another layer, it fails | The guard's answer: 404 for a stranger, as [Guards and roles](guards.md#roles-belong-to-memberships-read-by-a-guard) shows |
+| `guarded: true` | Anyone the route's guard lets through, as a membership guard lets in an organization's members. The record loads only once a `guard(...)` the route is provided has read it and let the visitor in: asked for first by an action, another layer or a guard that reads a record under it, it fails | The guard's answer: 404 for a stranger, as [Guards and roles](guards.md#roles-belong-to-memberships-read-by-a-guard) shows |
 
 A record that lives inside another, such as a book in a list, says `scope`
 instead: `book: routeBinding(schema.books, { scope: { list: { foreignKey: 'listId' } } })`
@@ -107,7 +107,8 @@ route's models load together, so a missing one is a 404 whichever the action
 asks for. A guard's read loads only the record it reads and those before it
 in the path, and the rest load on the first read after the guards, so a
 visitor a guard turns away learns nothing of the records under the one it
-decides for, even when it answers 403 or redirects.
+decides for, even when it answers 403 or redirects. A guard that reads a
+record under a `guarded` one fails until that one's guard has decided.
 
 `{post}` looks the record up by the table's `id` column, or, for a table
 without one, its primary key. `{post:slug}` names the column by its property

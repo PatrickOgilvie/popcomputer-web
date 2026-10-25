@@ -51,7 +51,7 @@ import {
   type RouteCacheOptions,
 } from './response-cache.js'
 import { AuthUserService, DatabaseService, RequestService } from './services.js'
-import { isDeciding, isGuard } from './guard.js'
+import { currentDecision, GuardVerdicts, isGuard } from './guard.js'
 import type {
   AuthService,
   ExecutionContextService,
@@ -1124,12 +1124,13 @@ export class EffectRouteBuilder<
       // Route models load on the action's first bound() call, after guards.
 
       // A guarded binding loads once a guard(...) the route is provided has
-      // read it. The route's records load together, so until then nothing
-      // else may ask for any of them: an action, a layer that reads a record
-      // for breadcrumbs, or a purge.
+      // read it and let the visitor in. The route's records load together, so
+      // until then nothing else may ask for any of them: an action, a layer
+      // that reads a record for breadcrumbs, or a purge.
       const guarded = modelBindings.map((binding) => binding.param).filter((name) => isGuardedBinding(configuredBindings?.[name]))
       const decided = new Set<string>()
       const undecided = (): string | undefined => guarded.find((name) => !decided.has(name))
+      const positionOf = (key: string): number => modelBindings.findIndex((binding) => binding.param === key)
 
       // The models this request has loaded, which each later load goes on
       // from, one load at a time.
@@ -1228,17 +1229,27 @@ export class EffectRouteBuilder<
                 return Effect.fail(RouteConfigurationError.bindingParserNotConfigured(key))
               }
 
-              return Effect.flatMap(isDeciding, (deciding) => {
-                if (deciding) {
-                  decided.add(key)
+              return Effect.flatMap(currentDecision, (decision) => {
+                if (Option.isSome(decision)) {
+                  const position = positionOf(key)
+                  // A guarded record before this one is decided by its own
+                  // guard first: a guard that read a record under it would
+                  // load both, and answer from them, for a visitor that
+                  // guard turns away.
+                  const earlier = guarded.find((name) =>
+                    positionOf(name) < position && !decided.has(name) && !decision.value.reads.has(name)
+                  )
+
+                  if (earlier !== undefined) return Effect.fail(RouteConfigurationError.guardedWithoutGuard(earlier))
+
+                  // Decided once this guard lets the visitor in, not now.
+                  decision.value.reads.add(key)
 
                   // A guard decides from the record it reads and those before
                   // it, so the records under it, such as an organization's
                   // project, are looked up only once the guards have let the
                   // visitor in: a visitor one turns away learns only that.
-                  const through = modelBindings.findIndex((binding) => binding.param === key) + 1
-
-                  return Effect.map(loadThrough(through), (loaded) => loaded.models.get(key))
+                  return Effect.map(loadThrough(position + 1), (loaded) => loaded.models.get(key))
                 }
 
                 const unguarded = undecided()
@@ -1270,7 +1281,15 @@ export class EffectRouteBuilder<
             ),
           })
 
-          return Context.make(BoundModels, models).pipe(Context.add(RouteRecords, records))
+          // The guarded records a guard read are decided once it has let the
+          // visitor in.
+          const verdicts = GuardVerdicts.of({
+            confirm: (reads) => Effect.sync(() => {
+              for (const key of reads) decided.add(key)
+            }),
+          })
+
+          return Context.make(BoundModels, models).pipe(Context.add(RouteRecords, records), Context.add(GuardVerdicts, verdicts))
         })
       )
 

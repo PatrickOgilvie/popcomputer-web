@@ -125,6 +125,36 @@ const createApp = () => {
   // The same guard, given as a layer.
   routes.prefix('/layered/{organization}').provide(guard(Layer.effect(CurrentMember, findMember))).get('/layered/{organization}/me', whoAmI)
 
+  // A guard that decides from the project, provided before the organization's
+  // guard, or on a route whose organization no guard decides.
+  const ProjectGuard = guard(Effect.asVoid(bound('project')))
+
+  routes.prefix('/early/{organization}').provide(ProjectGuard).provide(RequireMember)
+    .get('/early/{organization}/projects/{project}', showProject)
+  routes.prefix('/unguarded/{organization}').provide(ProjectGuard)
+    .get('/unguarded/{organization}/projects/{project}', showProject)
+
+  // One guard that decides from the organization, then from its project.
+  routes.prefix('/both/{organization}').provide(guard(Effect.gen(function* () {
+    yield* findMember
+    yield* bound('project')
+  }))).get('/both/{organization}/projects/{project}', showProject)
+
+  // The breadcrumbs built beside a guard, which Layer.merge builds at once,
+  // whose decision outlasts its read of the organization, as one waiting on
+  // a distant database does.
+  const SlowMember = guard(CurrentMember, Effect.gen(function* () {
+    yield* organizationOf
+    yield* Effect.sleep('20 millis')
+
+    return yield* memberOr(forbidden('Members only.'))
+  }))
+
+  routes.prefix('/merged/{organization}').provide(Layer.merge(SlowMember, Breadcrumbs))
+    .get('/merged/{organization}/projects/{project}', showProject)
+  routes.prefix('/merged-first/{organization}').provide(Layer.merge(Breadcrumbs, SlowMember))
+    .get('/merged-first/{organization}/projects/{project}', showProject)
+
   return { app, queries }
 }
 
@@ -193,6 +223,56 @@ describe('guard()', () => {
     // A member the guard lets in gets the record, or its 404.
     expect((await app.request('/closed/acme/projects/rocket', asJson, as('bob'))).status).toBe(200)
     expect((await app.request('/closed/acme/projects/nope', asJson, as('bob'))).status).toBe(404)
+  })
+
+  test('a guard that reads a record under the guarded one fails before any lookup until that one\'s guard has decided', async () => {
+    const { app, queries } = createApp()
+
+    for (const route of ['early', 'unguarded']) {
+      for (const id of ['ada', 'grace']) {
+        for (const project of ['rocket', 'nope']) {
+          const res = await app.request(`/${route}/acme/projects/${project}`, asJson, as(id))
+
+          expect({ route, id, project, status: res.status }).toEqual({ route, id, project, status: 500 })
+          expect(await res.json()).toMatchObject({ code: 'WEB_RTE_606_BINDING_ACCESS_INVALID' })
+        }
+      }
+    }
+
+    expect(queries).toEqual([])
+  })
+
+  test('one guard that reads the guarded record and then one under it decides from both', async () => {
+    const { app, queries } = createApp()
+
+    expect((await app.request('/both/acme/projects/rocket', asJson, as('ada'))).status).toBe(200)
+    expect((await app.request('/both/acme/projects/nope', asJson, as('ada'))).status).toBe(404)
+
+    queries.length = 0
+
+    for (const project of ['rocket', 'nope']) {
+      expect((await app.request(`/both/acme/projects/${project}`, asJson, as('grace'))).status).toBe(404)
+    }
+
+    expect(queries.filter((query) => query.includes('from "projects"'))).toEqual([])
+  })
+
+  test('a layer built beside the guard reads no record until the guard has decided, for a member or a stranger', async () => {
+    const { app, queries } = createApp()
+
+    for (const route of ['merged', 'merged-first']) {
+      for (const id of ['ada', 'grace']) {
+        for (const project of ['rocket', 'nope']) {
+          queries.length = 0
+          const res = await app.request(`/${route}/acme/projects/${project}`, asJson, as(id))
+
+          expect({ route, id, project, status: res.status }).toEqual({ route, id, project, status: 500 })
+          expect(await res.json()).toMatchObject({ code: 'WEB_RTE_606_BINDING_ACCESS_INVALID' })
+          // The project is never looked up before the guard has let the visitor in.
+          expect(queries.filter((query) => query.includes('from "projects"'))).toEqual([])
+        }
+      }
+    }
   })
 
   test('a permission guard after the membership guard answers a member without it the same for a record that exists and one that does not', async () => {
