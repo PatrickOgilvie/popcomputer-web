@@ -37,7 +37,7 @@ async function member() {
   const credentials = { email: 'ada@example.com', password: 'correct horse battery' }
 
   await browser.request('/sign-up', form({ name: 'Ada Lovelace', timeZone: 'Europe/London', ...credentials }))
-  await browser.request(`/verify-email?token=${outbox.verifications.at(-1)?.token}`)
+  await browser.request('/verify-email', form({ token: outbox.verifications.at(-1)?.token ?? '' }))
   // The page signing in lands on clears the history of whoever used the browser before.
   const landed = await browser.follow(await browser.request('/sign-in', form(credentials)))
 
@@ -174,7 +174,7 @@ describe("a signed-in user's pages, after the session ends out of the tab's sigh
     const own = testBrowser(app, testEnv({ OUTBOX: outbox, APP_URL: 'http://localhost' }, { database: db }))
     const grace = { email: 'grace@example.com', password: 'another horse battery' }
     await own.request('/sign-up', form({ name: 'Grace Hopper', timeZone: 'America/New_York', ...grace }))
-    await own.request(`/verify-email?token=${outbox.verifications.at(-1)?.token}`)
+    await own.request('/verify-email', form({ token: outbox.verifications.at(-1)?.token ?? '' }))
 
     await signOutThroughTheClient(browser)
     await browser.request('/api/auth/get-session')

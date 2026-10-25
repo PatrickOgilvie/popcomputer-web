@@ -590,6 +590,12 @@ function isBetterAuthInstance(auth: unknown): auth is BetterAuthInstance {
 }
 
 /**
+ * The options an instance was built with, which the sign-in limits read,
+ * whatever type the registered auth client gives the instance.
+ */
+const optionsOf = (auth: BetterAuthInstance): unknown => auth.options
+
+/**
  * Better Auth's own endpoints the framework calls by itself, by their path
  * under its base path, for an `auth.api` that does not say: a wrapper that
  * loads Better Auth on first use, to keep it out of a Worker's startup, gives
@@ -679,12 +685,58 @@ function readEndpointResult(response: Response): Effect.Effect<unknown> {
   })
 }
 
+/** The claims of Better Auth's email verification token that say what its link does. */
+const decodeVerificationClaims = S.decodeUnknownOption(S.fromJsonString(S.Struct({
+  updateTo: S.optional(S.String),
+  requestType: S.optional(S.String),
+})))
+
+/**
+ * Whether a token on Better Auth's `/verify-email` link moves an account to a
+ * new address, as the link its `user.changeEmail` emails that address does,
+ * rather than proving a sign-up's or confirming the move from the old one.
+ * Its payload is read here unverified; Better Auth verifies it.
+ */
+function movesAccount(token: unknown): boolean {
+  if (typeof token !== 'string') return false
+
+  let payload: string
+
+  try {
+    const binary = atob((token.split('.')[1] ?? '').replace(/-/g, '+').replace(/_/g, '/'))
+    payload = new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)))
+  } catch {
+    return false
+  }
+
+  return Option.match(decodeVerificationClaims(payload), {
+    onNone: () => false,
+    onSome: (claims) => (claims.updateTo ?? '') !== '' && claims.requestType !== 'change-email-confirmation',
+  })
+}
+
+/**
+ * Refuse a signed-out visitor a link that moves an account to a new address:
+ * Better Auth signs whoever follows one with no session in to the account
+ * that asked, so the holder of the new address would land in it. A signed-in
+ * visitor goes on, and Better Auth refuses any but that account.
+ */
+function signedInToMove(path: string, tokens: ReadonlyArray<unknown>): Effect.Effect<void, UnauthorizedError> {
+  if (path !== '/verify-email' || !tokens.some(movesAccount)) return Effect.void
+
+  return Effect.flatMap(Effect.serviceOption(AuthUserService), (user) =>
+    Option.isSome(user)
+      ? Effect.void
+      : Effect.fail(new UnauthorizedError({ message: 'Sign in to the account that asked to change its address, then follow the link again.' }))
+  )
+}
+
 /** Call an endpoint through the handler, with its failures classified and its cookies kept for the response. */
 function callEndpoint(
   name: string,
   input: { readonly body?: unknown; readonly query?: unknown },
   errors: ((error: BetterAuthActionError) => Record<string, string>) | undefined
-): Effect.Effect<{ readonly result: unknown; readonly response: Response }, AuthRedirect | ValidationError | AuthRateLimitError | HttpError, RequestService | AuthService> {
+): Effect.Effect<{ readonly result: unknown; readonly response: Response }, AuthRedirect | ValidationError | AuthRateLimitError | HttpError | UnauthorizedError, RequestService | AuthService> {
   return Effect.gen(function* () {
     const auth = yield* AuthService
     const request = yield* RequestService
@@ -695,11 +747,15 @@ function callEndpoint(
     }
 
     const { path } = yield* Effect.try({ try: () => endpointOf(auth, name), catch: (cause) => cause }).pipe(Effect.orDie)
-    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, input.body))
+
+    yield* signedInToMove(path, [input.query instanceof Object ? Reflect.get(input.query, 'token') : undefined])
+
+    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, input.body, optionsOf(auth)))
 
     const response = yield* withinSignInLimits(
       attempt,
-      sendToBetterAuth(() => sendThroughHandler(auth, raw, name, input))
+      sendToBetterAuth(() => sendThroughHandler(auth, raw, name, input)),
+      optionsOf(auth)
     ).pipe(
       Effect.flatMap(inspectBetterAuthResponse),
       Effect.mapError((failure) => failure instanceof AuthRateLimitError ? failure : toAuthActionError(failure, errors))
@@ -760,7 +816,7 @@ export function betterAuthRedirect<
   options: BetterAuthRedirectOptions<BetterAuthEndpointResult<Name>, E, R, Path>
 ): Effect.Effect<
   Response,
-  AuthRedirect | ValidationError | AuthRateLimitError | HttpError | E,
+  AuthRedirect | ValidationError | AuthRateLimitError | HttpError | UnauthorizedError | E,
   RequestService | AuthService | R
 > {
   return Effect.gen(function* () {
@@ -797,7 +853,7 @@ export function betterAuthCall<const Name extends BetterAuthEndpoint>(
   endpoint: Name,
   input: BetterAuthEndpointInput<Name>,
   options: { readonly errors?: (error: BetterAuthActionError) => Readonly<Record<string, string | undefined>> } = {}
-): Effect.Effect<BetterAuthEndpointResult<Name>, AuthRedirect | ValidationError | AuthRateLimitError | HttpError, RequestService | AuthService> {
+): Effect.Effect<BetterAuthEndpointResult<Name>, AuthRedirect | ValidationError | AuthRateLimitError | HttpError | UnauthorizedError, RequestService | AuthService> {
   return callEndpoint(endpoint, input, definedErrors(options.errors)).pipe(
     // SAFETY: the endpoint's JSON body is what auth.api's endpoint returns.
     Effect.map(({ result }) => result as BetterAuthEndpointResult<Name>),
@@ -914,13 +970,14 @@ const ENDPOINT_INPUT_KEYS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
  * such as `phoneNumber`. Name the ones a visitor may set there in `settable`,
  * which TypeScript asks for once the registered Better Auth declares any; a
  * request setting another is refused with a 400. A body over setupWeb's
- * `bodyLimit` is refused with a 413 before Better Auth reads it. A
+ * `bodyLimit` is refused with a 413 before Better Auth reads it, and one of
+ * those calls or a sign-in in a type other than JSON or a form with a 415. A
  * server-rendered app that signs users in with `betterAuthRedirect` needs it
  * only for OAuth callbacks.
  */
 export function betterAuthHandler(
   ...[options]: BetterAuthHandlerArguments
-): Effect.Effect<Response, HttpError | AuthRateLimitError, RequestService | AuthService> {
+): Effect.Effect<Response, HttpError | AuthRateLimitError | UnauthorizedError, RequestService | AuthService> {
   const settable = new Set<string>(options?.settable ?? [])
 
   return Effect.gen(function* () {
@@ -939,6 +996,9 @@ export function betterAuthHandler(
     }
 
     const path = yield* Effect.promise(() => handlerPath(auth, raw))
+
+    yield* signedInToMove(path, new URL(raw.url).searchParams.getAll('token'))
+
     // Better Auth reads whole every body it is handed, so it is handed the
     // body read within the limit, in a request of its own; `raw` stays the
     // request the framework knows.
@@ -968,13 +1028,14 @@ export function betterAuthHandler(
       }
     }
 
-    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, body))
+    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, body, optionsOf(auth)))
     const response = yield* withinSignInLimits(
       attempt,
       Effect.tryPromise({
         try: (): Promise<Response> => Promise.resolve(auth.handler(forwarded)),
         catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
-      })
+      }),
+      optionsOf(auth)
     )
 
     // Better Auth's own server error is the application's to answer, with its
@@ -1019,14 +1080,24 @@ function withinBodyLimit(request: Request, limit: number): Effect.Effect<Request
 }
 
 /**
- * A JSON or form body, read from a copy, by its media type in any case; none
- * for any other type, or one that does not parse.
+ * A JSON media type that Better Auth's body parser (better-call's `getBody`)
+ * reads as JSON too: it tests the whole header against this pattern anchored
+ * only at its start, and reads a form from any other header naming one, so
+ * `x/y+json; application/x-www-form-urlencoded` would be JSON here and a form
+ * there.
+ */
+const JSON_MEDIA_TYPE = /^application\/([a-z0-9.+-]*\+)?json$/
+
+/**
+ * A JSON or form body, read from a copy, by its media type in any case,
+ * exactly as Better Auth will read it; none for any other type, or one that
+ * does not parse.
  */
 async function bodyOf(request: Request): Promise<{ readonly body: unknown } | undefined> {
   const media = (request.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase()
 
   try {
-    if (media === 'application/json' || media.endsWith('+json')) return { body: await request.clone().json() }
+    if (JSON_MEDIA_TYPE.test(media)) return { body: await request.clone().json() }
     if (media === 'application/x-www-form-urlencoded' || media === 'multipart/form-data') {
       return { body: Object.fromEntries(await request.clone().formData()) }
     }

@@ -159,7 +159,9 @@ TypeScript example here and in `docs/` type-checks against the package.
    an `emailVerification.sendVerificationEmail` whose email tells a recipient
    who did not sign up to ignore it, with `autoSignInAfterVerification` off,
    as docs/auth.md's `createAuth` does: a password whose address nobody has
-   proven then signs no one in. Better
+   proven then signs no one in. Its link opens a page whose button posts the
+   token to the action that proves the address, so a mail scanner's fetch of
+   the link proves nothing. Better
    Auth's plugins (organizations, two-factor, magic links, OAuth providers)
    stay Better Auth's: call their endpoints by name the same way. Sign in
    through an OAuth provider (`socialProviders`, or `genericOAuth` for a
