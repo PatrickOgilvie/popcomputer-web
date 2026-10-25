@@ -12,8 +12,9 @@
  * - a Cloudflare binding on `c.env` (D1, KV, R2, Durable Objects, service
  *   bindings, AI, Hyperdrive…);
  * - request headers or the raw request through `RequestService`, or through
- *   the context a `web.services` request callback receives, or request
- *   state through `RequestStateService`;
+ *   the context a `web.services` request callback, route middleware or
+ *   prefix middleware receives, or request state through
+ *   `RequestStateService`;
  * - a route model binding (`{project}` placeholders).
  *
  * Signed-in requests, requests carrying app cookies or `Authorization`,
@@ -124,6 +125,71 @@ export function markPageDynamic<E extends Env>(c: Context<E>): void {
 
   if (context.pageCache) {
     context.pageCache.dynamic = true
+  }
+}
+
+/** Reads of a request that no cache key holds: its headers, and the raw request, which carries them and Cloudflare's `cf` data. */
+export const HEADER_READS: ReadonlySet<PropertyKey> = new Set(['header', 'raw'])
+
+/**
+ * Record that the response read what no cache key holds, for a route's own
+ * `cache` option only: the default page cache, which an application turns on
+ * behind its own middleware with `pageCache: true`, keeps its pages.
+ */
+export function markRouteCacheDynamic<E extends Env>(c: Context<E>): void {
+  openWebContext(c).readRequestState = true
+}
+
+/**
+ * Hono's context, with each read of `reads` on its request reported to
+ * `mark`: the context the framework hands application code that runs while
+ * a response is produced, such as route middleware, so a header that code
+ * decides from keeps the response out of every cache that answers before it
+ * runs, as a header read through RequestService does.
+ */
+export function observedRequestContext<E extends Env>(
+  c: Context<E>,
+  observe: {
+    readonly reads?: ReadonlySet<PropertyKey>
+    readonly mark?: (c: Context<E>) => void
+  } = {}
+): Context<E> {
+  const reads = observe.reads ?? HEADER_READS
+  const mark = observe.mark ?? markPageDynamic
+  // Hono's Context and HonoRequest keep private fields, so every member is
+  // read, called and written with the original as its receiver.
+  const req = new Proxy(c.req, {
+    get(target, key) {
+      if (reads.has(key)) mark(c)
+
+      const value: unknown = Reflect.get(target, key, target)
+
+      return value instanceof Function ? value.bind(target) : value
+    },
+  })
+
+  return new Proxy(c, {
+    get(target, key) {
+      if (key === 'req') return req
+
+      const value: unknown = Reflect.get(target, key, target)
+
+      return value instanceof Function ? value.bind(target) : value
+    },
+    set: (target, key, value) => Reflect.set(target, key, value, target),
+  })
+}
+
+/**
+ * Keep this request's page out of the default page cache: an access check
+ * ran, such as a guard or prefix middleware, that a cached page, served
+ * before it runs, would skip. A route's own `cache` option is unaffected.
+ */
+export function keepPageOutOfCache<E extends Env>(c: Context<E>): void {
+  const state = openWebContext(c).pageCache
+
+  if (state) {
+    state.dynamic = true
   }
 }
 

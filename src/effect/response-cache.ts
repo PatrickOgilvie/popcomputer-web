@@ -535,13 +535,25 @@ export class PendingPurges extends Context.Service<
   }
 >()('@popcomputer/web/PendingPurges') {}
 
-/** An empty set of pending purges, for one request. */
+/**
+ * An empty set of pending purges, for one request or one piece of detached
+ * work. It is taken once, when the work it belongs to has succeeded: a tag
+ * added after that, by work that outlived it, would never be purged, so
+ * adding one is a defect.
+ */
 export function makePendingPurges(): PendingPurges['Service'] {
   const tags = new Set<string>()
+  let taken = false
 
   return PendingPurges.of({
-    add: (added) => Effect.sync(() => added.forEach((tag) => tags.add(tag))),
-    take: Effect.sync(() => [...tags]),
+    add: (added) => taken
+      ? Effect.die(new Error(`purgeCache(${added.join(', ')}) was called after the work it belongs to had finished, so nothing would purge it. Give work that outlives its action to background().`))
+      : Effect.sync(() => added.forEach((tag) => tags.add(tag))),
+    take: Effect.sync(() => {
+      taken = true
+
+      return [...tags]
+    }),
   })
 }
 
@@ -616,6 +628,31 @@ export const purgeTags = (tags: readonly string[]): Effect.Effect<void, Response
 
     const cache = yield* ResponseCacheService
     yield* cache.purge({ tags: preparedTags.tags })
+  })
+
+/**
+ * Detached work with pending purges of its own: what it names with
+ * `purgeCache` is purged once it succeeds, whenever it runs, rather than
+ * added to those of the action that started it, which the route has taken by
+ * then. Every path that schedules work wraps it so. The Workers Cache client
+ * is the scheduling route's; work scheduled outside a route purges only
+ * cached data, as it would outside a Worker.
+ *
+ * @internal
+ */
+export const withOwnPurges = <A, E, R>(
+  effect: Effect.Effect<A, E, R>
+): Effect.Effect<Effect.Effect<A, E | ResponseCachePurgeError, Exclude<R, PendingPurges>>> =>
+  Effect.map(Effect.serviceOption(ResponseCacheService), (service) => {
+    const pending = makePendingPurges()
+    const responseCache = Option.getOrElse(service, createUnavailableResponseCacheClient)
+
+    return effect.pipe(
+      Effect.provideService(PendingPurges, pending),
+      Effect.tap(() =>
+        Effect.flatMap(pending.take, purgeTags).pipe(Effect.provideService(ResponseCacheService, responseCache))
+      )
+    )
   })
 
 /**

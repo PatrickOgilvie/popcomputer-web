@@ -14,12 +14,13 @@ import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { WebRequestContext } from '../request-context.js'
 import { openWebContext } from '../request-context.js'
-import { markPageDynamic, trackDatabase } from '../page-cache.js'
+import { HEADER_READS, markPageDynamic, observedRequestContext, trackDatabase } from '../page-cache.js'
 import {
   ResponseCacheService,
   createWorkersResponseCacheClient,
   createUnavailableResponseCacheClient,
   resolveWorkersCachePurgeApi,
+  withOwnPurges,
   type WorkersCachePurgeApi,
 } from './response-cache.js'
 import {
@@ -172,7 +173,7 @@ function createRequestContext<E extends Env>(
 }
 
 /** The request reads a request service may make through its context that no cache key holds. */
-const OBSERVED_REQUEST_READS: ReadonlySet<PropertyKey> = new Set(['header', 'raw', 'url'])
+const SERVICE_REQUEST_READS: ReadonlySet<PropertyKey> = new Set([...HEADER_READS, 'url'])
 
 /**
  * The context `web.services`' request callback receives. A service built from
@@ -180,29 +181,8 @@ const OBSERVED_REQUEST_READS: ReadonlySet<PropertyKey> = new Set(['header', 'raw
  * `X-Tenant`, makes every response that uses it depend on what no cache key
  * holds, so reading one marks the page dynamic, as RequestService does.
  */
-export function observedRequestContext<E extends Env>(c: HonoContext<E>): HonoContext<E> {
-  // Hono's Context and HonoRequest keep private fields, so every member is
-  // read, called and written with the original as its receiver.
-  const req = new Proxy(c.req, {
-    get(target, key) {
-      if (OBSERVED_REQUEST_READS.has(key)) markPageDynamic(c)
-
-      const value: unknown = Reflect.get(target, key, target)
-
-      return value instanceof Function ? value.bind(target) : value
-    },
-  })
-
-  return new Proxy(c, {
-    get(target, key) {
-      if (key === 'req') return req
-
-      const value: unknown = Reflect.get(target, key, target)
-
-      return value instanceof Function ? value.bind(target) : value
-    },
-    set: (target, key, value) => Reflect.set(target, key, value, target),
-  })
+export function serviceRequestContext<E extends Env>(c: HonoContext<E>): HonoContext<E> {
+  return observedRequestContext(c, { reads: SERVICE_REQUEST_READS })
 }
 
 /**
@@ -434,23 +414,27 @@ function createExecutionContextSupervisor(
   const external = createExternalPromiseTracker()
   let drainPromise: Promise<void> | undefined
 
+  // The work runs beside the action and may outlive it, so what it names with
+  // purgeCache is its own to purge once it succeeds.
   const schedule = <A, E, R>(
     operation: string,
     effect: Effect.Effect<A, E, R>
   ): Effect.Effect<void, never, R> =>
-    Effect.flatMap(Effect.context<R>(), (context) =>
-      Effect.sync(() => {
-        const running = Effect.runPromise(
-          makeObservedBackground(operation, effect).pipe(Effect.provide(context))
-        )
+    Effect.flatMap(withOwnPurges(effect), (owned) =>
+      Effect.flatMap(Effect.context<R>(), (context) =>
+        Effect.sync(() => {
+          const running = Effect.runPromise(
+            makeObservedBackground(operation, owned).pipe(Effect.provide(context))
+          )
 
-        const tracked: Promise<void> = running.then(() => {
-          pending.delete(tracked)
+          const tracked: Promise<void> = running.then(() => {
+            pending.delete(tracked)
+          })
+
+          pending.add(tracked)
+          ctx.waitUntil(tracked)
         })
-
-        pending.add(tracked)
-        ctx.waitUntil(tracked)
-      })
+      )
     )
 
   const client: ExecutionContextClient = {
@@ -497,8 +481,10 @@ function createInlineExecutionContextSupervisor(): BackgroundSupervisor {
       // oxlint-disable-next-line no-floating-promises -- external owns this promise and its rejection; the request awaits external.drain() before disposing services.
       external.track(promise)
     },
-    runInBackground: (effect) => makeObservedBackground('background', effect),
-    schedule: (operation, effect) => makeObservedBackground(operation, effect),
+    // Inline, the work runs before the action's own purges are taken; it
+    // still purges what it names itself, as it would in a Worker.
+    runInBackground: (effect) => Effect.flatMap(withOwnPurges(effect), (owned) => makeObservedBackground('background', owned)),
+    schedule: (operation, effect) => Effect.flatMap(withOwnPurges(effect), (owned) => makeObservedBackground(operation, owned)),
   }
 
   return {
@@ -709,7 +695,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   // web.services' `request(c)`, which may read bindings that route lacks.
   if (config?.services) {
     const services = config.services
-    const customServicesLayer = Layer.suspend(() => services(observedRequestContext(c))).pipe(Layer.provide(configuration))
+    const customServicesLayer = Layer.suspend(() => services(serviceRequestContext(c))).pipe(Layer.provide(configuration))
     baseLayer = Layer.merge(baseLayer, customServicesLayer)
   }
 

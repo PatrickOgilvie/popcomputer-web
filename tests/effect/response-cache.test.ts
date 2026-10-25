@@ -11,15 +11,16 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { Hono, type Context as HonoContext } from 'hono'
+import { Hono, type Context as HonoContext, type MiddlewareHandler } from 'hono'
 import type { BlankEnv } from 'hono/types'
-import { Context, Effect, Layer, Schema as S } from 'effect'
+import { Cause, Context, Effect, Exit, Layer, Schema as S } from 'effect'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { web } from '../../src/middleware.js'
 import { effectBridge } from '../../src/effect/bridge.js'
 import {
   createWorkersResponseCacheClient,
+  makePendingPurges,
   PAGE_CACHE_TAG,
   ResponseCachePurgeError,
   ResponseCacheService,
@@ -29,8 +30,8 @@ import {
   type ResponseCachePurgeInput,
 } from '../../src/effect/response-cache.js'
 import { Redirect, ValidationError } from '../../src/effect/errors.js'
-import { flash, json, render } from '../../src/effect/responses.js'
-import { RequestService } from '../../src/effect/services.js'
+import { flash, forbidden, json, redirectNow, render } from '../../src/effect/responses.js'
+import { DatabaseService, RequestService } from '../../src/effect/services.js'
 import { responseHeader } from '../../src/effect/response-headers.js'
 import { cookie } from '../../src/effect/cookies.js'
 import { betterAuthCall, loadUser } from '../../src/effect/auth.js'
@@ -305,6 +306,39 @@ describe('cache route option', () => {
           .toEqual({ read, composition, body: { tenant: expect.any(String) }, cacheControl: 'no-store' })
       }
     }
+  })
+
+  test('a header that route or prefix middleware decides from is never stored; a path it reads leaves the route cacheable', async () => {
+    // An API key gate: the key holder's answer must not reach a keyless visitor.
+    const keyGate: MiddlewareHandler = async (c, next) => {
+      if (c.req.header('X-Api-Key') !== 'ada-key') return c.text('Unauthorized', 401)
+      await next()
+    }
+    const rawKeyGate: MiddlewareHandler = async (c, next) => {
+      if (c.req.raw.headers.get('X-Api-Key') !== 'ada-key') return c.text('Unauthorized', 401)
+      await next()
+    }
+    const pathGate: MiddlewareHandler = async (c, next) => {
+      if (c.req.path.endsWith('/hidden')) return c.notFound()
+      await next()
+    }
+    const stats = Effect.succeed(Response.json({ revenue: 1200 }))
+
+    const app = createApp()
+    const routes = effectRoutes(app)
+
+    routes.middleware(keyGate).get('/api/stats', stats, { cache: { maxAge: 60 } })
+    routes.middleware(rawKeyGate).get('/api/raw-stats', stats, { cache: { maxAge: 60 } })
+    routes.prefix('/partners').prefixMiddleware(keyGate).get('/partners/stats', stats, { cache: { maxAge: 60 } })
+    routes.middleware(pathGate).get('/api/public-stats', stats, { cache: { maxAge: 60 } })
+
+    for (const path of ['/api/stats', '/api/raw-stats', '/partners/stats']) {
+      const res = await app.request(path, { headers: { 'X-Api-Key': 'ada-key' } })
+
+      expect({ path, status: res.status, cacheControl: res.headers.get('Cache-Control') }).toEqual({ path, status: 200, cacheControl: 'no-store' })
+    }
+
+    expect((await app.request('/api/public-stats')).headers.get('Cache-Control')).toBe('public, max-age=60')
   })
 
   test('a request service that reads no request data leaves the route cacheable', async () => {
@@ -642,6 +676,56 @@ describe('cache route option', () => {
   })
 })
 
+describe('cache route option and the hooks setupWeb hands the request', () => {
+  test("a header setupWeb's middleware, its database factory or its template reads is never stored", async () => {
+    // A gate by country: an admitted visitor's answer must not reach one it turns away.
+    const geoGate: MiddlewareHandler = async (c, next) => {
+      if (c.req.header('CF-IPCountry') !== 'NZ') return c.text('Unavailable here.', 451)
+      await next()
+    }
+    const geo = new Hono()
+    setupWeb(geo, { version: '1.0.0', render: (page) => JSON.stringify(page), middleware: [geoGate] })
+      .routes.get('/deals', Effect.succeed(Response.json({ deals: ['kiwifruit'] })), { cache: { maxAge: 60 } })
+
+    // A database chosen by the tenant a header names.
+    const tenants = new Hono()
+    setupWeb(tenants, { version: '1.0.0', render: (page) => JSON.stringify(page), database: (c) => ({ tenant: c.req.header('X-Tenant') ?? 'none' }) })
+      .routes.get('/revenue', Effect.map(DatabaseService, (db) => Response.json(db)), { cache: { maxAge: 60 } })
+
+    // A template that localizes the document from Accept-Language.
+    const localized = new Hono()
+    setupWeb(localized, {
+      version: '1.0.0',
+      render: (page, c) => `<html lang="${c?.req.header('Accept-Language')?.startsWith('de') ? 'de' : 'en'}">${JSON.stringify(page)}</html>`,
+    }).routes.get('/welcome', render('Welcome'), { cache: { maxAge: 60 } })
+
+    const visits: ReadonlyArray<{ readonly name: string; readonly app: Hono; readonly path: string; readonly headers: Record<string, string> }> = [
+      { name: 'middleware', app: geo, path: '/deals', headers: { 'CF-IPCountry': 'NZ' } },
+      { name: 'database', app: tenants, path: '/revenue', headers: { 'X-Tenant': 'acme' } },
+      { name: 'template', app: localized, path: '/welcome', headers: { 'Accept-Language': 'de-DE' } },
+    ]
+
+    for (const { name, app, path, headers } of visits) {
+      const res = await app.request(path, { headers })
+
+      expect({ name, status: res.status, cacheControl: res.headers.get('Cache-Control'), cdn: res.headers.get('Cloudflare-CDN-Cache-Control') })
+        .toEqual({ name, status: 200, cacheControl: 'no-store', cdn: null })
+    }
+  })
+
+  test("setupWeb's middleware that reads only the path leaves a route cacheable", async () => {
+    const pathGate: MiddlewareHandler = async (c, next) => {
+      if (c.req.path.startsWith('/internal')) return c.notFound()
+      await next()
+    }
+    const app = new Hono()
+    setupWeb(app, { version: '1.0.0', render: (page) => JSON.stringify(page), middleware: [pathGate] })
+      .routes.get('/deals', Effect.succeed(Response.json({ deals: ['kiwifruit'] })), { cache: { maxAge: 60 } })
+
+    expect((await app.request('/deals')).headers.get('Cache-Control')).toBe('public, max-age=60')
+  })
+})
+
 describe('cache route option and what web() writes after the route answers', () => {
   const visitorCookie = cookie('visitor', S.String)
 
@@ -921,6 +1005,39 @@ describe('purges route option', () => {
 
     // Each tag once, and nothing for the action that failed.
     expect(purges).toEqual([{ tags: ['offers', 'listings', 'listings:listing-1'] }])
+  })
+
+  test('an action that leaves with redirectNow after its write purges as one that returns redirect()', async () => {
+    const { purges, layer } = recordingCacheLayer()
+    const app = createApp()
+
+    effectRoutes(app, { services: () => layer })
+      .put(
+        '/posts/post-1/hide',
+        // A helper that sends the visitor elsewhere once the post is hidden.
+        Effect.andThen(purgeCache(recordCacheTag('posts', 'post-1')), redirectNow('/')),
+        { purges: ['posts'] }
+      )
+      .put('/posts/post-1/pin', Effect.andThen(purgeCache('pins'), forbidden('Only editors pin posts.')), { purges: ['posts'] })
+
+    const hidden = await app.request('/posts/post-1/hide', { method: 'PUT' })
+    const pinned = await app.request('/posts/post-1/pin', { method: 'PUT' })
+
+    expect({ status: hidden.status, location: hidden.headers.get('Location') }).toEqual({ status: 303, location: '/' })
+    expect(pinned.status).toBe(403)
+    // The route's purges and the action's, once; nothing for the refusal.
+    expect(purges).toEqual([{ tags: ['posts', 'posts:post-1'] }])
+  })
+
+  test('a tag added once the pending purges were taken is a defect, not dropped unseen', async () => {
+    const pending = makePendingPurges()
+
+    await Effect.runPromise(pending.add(['posts']))
+    expect(await Effect.runPromise(pending.take)).toEqual(['posts'])
+
+    const late = await Effect.runPromiseExit(pending.add(['posts:post-1']))
+
+    expect(Exit.isFailure(late) && Cause.hasDies(late.cause)).toBe(true)
   })
 
   test('static purge tags are used verbatim', async () => {

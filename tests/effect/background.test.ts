@@ -5,7 +5,7 @@ import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { cache, kvCache, type KVNamespaceLike } from '../../src/cache.js'
 import { background } from '../../src/effect/background.js'
-import { purgeCache, recordCacheTag, ResponseCachePurgeError } from '../../src/effect/response-cache.js'
+import { purgeCache, recordCacheTag, ResponseCachePurgeError, type PendingPurges } from '../../src/effect/response-cache.js'
 import { json } from '../../src/effect/responses.js'
 import { HttpError } from '../../src/effect/errors.js'
 import {
@@ -255,8 +255,27 @@ function memoryKv(): KVNamespaceLike {
 
 const Listing = S.Struct({ posts: S.Array(S.String) })
 
+/** The ways an action hands work to the request's execution context, and the operation each names. */
+const detachers: ReadonlyArray<{
+  readonly name: string
+  readonly operation: string
+  readonly detach: (work: Effect.Effect<void, never, PendingPurges>) => Effect.Effect<void, never, ExecutionContextService | PendingPurges>
+}> = [
+  { name: 'background()', operation: 'posts.hide', detach: (work) => background('posts.hide', work) },
+  {
+    name: 'ExecutionContextService.runInBackground',
+    operation: 'background',
+    detach: (work) => Effect.flatMap(ExecutionContextService, (execution) => execution.runInBackground(work)),
+  },
+  {
+    name: 'ExecutionContextService.schedule',
+    operation: 'posts.hide',
+    detach: (work) => Effect.flatMap(ExecutionContextService, (execution) => execution.schedule('posts.hide', work)),
+  },
+]
+
 /** A listing kept in the data cache, and a route that hides its post in background work it releases. */
-function listingApp() {
+function listingApp(detach = detachers[0].detach) {
   const events: EffectErrorEvent[] = []
   const published = new Set(['post-1'])
   const release = Deferred.makeUnsafe<void>()
@@ -274,16 +293,14 @@ function listingApp() {
 
       return yield* json({ posts })
     }))
-    .post('/posts/hide', Effect.gen(function* () {
-      yield* background('posts.hide', Effect.gen(function* () {
-        // The response has gone by the time the work changes the post.
-        yield* Deferred.await(release)
-        published.delete('post-1')
-        yield* purgeCache(recordCacheTag('posts', 'post-1'), 'posts')
-      }))
+  const hide = detach(Effect.gen(function* () {
+    // The response has gone by the time the work changes the post.
+    yield* Deferred.await(release)
+    published.delete('post-1')
+    yield* purgeCache(recordCacheTag('posts', 'post-1'), 'posts')
+  }))
 
-      return new Response(null, { status: 202 })
-    }))
+  routes.post('/posts/hide', Effect.andThen(hide, Effect.succeed(new Response(null, { status: 202 }))))
 
   const listing = async (ctx?: ReturnType<typeof workerContext>['ctx']) => {
     const res = await app.request('/explore', {}, {}, ctx)
@@ -291,12 +308,12 @@ function listingApp() {
     return S.decodeUnknownSync(Listing)(await res.json()).posts
   }
 
-  return { app, events, listing, release: () => Effect.runPromise(Deferred.succeed(release, undefined)) }
+  return { app, routes, hide, events, listing, release: () => Effect.runPromise(Deferred.succeed(release, undefined)) }
 }
 
-describe('purgeCache in background work', () => {
+describe.each(detachers)('purgeCache in work given to $name', ({ detach, operation }) => {
   test('purges the Workers Cache and the data cache once work after the response succeeds', async () => {
-    const { app, listing, release } = listingApp()
+    const { app, listing, release } = listingApp(detach)
     const worker = workerContext(true)
 
     expect(await listing(worker.ctx)).toEqual(['post-1'])
@@ -313,7 +330,7 @@ describe('purgeCache in background work', () => {
   })
 
   test('purges the data cache when the work runs before the response, as in tests', async () => {
-    const { app, listing, release } = listingApp()
+    const { app, listing, release } = listingApp(detach)
 
     expect(await listing()).toEqual(['post-1'])
     await release()
@@ -322,8 +339,21 @@ describe('purgeCache in background work', () => {
     expect(await listing()).toEqual([])
   })
 
+  test('purges once work a routes.run job hands it succeeds', async () => {
+    const { routes, hide, listing, release } = listingApp(detach)
+    const worker = workerContext(true)
+
+    expect(await listing(worker.ctx)).toEqual(['post-1'])
+    await routes.run(hide, {}, worker.ctx)
+    await release()
+    await worker.settle()
+
+    expect(worker.purges).toEqual([{ tags: ['posts:post-1', 'posts'] }])
+    expect(await listing(worker.ctx)).toEqual([])
+  })
+
   test("reports a refused purge as the work's failure, leaving the response alone", async () => {
-    const { app, events, release } = listingApp()
+    const { app, events, release } = listingApp(detach)
     const worker = workerContext(false)
 
     const res = await app.request('/posts/hide', { method: 'POST' }, {}, worker.ctx)
@@ -335,6 +365,6 @@ describe('purgeCache in background work', () => {
     expect(worker.purges).toEqual([{ tags: ['posts:post-1', 'posts'] }])
     expect(events).toHaveLength(1)
     expect(events[0].error).toBeInstanceOf(ResponseCachePurgeError)
-    expect(events[0].metadata).toEqual({ operation: 'posts.hide' })
+    expect(events[0].metadata).toEqual({ operation })
   })
 })

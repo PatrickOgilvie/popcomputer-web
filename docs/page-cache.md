@@ -12,7 +12,8 @@ on every request, when it reads:
   Hyperdrive);
 - a request header, the raw request or request state, through
   `RequestService` or `RequestStateService`, or through the context a
-  `web.services` request callback receives;
+  `web.services` request callback, `routes.middleware(...)`,
+  `prefixMiddleware(...)` or the `render` template receives;
 - a route model binding.
 
 Cached pages are keyed by deploy. Bind the version metadata so each deploy
@@ -54,13 +55,15 @@ should show, such as a signed preview, `cache: 'no-store'`, which keeps it
 out of every cache, the browser's included. `pageCache: false` in `setupWeb`
 turns page caching off for the whole application.
 
-A cached page is served before guards and middleware run, so a route
-provided a `guard(...)` or given `routes.middleware(...)` is never cached by
-default, and with `setupWeb`'s `middleware` option pages are cached only with
+A cached page is served before guards and middleware run, so a page a
+`guard(...)` decides for is never cached by default, however the guard was
+composed before it was provided (`Layer.merge`, `Layer.provide`), nor one
+behind `routes.middleware(...)` or under `prefixMiddleware(...)`; with
+`setupWeb`'s `middleware` option pages are cached only with
 `pageCache: true`. An access check made any other way, such as a layer that
-is not a guard or Hono middleware added after `setupWeb`, that decides from
-anything the list above does not name, such as the time or Hono's context,
-needs `cache: 'private'` on the routes it checks.
+is not a guard or Hono middleware the application adds with `app.use` after
+`setupWeb`, that decides from anything the list above does not name, such as
+the time or Hono's context, needs `cache: 'private'` on the routes it checks.
 
 ## Time-based caching with Workers Cache
 
@@ -69,7 +72,12 @@ option and enable Workers Cache (`"cache": { "enabled": true }` in Wrangler
 config). The option emits Workers Cache headers and tags. It does not publicly
 cache authenticated, partial, failed, or mutating responses, nor one whose
 producing read a request header, a cookie or request state, such as an API key
-a route's own layer reads: none of them is part of the cache's key. That key
+a route's own layer or middleware reads before calling `next()`, a country
+`setupWeb`'s `middleware` checks, a tenant its `database` factory picks the
+database by, or a language the `render` template localizes from: none of
+them is part of the cache's key. A header the `database` factory reads keeps
+every response of the request out of shared caches, since any of them may
+use the database. That key
 is the path and query string, not the host, so a Worker serving several
 hostnames shares one cache across them: a page that differs by hostname does
 not set `cache`. A response that sets a cookie, itself or through
@@ -151,8 +159,8 @@ creates a record under its parent, such as `POST /threads/{thread}/posts`,
 are the parent and its table (`threads`), not the new post's. When an action
 creates or changes another record, such as a reply's post or the listing an
 accepted offer sold, it adds that record's tag with `purgeCache`. The route purges it after the action
-succeeds, together with its own `purges` if it has any, and not at all when
-the action fails:
+succeeds, or leaves with `redirectNow`, together with its own `purges` if it
+has any, and not at all when the action fails:
 
 ```ts
 yield* purgeCache(recordCacheTag('projects', 'project-1'), 'projects')
@@ -171,8 +179,10 @@ queue consumer that changes a record: the purge runs once the Effect succeeds,
 and a purge that fails fails the run, so the queue retries the message and a
 scheduled run is recorded as failed. The job runs again on a retry, so it
 must be safe to repeat.
-Work given to `background()` purges what it names once it succeeds, whether
-it runs after the response, as in a Worker, or before it, as in tests.
+Work given to `background()`, or to `ExecutionContextService`'s
+`runInBackground` or `schedule`, purges what it names once it succeeds,
+whether it runs after the response, as in a Worker, or before it, as in
+tests.
 
 ## Other patterns
 

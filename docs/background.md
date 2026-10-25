@@ -16,7 +16,10 @@ it runs where it is called, before the response returns, so a test sees its
 effects but not a race between them; pass an execution context as
 `app.request`'s fourth argument to test concurrent behaviour. Tags the work
 names with `purgeCache` are purged once it succeeds, and a failed purge is
-reported as the work's failure.
+reported as the work's failure. Work handed to `ExecutionContextService`'s
+`runInBackground` or `schedule` purges the same way; `purgeCache` called by
+work that outlived what it belongs to, such as a detached fiber, is a defect
+rather than a purge nothing would send.
 
 ## Scheduled and queued work
 

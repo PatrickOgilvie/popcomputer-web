@@ -15,7 +15,7 @@ import {
   getEffectBindings,
   getEffectRuntime,
   getEffectSchema,
-  observedRequestContext,
+  serviceRequestContext,
   setEffectBridgeConfig,
   type EffectBridgeConfig,
 } from './bridge.js'
@@ -32,7 +32,7 @@ import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
 import type { ResponseHeaders } from './response-headers.js'
-import { allowDefaultPageCache, defaultCacheControl } from '../page-cache.js'
+import { allowDefaultPageCache, defaultCacheControl, keepPageOutOfCache, observedRequestContext } from '../page-cache.js'
 import {
   applyCachePolicy,
   decideCachePolicy,
@@ -51,7 +51,7 @@ import {
   type RouteCacheOptions,
 } from './response-cache.js'
 import { AuthUserService, DatabaseService, RequestService } from './services.js'
-import { isDeciding, isGuard } from './guard.js'
+import { currentDecision, GuardVerdicts, isGuard } from './guard.js'
 import type {
   AuthService,
   ExecutionContextService,
@@ -381,8 +381,9 @@ export interface EffectRouteOptions {
    */
   cache?: RouteCacheOptions | 'private' | 'no-store'
   /**
-   * After this route's effect succeeds (any Redirect, or a Response below
-   * 400), purge these Workers Cache tags. `true` purges the record of each
+   * After this route's effect succeeds (any Redirect, including the one
+   * `redirectNow` leaves with, or a Response below 400), purge these Workers
+   * Cache tags. `true` purges the record of each
    * of the route's model bindings, the tag every cached page that reads it
    * carries (see recordCacheTag), and the table of its last binding:
    * PUT /projects/{project} purges `projects:{id}` and `projects`. Records
@@ -725,6 +726,8 @@ export class EffectRouteBuilder<
    * Add Hono middleware that runs before the Effect handler.
    * Use this for middleware that needs to redirect or short-circuit requests
    * before the Effect computation runs (e.g., auth redirects, rate limiting).
+   * A header or the raw request it reads keeps the route's response out of
+   * shared caches, as one read through RequestService does.
    *
    * @example
    * ```typescript
@@ -754,7 +757,9 @@ export class EffectRouteBuilder<
    * Attach Hono middleware to the builder's whole prefix, including paths
    * that match no route. Use this for cross-cutting response policy (error
    * redaction, envelope shaping, security headers) that must also apply to
-   * 404s — per-route `.middleware()` never runs when no route matches.
+   * 404s — per-route `.middleware()` never runs when no route matches. A
+   * cached page would be served before it runs, so pages under the prefix
+   * are not cached by default.
    *
    * Registers immediately against the current prefix, so call it after
    * `.prefix()`:
@@ -772,14 +777,24 @@ export class EffectRouteBuilder<
   prefixMiddleware(
     ...handlers: MiddlewareHandler<E>[]
   ): this {
+    // A cached page is served before this middleware runs, and it may turn
+    // visitors away, so no page under the prefix is cached by default; a
+    // header it reads keeps a route's own cache option from sharing the
+    // response, as one read through RequestService does.
+    const checked = handlers.map((handler): MiddlewareHandler<E> => (c, next) => {
+      keepPageOutOfCache(c)
+
+      return handler(observedRequestContext(c), next)
+    })
+
     if (this.pathPrefix) {
       const prefix = toHonoPath(this.pathPrefix)
 
       // Two patterns: '/api/*' does not match '/api' itself in Hono
-      this.app.use(prefix, ...handlers)
-      this.app.use(`${prefix}/*`, ...handlers)
+      this.app.use(prefix, ...checked)
+      this.app.use(`${prefix}/*`, ...checked)
     } else {
-      this.app.use('/*', ...handlers)
+      this.app.use('/*', ...checked)
     }
 
     return this
@@ -1116,7 +1131,7 @@ export class EffectRouteBuilder<
       if (requestRuntime && bridgeConfig?.services) {
         contextLayer = Layer.merge(
           contextLayer,
-          bridgeConfig.services(observedRequestContext(c)).pipe(Layer.provide(bindingsConfiguration(c.env)))
+          bridgeConfig.services(serviceRequestContext(c)).pipe(Layer.provide(bindingsConfiguration(c.env)))
         )
       }
 
@@ -1124,12 +1139,13 @@ export class EffectRouteBuilder<
       // Route models load on the action's first bound() call, after guards.
 
       // A guarded binding loads once a guard(...) the route is provided has
-      // read it. The route's records load together, so until then nothing
-      // else may ask for any of them: an action, a layer that reads a record
-      // for breadcrumbs, or a purge.
+      // read it and let the visitor in. The route's records load together, so
+      // until then nothing else may ask for any of them: an action, a layer
+      // that reads a record for breadcrumbs, or a purge.
       const guarded = modelBindings.map((binding) => binding.param).filter((name) => isGuardedBinding(configuredBindings?.[name]))
       const decided = new Set<string>()
       const undecided = (): string | undefined => guarded.find((name) => !decided.has(name))
+      const positionOf = (key: string): number => modelBindings.findIndex((binding) => binding.param === key)
 
       // The models this request has loaded, which each later load goes on
       // from, one load at a time.
@@ -1228,17 +1244,27 @@ export class EffectRouteBuilder<
                 return Effect.fail(RouteConfigurationError.bindingParserNotConfigured(key))
               }
 
-              return Effect.flatMap(isDeciding, (deciding) => {
-                if (deciding) {
-                  decided.add(key)
+              return Effect.flatMap(currentDecision, (decision) => {
+                if (Option.isSome(decision)) {
+                  const position = positionOf(key)
+                  // A guarded record before this one is decided by its own
+                  // guard first: a guard that read a record under it would
+                  // load both, and answer from them, for a visitor that
+                  // guard turns away.
+                  const earlier = guarded.find((name) =>
+                    positionOf(name) < position && !decided.has(name) && !decision.value.reads.has(name)
+                  )
+
+                  if (earlier !== undefined) return Effect.fail(RouteConfigurationError.guardedWithoutGuard(earlier))
+
+                  // Decided once this guard lets the visitor in, not now.
+                  decision.value.reads.add(key)
 
                   // A guard decides from the record it reads and those before
                   // it, so the records under it, such as an organization's
                   // project, are looked up only once the guards have let the
                   // visitor in: a visitor one turns away learns only that.
-                  const through = modelBindings.findIndex((binding) => binding.param === key) + 1
-
-                  return Effect.map(loadThrough(through), (loaded) => loaded.models.get(key))
+                  return Effect.map(loadThrough(position + 1), (loaded) => loaded.models.get(key))
                 }
 
                 const unguarded = undecided()
@@ -1270,7 +1296,18 @@ export class EffectRouteBuilder<
             ),
           })
 
-          return Context.make(BoundModels, models).pipe(Context.add(RouteRecords, records))
+          // Every guard starts and ends its decision here, however it was
+          // composed: the page cache, which answers before any guard runs,
+          // keeps none of its pages, and the guarded records it read are
+          // decided once it has let the visitor in.
+          const verdicts = GuardVerdicts.of({
+            start: Effect.sync(() => keepPageOutOfCache(c)),
+            confirm: (reads) => Effect.sync(() => {
+              for (const key of reads) decided.add(key)
+            }),
+          })
+
+          return Context.make(BoundModels, models).pipe(Context.add(RouteRecords, records), Context.add(GuardVerdicts, verdicts))
         })
       )
 
@@ -1299,7 +1336,16 @@ export class EffectRouteBuilder<
         Response | Redirect,
         AppError | ResponseCachePurgeError,
         R | ResponseCacheService | RouteRecords | PendingPurges | PendingCacheTags
-      > = effect
+      > = effect.pipe(
+        // redirectNow leaves the action with a Redirect failure. It ends the
+        // action as redirect() does and keeps what the action wrote, so the
+        // route answers it as the Redirect value: its purges run below, and
+        // the boundary answers with the same redirect.
+        Effect.catchIf(
+          (error): error is Redirect => error instanceof Redirect,
+          (redirect) => Effect.succeed(redirect)
+        )
+      )
 
       // A cacheable page is tagged with the records its route read, so a
       // write to any of them purges it.
@@ -1505,11 +1551,14 @@ export class EffectRouteBuilder<
         ...handlers: MiddlewareHandler<E>[]
       ) => void
 
-      register(
-        fullPath,
-        ...this.middlewares,
-        handler
+      // Route middleware reads the request through the observed context, so
+      // a header it decides from, such as an API key, keeps a cached route's
+      // response out of shared caches, as RequestService's reads do.
+      const observed = this.middlewares.map(
+        (middleware): MiddlewareHandler<E> => (c, next) => middleware(observedRequestContext(c), next)
       )
+
+      register(fullPath, ...observed, handler)
     } else {
       this.app[method](fullPath, handler)
     }

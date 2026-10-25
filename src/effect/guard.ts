@@ -1,19 +1,34 @@
 /**
  * Guards: the layers that decide whether a visitor may go on, provided to the
- * routes they guard. A `guarded: true` binding loads only once a guard has
- * read it, so a layer that reads a record for some other reason, such as
- * breadcrumbs, never stands in for the one that decides.
+ * routes they guard. A `guarded: true` binding loads only once a guard that
+ * read it has let the visitor in, so a layer that reads a record for some
+ * other reason, such as breadcrumbs, never stands in for the one that decides.
  */
 
 import { Context, Effect, Layer, Option, type Scope } from 'effect'
 
 /**
- * Present while a guard decides. Only `guard` provides it, so only a guard's
- * reads vouch for a guarded binding.
+ * Present while a guard decides: the guarded records its decision has read.
+ * Only `guard` provides it, so only a guard's reads vouch for a guarded
+ * binding, and only once that guard has decided.
  */
-export class GuardDecision extends Context.Service<GuardDecision, true>()('@popcomputer/web/GuardDecision') {}
+export class GuardDecision extends Context.Service<GuardDecision, {
+  readonly reads: Set<string>
+}>()('@popcomputer/web/GuardDecision') {}
 
-const deciding = Layer.succeed(GuardDecision, true)
+/**
+ * The request's guards, which the route provides: every guard starts its
+ * decision through it, however the layer it made was composed, and the
+ * records a guard read are decided once it lets the visitor in.
+ *
+ * @internal
+ */
+export class GuardVerdicts extends Context.Service<GuardVerdicts, {
+  /** A guard starts deciding: the page it guards is no shared cache's to keep. */
+  readonly start: Effect.Effect<void>
+  /** A guard let the visitor in: the guarded records it read are decided. */
+  readonly confirm: (reads: ReadonlySet<string>) => Effect.Effect<void>
+}>()('@popcomputer/web/GuardVerdicts') {}
 
 /**
  * A guard: a layer that decides whether the visitor may go on, failing to
@@ -77,18 +92,35 @@ export function guard(
 const guards = new WeakSet<Layer.Layer<never, unknown, unknown>>()
 
 function guardLayer<ROut, E, RIn>(decide: Layer.Layer<ROut, E, RIn>): Layer.Layer<ROut, E, Exclude<RIn, GuardDecision>> {
-  const layer = Layer.provide(decide, deciding)
+  // Each request builds the layer anew, inside whatever layer it was composed
+  // into, so the route sees every guard decide, however it was provided.
+  const layer = Layer.unwrap(Effect.gen(function* () {
+    const verdicts = yield* Effect.serviceOption(GuardVerdicts)
+    const decision = GuardDecision.of({ reads: new Set() })
+
+    if (Option.isSome(verdicts)) yield* verdicts.value.start
+
+    return decide.pipe(
+      Layer.provide(Layer.succeed(GuardDecision, decision)),
+      // A layer built beside the guard, as Layer.merge builds it, reads none
+      // of the guarded records until the guard has decided.
+      Layer.tap(() => Option.isSome(verdicts) ? verdicts.value.confirm(decision.reads) : Effect.void)
+    )
+  }))
+
   guards.add(layer)
 
   return layer
 }
 
 /**
- * Whether `guard` made this layer. The default page cache answers before
- * any layer runs, so it caches no route a guard decides for: the guard may
- * read what no cache key holds, such as the visitor's address or country.
+ * Whether `guard` made this layer, as it was provided. The default page cache
+ * answers before any layer runs, so it caches no route a guard decides for:
+ * the guard may read what no cache key holds, such as the visitor's address
+ * or country. A guard composed into another layer is found when it decides,
+ * through GuardVerdicts.
  */
 export const isGuard = (layer: Layer.Layer<never, unknown, unknown>): boolean => guards.has(layer)
 
-/** Whether the running Effect is a guard deciding. */
-export const isDeciding: Effect.Effect<boolean> = Effect.map(Effect.serviceOption(GuardDecision), Option.isSome)
+/** The decision of the guard the running Effect is part of, if it is a guard deciding. */
+export const currentDecision: Effect.Effect<Option.Option<GuardDecision['Service']>> = Effect.serviceOption(GuardDecision)

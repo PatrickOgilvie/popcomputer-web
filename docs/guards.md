@@ -19,16 +19,20 @@ record at all is its binding's to say, with `ownedBy`, `publicWhen` or
 `public`, as [Route model binding](route-models.md#who-may-load-a-record)
 shows: a guard decides it for a rule a column cannot state, such as
 membership of an organization, whose binding says `guarded: true`. Such a
-record loads only once a guard has read it, and the guard's read loads none
-of the records under it, such as the organization's project, so a stranger
-the guard turns away gets its answer whether the project exists or not. A layer that reads it for some
-other reason, such as breadcrumbs, is no guard, and a route whose records
-are asked for before a guard has read it fails
-(`WEB_RTE_606_BINDING_ACCESS_INVALID`), so provide the guard before any
-other layer that reads a record.
+record loads only once a guard has read it and let the visitor in, and the
+guard's read loads none of the records under it, such as the organization's
+project, so a stranger the guard turns away gets its answer whether the
+project exists or not. A layer that reads it for some other reason, such as
+breadcrumbs, is no guard. A route whose records are asked for before a guard
+has decided fails (`WEB_RTE_606_BINDING_ACCESS_INVALID`) before any lookup:
+by a layer provided before the guard or built beside it, as `Layer.merge`
+builds its layers, or by a guard that reads a record under the guarded one,
+such as the project, before the organization's guard has decided. So
+provide the guard on its own, before any other layer that reads a record.
 
 The default page cache answers before any guard runs, so it caches no page
-a guard decides for, nor one behind `routes.middleware(...)`. An access
+a guard decides for, however the guard was composed before it was provided,
+nor one behind `routes.middleware(...)` or `prefixMiddleware(...)`. An access
 check made any other way that reads something the page cache does not
 track, as [Page caching](page-cache.md) lists, such as the time, needs
 `cache: 'private'` on its routes.
