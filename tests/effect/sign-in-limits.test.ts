@@ -35,16 +35,18 @@ const rateLimit = sqliteTable('rate_limit', {
 interface AuthOptions {
   /** The username plugin's options, such as its usernameNormalization. */
   readonly username?: Parameters<typeof username>[0]
+  /** Better Auth's own limits, off unless a test turns them on. */
+  readonly rateLimit?: { readonly enabled?: boolean; readonly storage?: 'memory' | 'database'; readonly modelName?: string }
 }
 
 function createAuth(options: AuthOptions = {}) {
   return betterAuth({
-    database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
+    database: memoryAdapter({ user: [], session: [], account: [], verification: [], rateLimit: [] }),
     baseURL: 'http://localhost',
     secret: 'sign-in-limits-test-secret-with-enough-entropy-0123',
     emailAndPassword: { enabled: true },
     user: { deleteUser: { enabled: true } },
-    rateLimit: { enabled: false },
+    rateLimit: options.rateLimit ?? { enabled: false },
     logger: { disabled: true },
     // Two more doors to the same password: a username, and a phone number.
     plugins: [username(options.username), phoneNumber({ sendOTP: async () => {} })],
@@ -391,5 +393,31 @@ describe("Better Auth's other checks of the signed-in account's password", () =>
       '/api/auth/delete-user': [400, 400, 429],
       '/confirm-password': [422, 422, 429],
     })
+  })
+})
+
+describe("Better Auth's own limits beside the sign-in limits", () => {
+  const signInFrom = (app: Hono, env: ReturnType<typeof testEnv>) => testBrowser(app, env).request('/api/auth/sign-in/email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'ada@example.com', password: 'correct horse' }),
+  })
+
+  test("Better Auth's database storage, which deletes the table's rows by age, is refused, whatever its model's name", async () => {
+    for (const rateLimit of [{ enabled: true, storage: 'database' }, { storage: 'database', modelName: 'rate_limit' }] as const) {
+      const { app, time } = await createApp(testRateLimiter({ limit: 100 }), 3, { rateLimit })
+      const res = await signInFrom(app, testEnv(time.layer, { SIGN_IN_LIMITER: testRateLimiter({ limit: 100 }), ENVIRONMENT: 'development' }))
+
+      expect(res.status).toBe(500)
+      expect(await res.text()).toContain("storage: 'memory'")
+    }
+  })
+
+  test('its memory storage, or none, leaves the counts alone and signs in', async () => {
+    for (const rateLimit of [{ enabled: true, storage: 'memory' }, { enabled: false, storage: 'database' }] as const) {
+      const { app, env } = await createApp(testRateLimiter({ limit: 100 }), 3, { rateLimit })
+
+      expect((await signInFrom(app, env)).status).toBe(200)
+    }
   })
 })

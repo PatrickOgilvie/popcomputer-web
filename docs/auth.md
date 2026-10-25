@@ -96,7 +96,8 @@ export function createAuth(options: CreateAuthOptions) {
     },
     // setupWeb's auth.signInLimits limits signing in, up and every password
     // call by address and account. Better Auth's own limits stay on too, in
-    // each isolate's memory, writing nothing: three sign-ins or sign-ups
+    // each isolate's memory (its 'database' storage deletes the accounts'
+    // counts, so auth.signInLimits refuses it): three sign-ins or sign-ups
     // from one address in ten seconds, and its other endpoints. They are on
     // by default only when NODE_ENV is 'production', which a Worker's is not.
     rateLimit: { enabled: true, storage: 'memory' },

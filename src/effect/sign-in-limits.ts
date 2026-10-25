@@ -279,20 +279,52 @@ const counts = Effect.flatMap(Effect.serviceOption(DatabaseService), (db) =>
 )
 
 /**
+ * Whether the registered Better Auth keeps its own request counts through
+ * its database adapter, `rateLimit: { storage: 'database' }`. Each rollover
+ * of one of its windows then deletes every row of its rateLimit model older
+ * than its longest window, a minute by default, the account failure counts
+ * kept here among them. Which table that model is the adapter decides, so a
+ * `modelName` of its own is no proof the counts are spared.
+ */
+function prunesCounts(betterAuth: unknown): boolean {
+  const rateLimit = property(betterAuth, 'rateLimit')
+
+  if (property(rateLimit, 'enabled') === false || property(rateLimit, 'customStorage') !== undefined) return false
+
+  // Better Auth's default: its secondary storage when it has one, else memory.
+  const storage = property(rateLimit, 'storage') ?? (property(betterAuth, 'secondaryStorage') === undefined ? 'memory' : 'secondary-storage')
+
+  return storage !== 'memory' && storage !== 'secondary-storage'
+}
+
+/**
  * Run a call to Better Auth within the sign-in limits: the address, and for a
  * password sign-in the account, are counted on the Rate Limiting binding,
  * and a sign-in during the account's cooldown is refused before the call; a
  * failed sign-in (401) is counted, and a successful one clears the count.
- * Without `auth.signInLimits`, the call runs as it is.
+ * Without `auth.signInLimits`, the call runs as it is. `betterAuth` is the
+ * registered Better Auth's options: with limits whose storage would delete
+ * the counts, every call fails, naming the fix.
  */
 export function withinSignInLimits<E, R>(
   attempt: SignInAttempt,
-  call: Effect.Effect<Response, E, R>
+  call: Effect.Effect<Response, E, R>,
+  betterAuth: unknown
 ): Effect.Effect<Response, E | AuthRateLimitError, R> {
   return Effect.gen(function* () {
     const configured = yield* Effect.serviceOption(SignInLimits)
 
-    if (Option.isNone(configured) || !isLimitedPath(attempt.path)) return yield* call
+    if (Option.isNone(configured)) return yield* call
+
+    if (prunesCounts(betterAuth)) {
+      return yield* Effect.die(new Error(
+        "auth.signInLimits counts each account's failed sign-ins in a rateLimit table, and Better Auth's rateLimit " +
+          "storage 'database' deletes that table's rows by age, the counts among them. Keep Better Auth's limits in " +
+          "memory, betterAuth({ rateLimit: { enabled: true, storage: 'memory' } }), or in its secondary storage."
+      ))
+    }
+
+    if (!isLimitedPath(attempt.path)) return yield* call
 
     const limits = configured.value
 

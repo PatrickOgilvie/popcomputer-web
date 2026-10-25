@@ -699,7 +699,8 @@ function callEndpoint(
 
     const response = yield* withinSignInLimits(
       attempt,
-      sendToBetterAuth(() => sendThroughHandler(auth, raw, name, input))
+      sendToBetterAuth(() => sendThroughHandler(auth, raw, name, input)),
+      auth.options
     ).pipe(
       Effect.flatMap(inspectBetterAuthResponse),
       Effect.mapError((failure) => failure instanceof AuthRateLimitError ? failure : toAuthActionError(failure, errors))
@@ -974,7 +975,8 @@ export function betterAuthHandler(
       Effect.tryPromise({
         try: (): Promise<Response> => Promise.resolve(auth.handler(forwarded)),
         catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
-      })
+      }),
+      auth.options
     )
 
     // Better Auth's own server error is the application's to answer, with its

@@ -1179,6 +1179,13 @@ change nothing. Check each item against yours:
   `APP_URL: variable(S.String)` in `src/env.ts` and passes it as `baseURL`
   (or gives Better Auth `baseURL: { allowedHosts }`), so emailed links never
   follow the host a request arrived on.
+- **Better Auth's limits in the database.** An application with
+  `auth.signInLimits` whose `betterAuth` sets `rateLimit: { storage:
+  'database' }`, as the README before 1.0 did, sets `storage: 'memory'`.
+  Better Auth's database storage deletes the rows of its `rateLimit` table by
+  age, the account counts among them, so every call the framework sends
+  Better Auth, signing in among them, now fails with a message naming the fix
+  until it changes.
 - **Hand-composed stacks.** One composed as `docs/lower-level.md` shows puts
   `webDefaults()` first in its stack, for setupWeb's security headers and
   cross-site check. `web()` now sends a private Cache-Control itself where
