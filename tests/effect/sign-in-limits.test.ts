@@ -16,7 +16,8 @@ import { Effect, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
-import { betterAuthHandler, betterAuthRedirect } from '../../src/auth.js'
+import { betterAuthCall, betterAuthHandler, betterAuthRedirect } from '../../src/auth.js'
+import { json } from '../../src/effect/responses.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { currentPassword, email, requiredString } from '../../src/effect/schema.js'
 import { sweepSignInFailures } from '../../src/effect/sign-in-limits.js'
@@ -36,6 +37,7 @@ function createAuth() {
     baseURL: 'http://localhost',
     secret: 'sign-in-limits-test-secret-with-enough-entropy-0123',
     emailAndPassword: { enabled: true },
+    user: { deleteUser: { enabled: true } },
     rateLimit: { enabled: false },
     logger: { disabled: true },
     // Two more doors to the same password: a username, and a phone number.
@@ -71,6 +73,13 @@ const signInWithPhone = action(Effect.gen(function* () {
   })
 }))
 
+const confirmPassword = action(Effect.gen(function* () {
+  const input = yield* validateRequest(S.Struct({ password: currentPassword }))
+  yield* betterAuthCall('verifyPassword', { body: input }, { errors: (error) => ({ password: error.message }) })
+
+  return yield* json({ confirmed: true })
+}))
+
 async function createApp(limiter: TestRateLimiter, max = 3) {
   const auth = createAuth()
   const { user } = await auth.api.signUpEmail({ body: { name: 'Ada', email: 'ada@example.com', password: 'correct horse', username: 'ada' } })
@@ -91,7 +100,11 @@ async function createApp(limiter: TestRateLimiter, max = 3) {
     },
   })
 
-  routes.post('/sign-in', signIn).post('/sign-in/phone', signInWithPhone).all('/api/auth/*', betterAuthHandler({ settable: [] }))
+  routes
+    .post('/sign-in', signIn)
+    .post('/sign-in/phone', signInWithPhone)
+    .post('/confirm-password', confirmPassword)
+    .all('/api/auth/*', betterAuthHandler({ settable: [] }))
 
   const time = await testClock(new Date())
   const env = testEnv(time.layer, { SIGN_IN_LIMITER: limiter })
@@ -313,5 +326,42 @@ describe('each password sign-in counts against the account its endpoint checks',
 
     expect(rows()).toEqual([])
     expect((await api('/sign-in/username', { username: 'ada', password: 'correct horse' })).status).toBe(200)
+  })
+})
+
+describe("Better Auth's other checks of the signed-in account's password", () => {
+  /** A browser signed in through Better Auth's API, which counts one call against its address. */
+  const signedIn = async (app: Hono, env: ReturnType<typeof testEnv>) => {
+    const browser = testBrowser(app, env)
+    const res = await browser.request('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ada@example.com', password: 'correct horse' }),
+    })
+
+    expect(res.status).toBe(200)
+
+    return browser
+  }
+
+  test('a session guessing its password is counted against its address, through the API and through an action', async () => {
+    const { app, env } = await createApp(testRateLimiter({ limit: 3 }), 100)
+    const guess = (browser: ReturnType<typeof testBrowser>, path: string) => browser.request(path, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: 'guess' }),
+    })
+    const statuses: Record<string, ReadonlyArray<number>> = {}
+
+    for (const path of ['/api/auth/verify-password', '/api/auth/delete-user', '/confirm-password']) {
+      const browser = await signedIn(app, env)
+      statuses[path] = [(await guess(browser, path)).status, (await guess(browser, path)).status, (await guess(browser, path)).status]
+    }
+
+    expect(statuses).toEqual({
+      '/api/auth/verify-password': [400, 400, 429],
+      '/api/auth/delete-user': [400, 400, 429],
+      '/confirm-password': [422, 422, 429],
+    })
   })
 })

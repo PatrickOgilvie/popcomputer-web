@@ -105,10 +105,18 @@ export function activeSignInLimits(config: SignInLimitsConfig, bindings: object)
   }
 }
 
-/** Better Auth's paths a client address is limited on: signing in and up, and every password and verification call, except a sign-in through an identity provider. */
+/**
+ * Better Auth's paths a client address is limited on: signing in and up, and
+ * every password and verification call, except a sign-in through an identity
+ * provider. `/verify-password` and `/delete-user` check the signed-in
+ * account's password, as `/change-password` does: a stolen session must not
+ * guess it unlimited. The seam suite fails on an endpoint of Better Auth's
+ * that takes a password and is missing here.
+ */
 const ADDRESS_LIMITED = [
   '/sign-in', '/sign-up', '/change-password', '/change-email', '/reset-password', '/request-password-reset',
   '/forget-password', '/send-verification-email', '/verify-email', '/email-otp', '/two-factor', '/magic-link', '/phone-number',
+  '/verify-password', '/delete-user',
 ]
 
 /**

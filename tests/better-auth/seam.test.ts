@@ -14,6 +14,7 @@ import { eq } from 'drizzle-orm'
 import { Redacted, Schema as S } from 'effect'
 import { testBrowser, testEnv } from '../../src/testing.js'
 import { betterAuthSession } from '../../src/auth.js'
+import { isLimitedPath } from '../../src/effect/sign-in-limits.js'
 import { tableSchema } from '../../src/schema.js'
 import { acme, createAuth, createDatabase, newOutbox, schema, type CreateAuthOptions } from './fixture.js'
 import { app } from './app.js'
@@ -97,6 +98,25 @@ describe('tables', () => {
     }
 
     expect(missing).toEqual([])
+  })
+})
+
+describe('sign-in limits', () => {
+  test("every endpoint of Better Auth's and the plugins' that checks a password is limited per client address", () => {
+    const auth = createAuth({ db: createDatabase(), outbox: newOutbox() })
+    // An admin's create-user sets a new user's password; it checks none.
+    const setsPassword = new Set(['/admin/create-user'])
+    const unlimited = Object.values(auth.api).flatMap((endpoint: object) => {
+      const path: unknown = Reflect.get(endpoint, 'path')
+      const options: unknown = Reflect.get(endpoint, 'options')
+      const body: unknown = options instanceof Object ? Reflect.get(options, 'body') : undefined
+      const shape: unknown = body instanceof Object ? Reflect.get(body, 'shape') : undefined
+      const checksPassword = shape instanceof Object && (Object.hasOwn(shape, 'password') || Object.hasOwn(shape, 'currentPassword'))
+
+      return typeof path === 'string' && checksPassword && !setsPassword.has(path) && !isLimitedPath(path) ? [path] : []
+    })
+
+    expect(unlimited).toEqual([])
   })
 })
 
