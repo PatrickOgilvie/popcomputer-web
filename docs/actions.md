@@ -65,7 +65,8 @@ the path's placeholders; the parameters are typed from them, so a renamed
 placeholder is a type error at every URL built from it. A value fills one path
 segment: an empty one, `.` or `..` would turn the path into another route's,
 or `//host`, another site, and a URL reads `%2e` as a dot, so no escape keeps
-one. `href` and `redirect` leave such a placeholder unfilled, as a missing
+one, and no URL can carry text with a lone surrogate, which a JSON body can hold.
+`href` and `redirect` leave such a placeholder unfilled, as a missing
 value, `/orgs/{organization}`: the link stays on its route and site, and one
 stored slug of `..` breaks only its own link, never a page or job listing
 others. An endpoint's `call` throws on it. Validate a name a URL will carry

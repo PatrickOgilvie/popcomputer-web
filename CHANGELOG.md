@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- `intendedUrl` refuses a `redirect` whose dot segments resolve to a path beginning `//`, such as `/%2e//evil.test`, as `sameOriginReferer` already refuses such a Referer. It checked only the text's first characters, and a browser resolves `/%2e//evil.test` to this site's path `//evil.test`.
+
+### Fixed
+
+- `href` and `redirect` leave a placeholder unfilled for text with a lone surrogate, which no URL can carry, as they do for `..`. `encodeURIComponent` threw on it, so one stored value a JSON body set, such as `"\ud800"`, failed every page and job that listed it.
+
 ## [1.6.0] - 2026-10-25
 
 This release fixes what a second security audit found in the changes 1.5.0 made: one medium and sixteen low findings, and six leads. Each fix was proven by re-running the audit's own reproductions on 1.5.0 and on this release. It also adds lint rules for mistakes the types cannot see, and the agent fence, which runs the framework's checks before every commit and before an agent's commands.

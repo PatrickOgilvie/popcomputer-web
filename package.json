@@ -93,6 +93,7 @@
     "test:package": "bun run build && node tests/package-imports.mjs",
     "test:types": "bun tests/typecheck-tests.ts && bun run build && bun tests/docs/check-docs.ts && tsc -p tests/consumer-types",
     "test:watch": "bun test --watch",
+    "fuzz": "FUZZ_RUNS=${FUZZ_RUNS:-20000} FUZZ_SEED=${FUZZ_SEED:-random} bun test tests/fuzz",
     "test:coverage": "bun test --coverage",
     "prepublishOnly": "bun run test"
   },

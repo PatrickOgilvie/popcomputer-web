@@ -158,9 +158,14 @@ function parseUrl(value: string | undefined): URL | undefined {
   }
 }
 
-/** A path on this site: not `//host` or `/\\host`, which browsers treat as other sites. */
+/**
+ * A path on this site: not `//host` or `/\\host`, which browsers treat as
+ * other sites, nor one whose dot segments resolve to such a path, as
+ * `/%2e//host` resolves to `//host`, which `sameOriginReferer` refuses too.
+ */
 function isLocalPath(value: string): boolean {
-  return value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\') && !/[\u0000-\u001f]/.test(value)
+  return value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\') && !/[\u0000-\u001f]/.test(value) &&
+    !new URL(value, 'https://localhost').pathname.startsWith('//')
 }
 
 /**

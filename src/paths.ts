@@ -65,10 +65,11 @@ export type QueryParams = Readonly<Record<string, string | number | boolean | nu
 /**
  * Build the URL to a route path, filling its placeholders and adding a query.
  * A placeholder's value is one path segment: an empty value, `.` or `..`,
- * which would reach another route or another host, leaves its placeholder
- * unfilled, as a missing value does. The URL then stays on its route and
- * site, and a stored value fails only its own link, never the page, request
- * or job that lists it.
+ * which would reach another route or another host, and text with a lone
+ * surrogate, which no URL can carry, leave their placeholder unfilled, as a
+ * missing value does. The URL then stays on its route and site, and a stored
+ * value fails only its own link, never the page, request or job that lists
+ * it.
  *
  * @example
  * href('/projects/{project}/tasks/{task}', { project: 'p1', task: 7 }) // '/projects/p1/tasks/7'
@@ -83,7 +84,7 @@ export function href<const Path extends string>(
   const filled = path.replace(/\{([^}:]+)(?::[^}]+)?\}/g, (_placeholder, name: string) => {
     const value = Object.hasOwn(values, name) ? values[name] : undefined
 
-    const segment = value === undefined ? '' : encodeURIComponent(String(value))
+    const segment = value === undefined ? '' : encodeSegment(String(value))
 
     return isPathSegment(segment) ? segment : `{${name}}`
   })
@@ -97,4 +98,13 @@ export function href<const Path extends string>(
   const queryString = search.toString()
 
   return queryString === '' ? filled : `${filled}?${queryString}`
+}
+
+/** A value encoded for a URL, or nothing for text with a lone surrogate, which `encodeURIComponent` throws on. */
+function encodeSegment(value: string): string {
+  try {
+    return encodeURIComponent(value)
+  } catch {
+    return ''
+  }
 }
