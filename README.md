@@ -78,6 +78,7 @@ Testing and reference:
 - [Testing](docs/testing.md): requests through the application, the readers, one visitor, fakes and time
 - [A database for tests](docs/test-database.md): PGlite for Postgres, and D1 through Miniflare
 - [Lower-level composition](docs/lower-level.md): the middleware without `setupWeb`
+- [State machines](docs/state-machines.md): what the framework keeps across requests, the rule each keeps, and the models that check them
 
 ## Why this shape
 
