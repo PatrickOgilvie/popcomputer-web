@@ -10,10 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - `intendedUrl` refuses a `redirect` whose dot segments resolve to a path beginning `//`, such as `/%2e//evil.test`, as `sameOriginReferer` already refuses such a Referer. It checked only the text's first characters, and a browser resolves `/%2e//evil.test` to this site's path `//evil.test`.
+- `auth.signInLimits` counts each password sign-in against its account in one statement before its password is checked, unless the account is cooling down, and a successful sign-in deletes the count. It read the count before Better Auth's call and wrote it after, so guesses sent together were not counted against each other: twelve at once against an account with `max: 3` all had their passwords checked, bounded only by the Rate Limiting binding at each Cloudflare location. A count also lasts `failures.window` past the end of its cooldown, so the longest cooldown comes again with each further guess. The window ran from the last failure, so a cooldown was spent toward it, and the longest one ended as the count did, handing back `max` fresh guesses: with the defaults, 14 guesses every half hour for as long as the guessing went on. Each sign-in now writes the account's row, where only a failure did.
 
 ### Fixed
 
 - `href` and `redirect` leave a placeholder unfilled for text with a lone surrogate, which no URL can carry, as they do for `..`. `encodeURIComponent` threw on it, so one stored value a JSON body set, such as `"\ud800"`, failed every page and job that listed it.
+- `setupWeb` refuses `auth.signInLimits.failures` whose `max` is not a whole number of at least 1, or whose `window` or `cooldown` is not a positive duration. A `NaN`, such as `Number()` of a variable that is not set, turned the cooldown off without a word.
 
 ## [1.6.0] - 2026-10-25
 

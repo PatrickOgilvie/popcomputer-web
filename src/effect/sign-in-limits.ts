@@ -8,18 +8,30 @@
  *   and password call per client address, and every sign-in per account,
  *   over its short window (10 or 60 seconds), at Cloudflare's edge, with no
  *   database write.
- * - Better Auth's `rateLimit` table counts an account's failed sign-ins over
- *   a long window. Past `max`, the account cools down, for longer with each
- *   further failure, up to the window: a sign-in during a cooldown is refused
- *   before the password is checked. A cooldown, not a lock, so someone who
- *   knows an address can delay its owner, never shut them out.
+ * - Better Auth's `rateLimit` table counts an account's sign-ins, each before
+ *   its password is checked. Past `max`, the account cools down, for longer
+ *   with each further sign-in, up to the window: a sign-in during a cooldown
+ *   is refused before the password is checked. A cooldown, not a lock, so
+ *   someone who knows an address can delay its owner, never shut them out.
  *
- * Only a failure writes a row, and a successful sign-in deletes the account's
- * row if it has one. `sweepSignInFailures` deletes the rows whose window has
- * passed, from a Cron Trigger.
+ * A successful sign-in deletes the account's row. `sweepSignInFailures`
+ * deletes the rows that are spent, from a Cron Trigger.
+ *
+ * The account's row is a state machine, its states conditions on the row at
+ * a moment, which `docs/state-machines.md` models:
+ *
+ * - spent: no row, or a window has passed since the end of its cooldown;
+ * - counting: fewer than `max` sign-ins counted;
+ * - cooling: `max` or more, within the cooldown the count earned;
+ * - cooled: `max` or more, the cooldown over, the window not yet passed.
+ *
+ * A sign-in moves a spent row to a count of 1, and a counting or cooled one
+ * to its count plus one, in one statement before its password is checked, so
+ * sign-ins sent together are counted against each other; cooling refuses it.
+ * A success deletes the row.
  */
 
-import type { Column, Table } from 'drizzle-orm'
+import type { Column, SQL, Table } from 'drizzle-orm'
 import { Clock, Context, Duration, Effect, Option } from 'effect'
 import { AuthRateLimitError, HttpError } from './errors.js'
 import { loadDrizzle } from './binding.js'
@@ -52,13 +64,13 @@ export type SignInCountsTable = Table & {
   readonly lastRequest: Column
 }
 
-/** How an account's failed sign-ins slow the next ones. */
+/** How an account's sign-ins slow the next ones. */
 export interface SignInFailures {
-  /** Failed sign-ins within `window` before the account cools down. Default 10. */
+  /** Sign-ins counted before the account cools down. A whole number, 1 or more. Default 10. */
   readonly max?: number
-  /** How long a failure counts. Default 15 minutes. */
+  /** How long the count lasts past the end of its cooldown. Default 15 minutes. */
   readonly window?: Duration.Input
-  /** The first cooldown, doubled by each further failure, up to `window`. Default 1 minute. */
+  /** The first cooldown, doubled by each further sign-in, up to `window`. Default 1 minute. */
   readonly cooldown?: Duration.Input
 }
 
@@ -88,6 +100,45 @@ export interface ActiveSignInLimits {
 
 export class SignInLimits extends Context.Service<SignInLimits, ActiveSignInLimits>()('@popcomputer/web/SignInLimits') {}
 
+const millisOf = (input: Duration.Input): number => {
+  try {
+    return Duration.toMillis(Duration.fromInputUnsafe(input))
+  } catch {
+    return Number.NaN
+  }
+}
+
+/** The policy `failures` sets, with its defaults. */
+function failuresPolicy(failures: SignInFailures | undefined) {
+  return {
+    max: failures?.max ?? 10,
+    windowMillis: millisOf(failures?.window ?? '15 minutes'),
+    cooldownMillis: millisOf(failures?.cooldown ?? '1 minute'),
+  }
+}
+
+/**
+ * Refuse `auth.signInLimits.failures` that would never cool an account down:
+ * a `max` that is not a whole number of at least 1, or a `window` or
+ * `cooldown` that is not a positive whole number of milliseconds, such as
+ * `Number()` of a variable that is not set. setupWeb calls it.
+ */
+export function assertSignInLimitsConfig(config: SignInLimitsConfig): void {
+  const { max, windowMillis, cooldownMillis } = failuresPolicy(config.failures)
+  const invalid = [
+    ...(Number.isSafeInteger(max) && max >= 1 ? [] : [`max ${String(max)}`]),
+    ...(Number.isSafeInteger(windowMillis) && windowMillis > 0 ? [] : [`window ${String(config.failures?.window)}`]),
+    ...(Number.isSafeInteger(cooldownMillis) && cooldownMillis > 0 ? [] : [`cooldown ${String(config.failures?.cooldown)}`]),
+  ]
+
+  if (invalid.length > 0) {
+    throw new Error(
+      `Invalid setupWeb configuration: auth.signInLimits.failures has ${invalid.join(', ')}, with which no account would ever cool down. ` +
+        "Give max as a whole number of 1 or more, and window and cooldown as positive durations, such as '15 minutes' and '1 minute'."
+    )
+  }
+}
+
 /** The limits `setupWeb`'s configuration gives a request, reading its bindings. */
 export function activeSignInLimits(config: SignInLimitsConfig, bindings: object): ActiveSignInLimits {
   const limiter: unknown = Reflect.get(bindings, config.limiter)
@@ -99,9 +150,7 @@ export function activeSignInLimits(config: SignInLimitsConfig, bindings: object)
       : undefined,
     limiterName: config.limiter,
     table: config.table,
-    max: config.failures?.max ?? 10,
-    windowMillis: Duration.toMillis(Duration.fromInputUnsafe(config.failures?.window ?? '15 minutes')),
-    cooldownMillis: Duration.toMillis(Duration.fromInputUnsafe(config.failures?.cooldown ?? '1 minute')),
+    ...failuresPolicy(config.failures),
   }
 }
 
@@ -235,9 +284,31 @@ const accountKey = (account: string): Effect.Effect<string> =>
     return `sign-in:${[...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
   })
 
-/** The cooldown after `count` failures: none below `max`, then doubling from `cooldownMillis`, up to the window. */
+/** The cooldown after `count` sign-ins: none below `max`, then doubling from `cooldownMillis`, up to the window. */
 const cooldownAfter = (limits: ActiveSignInLimits, count: number): number =>
   count < limits.max ? 0 : Math.min(limits.windowMillis, limits.cooldownMillis * 2 ** (count - limits.max))
+
+/**
+ * The row's states as SQL, each the same rule as `cooldownAfter`: the
+ * cooldown its count earned, whether it is cooling at `now`, and whether it
+ * is spent. The policy's numbers, which setupWeb checked are whole, are
+ * written into the statement, so every dialect reads them as integers.
+ */
+function rowStates(limits: ActiveSignInLimits, table: SignInCountsTable, now: number, sql: typeof import('drizzle-orm').sql) {
+  const literal = (value: number) => sql.raw(String(value))
+  const doublings: SQL[] = []
+
+  for (let extra = 0, millis = limits.cooldownMillis; millis < limits.windowMillis; extra++, millis *= 2) {
+    doublings.push(sql`when ${table.count} = ${literal(limits.max + extra)} then ${literal(millis)}`)
+  }
+
+  const cooldown = sql`(case when ${table.count} < ${literal(limits.max)} then 0 ${sql.join(doublings, sql` `)} else ${literal(limits.windowMillis)} end)`
+
+  return {
+    cooling: sql`${table.count} >= ${literal(limits.max)} and ${table.lastRequest} + ${cooldown} > ${now}`,
+    spent: sql`${table.lastRequest} + ${cooldown} + ${literal(limits.windowMillis)} <= ${now}`,
+  }
+}
 
 const refused = (retryAfterMillis: number) =>
   new AuthRateLimitError({ retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMillis / 1000)), cause: undefined })
@@ -263,7 +334,7 @@ interface CountsClient {
   select(fields: object): { from(table: Table): { where(condition: unknown): { limit(count: number): PromiseLike<ReadonlyArray<{ count: number; lastRequest: number }>> } } }
   insert(table: Table): {
     values(row: object): {
-      onConflictDoUpdate(config: { target: Column; set: object }): { returning(fields: object): PromiseLike<ReadonlyArray<{ count: number }>> }
+      onConflictDoUpdate(config: { target: Column; set: object; setWhere: SQL }): { returning(fields: object): PromiseLike<ReadonlyArray<{ count: number }>> }
     }
   }
   delete(table: Table): { where(condition: unknown): PromiseLike<unknown> }
@@ -316,12 +387,12 @@ export function signInLimitsStorageError(betterAuth: unknown): Error | undefined
 
 /**
  * Run a call to Better Auth within the sign-in limits: the address, and for a
- * password sign-in the account, are counted on the Rate Limiting binding,
- * and a sign-in during the account's cooldown is refused before the call; a
- * failed sign-in (401) is counted, and a successful one clears the count.
- * Without `auth.signInLimits`, the call runs as it is. `betterAuth` is the
- * registered Better Auth's options: with limits whose storage would delete
- * the counts, every call fails, naming the fix.
+ * password sign-in the account, are counted on the Rate Limiting binding; a
+ * password sign-in is counted against its account before the call, unless
+ * the account cools down, which refuses it, and a successful one clears the
+ * count. Without `auth.signInLimits`, the call runs as it is. `betterAuth` is
+ * the registered Better Auth's options: with limits whose storage would
+ * delete the counts, every call fails, naming the fix.
  */
 export function withinSignInLimits<E, R>(
   attempt: SignInAttempt,
@@ -355,43 +426,39 @@ export function withinSignInLimits<E, R>(
     const { eq, sql } = yield* drizzle
     const table = limits.table
     const now = yield* Clock.currentTimeMillis
-    const [row] = yield* Effect.promise(() => db.select({ count: table.count, lastRequest: table.lastRequest }).from(table).where(eq(table.key, key)).limit(1))
-    const current = row !== undefined && row.lastRequest > now - limits.windowMillis ? row : undefined
+    const { cooling, spent } = rowStates(limits, table, now, sql)
 
-    if (current !== undefined) {
-      const until = current.lastRequest + cooldownAfter(limits, current.count)
+    // One statement counts the sign-in, afresh once the row is spent, unless
+    // the account is cooling down, when it writes nothing and returns no row.
+    const counted = yield* Effect.promise(() =>
+      db.insert(table)
+        .values({ id: crypto.randomUUID(), key, count: 1, lastRequest: now })
+        .onConflictDoUpdate({
+          target: table.key,
+          set: { count: sql`case when ${spent} then 1 else ${table.count} + 1 end`, lastRequest: now },
+          setWhere: sql`not (${cooling})`,
+        })
+        .returning({ count: table.count })
+    )
 
-      if (until > now) return yield* Effect.fail(refused(until - now))
+    if (counted.length === 0) {
+      const [row] = yield* Effect.promise(() => db.select({ count: table.count, lastRequest: table.lastRequest }).from(table).where(eq(table.key, key)).limit(1))
+
+      return yield* Effect.fail(refused(row === undefined ? 0 : row.lastRequest + cooldownAfter(limits, row.count) - now))
     }
 
     const response = yield* call
 
-    if (response.status === 401) {
-      // One write, counting afresh once the window has passed.
-      yield* Effect.promise(() =>
-        db.insert(table)
-          .values({ id: crypto.randomUUID(), key, count: 1, lastRequest: now })
-          .onConflictDoUpdate({
-            target: table.key,
-            set: {
-              count: sql`case when ${table.lastRequest} <= ${now - limits.windowMillis} then 1 else ${table.count} + 1 end`,
-              lastRequest: now,
-            },
-          })
-          .returning({ count: table.count })
-      )
-    } else if (response.ok && row !== undefined) {
-      yield* Effect.promise(() => db.delete(table).where(eq(table.key, key)))
-    }
+    if (response.ok) yield* Effect.promise(() => db.delete(table).where(eq(table.key, key)))
 
     return response
   })
 }
 
 /**
- * Delete the counts of failed sign-ins whose window has passed. Run it from a
- * Cron Trigger, so made-up addresses do not keep rows:
- * `scheduled: routes.scheduled(() => sweepSignInFailures)`.
+ * Delete the counts that are spent: a window has passed since the end of
+ * their cooldown. Run it from a Cron Trigger, so made-up addresses do not
+ * keep rows: `scheduled: routes.scheduled(() => sweepSignInFailures)`.
  */
 export const sweepSignInFailures: Effect.Effect<void> = Effect.gen(function* () {
   const configured = yield* Effect.serviceOption(SignInLimits)
@@ -402,11 +469,9 @@ export const sweepSignInFailures: Effect.Effect<void> = Effect.gen(function* () 
 
   const limits = configured.value
   const db = yield* counts
-  const { and, like, lt } = yield* drizzle
+  const { and, like, sql } = yield* drizzle
   const now = yield* Clock.currentTimeMillis
   const table = limits.table
 
-  yield* Effect.promise(() =>
-    db.delete(table).where(and(like(table.key, 'sign-in:%'), lt(table.lastRequest, now - limits.windowMillis)))
-  )
+  yield* Effect.promise(() => db.delete(table).where(and(like(table.key, 'sign-in:%'), rowStates(limits, table, now, sql).spent)))
 })

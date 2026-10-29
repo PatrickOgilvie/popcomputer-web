@@ -5,7 +5,7 @@ import type { Hono } from 'hono'
 import type { MiddlewareHandler, Env, Context } from 'hono'
 import { Effect, type Config, type Layer, type Schema as S } from 'effect'
 import { web } from './middleware.js'
-import { activeSignInLimits, signInLimitsStorageError, type RateLimiterName, type SignInLimitsConfig } from './effect/sign-in-limits.js'
+import { activeSignInLimits, assertSignInLimitsConfig, signInLimitsStorageError, type RateLimiterName, type SignInLimitsConfig } from './effect/sign-in-limits.js'
 import { originRefusal, securityHeaders, verifyOrigin, type SecurityHeadersConfig, type VerifyOriginConfig } from './security.js'
 import type { WebConfig } from './types.js'
 import { loadUserMiddleware, shareAuthMiddleware, usersTableOf } from './effect/auth.js'
@@ -89,7 +89,8 @@ export interface WebAuthOptions<
    * Slow down password guessing: a Cloudflare Rate Limiting binding counts
    * each client address's sign-in, sign-up and password calls and each
    * account's sign-ins, and Better Auth's `rateLimit` table counts an
-   * account's failed sign-ins, cooling it down past `failures.max`.
+   * account's sign-ins before their passwords are checked, cooling it down
+   * past `failures.max`.
    *
    * @example
    * signInLimits: { limiter: 'SIGN_IN_LIMITER', table: schema.rateLimit }
@@ -405,6 +406,7 @@ export function setupWeb<
   RoutePath<Paths>
 > {
   assertSetupConfig(config)
+  if (config.auth?.signInLimits !== undefined) assertSignInLimitsConfig(config.auth.signInLimits)
   if (config.bindings !== undefined) {
     assertBindingsConfig(config.bindings, config.schema, usersTableOf(config.auth?.session, config.schema))
   }

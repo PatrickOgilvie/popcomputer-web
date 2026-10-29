@@ -2,7 +2,7 @@
 
 Better Auth reads and writes five tables, which the application's schema
 declares beside its own: `user`, `session`, `account`, `verification`, and
-`rateLimit`, where `auth.signInLimits` counts each account's failed sign-ins.
+`rateLimit`, where `auth.signInLimits` counts each account's sign-ins.
 `npx @better-auth/cli generate` writes them from the configuration; these
 are the tables Better Auth 1.7 needs for it, in a module `src/schema.ts`
 re-exports with `export * from './auth-schema'`. Their keys in the schema are
@@ -75,7 +75,7 @@ export const verification = pgTable(
   (table) => [index('verification_identifier_idx').on(table.identifier)]
 )
 
-// Each account's failed sign-ins, which auth.signInLimits counts.
+// Each account's sign-ins, which auth.signInLimits counts.
 export const rateLimit = pgTable('rate_limit', {
   id: text('id').primaryKey(),
   key: text('key').notNull().unique(),
@@ -154,7 +154,7 @@ export const verification = sqliteTable(
   (table) => [index('verification_identifier_idx').on(table.identifier)]
 )
 
-// Each account's failed sign-ins, which auth.signInLimits counts.
+// Each account's sign-ins, which auth.signInLimits counts.
 export const rateLimit = sqliteTable('rate_limit', {
   id: text('id').primaryKey(),
   key: text('key').notNull().unique(),

@@ -7,12 +7,15 @@
 
 import { describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
+import { PGlite } from '@electric-sql/pglite'
 import { betterAuth } from 'better-auth'
 import { memoryAdapter } from 'better-auth/adapters/memory'
 import { phoneNumber, username } from 'better-auth/plugins'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
+import { drizzle as drizzlePostgres } from 'drizzle-orm/pglite'
+import { bigint, integer as pgInteger, pgTable, text as pgText } from 'drizzle-orm/pg-core'
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
-import { Effect, Schema as S } from 'effect'
+import { Effect, Exit, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
@@ -20,7 +23,8 @@ import { betterAuthCall, betterAuthHandler, betterAuthRedirect } from '../../src
 import { json } from '../../src/effect/responses.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { currentPassword, email, requiredString } from '../../src/effect/schema.js'
-import { accountOf, sweepSignInFailures } from '../../src/effect/sign-in-limits.js'
+import { accountOf, activeSignInLimits, SignInLimits, sweepSignInFailures, withinSignInLimits } from '../../src/effect/sign-in-limits.js'
+import { DatabaseService } from '../../src/effect/services.js'
 import { testBrowser, testClock, testEnv, testRateLimiter, type TestRateLimiter } from '../../src/testing.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
@@ -184,6 +188,56 @@ describe('sign-in limits', () => {
     expect(Number(cooling.headers.get('Retry-After'))).toBeGreaterThan(60)
   })
 
+  test('guesses sent together are each counted before any password is checked, so no more than max are checked', async () => {
+    const { app, env, rows } = await createApp(testRateLimiter({ limit: 100 }))
+
+    // Each from a client address of its own, all at once, as a botnet sends them.
+    const answers = await Promise.all(Array.from({ length: 12 }, (_, index) => attempt(testBrowser(app, env), `guess-${index}`)))
+    const statuses = answers.map((res) => res.status)
+
+    expect(statuses.filter((status) => status === 422)).toHaveLength(3)
+    expect(statuses.filter((status) => status === 429)).toHaveLength(9)
+    expect(rows()[0]?.count).toBe(3)
+  })
+
+  test("the owner's sign-in clears a failure counted while its own password was checked", async () => {
+    const { app, env, rows } = await createApp(testRateLimiter({ limit: 100 }))
+
+    const [owner, guess] = await Promise.all([attempt(testBrowser(app, env), 'correct horse'), attempt(testBrowser(app, env), 'guess')])
+
+    expect([owner.status, guess.status]).toEqual([303, 422])
+    expect(rows()).toEqual([])
+  })
+
+  test('the count lasts a window past the end of its cooldown, so the cooldown is not spent toward it', async () => {
+    const { app, env, time } = await createApp(testRateLimiter({ limit: 100 }))
+
+    for (const guess of ['guess-1', 'guess-2', 'guess-3']) await attempt(testBrowser(app, env), guess)
+    // A window since the last failure, but less since its minute's cooldown ended.
+    await time.advance('15 minutes')
+
+    expect((await attempt(testBrowser(app, env), 'guess-4')).status).toBe(422)
+    expect((await attempt(testBrowser(app, env), 'correct horse')).status).toBe(429)
+  })
+
+  test('the longest cooldown comes again with each further failure, rather than a fresh count of max', async () => {
+    const { app, env, time } = await createApp(testRateLimiter({ limit: 100 }))
+    const guess = async (password: string) => (await attempt(testBrowser(app, env), password)).status
+
+    for (const password of ['guess-1', 'guess-2', 'guess-3']) await guess(password)
+
+    // A failure as each cooldown ends: 1, 2, 4 and 8 minutes, then the window's 15.
+    for (const [index, wait] of (['61 seconds', '121 seconds', '241 seconds', '481 seconds'] as const).entries()) {
+      await time.advance(wait)
+      expect(await guess(`guess-${index + 4}`)).toBe(422)
+    }
+
+    await time.advance('15 minutes')
+
+    expect(await guess('guess-8')).toBe(422)
+    expect(await guess('correct horse')).toBe(429)
+  })
+
   test('the count starts again once its window has passed', async () => {
     const { app, env, time } = await createApp(testRateLimiter({ limit: 100 }))
 
@@ -208,7 +262,7 @@ describe('sign-in limits', () => {
   })
 
   test("Better Auth's sign-in route counts however the request spells its path or its body's type", async () => {
-    const { app, env } = await createApp(testRateLimiter({ limit: 100 }))
+    const { app, env } = await createApp(testRateLimiter({ limit: 100 }), 4)
     const viaApi = (path: string, type: string, password: string) => testBrowser(app, env).request(`/api/auth${path}`, {
       method: 'POST',
       headers: { 'Content-Type': type },
@@ -217,7 +271,8 @@ describe('sign-in limits', () => {
 
     expect((await viaApi('/sign-in/email', 'Application/JSON', 'guess-1')).status).toBe(401)
     expect((await viaApi('/sign-in/email', 'application/json; charset=utf-8', 'guess-2')).status).toBe(401)
-    // Not a sign-in: Better Auth finds no endpoint there.
+    // Better Auth finds no endpoint there, but a router that collapses slashes
+    // would find the sign-in, so it counts before Better Auth answers.
     expect((await viaApi('//sign-in/email', 'application/json', 'guess-3')).status).toBe(404)
     // A body the framework cannot read is refused, so it is never an uncounted guess.
     expect((await viaApi('/sign-in/email', 'text/plain', 'guess-4')).status).toBe(415)
@@ -275,6 +330,21 @@ describe('sign-in limits', () => {
     await time.advance('16 minutes')
     await scheduled({ cron: '0 * * * *', scheduledTime: 0 }, env)
     expect(rows()).toEqual([])
+  })
+
+  test.each([
+    { max: Number.NaN },
+    { max: 0 },
+    { max: 2.5 },
+    { window: 0 },
+    { cooldown: -60_000 },
+    { cooldown: Number.NaN },
+  ])('setupWeb refuses failures %p, with which no account would cool down', (failures) => {
+    expect(() => setupWeb(new Hono(), {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      auth: { client: () => createAuth(), signInLimits: { limiter: 'SIGN_IN_LIMITER', table: rateLimit, failures } },
+    })).toThrow('auth.signInLimits.failures')
   })
 
   test('a missing binding names itself', async () => {
@@ -455,5 +525,52 @@ describe("Better Auth's own limits beside the sign-in limits", () => {
 
       expect((await signInFrom(app, env)).status).toBe(200)
     }
+  })
+})
+
+describe('the counts on Postgres', () => {
+  const pgRateLimit = pgTable('rate_limit', {
+    id: pgText('id').primaryKey(),
+    key: pgText('key').notNull().unique(),
+    count: pgInteger('count').notNull(),
+    lastRequest: bigint('last_request', { mode: 'number' }).notNull(),
+  })
+
+  test('sign-ins sent together count against each other there too, a success clears them, and a sweep deletes spent rows', async () => {
+    const client = new PGlite()
+    await client.exec('CREATE TABLE rate_limit (id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, count INTEGER NOT NULL, last_request BIGINT NOT NULL)')
+    const db = drizzlePostgres(client)
+    const limits = activeSignInLimits(
+      { limiter: 'SIGN_IN_LIMITER', table: pgRateLimit, failures: { max: 3, window: '15 minutes', cooldown: '1 minute' } },
+      { SIGN_IN_LIMITER: testRateLimiter({ limit: 100 }) }
+    )
+    const answered = (status: number) =>
+      Effect.promise(() => new Promise<Response>((resolve) => setTimeout(() => resolve(new Response(null, { status })), 20)))
+    const signIn = (status: number) => Effect.runPromiseExit(
+      withinSignInLimits({ path: '/sign-in/email', address: '192.0.2.1', account: 'ada@example.com' }, answered(status), {}).pipe(
+        Effect.provideService(SignInLimits, limits),
+        // SAFETY: the counts need only Drizzle's query builder, which PGlite's client has.
+        Effect.provideService(DatabaseService, db as never)
+      )
+    )
+    const rows = () => db.select().from(pgRateLimit)
+
+    const exits = await Promise.all(Array.from({ length: 6 }, () => signIn(401)))
+
+    expect(exits.filter(Exit.isSuccess)).toHaveLength(3)
+    expect((await rows())[0]?.count).toBe(3)
+
+    await db.update(pgRateLimit).set({ lastRequest: 0 })
+    expect(Exit.isSuccess(await signIn(200))).toBe(true)
+    expect(await rows()).toEqual([])
+
+    await db.insert(pgRateLimit).values({ id: 'spent', key: 'sign-in:spent', count: 12, lastRequest: 0 })
+    await Effect.runPromise(sweepSignInFailures.pipe(
+      Effect.provideService(SignInLimits, limits),
+      // SAFETY: as above.
+      Effect.provideService(DatabaseService, db as never)
+    ))
+    expect(await rows()).toEqual([])
+    await client.close()
   })
 })
