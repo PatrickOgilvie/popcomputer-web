@@ -118,10 +118,13 @@ and an action that reads the record and gives it to `cacheSet` later.
 - **NoReadAfterPurgeReturnsTheOldValue**: once a write's purge has run, no
   read returns the value from before it, but one `cacheSet` stored after the
   purge.
-- **CacheSetStoresOnlyCurrentValues** breaks, and stays a known limit:
-  `cacheSet` stores against its tags' generations as they are when it runs,
-  so a value read before a write whose purge ran before `cacheSet` is stored
-  as current.
+- **CacheSetStoresOnlyCurrentValues** breaks for a value `cacheSet` is
+  given, and stays a known limit of that form: it stores against its tags'
+  generations as they are when it runs, so a value read before a write whose
+  purge ran before `cacheSet` is stored as current. Given the Effect that
+  reads the value, `cacheSet` reads the generations first, as `cache` does,
+  which `tests/cache.test.ts` and `tests/fuzz/data-cache.test.ts` check; the
+  model holds the value form alone.
 
 The first holds on the code over 417 states. On 1.6, `cacheSet` stored no tag
 and `cacheGet` read none: a value stored by `cache` or `cacheSet`, its record
@@ -163,7 +166,9 @@ The models found these, or the inventory did, and the framework keeps them:
   [background work](background.md) says, so a job must be safe to run twice;
   a queue message is acked before the `background()` work it started settles.
 - A value given to `cacheSet` that was read before a write whose purge ran
-  before `cacheSet` is stored as current, until its `ttl`.
+  before `cacheSet` is stored as current, until its `ttl`. Given the Effect
+  that reads it instead, `cacheSet` keeps no value a purge during the read
+  made stale.
 - A GET that read a record before a write and stores its response after the
   write's purge keeps the old page in Workers Cache until its `maxAge`.
   `cache` refuses such an entry by its tags' generations; Workers Cache

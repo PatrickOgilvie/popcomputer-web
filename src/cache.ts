@@ -440,24 +440,48 @@ export const cacheGet = <V>(
   }).pipe(Effect.withSpan('Web.cacheGet'))
 
 /**
- * Set a value in cache. With `tags`, the entry records their generations, as
- * `cache()` does, so invalidating any of them makes it a miss for both.
+ * Store a value in the cache. With `tags`, the entry records their
+ * generations, as `cache()` does, so invalidating any of them makes it a miss
+ * for both. Given the Effect that reads the value, such as a `dbQuery`,
+ * `cacheSet` reads the generations before it runs the Effect, so a purge that
+ * follows a write during the read leaves the entry a miss. Given a value read
+ * earlier, it records them as they are when it runs, and cannot know when the
+ * value was read: one read before a write whose purge ran first stays until
+ * its `ttl`.
  *
  * @example
  * ```typescript
+ * // Tagged: give the read, so a write during it cannot be missed
+ * yield* cacheSet(`projects:${id}:summary`, summarizeProject(id), ProjectSummary, {
+ *   ttl: Duration.minutes(5),
+ *   tags: [recordCacheTag('projects', id)],
+ * })
+ *
  * yield* cacheSet(`user:${id}`, user, UserSchema, { ttl: Duration.hours(1) })
  *
  * // With auto schema versioning
  * yield* cacheSet(`user:${id}`, user, UserSchema, { ttl: Duration.hours(1), version: true })
  * ```
  */
-export const cacheSet = <V>(
+export function cacheSet<V, E, R>(
+  key: string,
+  read: Effect.Effect<V, E, R>,
+  schema: CacheSchema<V>,
+  options: CacheOptions
+): Effect.Effect<void, CacheError | E, CacheService | R>
+export function cacheSet<V>(
   key: string,
   value: V,
   schema: CacheSchema<V>,
   options: CacheOptions
-): Effect.Effect<void, CacheError, CacheService> =>
-  Effect.gen(function* () {
+): Effect.Effect<void, CacheError, CacheService>
+export function cacheSet<V, E, R>(
+  key: string,
+  given: V | Effect.Effect<V, E, R>,
+  schema: CacheSchema<V>,
+  options: CacheOptions
+): Effect.Effect<void, CacheError | E, CacheService | R> {
+  return Effect.gen(function* () {
     const cacheService = yield* CacheService
     const entrySchema = CacheEntrySchema(schema)
     const jsonSchema = Schema.fromJsonString(entrySchema)
@@ -472,8 +496,10 @@ export const cacheSet = <V>(
     const totalTtlSeconds = Math.ceil((ttlMs + swrMs) / 1000)
     const tags = options.tags ?? []
     // Its tags' generations, as cache() records them, so an invalidation of
-    // any of them makes the entry a miss.
+    // any of them makes the entry a miss. They are read before the value is,
+    // when cacheSet is given its read, so a purge during the read counts.
     const generations = tags.length === 0 ? undefined : yield* readTagGenerations(cacheService, tags)
+    const value = Effect.isEffect(given) ? yield* given : given
     const t = yield* Clock.currentTimeMillis
 
     const entry: CacheEntry<V> = generations === undefined ? { v: value, t } : { v: value, t, g: generations }
@@ -483,6 +509,7 @@ export const cacheSet = <V>(
 
     yield* cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
   }).pipe(Effect.withSpan('Web.cacheSet'))
+}
 
 export type CacheInvalidateOptions<V> = {
   /** Schema used when caching (required if version is set) */

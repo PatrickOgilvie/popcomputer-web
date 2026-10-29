@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `docs/state-machines.md` lists the state the framework keeps across requests, from an account's sign-in count to Inertia's history, and the rule each keeps, with TLA+ models of five of them in `docs/state-machines/`, which TLC checks over every order of their steps within small bounds.
+- `cacheSet` takes the Effect that reads its value, `cacheSet(key, summarizeProject(id), ProjectSummary, { ttl, tags })`, and reads the tags' generations before it runs the read, as `cache` does, so a write whose purge runs during the read leaves the entry a miss. Given a value read earlier, `cacheSet` cannot know when it was read, and one read before a write whose purge ran first stays until its `ttl`.
 
 ### Changed
 

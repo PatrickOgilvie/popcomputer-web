@@ -68,10 +68,21 @@ const summary = yield* cache(
 A tag gets a generation in the store when an entry first uses it, and each
 purge of the tag replaces it, so an entry stored under an older one is a miss,
 for `cacheGet` too. `cache` reads the generations before it computes, so a
-purge during the computation leaves its value a miss. `cacheSet` with `tags`
-records them as they are when it runs, and cannot know when its value was
-read: a value read before a write whose purge ran before `cacheSet` stays
-until its `ttl`. Compute a tagged value through `cache`.
+purge during the computation leaves its value a miss. So does `cacheSet`
+given the Effect that reads its value, since it reads them before running
+that Effect:
+
+```ts
+yield* cacheSet(`projects:${project.id}:summary`, summarizeProject(project.id), ProjectSummary, {
+  ttl: Duration.minutes(5),
+  tags: [recordCacheTag('projects', project.id)],
+})
+```
+
+Given a value read earlier, `cacheSet` records them as they are when it
+runs, and cannot know when the value was read: a value read before a write
+whose purge ran before `cacheSet` stays until its `ttl`. Give a tagged
+`cacheSet` its read, or compute the value through `cache`.
 A tagged read costs one store read per tag besides the entry's own; a purge of
 a tag no entry uses costs a read and no write. KV accepts one write a second
 to a key and takes up to a minute to show a write everywhere, so tag data by

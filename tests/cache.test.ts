@@ -1239,6 +1239,40 @@ describe('cache tags', () => {
     }).pipe(Effect.provide(layer), Effect.runPromise)
   })
 
+  it('cacheSet given the read keeps no value a purge during the read made stale', async () => {
+    const { layer } = makeTestCache()
+    const tagged = { ...ttl, tags: ['projects:p1'] }
+    let version = 1
+
+    // Another request writes the record, and its route purges the tag, while this one reads it.
+    const read = Effect.gen(function* () {
+      const value = version
+      version = 2
+      yield* invalidateCacheTags(['projects:p1'])
+
+      return value
+    })
+
+    await Effect.gen(function* () {
+      yield* cacheSet('project:p1', read, S.Number, tagged)
+
+      expect(yield* cacheGet('project:p1', S.Number)).toEqual(Option.none())
+      expect(yield* cache('project:p1', Effect.sync(() => version), S.Number, tagged)).toBe(2)
+    }).pipe(Effect.provide(layer), Effect.runPromise)
+  })
+
+  it('cacheSet given the read stores what it read, and fails as the read does', async () => {
+    const { layer } = makeTestCache()
+
+    await Effect.gen(function* () {
+      yield* cacheSet('project:p1', Effect.succeed('read'), S.String, { ...ttl, tags: ['projects:p1'] })
+      expect(yield* cacheGet('project:p1', S.String)).toEqual(Option.some('read'))
+
+      expect(yield* Effect.flip(cacheSet('project:p2', Effect.fail('unreachable'), S.String, ttl))).toBe('unreachable')
+      expect(yield* cacheGet('project:p2', S.String)).toEqual(Option.none())
+    }).pipe(Effect.provide(layer), Effect.runPromise)
+  })
+
   it('does not serve a stale tagged entry while revalidating', async () => {
     const { layer } = makeTestCache()
     let computations = 0

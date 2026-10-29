@@ -2,10 +2,11 @@
  * The data cache as a sequence of steps, against the real `cache`,
  * `cacheGet`, `cacheSet` and `invalidateCacheTags` over an in-memory store
  * and Effect's test clock. Three keys depend on two records: one on `a`, one
- * on `a` and `b`, one on neither. Steps compute a key (the computation may
- * be held while other steps run, as a slow query is), read one, store one,
- * write a record and purge its tag as a route's `purges` does, and let time
- * pass. Each value records the records' versions it was computed from.
+ * on `a` and `b`, one on neither. Steps compute a key, read one, store one,
+ * or store what `cacheSet` is given the read of (a computation or a read may
+ * be held while other steps run, as a slow query is), write a record and
+ * purge its tag as a route's `purges` does, and let time pass. Each value
+ * records the records' versions it was computed from.
  *
  * docs/state-machines/DataCache.tla checks one value under one tag; this
  * runs the code itself, with every interleaving the steps allow:
@@ -20,8 +21,8 @@
 import { describe } from 'bun:test'
 import { Arbitrary, Clock, Deferred, Effect, Fiber, Layer, Option, Schema as S } from 'effect'
 import { TestClock } from 'effect/testing'
-import { CacheService, cache, cacheGet, cacheSet, invalidateCacheTags, type CacheClient } from '../../src/cache.js'
-import { oneOf, pick, property, show } from './property'
+import { CacheService, cache, cacheGet, cacheSet, invalidateCacheTags, type CacheClient, type CacheError } from '../../src/cache.js'
+import { oneOf, pick, property, show, weighted } from './property'
 
 type Version = { a: number; b: number }
 
@@ -42,17 +43,26 @@ type Step =
   | { readonly _tag: 'Release' }
   | { readonly _tag: 'Get'; readonly key: Key }
   | { readonly _tag: 'Set'; readonly key: Key }
+  | { readonly _tag: 'SetRead'; readonly key: Key; readonly hold: boolean }
   | { readonly _tag: 'Write'; readonly record: keyof Version }
   | { readonly _tag: 'Tick'; readonly ms: number }
 
 const keys = pick(['one', 'both', 'none'])
 
+// Held computations and reads, writes and releases come most often: their order is what the rules are about.
+const holds = weighted([true, 2], [false, 1])
+
 const step = oneOf<Step>(
-  Arbitrary.map(Arbitrary.all([keys, pick([false, true])]), ([key, hold]) => ({ _tag: 'Cache', key, hold })),
+  Arbitrary.map(Arbitrary.all([keys, holds]), ([key, hold]) => ({ _tag: 'Cache', key, hold })),
+  Arbitrary.map(Arbitrary.all([keys, holds]), ([key, hold]) => ({ _tag: 'SetRead', key, hold })),
+  Arbitrary.map(pick(['a', 'b']), (record) => ({ _tag: 'Write', record })),
   Arbitrary.Constant({ _tag: 'Release' }),
   Arbitrary.map(keys, (key) => ({ _tag: 'Get', key })),
-  Arbitrary.map(keys, (key) => ({ _tag: 'Set', key })),
+  Arbitrary.map(Arbitrary.all([keys, holds]), ([key, hold]) => ({ _tag: 'Cache', key, hold })),
+  Arbitrary.map(Arbitrary.all([keys, holds]), ([key, hold]) => ({ _tag: 'SetRead', key, hold })),
   Arbitrary.map(pick(['a', 'b']), (record) => ({ _tag: 'Write', record })),
+  Arbitrary.Constant({ _tag: 'Release' }),
+  Arbitrary.map(keys, (key) => ({ _tag: 'Set', key })),
   Arbitrary.map(pick([400, 700, 1100]), (ms) => ({ _tag: 'Tick', ms }))
 )
 
@@ -78,13 +88,17 @@ function memoryStore(): CacheClient {
   }
 }
 
-interface Held {
-  readonly key: Key
-  readonly call: number
-  readonly purgedBefore: Version
-  readonly gate: Deferred.Deferred<void>
-  readonly fiber: Fiber.Fiber<Value>
-}
+/** A computation, or a `cacheSet` read, held while other steps run. */
+type Held =
+  | {
+      readonly kind: 'cache'
+      readonly key: Key
+      readonly call: number
+      readonly purgedBefore: Version
+      readonly gate: Deferred.Deferred<void>
+      readonly fiber: Fiber.Fiber<Value>
+    }
+  | { readonly kind: 'set'; readonly call: number; readonly gate: Deferred.Deferred<void>; readonly fiber: Fiber.Fiber<void, CacheError> }
 
 /** Runs the steps, and returns every way a read broke a rule. */
 const runSteps = (steps: readonly Step[]) =>
@@ -125,6 +139,13 @@ const runSteps = (steps: readonly Step[]) =>
     const release = (entry: Held) =>
       Effect.gen(function* () {
         yield* Deferred.succeed(entry.gate, undefined)
+
+        if (entry.kind === 'set') {
+          yield* Fiber.join(entry.fiber)
+          storedAt.set(entry.call, yield* Clock.currentTimeMillis)
+          return
+        }
+
         const value = yield* Fiber.join(entry.fiber)
         const now = yield* Clock.currentTimeMillis
 
@@ -156,7 +177,7 @@ const runSteps = (steps: readonly Step[]) =>
           yield* Effect.raceFirst(Deferred.await(started), Effect.asVoid(Fiber.await(fiber)))
 
           if (yield* Deferred.isDone(started)) {
-            held.push({ key: current.key, call, purgedBefore, gate, fiber })
+            held.push({ kind: 'cache', key: current.key, call, purgedBefore, gate, fiber })
           } else {
             checkRead('cache', current.key, yield* Fiber.join(fiber), purgedBefore, now, call)
           }
@@ -178,6 +199,24 @@ const runSteps = (steps: readonly Step[]) =>
         case 'Set':
           yield* cacheSet(current.key, { a: db.a, b: db.b, at: now, by: 0 }, Value, optionsFor(current.key))
           break
+        case 'SetRead': {
+          const call = ++calls
+
+          if (!current.hold) {
+            yield* cacheSet(current.key, compute(call), Value, optionsFor(current.key))
+            storedAt.set(call, now)
+            break
+          }
+
+          const started = yield* Deferred.make<void>()
+          const gate = yield* Deferred.make<void>()
+          const fiber = yield* Effect.forkChild(cacheSet(current.key, compute(call, started, gate), Value, optionsFor(current.key)))
+
+          // cacheSet always runs its read: it looks nothing up.
+          yield* Deferred.await(started)
+          held.push({ kind: 'set', call, gate, fiber })
+          break
+        }
         case 'Write':
           db[current.record] += 1
           yield* invalidateCacheTags([`records:${current.record}`])
