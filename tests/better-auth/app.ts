@@ -151,8 +151,19 @@ const sendMagicLink = action(Effect.gen(function* () {
   return yield* redirect(paths.home)
 }))
 
+/**
+ * The emailed sign-in link's page, whose button posts the token back: Better
+ * Auth's token signs in once, whoever sends it, so a mail scanner's fetch of
+ * the link must not.
+ */
+const showMagicLink = action(Effect.gen(function* () {
+  const input = yield* validateRequest(VerifyLink)
+
+  return yield* render('Auth/MagicLink', input)
+}).pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired'))))
+
 const verifyMagicLink = action(Effect.gen(function* () {
-  const input = yield* validateRequest(S.Struct({ token: requiredString }))
+  const input = yield* validateRequest(VerifyLink)
 
   return yield* betterAuthRedirect('magicLinkVerify', { query: input }, { redirectTo: paths.dashboard })
 }).pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired'))))
@@ -262,7 +273,8 @@ routes
   .post(paths.signInAcme, signInWithAcme)
   .post(paths.twoFactor, verifyTwoFactor)
   .post(paths.magicLink, sendMagicLink)
-  .get(paths.magicLinkVerify, verifyMagicLink)
+  .get(paths.magicLinkVerify, showMagicLink)
+  .post(paths.magicLinkVerify, verifyMagicLink)
 
 routes
   .provide(RequireAuthLayer)

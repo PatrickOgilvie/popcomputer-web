@@ -15,10 +15,15 @@ other, typed from the registered client. Where they meet the application:
   and the code form's action calls `betterAuthRedirect('verifyTOTP', { body: input }, { redirectTo, errors })`.
 - An OAuth provider, a company's own or GitHub's: see
   [Signing in with an OAuth provider](#signing-in-with-an-oauth-provider).
-- A magic link, or another link Better Auth emails: the action verifying its
-  token, `betterAuthRedirect('magicLinkVerify', { query: input }, { redirectTo })`,
-  fails as a rejection does once the link is used or expired, so it shows a
-  page instead: `.pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired')))`.
+- A magic link, or another link Better Auth emails: email a link to a page
+  whose button posts its token, as the verify-email link does ([Proving an
+  address](auth.md#proving-an-address)), never Better Auth's own `url`. Its
+  token signs in once, whoever sends it, so a mail scanner's or a link
+  preview's fetch would hold the member's session and leave their click an
+  expired link. The post's action, `betterAuthRedirect('magicLinkVerify',
+  { query: input }, { redirectTo })`, fails as a rejection does once the link
+  is used or expired, so it shows a page instead:
+  `.pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired')))`.
   Beside password sign-up, keep `createAuth`'s `requireEmailVerification`: a
   link's first sign-in revokes the password and sessions of an account someone
   else registered with that address, not a two-factor challenge they hold or a

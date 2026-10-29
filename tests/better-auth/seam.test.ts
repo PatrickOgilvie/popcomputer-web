@@ -68,6 +68,9 @@ const me = async (browser: Browser) => {
   return { status: res.status, body: res.status === 200 ? await res.json() : undefined, res }
 }
 
+/** Press the button on the page of an emailed sign-in link. */
+const followMagicLink = (browser: Browser, token: string) => browser.request('/magic-link/verify', form({ token }))
+
 const setsSession = (res: Response) =>
   res.headers.getSetCookie().some((cookie) => cookie.startsWith(`${SESSION}=`) && !/max-age=0/i.test(cookie))
 
@@ -500,6 +503,26 @@ describe('two-factor', () => {
 })
 
 describe('magic links', () => {
+  test("a fetch of the emailed link, as a mail scanner or a link preview makes, signs no one in: only its page's button does", async () => {
+    const { browser, outbox } = setup()
+    const member = browser()
+    await member.request('/magic-link', form({ email: 'grace@example.com' }))
+    const token = outbox.magicLinks.at(-1)?.token ?? ''
+    const scanner = browser()
+
+    const fetched = await scanner.request(`/magic-link/verify?token=${token}`, { headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } })
+
+    expect(fetched.status).toBe(200)
+    expect(await fetched.json()).toMatchObject({ component: 'Auth/MagicLink', props: { token } })
+    expect(scanner.cookies.has(SESSION)).toBe(false)
+
+    const pressed = await followMagicLink(member, token)
+
+    expect(pressed.status).toBe(303)
+    expect(pressed.headers.get('Location')).toBe('/dashboard')
+    expect((await me(member)).body).toMatchObject({ email: 'grace@example.com' })
+  })
+
   test('a link signs the visitor in once, and a used link shows that it expired', async () => {
     const { browser, outbox } = setup()
     const visitor = browser()
@@ -507,14 +530,17 @@ describe('magic links', () => {
     await visitor.request('/magic-link', form({ email: 'grace@example.com' }))
     const [link] = outbox.magicLinks
 
-    const first = await visitor.request(`/magic-link/verify?token=${link?.token}`)
+    const first = await followMagicLink(visitor, link?.token ?? '')
 
     expect(first.status).toBe(303)
     expect(first.headers.get('Location')).toBe('/dashboard')
     expect((await me(visitor)).body).toMatchObject({ email: 'grace@example.com' })
 
     const again = browser()
-    const reused = await again.request(`/magic-link/verify?token=${link?.token}`, { headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } })
+    const reused = await again.request('/magic-link/verify', {
+      ...form({ token: link?.token ?? '' }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Inertia': 'true', 'X-Inertia-Version': '1' },
+    })
 
     expect(reused.status).toBe(200)
     expect(await reused.json()).toMatchObject({ component: 'Auth/LinkExpired' })
@@ -551,7 +577,7 @@ describe("an account registered with someone else's address", () => {
 
     const victim = browser()
     await victim.request('/magic-link', form({ email: 'victim@example.com' }))
-    await victim.request(`/magic-link/verify?token=${outbox.magicLinks.at(-1)?.token}`)
+    await followMagicLink(victim, outbox.magicLinks.at(-1)?.token ?? '')
     await challenger.request('/two-factor', form({ code: backupCodes[0] ?? 'no-code' }))
 
     expect((await me(victim)).body).toMatchObject({ email: 'victim@example.com' })
@@ -568,7 +594,7 @@ describe("an account registered with someone else's address", () => {
     // The owner's link lands while Mallory's password sign-ins are hashing.
     const racers = [browser(), browser(), browser()]
     const racing = Promise.all(racers.map((racer) => signIn(racer, 'victim@example.com')))
-    await victim.request(`/magic-link/verify?token=${outbox.magicLinks.at(-1)?.token}`)
+    await followMagicLink(victim, outbox.magicLinks.at(-1)?.token ?? '')
     await racing
     const retried = browser()
     await signIn(retried, 'victim@example.com')
@@ -623,7 +649,7 @@ describe("an account registered with someone else's address", () => {
 
     const victim = browser()
     await victim.request('/magic-link', form({ email: 'victim@example.com' }))
-    await victim.request(`/magic-link/verify?token=${outbox.magicLinks.at(-1)?.token}`)
+    await followMagicLink(victim, outbox.magicLinks.at(-1)?.token ?? '')
     // Mallory's texted code, once the owner holds the address, makes a user of its own.
     const later = browser()
     await api(later, '/phone-number/send-otp', { phoneNumber: phone })

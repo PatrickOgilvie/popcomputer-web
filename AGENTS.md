@@ -152,8 +152,9 @@ here, as the demo's does.
    token to the action that proves the address, so a mail scanner's fetch of
    the link proves nothing. Better
    Auth's plugins (organizations, two-factor, magic links, OAuth providers)
-   stay Better Auth's: call their endpoints by name the same way. Sign in
-   through an OAuth provider (`socialProviders`, or `genericOAuth` for a
+   stay Better Auth's: call their endpoints by name the same way, and email
+   a magic link, as the verification link, to a page whose button posts its
+   token. Sign in through an OAuth provider (`socialProviders`, or `genericOAuth` for a
    company's own) with `betterAuthRedirect('signInSocial', ...)`, and serve
    its callback alone, `routes.get(paths.authCallback, betterAuthHandler())`,
    with `account: { accountLinking: { disableImplicitLinking: true } }` and
