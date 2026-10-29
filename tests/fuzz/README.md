@@ -1,10 +1,12 @@
 # Fuzz tests
 
 Each file states a property the framework must keep for any input, and
-checks it on inputs Effect generates (`effect/Arbitrary`). The first files
-check functions that read a visitor's text; `requests.test.ts` and
-`endpoints.test.ts` send whole requests through `setupWeb`, to `app.ts` and
-to endpoint contracts. `bun test` runs
+checks it on inputs Effect generates (`effect/Arbitrary`), in three layers:
+functions that read a visitor's text; whole requests through `setupWeb`, to
+`app.ts` and to endpoint contracts (`requests.test.ts`, `endpoints.test.ts`);
+and sequences of steps over state that lasts between requests, the data
+cache, the page cache and flash, which run the code of the lifecycles
+`docs/state-machines.md` models. `bun test` runs
 every property for a few hundred cases from a fixed seed, so the commit gate
 is repeatable. `bun run fuzz` runs many more cases from a random seed:
 
@@ -31,6 +33,9 @@ security audits, on the release that had it:
 | `validators.test.ts` | every validator answers any input, decodes its own encoding to the same value, and no text makes it slow | run-1 C5, on 1.4.2 |
 | `requests.test.ts` | any request to `app.ts`, from a visitor, ada or grace, is answered without a defect or a write it refused, shows and changes no one's private record but its owner's, refuses another site's writes, keeps signed-in answers from shared caches, and answers a JSON client in the envelope | 1.4.2's cross-site check, which ran after route lookup and answered a write to an unrouted path 404 |
 | `endpoints.test.ts` | an endpoint carries any value of its types through `call` and back, answers any other body before its handler runs, and with `auth: true` answers 401 before reading input | three `call` bugs it found after 1.6.0 |
+| `data-cache.test.ts` | over any steps, held computations among them, no read that starts after a purge returns a value from before its write, and `cache` returns nothing stored longer ago than its `ttl` | 1.6.0's `cacheSet`, which stored no tags (`DataCache.tla`'s counterexample) |
+| `page-cache.test.ts` | over any requests from a guest, a guest with a cookie and two members, the default page cache answers as a fresh render does, and stores no page a guard, middleware or sign-in decides for | run-1 C6 and C12 on 1.4.2, run-2 F11 on 1.5.0 |
+| `flash.test.ts` | over any posts and visits from two browsers, a page shows only its own browser's flash and errors, each at most once | a flash cookie never expired, planted by hand: no release had one |
 
 A property whose bug leaves lasting changes, such as one written onto
 `Object.prototype`, puts the realm right after each case, as

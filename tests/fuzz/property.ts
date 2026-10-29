@@ -64,6 +64,13 @@ export function oneOf<A>(...arbitraries: readonly [Arbitrary.Arbitrary<A>, ...Ar
   return Arbitrary.flatMap(pick([0, ...rest.map((_, index) => index + 1)]), (index) => arbitraries[index])
 }
 
+/** One of the values, each as often as its weight says, shrinking toward the first. */
+export function weighted<A>(...choices: readonly [readonly [A, number], ...(readonly [A, number])[]]): Arbitrary.Arbitrary<A> {
+  const [first, ...rest] = choices.flatMap(([value, weight]) => Array.from({ length: weight }, () => Arbitrary.Constant(value)))
+
+  return first === undefined ? Arbitrary.Constant(choices[0][0]) : oneOf(first, ...rest)
+}
+
 /** Text made of the given pieces, up to `maxPieces` of them. */
 export function textOf(pieces: readonly [string, ...string[]], maxPieces = 8): Arbitrary.Arbitrary<string> {
   return Arbitrary.map(Arbitrary.array(pick(pieces), { maxLength: maxPieces }), (chosen) => chosen.join(''))
