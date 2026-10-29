@@ -58,12 +58,13 @@ export const endpoints = {
 `action(endpoint, handler)` implements one. The handler receives `params`
 (the path's placeholders), the signed-in user as `auth` when the contract has
 `auth: true`, and the `query`, `body` and `headers` the contract declares,
-already decoded. A contract with `auth: true` is answered 401 for a client
-that is not signed in, before its input is read, so the requirement is
-declared once, where the API's description reads it too. Input that does not
-decode is answered `422`, with each invalid field's message in `errors`,
-before the handler runs. The handler returns
-the success value, which the response encodes through the `success` schema,
+already decoded. A body is read through its JSON form, as `call` sends it and
+`openApi` describes it, so a `Date` arrives as its ISO string. A contract
+with `auth: true` is answered 401 for a client that is not signed in, before
+its input is read, so the requirement is declared once, where the API's
+description reads it too. Input that does not decode is answered `422`,
+with each invalid field's message in `errors`, before the handler runs. The
+handler returns the success value, which the response encodes through the `success` schema,
 so only the fields the schema declares leave the server, whatever the row
 holds; an endpoint without `success` answers `204`. A failure the contract
 declares is answered with its status in the error envelope, its `tag` the

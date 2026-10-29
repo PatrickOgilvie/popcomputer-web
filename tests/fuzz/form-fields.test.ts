@@ -7,9 +7,10 @@
  * bytes into a list of thousands of slots (C4).
  */
 import { describe } from 'bun:test'
-import { Arbitrary, Predicate } from 'effect'
+import { Arbitrary } from 'effect'
 import { nestFields } from '../../src/effect/form-fields'
-import { anyText, oneOf, pick, property, textOf, type Refusal } from './property'
+import { anyText, oneOf, pick, property, textOf } from './property'
+import { realmGuard } from './realm'
 
 /** How many more slots than items sent a list may hold, as nestFields allows. */
 const MAX_LIST_GAP = 20
@@ -29,58 +30,6 @@ const formOf = (names: Arbitrary.Arbitrary<string>) =>
 
 /** Names a browser could send: the segments above, or any text with brackets and dots in it. */
 const anyName = oneOf(fieldName(SEGMENTS), textOf(['a', '[', ']', '.', '0', '__proto__', 'toString', '\u0000', 'é'], 10), anyText)
-
-/** The objects every request in a realm shares, by name. */
-const INTRINSICS: ReadonlyArray<readonly [string, object]> = [
-  ['Object', Object],
-  ['Function', Function],
-  ['Array', Array],
-  ['String', String],
-  ['Number', Number],
-  ['Boolean', Boolean],
-  ['Symbol', Symbol],
-  ['Object.prototype', Object.prototype],
-  ['Function.prototype', Function.prototype],
-  ['Array.prototype', Array.prototype],
-  ['String.prototype', String.prototype],
-]
-
-/**
- * The own keys of each shared intrinsic, and of each object hanging from
- * one, so a check can see what a call added to them and take it away again:
- * a change left in place would fail every later case, and shrinking could
- * not find the input that made it.
- */
-function realmGuard(): () => Refusal {
-  const shared = new Map<object, string>()
-
-  for (const [name, root] of INTRINSICS) {
-    shared.set(root, name)
-
-    for (const key of Reflect.ownKeys(root)) {
-      const value: unknown = Object.getOwnPropertyDescriptor(root, key)?.value
-
-      if (Predicate.isObjectKeyword(value) && !shared.has(value)) shared.set(value, `${name}.${String(key)}`)
-    }
-  }
-
-  const before = [...shared].map(([object, name]) => ({ object, name, keys: new Set(Reflect.ownKeys(object)) }))
-
-  return () => {
-    const added: string[] = []
-
-    for (const { object, name, keys } of before) {
-      for (const key of Reflect.ownKeys(object)) {
-        if (keys.has(key)) continue
-
-        added.push(`${name}.${String(key)}`)
-        Reflect.deleteProperty(object, key)
-      }
-    }
-
-    return added.length === 0 ? undefined : `wrote ${added.join(', ')} on the realm's built-ins`
-  }
-}
 
 /** The length of every list in nested fields, however deep. */
 function listLengths(nested: ReturnType<typeof nestFields>): number[] {

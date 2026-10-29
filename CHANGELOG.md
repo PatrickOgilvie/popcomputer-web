@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `setupWeb` refuses `auth.signInLimits.failures` whose `max` is not a whole number of at least 1, or whose `window` or `cooldown` is not a positive duration. A `NaN`, such as `Number()` of a variable that is not set, turned the cooldown off without a word.
 - A session cookie that a response expires with an `Expires` date already past ends the session for the history's clear, as `Max-Age=0` and an empty value do.
 - `cacheGet` reads an entry as absent once one of the tags it was stored with has been purged since, as `cache` does, and `cacheSet` with `tags` records their generations. `cacheGet` returned an entry whatever its tags, so the old value of a record a route had written and purged; and `cacheSet` dropped its `tags`, so a purge never invalidated its entry and `cache` with the same tags never read it.
+- An endpoint reads its body through the schema's JSON form, as `call` sends it and `openApi` describes it: a `Date` field takes its ISO string. It read the body with the schema itself, so a contract with a `Date` in its body refused every `call`, which sends the date as a string.
+- `call` leaves out a body field the struct may leave out, when the caller leaves it out or gives it as `undefined`. It sent `null`, which a field that may also be null, `S.optional(S.NullOr(...))`, reads as a value: an update meant to leave the field alone cleared it.
+- `call` sends the fields of an object made with no prototype, such as one from `Object.create(null)`. It sent none of them, and threw for a required one.
 
 ## [1.6.0] - 2026-10-25
 

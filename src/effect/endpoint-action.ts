@@ -91,6 +91,9 @@ export function endpointAction<const Ep extends Endpoint, Err, R>(
 > {
   const spec: EndpointSpec = ep.spec
   const failures = declaredFailures(spec)
+  // A body arrives as JSON, so it is read through the JSON form `call` sends
+  // and the success leaves in: a Date as its ISO string.
+  const body = spec.body === undefined ? undefined : S.toCodecJson(spec.body)
 
   const effect = Effect.gen(function* () {
     const request = yield* RequestService
@@ -103,8 +106,8 @@ export function endpointAction<const Ep extends Endpoint, Err, R>(
       input.query = yield* validateRequest(spec.query, { request: { order: ['query'] } })
     }
 
-    if (spec.body !== undefined) {
-      input.body = yield* validateRequest(spec.body, { request: { order: ['body'] } })
+    if (body !== undefined) {
+      input.body = yield* validateRequest(body, { request: { order: ['body'] } })
     }
 
     if (spec.headers !== undefined) {

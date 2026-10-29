@@ -54,7 +54,7 @@ export function property<A>(
 export function pick<const Values extends readonly [SchemaAST.LiteralValue, ...SchemaAST.LiteralValue[]]>(
   values: Values
 ): Arbitrary.Arbitrary<Values[number]> {
-  return Arbitrary.schema(S.Literals(values))
+  return Arbitrary.schema(S.Literals(values), { shrink: (value) => values.slice(0, values.indexOf(value)) })
 }
 
 /** A value from one of `arbitraries`, shrinking toward the first. */

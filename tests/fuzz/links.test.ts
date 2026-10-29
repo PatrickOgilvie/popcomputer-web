@@ -11,7 +11,8 @@ import { describe, expect, test } from 'bun:test'
 import { Arbitrary, Schema as S } from 'effect'
 import { sameOriginReferer } from '../../src/effect/referer'
 import { href } from '../../src/paths'
-import { as, asJson, createApp } from '../security/app'
+import { signedIn, testEnv } from '../../src/testing.js'
+import { createApp } from './app'
 import { anyText, oneOf, pick, property, show, textOf } from './property'
 
 const ORIGIN = 'https://app.test'
@@ -113,12 +114,13 @@ describe('sameOriginReferer', () => {
 })
 
 describe('intendedUrl', () => {
-  // The security fixture's /after-sign-in answers intendedUrl('/home') as JSON.
+  // The fuzz app's /after-sign-in answers intendedUrl('/home') as JSON.
   const { app } = createApp()
   const Answer = S.Struct({ url: S.String })
+  const ada = testEnv(signedIn({ id: 'ada' }), { ENVIRONMENT: 'production' })
 
   const intendedFor = async (redirect: string): Promise<string> => {
-    const res = await app.request(`/after-sign-in?${new URLSearchParams({ redirect })}`, asJson(), as('ada'))
+    const res = await app.request(`/after-sign-in?${new URLSearchParams({ redirect })}`, { headers: { Accept: 'application/json' } }, ada)
 
     return S.decodeUnknownSync(Answer)(await res.json()).url
   }

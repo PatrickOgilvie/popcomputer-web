@@ -33,7 +33,7 @@
  * const result = await call(endpoints.createPlace, { body: { name: 'Café' } })
  */
 
-import { Option, Schema as S } from 'effect'
+import { Option, Predicate, Schema as S } from 'effect'
 import { ErrorResponse, type ErrorResponseBody } from './effect/error-response.js'
 import type { PathParamName, PathTarget } from './paths.js'
 import type { AuthUser } from './effect/services.js'
@@ -251,17 +251,30 @@ function encodeJson(schema: EndpointSchema, value: unknown, what: string): unkno
   }
 }
 
-/** The value with each field the client left out that may be null set to null, as the schema's type has it. */
+/**
+ * The value with each field the client left out that may be null set to
+ * null, as the schema's type has it. A field the struct may leave out stays
+ * out, and one given as undefined is left out: JSON has no undefined, and
+ * the JSON form would send null, which a nullable field reads as a value.
+ */
 function withOmittedNulls(schema: EndpointSchema, value: unknown): unknown {
   const fields: unknown = Reflect.get(schema, 'fields')
 
   if (!(fields instanceof Object)) return value
 
-  const given: Record<string, unknown> = value instanceof Object ? { ...value } : {}
+  // An object made with no prototype, as Object.create(null) makes one, is not
+  // `instanceof Object`, and its fields count as much as any other's.
+  const given: Record<string, unknown> = Predicate.isObject(value) ? { ...value } : {}
 
   for (const [key, field] of Object.entries(fields)) {
     // SAFETY: a struct's fields are schemas.
-    if (!Object.hasOwn(given, key) && S.is(S.toType(field as S.Top))(null)) given[key] = null
+    const declared = field as S.Top
+
+    if (S.is(S.toType(S.Struct({ field: declared })))({})) {
+      if (given[key] === undefined) delete given[key]
+    } else if (!Object.hasOwn(given, key) && S.is(S.toType(declared))(null)) {
+      given[key] = null
+    }
   }
 
   return given
