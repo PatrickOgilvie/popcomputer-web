@@ -168,7 +168,8 @@ yield* purgeCache(recordCacheTag('projects', 'project-1'), 'projects')
 
 A cached page that reads records beyond its route's bindings, such as the
 translation a fallback shows, adds their tags to its response with
-`tagCache`, so writes that purge them refresh it:
+`tagCache` in its action, so writes that purge them refresh it; work that
+calls it after the response is stored, such as `background()`'s, fails:
 
 ```ts
 yield* tagCache(recordCacheTag('projects', 'project-1'))

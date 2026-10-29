@@ -566,13 +566,24 @@ export class PendingCacheTags extends Context.Service<
   }
 >()('@popcomputer/web/PendingCacheTags') {}
 
-/** An empty set of added cache tags, for one request. */
+/**
+ * An empty set of added cache tags, for one request. It is taken once, when
+ * the route stores its response: a tag added after that, by work that
+ * outlived the action, would tag nothing, so adding one is a defect.
+ */
 export function makePendingCacheTags(): PendingCacheTags['Service'] {
   const tags = new Set<string>()
+  let taken = false
 
   return PendingCacheTags.of({
-    add: (added) => Effect.sync(() => added.forEach((tag) => tags.add(tag))),
-    take: Effect.sync(() => [...tags]),
+    add: (added) => taken
+      ? Effect.die(new Error(`tagCache(${added.join(', ')}) was called after its route had stored the response, so it would tag nothing. Tag the response in the action, before it answers.`))
+      : Effect.sync(() => added.forEach((tag) => tags.add(tag))),
+    take: Effect.sync(() => {
+      taken = true
+
+      return [...tags]
+    }),
   })
 }
 

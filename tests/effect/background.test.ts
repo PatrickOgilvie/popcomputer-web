@@ -5,7 +5,8 @@ import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { cache, kvCache, type KVNamespaceLike } from '../../src/cache.js'
 import { background } from '../../src/effect/background.js'
-import { purgeCache, recordCacheTag, ResponseCachePurgeError, type PendingPurges } from '../../src/effect/response-cache.js'
+import { purgeCache, recordCacheTag, ResponseCachePurgeError, tagCache, type PendingPurges } from '../../src/effect/response-cache.js'
+import { action } from '../../src/effect/action.js'
 import { json } from '../../src/effect/responses.js'
 import { HttpError } from '../../src/effect/errors.js'
 import {
@@ -69,6 +70,41 @@ describe('background', () => {
     expect(events).toHaveLength(1)
     expect(events[0].metadata).toEqual({ operation: 'analytics.record-signup' })
     expect(events[0].handling).toBe('unhandled')
+  })
+
+  test('fails, rather than tagging nothing, when work after the response tags the response its route cached', async () => {
+    const events: EffectErrorEvent[] = []
+    const waitUntilPromises: Promise<unknown>[] = []
+    const release = Deferred.makeUnsafe<void>()
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1.0.0',
+      render: (page) => JSON.stringify(page),
+    }).services({
+      request: () =>
+        Layer.succeed(EffectErrorObserverService, {
+          observe: (event) => Effect.sync(() => events.push(event)),
+        }),
+    })
+
+    routes.get('/report', action(Effect.gen(function* () {
+      // Runs once the response is stored, too late to tag it.
+      yield* background('report.tag', Deferred.await(release).pipe(Effect.andThen(tagCache('reports'))))
+
+      return yield* json({ total: 1 })
+    })), { cache: { maxAge: 60 } })
+
+    const response = await app.fetch(new Request('http://localhost/report'), {}, {
+      waitUntil: (promise: Promise<unknown>) => waitUntilPromises.push(promise),
+      passThroughOnException: () => {},
+      props: {},
+    })
+
+    expect(response.status).toBe(200)
+    await Effect.runPromise(Deferred.succeed(release, undefined))
+    await Promise.allSettled(waitUntilPromises)
+    expect(events.map((event) => event.metadata)).toEqual([{ operation: 'report.tag' }])
+    expect(String(events[0]?.error)).toContain('tagCache(reports)')
   })
 
   test("keeps a promise handed to waitUntil alive, and observes its failure", async () => {

@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A signed-in page's Inertia `version` names its user: the assets' version, `~`, and 12 hex digits of a hash of the user's id, which `render` gives as `RenderOptions.userId`, and `web()` takes such a version as current. Inertia shows a page from a tab's history only when its version is the current page's, and asks the server otherwise, so Back in any tab whose page went to another member, or to a guest, shows none of the previous member's pages. The one-time clear reached only the tab that showed the first page after the switch: another tab whose next page went to the new member still decrypted the previous member's pages from history, and under `history: { encrypt: true }` a session cookie that simply expired cleared nothing.
 - The Better Auth template's emailed sign-in link opens a page whose button signs in, as its verify-email link does: `docs/auth-plugins.md` and `AGENTS.md` email a link to a page that a GET renders, whose button posts the token to the action that calls `magicLinkVerify`. The documented action took the token on a GET, and Better Auth's token signs in once, whoever sends it, so a mail scanner's or a link preview's fetch held the member's session and left their own click on an expired link. An application that signs in on its magic link's GET splits it so.
 
+### Changed
+
+- `tagCache` called after its route has stored the response, by work that outlived the action such as `background()`'s, fails with a defect naming the call, as a late `purgeCache` does. It added the tags to a set nothing read again, so the response it meant to tag was never purged by them.
+
 ### Fixed
 
 - `href` and `redirect` leave a placeholder unfilled for text with a lone surrogate, which no URL can carry, as they do for `..`. `encodeURIComponent` threw on it, so one stored value a JSON body set, such as `"\ud800"`, failed every page and job that listed it.
