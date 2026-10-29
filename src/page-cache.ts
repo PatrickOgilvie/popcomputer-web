@@ -35,6 +35,7 @@ import {
 import { copyTestState } from './effect/test-env.js'
 import { openWebContext } from './request-context.js'
 import { HEADERS } from './types.js'
+import { isCurrentVersion } from './page-version.js'
 
 /** Response header reporting what the page cache did: HIT, MISS, DYNAMIC or BYPASS. */
 export const PAGE_CACHE_HEADER = 'X-Popweb-Cache'
@@ -490,7 +491,7 @@ function isCacheableRequest<E extends Env>(c: Context<E>, version: string, varia
 
   // A stale Inertia client must reach web(), which answers 409 so the client
   // reloads with the current assets.
-  if (variant === 'inertia' && c.req.header(HEADERS.VERSION) !== version) {
+  if (variant === 'inertia' && !isCurrentVersion(c.req.header(HEADERS.VERSION) ?? '', version)) {
     return false
   }
 

@@ -199,6 +199,39 @@ describe("a signed-in user's pages, after the session ends out of the tab's sigh
     })
   })
 
+  // Inertia shows a page from a tab's history only when its version is the
+  // current page's, and otherwise asks the server for it (@inertiajs/core
+  // 3.9.1's popstate and back-forward handlers). The one-shot clear reaches
+  // the tab that shows the first page after a switch; a version that names
+  // the member reaches every tab.
+  test("are asked of the server, not shown from history, in a tab whose next page goes to another member after another tab took the clear", async () => {
+    const { browser, db } = await member()
+    const PageVersion = S.Struct({ version: S.String, clearHistory: S.optional(S.Boolean) })
+    const pageOf = async (res: Response) => S.decodeUnknownSync(PageVersion)(await res.json())
+    const adas = await pageOf(await visit(browser, '/dashboard'))
+    const outbox = newOutbox()
+    const own = testBrowser(app, testEnv({ OUTBOX: outbox, APP_URL: 'http://localhost' }, { database: db }))
+    const grace = { email: 'grace@example.com', password: 'another horse battery' }
+    await own.request('/sign-up', form({ name: 'Grace Hopper', timeZone: 'America/New_York', ...grace }))
+    await own.request('/verify-email', form({ token: outbox.verifications.at(-1)?.token ?? '' }))
+
+    await browser.request('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+      body: JSON.stringify(grace),
+    })
+    // Another tab shows Grace's first page, which takes the clear.
+    expect((await pageOf(await visit(browser, '/dashboard'))).clearHistory).toBe(true)
+    // This tab still shows Ada's page, and asks with its version.
+    const graces = await pageOf(await browser.request('/dashboard', { headers: { ...inertia, 'X-Inertia-Version': adas.version } }))
+    const guests = await pageOf(await testBrowser(app, testEnv({ OUTBOX: newOutbox(), APP_URL: 'http://localhost' }, { database: db })).request('/', { headers: inertia }))
+
+    expect(graces.clearHistory).toBeUndefined()
+    expect(graces.version).not.toBe(adas.version)
+    expect(guests.version).toBe('1')
+    expect([adas.version, graces.version]).not.toContain('1')
+  })
+
   test('the clear waits for its page past the minute flash data keeps', async () => {
     const { browser } = await member()
 

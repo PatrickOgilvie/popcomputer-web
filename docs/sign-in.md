@@ -85,10 +85,10 @@ tab, by its cookie's expiry, or where a prefetch or a JSON answer saw it end.
 For the next member to sign in there, the first page after any answer that
 ends the session or starts another clears it, through JSON answers between:
 Better Auth's client signing in or out through `betterAuthHandler`, or a
-lookup that finds the session revoked. That page reaches one tab, so a tab
-whose next page goes to the new member after another tab showed one still
-shows the previous member's pages with Back. A session cookie renamed in
-Better Auth, not given a `cookiePrefix`, is named in `auth.sessionCookie`.
+lookup that finds the session revoked. That page reaches one tab; every
+signed-in page's version names its member, so Back in any tab whose page
+went to the new member asks the server. A session cookie renamed in Better
+Auth, not given a `cookiePrefix`, is named in `auth.sessionCookie`.
 
 Better Auth writes the new user itself, so the application's own record of
 a member, such as a profile, is a second write. Make it on the member's first

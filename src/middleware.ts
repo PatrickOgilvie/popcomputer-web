@@ -16,6 +16,7 @@ import { openFlash } from './flash.js'
 import { applyDefaultCacheControl, markPageDynamic, observedRequestContext } from './page-cache.js'
 import { ConfigurationError } from './effect/errors.js'
 import { webUrl } from './locations.js'
+import { isCurrentVersion, pageVersion, userIdOf } from './page-version.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
@@ -97,8 +98,9 @@ export function web(config: WebConfig): MiddlewareHandler {
     const clientVersion = c.req.header(HEADERS.VERSION)
     const version = getVersion()
 
-    // Version mismatch - force full reload
-    if (isInertia && clientVersion && clientVersion !== version && c.req.method === 'GET') {
+    // Version mismatch - force full reload. A page's version also marks whom
+    // it went to, which is no reason to reload.
+    if (isInertia && clientVersion && !isCurrentVersion(clientVersion, version) && c.req.method === 'GET') {
       return c.body(null, {
         status: 409,
         headers: { [HEADERS.LOCATION]: c.req.url },
@@ -202,7 +204,9 @@ export function web(config: WebConfig): MiddlewareHandler {
           component,
           props: pageProps,
           url: new URL(c.req.url).pathname + new URL(c.req.url).search,
-          version,
+          // A signed-in page's version marks its member, so Back in a tab
+          // whose page went to someone else asks the server for theirs.
+          version: await pageVersion(version, signedIn ? options.userId ?? userIdOf(context.authUser) ?? '' : undefined),
           clearHistory: options.clearHistory ?? ((sessionChanged || signedOut) || undefined),
           encryptHistory: options.encryptHistory ??
             ((encrypt === 'signed-in' ? signedIn : encrypt) || undefined),
@@ -398,12 +402,21 @@ function sessionCookieStates(setCookies: readonly string[], sessionCookies: read
 
       states.set(name, {
         value,
-        expired: value === '' || attributes.some((attribute) => /^\s*max-age\s*=\s*(?:0|-\d+)\s*$/i.test(attribute)),
+        expired: value === '' || attributes.some(expiresTheCookie),
       })
     }
   }
 
   return states
+}
+
+/** Whether a Set-Cookie attribute expires the cookie: a Max-Age of 0 or less, or an Expires already past. */
+function expiresTheCookie(attribute: string): boolean {
+  if (/^\s*max-age\s*=\s*(?:0|-\d+)\s*$/i.test(attribute)) return true
+
+  const expires = /^\s*expires\s*=(.*)$/i.exec(attribute)?.[1]
+
+  return expires !== undefined && Date.parse(expires) <= Date.now()
 }
 
 /** Whether these Set-Cookie headers, applied in order, leave the session token cookie expired. */

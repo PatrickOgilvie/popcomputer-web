@@ -55,9 +55,9 @@ export interface WebConfig {
    * signed-in request are encrypted there unless this says otherwise, and the
    * first page after the session ends or another starts clears it, as does
    * every page rendered to a visitor who is not signed in, so Back after
-   * sign-out cannot show the previous user's pages. A tab whose next page
-   * goes to another signed-in user is cleared only when that page is the
-   * first since the switch: one shown first in another tab took the clear.
+   * sign-out cannot show the previous user's pages. A signed-in page's
+   * version marks its user, so Back in a tab whose page went to someone else
+   * asks the server, whichever tab took the clear.
    */
   history?: HistoryConfig
 }
@@ -85,6 +85,14 @@ export interface RenderOptions {
    * no-store.
    */
   signedIn?: boolean
+  /**
+   * The id of the signed-in user the page goes to: `render` gives it from
+   * the action's AuthUserService, and the session lookup's user gives it
+   * otherwise. It marks the page's version, so Inertia asks the server,
+   * rather than showing a page from a tab's history that went to someone
+   * else.
+   */
+  userId?: string
   /**
    * The response's status, 200 unless given: 404 for a page that says what
    * is missing, as a visit and as the Inertia page object alike.

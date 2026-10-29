@@ -17,6 +17,7 @@ import {
 } from './services.js'
 import { Redirect, NotFoundError, ForbiddenError, HttpError, ValidationError } from './errors.js'
 import { sameOriginReferer } from './referer.js'
+import { userIdOf } from '../page-version.js'
 import type { PageProps, PagePropValue, RenderOptions } from '../types.js'
 import {
   encodeDeclaredField,
@@ -135,7 +136,11 @@ function renderPage(
       yield* sharing.value.share
     }
 
-    return yield* Effect.promise(() => page.render(component, encoded, { ...options, signedIn: Option.isSome(user) }))
+    return yield* Effect.promise(() => page.render(component, encoded, {
+      ...options,
+      signedIn: Option.isSome(user),
+      userId: Option.isSome(user) ? userIdOf(user.value) : undefined,
+    }))
   }).pipe(Effect.withSpan('Web.render', { attributes: { component } }))
 }
 

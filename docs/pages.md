@@ -51,7 +51,9 @@ is encrypted there and answered `no-store`. Every page rendered to a visitor
 who is not signed in clears the history, as does the first page after a
 session ends or another starts, so the next person at the browser cannot
 page back through the previous user's pages ([Signing in and
-out](sign-in.md)). Clearing also empties Inertia's prefetch cache. `setupWeb`'s
+out](sign-in.md)). A signed-in page's version also names its user, and
+Inertia asks the server for a page in a tab's history whose version is not
+the current page's. Clearing also empties Inertia's prefetch cache. `setupWeb`'s
 `history: { encrypt: true }` encrypts every page and `false` none;
 `render('Account/Codes', props, { encryptHistory: true, clearHistory: true })`
 decides for one page. Inertia encrypts only over HTTPS or on localhost, and

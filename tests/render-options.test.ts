@@ -117,6 +117,22 @@ describe("a page's history", () => {
     expect(shown).toEqual({ encryptHistory: true, clearHistory: true })
   })
 
+  test('is cleared after an answer whose cookie expires the session by a past Expires, as Max-Age=0 does', async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page), history: { encrypt: true } })
+    const endsTheSession = responseHeader('Set-Cookie', 'better-auth.session_token=revoked; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT')
+
+    routes
+      .post('/sign-out', action(Effect.andThen(endsTheSession, redirect('/account'))))
+      .get('/account', action(render('Account/Show')))
+
+    const browser = testBrowser(app)
+    browser.setCookie('better-auth.session_token', 'revoked')
+    const signedOut = await browser.request('/sign-out', { method: 'POST', headers: { ...inertia.headers, Origin: 'http://localhost' } })
+
+    expect(S.decodeUnknownSync(PageHistory)(await (await browser.follow(signedOut)).json())).toEqual({ encryptHistory: true, clearHistory: true })
+  })
+
   test('is in the HTML document of a first visit too', async () => {
     const res = await historyApp().request('/account', {}, member())
 
