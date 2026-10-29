@@ -112,15 +112,23 @@ from that tab's history: only the server knows the session ended.
 
 ### The data cache
 
-[`DataCache.tla`](state-machines/DataCache.tla): one value under one tag.
+[`DataCache.tla`](state-machines/DataCache.tla): one value under one tag,
+and an action that reads the record and gives it to `cacheSet` later.
 
 - **NoReadAfterPurgeReturnsTheOldValue**: once a write's purge has run, no
-  read returns the value from before it.
+  read returns the value from before it, but one `cacheSet` stored after the
+  purge.
+- **CacheSetStoresOnlyCurrentValues** breaks, and stays a known limit:
+  `cacheSet` stores against its tags' generations as they are when it runs,
+  so a value read before a write whose purge ran before `cacheSet` is stored
+  as current.
 
-It holds on the code over 141 states. On 1.6, `cacheSet` stored no tag and
-`cacheGet` read none: a value stored with `cacheSet`, its record written and
-purged, came back from `cacheGet`. The model leaves out KV's eventual
-consistency, which [the data cache](data-cache.md) describes.
+The first holds on the code over 417 states. On 1.6, `cacheSet` stored no tag
+and `cacheGet` read none: a value stored by `cache` or `cacheSet`, its record
+written and purged, came back from `cacheGet`. `cache` reads the generations
+before it computes, so a purge during its computation leaves the value a
+miss. The model leaves out time, so `ttl`, and KV's eventual consistency,
+which [the data cache](data-cache.md) describes.
 
 ### A magic link
 
@@ -154,6 +162,8 @@ The models found these, or the inventory did, and the framework keeps them:
 - A job whose purge fails after its writes committed is retried whole, as
   [background work](background.md) says, so a job must be safe to run twice;
   a queue message is acked before the `background()` work it started settles.
+- A value given to `cacheSet` that was read before a write whose purge ran
+  before `cacheSet` is stored as current, until its `ttl`.
 - A GET that read a record before a write and stores its response after the
   write's purge keeps the old page in Workers Cache until its `maxAge`.
   `cache` refuses such an entry by its tags' generations; Workers Cache

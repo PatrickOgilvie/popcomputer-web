@@ -23,7 +23,7 @@ describe. A change touches a model when it changes any of these:
 |---|---|---|
 | `SignInLimits.tla` | `src/effect/sign-in-limits.ts`: `withinSignInLimits`, `rowStates`, `cooldownAfter`, `sweepSignInFailures`, `assertSignInLimitsConfig`; its callers in `src/effect/auth.ts` (`callEndpoint`, `betterAuthHandler`) | `tests/effect/sign-in-limits.test.ts` |
 | `HistoryClear.tla` | `src/middleware.ts` `web()`: the render's `encryptHistory`, `clearHistory` and `version`, the 409 check, the clear raised after `next()`, `endsSession`, `startsSession`, `expiresTheCookie`; `src/page-version.ts`; the clear in `src/flash.ts`; `isCacheableRequest`'s version check in `src/page-cache.ts`; `renderPage` in `src/effect/responses.ts`; `@inertiajs/core`'s popstate and back-forward version checks | `tests/security/history.test.ts`, `tests/render-options.test.ts` |
-| `DataCache.tla` | `src/cache.ts`: `cache`, `cacheGet`, `cacheSet`, `readTagGenerations`, `invalidateCacheTags` | `tests/cache.test.ts` (`cache tags`) |
+| `DataCache.tla` | `src/cache.ts`: `cache`, `cacheGet`, `cacheSet`, `readTagGenerations`, `invalidateCacheTags` | `tests/cache.test.ts` (`cache tags`); `tests/fuzz/data-cache.test.ts` drives the same calls through random sequences |
 | `MagicLink.tla` | the magic link in `docs/auth-plugins.md`; `showMagicLink`, `verifyMagicLink` and their routes in `tests/better-auth/app.ts`; `better-auth`'s magic-link plugin | `tests/better-auth/seam.test.ts` (`magic links`) |
 | `Flash.tla` | `src/flash.ts` `openFlash`; the render's `flash.take()` in `src/middleware.ts` | none: its rule breaks, a known limit |
 
@@ -46,12 +46,14 @@ since.
    output to a new folder outside the repository.
 2. Compare with what each config must give:
    - every `*.code.cfg`, `*.code.always.cfg` and `SignInLimits.chart.cfg`:
-     every rule holds;
+     every rule holds, but `DataCache.code.cfg`'s
+     `CacheSetStoresOnlyCurrentValues`, a known limit that breaks;
    - `SignInLimits.1.6.cfg`: `AtMostMaxGuessesAtOnce`,
      `OwnerSignInClearsCount` and `NoFreshBudgetAfterCooldown` break;
    - `HistoryClear.1.6.cfg` and `HistoryClear.1.6.always.cfg`:
      `BackShowsNoOneElsesPage` breaks;
-   - `DataCache.1.6.cfg`: `NoReadAfterPurgeReturnsTheOldValue` breaks;
+   - `DataCache.1.6.cfg`: `NoReadAfterPurgeReturnsTheOldValue` and
+     `CacheSetStoresOnlyCurrentValues` break;
    - `MagicLink.1.6.cfg`: `OnlyTheMemberSignsIn` and `TheMemberSignsIn` break;
    - `Flash.cfg`: `TheFormShowsItsErrors` breaks.
    The `1.6` configs model release 1.6.0, the code before these rules held.

@@ -4,7 +4,8 @@ The data cache keeps computed values in a store, checked against an Effect
 Schema when read. Provide a store with `kvCache` as a `request` layer of
 `web.services`; KV
 keeps an entry at least 60 seconds, its shortest expiry, and `cache` still
-treats it as fresh only for its `ttl`. `kvCache` keeps its keys under
+treats it as fresh only for its `ttl`, counted from when the value is stored,
+not from when its computation read its data. `kvCache` keeps its keys under
 `popweb:cache:`, so its KV namespace can hold the application's other data,
 such as an audit log, which the cache never reads, lists or deletes, even
 for `cacheInvalidatePrefix('')`:
@@ -66,7 +67,11 @@ const summary = yield* cache(
 
 A tag gets a generation in the store when an entry first uses it, and each
 purge of the tag replaces it, so an entry stored under an older one is a miss,
-for `cacheGet` too; `cacheSet` with `tags` records them as `cache` does.
+for `cacheGet` too. `cache` reads the generations before it computes, so a
+purge during the computation leaves its value a miss. `cacheSet` with `tags`
+records them as they are when it runs, and cannot know when its value was
+read: a value read before a write whose purge ran before `cacheSet` stays
+until its `ttl`. Compute a tagged value through `cache`.
 A tagged read costs one store read per tag besides the entry's own; a purge of
 a tag no entry uses costs a read and no write. KV accepts one write a second
 to a key and takes up to a minute to show a write everywhere, so tag data by
