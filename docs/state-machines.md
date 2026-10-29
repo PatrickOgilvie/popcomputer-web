@@ -113,22 +113,26 @@ from that tab's history: only the server knows the session ended.
 ### The data cache
 
 [`DataCache.tla`](state-machines/DataCache.tla): one value under one tag,
-and an action that reads the record and gives it to `cacheSet` later.
+and `cacheSet` given the Effect that reads the record, or, as
+`CacheSetGiven = "value"`, a value an action read in an earlier step.
 
 - **NoReadAfterPurgeReturnsTheOldValue**: once a write's purge has run, no
-  read returns the value from before it, but one `cacheSet` stored after the
-  purge.
-- **CacheSetStoresOnlyCurrentValues** breaks for a value `cacheSet` is
-  given, and stays a known limit of that form: it stores against its tags'
-  generations as they are when it runs, so a value read before a write whose
-  purge ran before `cacheSet` is stored as current. Given the Effect that
-  reads the value, `cacheSet` reads the generations first, as `cache` does,
-  which `tests/cache.test.ts` and `tests/fuzz/data-cache.test.ts` check; the
-  model holds the value form alone.
+  read returns the value from before it, but one `cacheSet` was given after
+  the purge.
+- **CacheSetStoresOnlyCurrentValues**: `cacheSet` stores no value a purge has
+  already replaced where a read would find it. Given its read, `cacheSet`
+  reads the generations first, as `cache` does, so a value the read returned
+  before a purge is stored under the older generation and never read. Given
+  a value, it stores against the generations as they are when it runs, and
+  the rule breaks: a known limit of that form.
 
-The first holds on the code over 417 states. On 1.6, `cacheSet` stored no tag
-and `cacheGet` read none: a value stored by `cache` or `cacheSet`, its record
-written and purged, came back from `cacheGet`. `cache` reads the generations
+Given its read, both hold on the code over 405 states
+(`DataCache.code.cfg`); given a value, the first holds over 417 and the
+second breaks in three steps (`DataCache.code.value.cfg`), as
+`tests/cache.test.ts` and `tests/fuzz/data-cache.test.ts` also find. On
+1.6, `cacheSet` stored no tag and `cacheGet` read none: a value stored by
+`cache` or `cacheSet`, its record written and purged, came back from
+`cacheGet`. `cache` reads the generations
 before it computes, so a purge during its computation leaves the value a
 miss. The model leaves out time, so `ttl`, and KV's eventual consistency,
 which [the data cache](data-cache.md) describes.
