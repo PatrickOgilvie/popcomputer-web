@@ -1192,6 +1192,34 @@ describe('cache tags', () => {
     }).pipe(Effect.provide(layer), Effect.runPromise)
   })
 
+  it('cacheGet treats an entry one of whose tags was invalidated since as absent', async () => {
+    const { layer } = makeTestCache()
+
+    await Effect.gen(function* () {
+      yield* cache('project:p1', Effect.succeed('before'), S.String, { ...ttl, tags: ['projects:p1'] })
+      expect(yield* cacheGet('project:p1', S.String)).toEqual(Option.some('before'))
+
+      yield* invalidateCacheTags(['projects:p1'])
+
+      expect(yield* cacheGet('project:p1', S.String)).toEqual(Option.none())
+    }).pipe(Effect.provide(layer), Effect.runPromise)
+  })
+
+  it('cacheSet records its tags, so cache() reads the entry and an invalidation of a tag takes it away', async () => {
+    const { layer } = makeTestCache()
+    const tagged = { ...ttl, tags: ['projects:p1'] }
+
+    await Effect.gen(function* () {
+      yield* cacheSet('project:p1', 'stored', S.String, tagged)
+      expect(yield* cache('project:p1', Effect.succeed('computed'), S.String, tagged)).toBe('stored')
+
+      yield* invalidateCacheTags(['projects:p1'])
+
+      expect(yield* cacheGet('project:p1', S.String)).toEqual(Option.none())
+      expect(yield* cache('project:p1', Effect.succeed('computed'), S.String, tagged)).toBe('computed')
+    }).pipe(Effect.provide(layer), Effect.runPromise)
+  })
+
   it('does not keep a value computed while one of its tags was invalidated', async () => {
     const { layer } = makeTestCache()
     let computations = 0

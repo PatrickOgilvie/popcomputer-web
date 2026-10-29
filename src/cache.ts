@@ -390,7 +390,8 @@ export const cache = <V, E, R>(
 
 /**
  * Get a value from cache without computing.
- * Returns any entry still present in the backing cache store.
+ * Returns any entry still present in the backing cache store, unless one of
+ * the tags it was stored with has been invalidated since.
  * This does not apply `ttl`/`swr` freshness checks used by `cache()`.
  *
  * @example
@@ -426,11 +427,21 @@ export const cacheGet = <V>(
       Effect.catch((error) => Effect.as(reportStoreFailure('cacheGet.decode')(error), undefined))
     )
 
-    return entry === undefined ? Option.none<V>() : Option.some(entry.v)
+    if (entry === undefined) return Option.none<V>()
+
+    // So does one stored with tags, once any of them was invalidated since.
+    const current = yield* Effect.forEach(
+      Object.entries(entry.g ?? {}),
+      ([tag, generation]) => Effect.map(cacheService.get(tagGenerationKey(tag)), (now) => now === generation),
+      { concurrency: 'unbounded' }
+    )
+
+    return current.every(Boolean) ? Option.some(entry.v) : Option.none<V>()
   }).pipe(Effect.withSpan('Web.cacheGet'))
 
 /**
- * Set a value in cache.
+ * Set a value in cache. With `tags`, the entry records their generations, as
+ * `cache()` does, so invalidating any of them makes it a miss for both.
  *
  * @example
  * ```typescript
@@ -459,8 +470,13 @@ export const cacheSet = <V>(
       : 0
 
     const totalTtlSeconds = Math.ceil((ttlMs + swrMs) / 1000)
+    const tags = options.tags ?? []
+    // Its tags' generations, as cache() records them, so an invalidation of
+    // any of them makes the entry a miss.
+    const generations = tags.length === 0 ? undefined : yield* readTagGenerations(cacheService, tags)
+    const t = yield* Clock.currentTimeMillis
 
-    const entry: CacheEntry<V> = { v: value, t: yield* Clock.currentTimeMillis }
+    const entry: CacheEntry<V> = generations === undefined ? { v: value, t } : { v: value, t, g: generations }
     const serialized = yield* Schema.encodeEffect(jsonSchema)(entry).pipe(
       Effect.mapError(entryError('The value does not match the cache schema.'))
     )

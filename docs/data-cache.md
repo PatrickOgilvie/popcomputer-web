@@ -65,7 +65,8 @@ const summary = yield* cache(
 ```
 
 A tag gets a generation in the store when an entry first uses it, and each
-purge of the tag replaces it, so an entry stored under an older one is a miss.
+purge of the tag replaces it, so an entry stored under an older one is a miss,
+for `cacheGet` too; `cacheSet` with `tags` records them as `cache` does.
 A tagged read costs one store read per tag besides the entry's own; a purge of
 a tag no entry uses costs a read and no write. KV accepts one write a second
 to a key and takes up to a minute to show a write everywhere, so tag data by

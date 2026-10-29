@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `href` and `redirect` leave a placeholder unfilled for text with a lone surrogate, which no URL can carry, as they do for `..`. `encodeURIComponent` threw on it, so one stored value a JSON body set, such as `"\ud800"`, failed every page and job that listed it.
 - `setupWeb` refuses `auth.signInLimits.failures` whose `max` is not a whole number of at least 1, or whose `window` or `cooldown` is not a positive duration. A `NaN`, such as `Number()` of a variable that is not set, turned the cooldown off without a word.
 - A session cookie that a response expires with an `Expires` date already past ends the session for the history's clear, as `Max-Age=0` and an empty value do.
+- `cacheGet` reads an entry as absent once one of the tags it was stored with has been purged since, as `cache` does, and `cacheSet` with `tags` records their generations. `cacheGet` returned an entry whatever its tags, so the old value of a record a route had written and purged; and `cacheSet` dropped its `tags`, so a purge never invalidated its entry and `cache` with the same tags never read it.
 
 ## [1.6.0] - 2026-10-25
 
