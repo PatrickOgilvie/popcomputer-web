@@ -1,7 +1,7 @@
 /**
  * Rules for where code runs. A Worker's isolate serves request after request,
  * so what a module holds, every visitor shares; tests' fakes stay in tests;
- * and a page, which runs in the browser, imports no server code.
+ * and a page or a component, which runs in the browser, imports no server code.
  */
 
 import {
@@ -16,7 +16,7 @@ import {
   type LintRule,
   type VariableDeclarator,
 } from './ast.js'
-import { isPagePath, isTestFile, isToolingPath, projectPath } from './files.js'
+import { isComponentPath, isPagePath, isTestFile, isToolingPath, projectPath } from './files.js'
 
 /** The framework's entrypoint for page components, whose importers run in the browser. */
 const WEB_REACT = '@popcomputer/web/react'
@@ -262,10 +262,10 @@ function isServerModule(source: string): boolean {
 export const noServerImportsInPages: LintRule = {
   meta: {
     type: 'problem',
-    docs: { description: "A page, which runs in the browser, imports no server code." },
+    docs: { description: "A page or a component, which runs in the browser, imports no server code." },
     messages: {
       server:
-        "A page runs in the visitor's browser, and {{source}} is server code (the database, sessions, the Worker's secrets): importing it ships it to the browser or breaks the build. Pass what the page shows as props declared in src/pages.ts, build URLs with href from @popcomputer/web/paths, and use `import type` for a type.",
+        "A page and the components it imports run in the visitor's browser, and {{source}} is server code (the database, sessions, the Worker's secrets): importing it ships it to the browser or breaks the build. Pass what the page shows as props declared in src/pages.ts, build URLs with href from @popcomputer/web/paths, and use `import type` for a type.",
     },
   },
   create(context) {
@@ -278,7 +278,11 @@ export const noServerImportsInPages: LintRule = {
         if (!module.typeOnly && isServerModule(module.source)) found.push(module)
       }),
       'Program:exit'() {
-        if (found.length === 0 || !(importsReact || isPagePath(projectPath(context)))) return
+        const path = projectPath(context)
+        // A component's test runs in Bun, and only what a page imports reaches the bundle.
+        const browser = importsReact || isPagePath(path) || (isComponentPath(path) && !isTestFile(context, path))
+
+        if (found.length === 0 || !browser) return
 
         for (const { node, source } of found) context.report({ node, messageId: 'server', data: { source } })
       },

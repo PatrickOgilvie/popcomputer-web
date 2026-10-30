@@ -7,8 +7,8 @@ cannot see, the ones a reviewer has to know to look for. They apply where a
 file uses the framework: the action rules to files that import `action`, the
 database rules inside `dbQuery`, `dbMutation`, `dbTransaction` and `dbBatch`,
 the binding rule to `setupWeb`'s `bindings` and `routeBinding`, and the
-rules about where code runs by where a file sits: a test, a script, a page.
-The examples in `docs/`, the README and `AGENTS.md` pass them.
+rules about where code runs by where a file sits: a test, a script, a page,
+a component. The examples in `docs/`, the README and `AGENTS.md` pass them.
 
 | Rule | Reports | Use instead |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `no-floating-effect` | A framework call that builds an Effect, written as a statement, so nothing runs it: `dbMutation(...)`, `flash(...)`, `redirect(...)`, `cart.set(...)`, `Effect.log(...)`; and `yield` without `*` | `yield* dbMutation(...)`, or `return` it |
 | `no-module-level-mutable-state` | A module-scope `let` or `var`, or a module-scope `Map`, `Set` or array a function changes, outside tests, configuration, scripts and pages: a Worker's isolate shares it with every request, so one visitor's data can reach another's | Values inside the action, `web.services({ app })` for a service built once, `cache(key, effect, schema, { ttl, tags })` for data kept across requests |
 | `no-testing-in-production` | An import of `@popcomputer/web/testing` (whose `signedIn` signs a request in with no session) or `@popcomputer/web/fuzz` from a file that is not a test | The helpers in tests only; `authorize()` or `currentUser` in the application |
-| `no-server-imports-in-pages` | A page or component (under `src/pages/`, or importing `@popcomputer/web/react`) importing server code: `@popcomputer/web`, `/effect`, `/auth`, `/env`, `/cache`, `/drizzle`, `drizzle-orm`, the Drizzle schema, the env module or an action | Props declared in `src/pages.ts`, `href` from `@popcomputer/web/paths`, and `import type` for types |
+| `no-server-imports-in-pages` | A page or component (under `src/pages/`, `src/components/` or `src/layouts/`, or importing `@popcomputer/web/react`) importing server code: `@popcomputer/web`, `/effect`, `/auth`, `/env`, `/cache`, `/drizzle`, `drizzle-orm`, the Drizzle schema, the env module or an action | Props declared in `src/pages.ts`, `href` from `@popcomputer/web/paths`, and `import type` for types |
 | `require-disable-reason` | A comment turning off one of these rules, or every rule, with no reason after `--` | `// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`, or the API the rule names |
 | `explain-security-loosening` (a warning) | A setting that weakens a protection the framework gives: `routeBinding(table, { public: true })`, `betterAuthHandler({ settable: [...] })`, `verifyOrigin`'s `allowedOrigins` or `verifyOrigin: false`, `security.headers: false`, a `bodyLimit` over 1 MiB, `history: { encrypt: false }` or `encryptHistory: false`, and `betterAuth` with password sign-in but no `requireEmailVerification: true`, or with `autoSignInAfterVerification: true` | The default, or a reasoned disable comment where it is set, which puts the choice before a reviewer |
 
@@ -82,9 +82,12 @@ written in the file, and nothing a helper in another module does.
   helper that imports the testing helpers (`src/app.ts` importing
   `./test-db`), a source built at runtime, or a re-export of the helpers
   under another package's name.
-- `no-server-imports-in-pages`. Covers: in a file under `src/pages/`, or one
-  that imports `@popcomputer/web/react` (`import type` included), an import,
-  re-export, `import()` or `require()` of the framework's server entrypoints
+- `no-server-imports-in-pages`. Covers: in a file under `src/pages/`; one
+  under `src/components/` or `src/layouts/`, at any depth, that is not a
+  test, since pages import their components from there and a component's
+  test runs in Bun; or one that imports `@popcomputer/web/react`
+  (`import type` included), an import, re-export, `import()` or
+  `require()` of the framework's server entrypoints
   (`@popcomputer/web`, `/effect`, `/auth`, `/env`, `/cache`, `/drizzle`),
   `drizzle-orm`, or the application's own server modules by name, relative
   or through a `@/` or `~/` alias: a file named `schema`, `auth-schema`,
@@ -92,7 +95,7 @@ written in the file, and nothing a helper in another module does.
   `schema/` or `db/` folder. `import type` and `import { type X }` pass, so
   a form reads its action's schema as `FormInput<typeof Schema>`;
   `@popcomputer/web/paths`, `/schema` and `/endpoint` pass. Does not see: a
-  component outside `src/pages/` that does not import
+  component in another folder (`src/ui/`, `src/hooks/`) that does not import
   `@popcomputer/web/react`, a server module under another name (`./data`), a
   module that imports server code itself (`../forms` importing `../db`),
   other path aliases, or server-only packages besides Drizzle, such as

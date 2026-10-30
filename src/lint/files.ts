@@ -42,6 +42,9 @@ export function isToolingPath(path: string): boolean {
 /** Whether a path is a page's or its components', under `src/pages/`. */
 export const isPagePath = (path: string): boolean => /(^|\/)src\/pages\//.test(path)
 
+/** Whether a path is a component's or a layout's, under `src/components/` or `src/layouts/`, which pages import. */
+export const isComponentPath = (path: string): boolean => /(^|\/)src\/(components|layouts)\//.test(path)
+
 /**
  * Whether the file is one `bunfig.toml`'s `[test] preload` names, which runs
  * before the tests alone: the nearest `bunfig.toml` from the file's folder up

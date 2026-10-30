@@ -127,6 +127,18 @@ describe('@popcomputer/web/lint', () => {
     expect(foundInApp(lint(...appFiles))).toEqual(expectedInApp())
   })
 
+  test("reports server code in a page's components and layouts, which need not import @popcomputer/web/react", () => {
+    const inComponents = (file: string) => /^\.app\/src\/(components|layouts)\//.test(file)
+
+    // drizzle-orm, @popcomputer/web/effect and the schema, three folders down.
+    expect(expected('.app/src/components/admin/office/InvoiceCard.tsx')).toEqual([
+      '1 no-server-imports-in-pages',
+      '2 no-server-imports-in-pages',
+      '3 no-server-imports-in-pages',
+    ])
+    expect(foundInApp(lint(...appFiles.filter(inComponents)))).toEqual(expectedInApp().filter(inComponents))
+  })
+
   test('accepts the patterns the framework documents', () => {
     expect(lint('valid.ts')).toEqual([])
   })

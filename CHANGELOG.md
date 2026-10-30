@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `no-server-imports-in-pages` also reports server code imported by a file under `src/components/` or `src/layouts/`, at any depth and with any extension, other than a test. It covered only `src/pages/` and files importing `@popcomputer/web/react`, and a page's sub-component needn't import that, so `src/components/admin/office/InvoiceCard.tsx` importing `drizzle-orm`, `@popcomputer/web/effect` or `../../../schema` passed, and shipped it to the browser. Type-only imports still pass. An application may see new reports: pass what the component shows as props from its page.
+
 ## [1.7.0] - 2026-10-30
 
 This release fixes four security issues in the state the framework keeps between requests, and gives applications the tools its fuzz suite runs on. `docs/state-machines.md` now models that state in TLA+, which TLC checks over every order of its steps, and the fuzz suite runs sequences of steps against the real code. Between them they found guesses sent together that a sign-in count let past, Back in one tab showing a previous member's pages from history, an emailed magic link that a mail scanner's fetch used up, and a sign-in redirect that left the site. Each fix is below, with tests that fail on 1.6.0. `@popcomputer/web/fuzz` gives an application's own tests the same tools.
