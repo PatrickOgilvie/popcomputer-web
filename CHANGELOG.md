@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.7.0] - 2026-10-30
+
+This release fixes four security issues in the state the framework keeps between requests, and gives applications the tools its fuzz suite runs on. `docs/state-machines.md` now models that state in TLA+, which TLC checks over every order of its steps, and the fuzz suite runs sequences of steps against the real code. Between them they found guesses sent together that a sign-in count let past, Back in one tab showing a previous member's pages from history, an emailed magic link that a mail scanner's fetch used up, and a sign-in redirect that left the site. Each fix is below, with tests that fail on 1.6.0. `@popcomputer/web/fuzz` gives an application's own tests the same tools.
+
+What an application on 1.6.0 may need to change, which `UPGRADING.md`'s "From 1.6 to 1.7" details:
+
+- One with Better Auth's magic-link plugin emails a link to a page whose button posts the token, as `docs/auth-plugins.md` shows, rather than signing in on the link's GET or emailing Better Auth's own `url`.
+- One that calls `tagCache` from work that outlives its action, such as `background()`'s, calls it in the action: it now fails with a defect.
+- One whose `auth.signInLimits.failures` reads a setting that may be missing gives it a value: `setupWeb` refuses a `max` that is not a whole number of at least 1, and a `window` or `cooldown` that is not a positive duration.
 
 ### Security
 

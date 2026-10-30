@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.6.0
+# Upgrading to @popcomputer/web 1.7.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.6.0.
+`honertia` package it was renamed from, to 1.7.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -10,11 +10,13 @@ record, which a lint rule reports, and 1.4.1 and 1.4.2 change nothing more.
 1.5.0 fixes what a security audit of 1.4.2 found, and asks a few applications
 to change something, which [From 1.4 to 1.5](#from-14-to-15) lists. 1.6.0
 fixes what a second audit found in 1.5.0's changes and adds lint rules, which
-[From 1.5 to 1.6](#from-15-to-16) lists. So the path is one jump: make the
-1.0.0 changes below, install 1.6.0, give each binding its option as
-[From 1.3 to 1.4](#from-13-to-14) shows, check the lists in
-[From 1.4 to 1.5](#from-14-to-15) and [From 1.5 to 1.6](#from-15-to-16), and
-you are done.
+[From 1.5 to 1.6](#from-15-to-16) lists. 1.7.0 fixes four security issues in
+the state the framework keeps between requests and adds
+`@popcomputer/web/fuzz`, which [From 1.6 to 1.7](#from-16-to-17) lists. So
+the path is one jump: make the 1.0.0 changes below, install 1.7.0, give each
+binding its option as [From 1.3 to 1.4](#from-13-to-14) shows, check the
+lists in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16)
+and [From 1.6 to 1.7](#from-16-to-17), and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -39,9 +41,10 @@ you installed:
 9. [From 1.3 to 1.4](#from-13-to-14)
 10. [From 1.4 to 1.5](#from-14-to-15)
 11. [From 1.5 to 1.6](#from-15-to-16)
-12. [Tooling after the upgrade](#tooling-after-the-upgrade)
-13. [Checklist](#checklist)
-14. [A worked example](#a-worked-example)
+12. [From 1.6 to 1.7](#from-16-to-17)
+13. [Tooling after the upgrade](#tooling-after-the-upgrade)
+14. [Checklist](#checklist)
+15. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -55,7 +58,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.6.0 needs:
+- **Check the peer dependencies.** 1.7.0 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -69,12 +72,12 @@ you installed:
   Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
-- **Install 1.6.0** with the peers your application uses, removing `honertia`
+- **Install 1.7.0** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.6.0 effect@^4.0.0
+  bun add @popcomputer/web@^1.7.0 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
@@ -94,10 +97,11 @@ you installed:
 | 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.7.x | [0.7 to 1.0](#from-07-to-10) |
-| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), then [1.5 to 1.6](#from-15-to-16) |
-| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), then [1.5 to 1.6](#from-15-to-16) |
-| 1.4.x | [1.4 to 1.5](#from-14-to-15), then [1.5 to 1.6](#from-15-to-16) |
-| 1.5.x | [1.5 to 1.6](#from-15-to-16) only |
+| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), then [1.6 to 1.7](#from-16-to-17) |
+| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), then [1.6 to 1.7](#from-16-to-17) |
+| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), then [1.6 to 1.7](#from-16-to-17) |
+| 1.5.x | [1.5 to 1.6](#from-15-to-16), then [1.6 to 1.7](#from-16-to-17) |
+| 1.6.x | [1.6 to 1.7](#from-16-to-17) only |
 
 `honertia` and `@popcomputer/web` share one version line, so `honertia` 0.1.45
 is "0.1.x". The 0.4 to 0.7 sections hardly apply to an application coming from
@@ -1341,6 +1345,64 @@ Changes you may notice without acting on them:
 
 [CHANGELOG.md](CHANGELOG.md) has the detail of each.
 
+## From 1.6 to 1.7
+
+Install 1.7.0:
+
+```bash
+bun add @popcomputer/web@^1.7.0
+```
+
+1.7.0 fixes four security issues in the state the framework keeps between
+requests, and adds `@popcomputer/web/fuzz`. Most applications change
+nothing. Check each item against yours:
+
+- **The magic link.** An application with Better Auth's magic-link plugin
+  emails a link to a page a GET renders, whose button posts the token to the
+  action that calls `betterAuthRedirect('magicLinkVerify', ...)`, as
+  [`docs/auth-plugins.md`](docs/auth-plugins.md) shows, never Better Auth's
+  own `url`. Better Auth's token signs in once, whoever sends it, so an
+  action that signs in on the link's GET gives the session to a mail
+  scanner's or a link preview's fetch, and the member's own click finds the
+  link expired. The verify-email link works this way since 1.6.0.
+- **`tagCache` after the response.** A call to `tagCache` from work that
+  outlived its action, such as `background()`'s, fails with a defect naming
+  the call, as a late `purgeCache` does: the response it meant to tag was
+  already stored, and the tags reached nothing. Call it in the action,
+  before it returns.
+- **Sign-in limit settings.** `setupWeb` refuses `auth.signInLimits.failures`
+  whose `max` is not a whole number of at least 1, or whose `window` or
+  `cooldown` is not a positive duration. Give a value read from a setting
+  that may be missing, such as `Number(...)` of an unset variable, a
+  default: a `NaN` turned the cooldown off.
+
+Changes you may notice without acting on them:
+
+- Each password sign-in writes its account's row in `auth.signInLimits`'
+  table before its password is checked, unless the account is cooling
+  down, and a success deletes it, where only a failure wrote one. Guesses sent together count against each other,
+  and a count lasts `failures.window` past the end of its cooldown.
+- A signed-in page's Inertia `version` is the assets' version, `~`, and 12
+  hex digits naming its user, so Back in a tab whose page went to another
+  member, or to a guest, asks the server. `web()` takes such a version as
+  current.
+- `intendedUrl` refuses a `redirect` whose dot segments resolve to a path
+  beginning `//`, such as `/%2e//evil.test`, and returns its fallback.
+- `cacheGet` misses an entry one of whose tags was purged since it was
+  stored, as `cache` does, and `cacheSet` takes the Effect that reads its
+  value, so a purge during the read counts.
+- An endpoint reads a `Date` body field from its ISO string, as `call` sends
+  it, and `call` leaves out a field given as `undefined` rather than sending
+  `null`.
+- `href` and `redirect` leave a placeholder unfilled for text with a lone
+  surrogate, and a session cookie expired with a past `Expires` date clears
+  Inertia's history, as `Max-Age=0` does.
+
+To fuzz the application's own routes with the tools the framework's suite
+runs on, see [Fuzzing](docs/fuzzing.md).
+
+[CHANGELOG.md](CHANGELOG.md) has the detail of each.
+
 ## Tooling after the upgrade
 
 - **`tsconfig.json`** needs the DOM library and JSX for React pages, and
@@ -1401,8 +1463,8 @@ Changes you may notice without acting on them:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.6.0`.
-- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15) and [From 1.5 to 1.6](#from-15-to-16) that applies to your application is done.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.7.0`.
+- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16) and [From 1.6 to 1.7](#from-16-to-17) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
