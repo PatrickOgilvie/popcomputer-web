@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `no-server-imports-in-pages` also reports server code imported by a file under `src/components/` or `src/layouts/`, at any depth and with any extension, other than a test. It covered only `src/pages/` and files importing `@popcomputer/web/react`, and a page's sub-component needn't import that, so `src/components/admin/office/InvoiceCard.tsx` importing `drizzle-orm`, `@popcomputer/web/effect` or `../../../schema` passed, and shipped it to the browser. Type-only imports still pass. An application may see new reports: pass what the component shows as props from its page.
+- `no-module-level-mutable-state` passes a file under `src/components/` or `src/layouts/`, as it passes pages: the module runs in one visitor's browser, so its state is that visitor's. It reported a component's module-scope `let`, or a `Map` its hook changes, unless the component imported `@popcomputer/web/react`.
 
 ## [1.7.0] - 2026-10-30
 

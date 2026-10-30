@@ -216,8 +216,8 @@ export const noModuleLevelMutableState: LintRule = {
         const path = projectPath(context)
 
         if (variables.length === 0 && ![...collections.keys()].some((name) => mutated.has(name))) return
-        // Tests, tools and scripts run once, outside the Worker; a page runs in one visitor's browser.
-        if (isToolingPath(path) || isPagePath(path) || imports.importsFrom(WEB_REACT) || isTestFile(context, path)) return
+        // Tests, tools and scripts run once, outside the Worker; a page or a component runs in one visitor's browser.
+        if (isToolingPath(path) || isPagePath(path) || isComponentPath(path) || imports.importsFrom(WEB_REACT) || isTestFile(context, path)) return
 
         for (const { node, kind } of variables) {
           context.report({ node, messageId: 'variable', data: { kind, name: bindingName(node) } })
