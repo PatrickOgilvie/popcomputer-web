@@ -6,8 +6,9 @@
  *
  * Precedents: Laravel CVE-2021-3129 and CVE-2024-52301 (debug mode reachable,
  * or set from the request), Rails CVE-2019-5420 (a development secret in
- * production), Better Auth CVE-2026-45364 and Hono CVE-2026-27700 (rate
- * limits keyed on X-Forwarded-For), Zod CVE-2023-4316, Valibot
+ * production), Better Auth CVE-2026-45364 (rate limits keyed on
+ * X-Forwarded-For, and on each address of an IPv6 network its owner can
+ * rotate through), Hono CVE-2026-27700 (access keyed on X-Forwarded-For), Zod CVE-2023-4316, Valibot
  * CVE-2025-66020 and path-to-regexp CVE-2024-45296 (regular expressions with
  * exponential backtracking), Drizzle CVE-2026-39356 and Hono's 2026
  * advisories (fixed in the releases the peer ranges now start at), Laravel's
@@ -25,7 +26,7 @@ import { EffectErrorObserverService, type EffectErrorEvent } from '../../src/eff
 import { ValidationError } from '../../src/effect/errors.js'
 import { json } from '../../src/effect/responses.js'
 import { alpha, alphaDash, alphaNum, email, ip, isoDate, isoDateTime, jsonString, macAddress, nullableEmail, password, requiredString, singleMediaType, url, uuid } from '../../src/effect/schema.js'
-import { clientAddress } from '../../src/effect/sign-in-limits.js'
+import { addressRange, clientAddress } from '../../src/effect/sign-in-limits.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { endpoint } from '../../src/endpoint.js'
 import { setupWeb } from '../../src/setup.js'
@@ -193,6 +194,31 @@ describe('the address sign-in limits are kept by', () => {
     expect(clientAddress(new Headers({ 'CF-Connecting-IP': '203.0.113.7', 'X-Forwarded-For': '198.51.100.1' }))).toBe('203.0.113.7')
     expect(clientAddress(new Headers({ 'X-Forwarded-For': '198.51.100.1' }))).toBe('unknown')
     expect(clientAddress(new Headers({ 'X-Real-IP': '198.51.100.1', Forwarded: 'for=198.51.100.1' }))).toBe('unknown')
+  })
+
+  test('is the IPv6 network a client could rotate through, so every address in it, however written, is one', () => {
+    const network = [
+      '2001:db8:1234:5678::1',
+      '2001:DB8:1234:5678:FFFF:FFFF:FFFF:FFFF',
+      '2001:0db8:1234:5678:0:0:0:2',
+      '2001:db8:1234:5678:a:b:c:d%eth0',
+      '2001:db8:1234:5678::203.0.113.7',
+    ]
+
+    expect(new Set(network.map((address) => addressRange(address, 64))).size).toBe(1)
+    expect(addressRange('2001:db8:1234:5679::1', 64)).not.toBe(addressRange('2001:db8:1234:5678::1', 64))
+  })
+
+  test('is the IPv4 address an IPv4-mapped IPv6 address carries', () => {
+    for (const mapped of ['::ffff:203.0.113.7', '::FFFF:cb00:7107', '0:0:0:0:0:ffff:203.0.113.7', '::ffff:203.0.113.7%1']) {
+      expect({ mapped, range: addressRange(mapped, 64) }).toEqual({ mapped, range: '203.0.113.7' })
+    }
+  })
+
+  test('is text that is no address as it came, so it shares a limit only with its own spelling', () => {
+    for (const text of ['unknown', '2001:db8::1::2', '2001:db8:0:0:0:0:0:0:1', '2001:db8:1234:5678::ffff:ffff:ffff:ffff', '12345::1', '::ffff:256.0.0.1']) {
+      expect({ text, range: addressRange(text, 64) }).toEqual({ text, range: text.toLowerCase() })
+    }
   })
 })
 

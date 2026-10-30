@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+What an application on 1.8.1 may need to change: one whose users share an IPv6 network, such as an office's /64, finds them sharing one per-address sign-in budget, as people behind one IPv4 address already do. `auth.signInLimits.ipv6Prefix` sets the network's size, and 128 counts each address alone again.
+
+### Security
+
+- `auth.signInLimits` counts an IPv6 client's sign-in, sign-up and password calls by its network, the first 64 bits of its address, so one client can't guess without limit by sending each guess from another address it owns. It keyed the Rate Limiting binding on the exact text of `CF-Connecting-IP`, and an ISP or a host gives each customer a /64: 2^64 addresses, each a fresh count. An IPv4 address carried in IPv6, `::ffff:203.0.113.7`, counts as that IPv4 address, and every spelling of one IPv6 address, upper case, zero-padded or with a zone, as one. Better Auth's own limiter had the same gap (CVE-2026-45364, GHSA-p6v2-xcpg-h6xw); `tests/security/production.test.ts` replays it.
+
+### Added
+
+- `auth.signInLimits.ipv6Prefix`, the bits of an IPv6 address that name the client its sign-in limit counts: 64 unless given, 48 or 56 where a provider gives each customer more, 128 for each address alone. `setupWeb` refuses one that is not a whole number from 1 to 128.
+
 ### Changed
 
 - The README's first screen says what the framework is in the words of someone choosing one: a batteries-included Effect framework for full-stack apps on Cloudflare Workers, in the spirit of Laravel, with Hono, Inertia and React, Better Auth, and Drizzle on D1 or Postgres. Three reasons follow, then the template and the setup prompt for building with an AI, and it links to [web.popcomputer.com](https://web.popcomputer.com). It opened with "Effect-native, server-driven web applications on Hono", which named neither Workers nor what an app gets, and npm shows the same text.

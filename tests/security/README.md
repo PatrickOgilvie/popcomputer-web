@@ -18,7 +18,7 @@ every statement the database receives.
 | A shared cache keeping one visitor's response; concurrent requests seeing each other's user | `cache-and-isolation.test.ts` |
 | A body over the limit, streamed or declared, read whole before anything refused it, by validation or by Better Auth; a list of thousands of invalid items, each kept, observed and answered as an error of its own | `sizes.test.ts`, `../better-auth/seam.test.ts` |
 | Back after sign-out showing the previous user's pages from the browser's history | `history.test.ts` |
-| Error detail in production; submitted passwords, cookies and tokens, and tokens in a URL or Referer, handed to the error observer; the client address; validators made slow; dependency floors | `production.test.ts` |
+| Error detail in production; submitted passwords, cookies and tokens, and tokens in a URL or Referer, handed to the error observer; the client address, and an IPv6 network counted as one client; validators made slow; dependency floors | `production.test.ts` |
 | Who may load a record, through a route that checks nothing itself | `../effect/careless-route.test.ts` |
 | Guards, roles and permissions | `../effect/guard.test.ts` |
 | Better Auth's endpoints reached with another body type or path | `../better-auth/seam.test.ts`, `../effect/sign-in-limits.test.ts` |

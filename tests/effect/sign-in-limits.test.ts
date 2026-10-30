@@ -152,6 +152,40 @@ describe('sign-in limits', () => {
     expect(limiter.refused[0]).toStartWith('address:')
   })
 
+  test('the binding limits a whole IPv6 network, however its addresses rotate', async () => {
+    const limiter = testRateLimiter({ limit: 2 })
+    const { app, env } = await createApp(limiter, 100)
+    const statuses: number[] = []
+
+    // A new address from one /64 for each guess, as its owner can make.
+    for (const host of ['1', 'beef', 'ffff:ffff:ffff']) {
+      const response = await testBrowser(app, env).request('/sign-in', {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'CF-Connecting-IP': `2001:db8:1234:5678::${host}` },
+        body: JSON.stringify({ email: 'ada@example.com', password: `guess-${host}` }),
+      })
+      statuses.push(response.status)
+    }
+
+    expect(statuses).toEqual([422, 422, 429])
+    expect(limiter.refused[0]).toBe('address:2001:db8:1234:5678:0:0:0:0/64')
+  })
+
+  test('ipv6Prefix widens the network an address counts with, and refuses a prefix that is not one', async () => {
+    const auth = createAuth()
+    const config = (ipv6Prefix: number) => ({
+      version: '1',
+      render: (page: unknown) => JSON.stringify(page),
+      auth: { client: () => auth, signInLimits: { limiter: 'SIGN_IN_LIMITER', table: rateLimit, ipv6Prefix } },
+    })
+
+    expect(activeSignInLimits({ limiter: 'SIGN_IN_LIMITER', table: rateLimit, ipv6Prefix: 48 }, {}).ipv6Prefix).toBe(48)
+    expect(activeSignInLimits({ limiter: 'SIGN_IN_LIMITER', table: rateLimit }, {}).ipv6Prefix).toBe(64)
+    for (const ipv6Prefix of [0, 129, 56.5, Number.NaN]) {
+      expect({ ipv6Prefix, setup: () => setupWeb(new Hono(), config(ipv6Prefix)) }.setup).toThrow('auth.signInLimits.ipv6Prefix')
+    }
+  })
+
   test("an account's failures from many addresses cool it down, before its password is checked", async () => {
     const { app, env, time, rows } = await createApp(testRateLimiter({ limit: 100 }))
 

@@ -5,7 +5,8 @@
  * Two layers, cheapest first:
  *
  * - A Cloudflare Workers Rate Limiting binding counts every sign-in, sign-up
- *   and password call per client address, and every sign-in per account,
+ *   and password call per client address, an IPv6 client's by its /64 network
+ *   (`ipv6Prefix`), and every sign-in per account,
  *   over its short window (10 or 60 seconds), at Cloudflare's edge, with no
  *   database write.
  * - Better Auth's `rateLimit` table counts an account's sign-ins, each before
@@ -86,6 +87,14 @@ export interface SignInLimitsConfig<Limiter extends string = string> {
   /** Better Auth's `rateLimit` table, where each account's failed sign-ins are counted. */
   readonly table: SignInCountsTable
   readonly failures?: SignInFailures
+  /**
+   * How many leading bits of an IPv6 address name the client its limit
+   * counts: every address in that network counts as one, as its owner can
+   * send from any of them. A whole number from 1 to 128. Default 64, the
+   * network an ISP or a host gives one customer; 48 or 56 where a provider
+   * gives a customer more, 128 for each address alone.
+   */
+  readonly ipv6Prefix?: number
 }
 
 /** The limits a request applies: the binding it reads and the policy, resolved. */
@@ -96,6 +105,7 @@ export interface ActiveSignInLimits {
   readonly max: number
   readonly windowMillis: number
   readonly cooldownMillis: number
+  readonly ipv6Prefix: number
 }
 
 export class SignInLimits extends Context.Service<SignInLimits, ActiveSignInLimits>()('@popcomputer/web/SignInLimits') {}
@@ -137,6 +147,15 @@ export function assertSignInLimitsConfig(config: SignInLimitsConfig): void {
         "Give max as a whole number of 1 or more, and window and cooldown as positive durations, such as '15 minutes' and '1 minute'."
     )
   }
+
+  const prefix = config.ipv6Prefix ?? DEFAULT_IPV6_PREFIX
+
+  if (!(Number.isSafeInteger(prefix) && prefix >= 1 && prefix <= 128)) {
+    throw new Error(
+      `Invalid setupWeb configuration: auth.signInLimits.ipv6Prefix is ${String(config.ipv6Prefix)}, which names no IPv6 network. ` +
+        'Give a whole number of bits from 1 to 128, such as 64, or leave it out.'
+    )
+  }
 }
 
 /** The limits `setupWeb`'s configuration gives a request, reading its bindings. */
@@ -151,6 +170,7 @@ export function activeSignInLimits(config: SignInLimitsConfig, bindings: object)
     limiterName: config.limiter,
     table: config.table,
     ...failuresPolicy(config.failures),
+    ipv6Prefix: config.ipv6Prefix ?? DEFAULT_IPV6_PREFIX,
   }
 }
 
@@ -202,6 +222,74 @@ export interface SignInAttempt {
   readonly path: string
   readonly address: string
   readonly account: string | undefined
+}
+
+/** The network an IPv6 client counts as, unless `ipv6Prefix` says otherwise: what an ISP or a host gives one customer. */
+const DEFAULT_IPV6_PREFIX = 64
+
+const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
+
+/**
+ * An IPv6 address's eight 16-bit groups, or undefined for text that is not
+ * one. A zone, `%eth0`, names the interface, not the address, and an IPv4
+ * address in the last 32 bits, `::ffff:203.0.113.7`, is two groups.
+ */
+function ipv6Groups(address: string): ReadonlyArray<number> | undefined {
+  const [text = ''] = address.split('%', 1)
+  const lastColon = text.lastIndexOf(':')
+
+  if (lastColon === -1) return undefined
+
+  const last = text.slice(lastColon + 1)
+  const dotted = last.includes('.') ? last : undefined
+
+  if (dotted !== undefined && !IPV4.test(dotted)) return undefined
+
+  const octets = dotted?.split('.').map(Number) ?? []
+  const hex = dotted === undefined
+    ? text
+    : `${text.slice(0, lastColon + 1)}${(((octets[0] ?? 0) << 8) | (octets[1] ?? 0)).toString(16)}:${(((octets[2] ?? 0) << 8) | (octets[3] ?? 0)).toString(16)}`
+  const halves = hex.split('::')
+
+  if (halves.length > 2) return undefined
+
+  const groupsOf = (half: string | undefined) => (half === undefined || half === '' ? [] : half.split(':'))
+  const left = groupsOf(halves[0])
+  const right = groupsOf(halves[1])
+  const elided = halves.length === 2 ? 8 - left.length - right.length : 0
+
+  if (halves.length === 2 ? elided < 1 : left.length !== 8) return undefined
+
+  const groups = [...left, ...Array.from({ length: elided }, () => '0'), ...right]
+
+  return groups.every((group) => /^[0-9a-f]{1,4}$/i.test(group)) ? groups.map((group) => Number.parseInt(group, 16)) : undefined
+}
+
+/**
+ * The client an address counts as for its limit. An IPv6 address counts as
+ * its network, its first `ipv6Prefix` bits, written in full: its owner can
+ * send from any address in it, so each must not start a fresh count. One
+ * that carries an IPv4 address, `::ffff:203.0.113.7`, counts as that IPv4
+ * address. An IPv4 address, and text that is no address, such as
+ * `'unknown'`, count as they are.
+ */
+export function addressRange(address: string, ipv6Prefix: number): string {
+  const text = address.trim().toLowerCase()
+  const groups = ipv6Groups(text)
+
+  if (groups === undefined) return text
+
+  const [a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, g = 0, h = 0] = groups
+
+  if (a === 0 && b === 0 && c === 0 && d === 0 && e === 0 && f === 0xffff) return `${g >> 8}.${g & 0xff}.${h >> 8}.${h & 0xff}`
+
+  const network = groups.map((group, index) => {
+    const kept = Math.min(16, Math.max(0, ipv6Prefix - index * 16))
+
+    return kept === 0 ? 0 : group & ((0xffff << (16 - kept)) & 0xffff)
+  })
+
+  return `${network.map((group) => group.toString(16)).join(':')}/${ipv6Prefix}`
 }
 
 /**
@@ -414,7 +502,7 @@ export function withinSignInLimits<E, R>(
 
     const limits = configured.value
 
-    yield* limit(limits, `address:${attempt.address}`)
+    yield* limit(limits, `address:${addressRange(attempt.address, limits.ipv6Prefix)}`)
 
     if (attempt.account === undefined || !isPasswordSignIn(attempt.path)) return yield* call
 

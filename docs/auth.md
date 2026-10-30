@@ -201,11 +201,11 @@ account's password spread across a botnet's addresses are never slowed, and
 each one costs a password hash. `setupWeb`'s `auth.signInLimits` limits both,
 cheapest first:
 
-- A Cloudflare Workers Rate Limiting binding counts each client address's
-  sign-in, sign-up and password calls, and each account's sign-ins, at
-  Cloudflare's edge, writing nothing. `limiter` names it, and accepts only the
-  bindings `src/env.ts` types `RateLimit`. Declare it in `wrangler.jsonc`; its
-  `period` is 10 or 60 seconds:
+- A Cloudflare Workers Rate Limiting binding counts each client address's sign-in, sign-up
+  and password calls, an IPv6 address's by its network, whose owner can send from any
+  address in it: its first `ipv6Prefix` bits, 64 by default. It counts each account's
+  sign-ins too, at Cloudflare's edge, writing nothing. `limiter` names it, one `src/env.ts`
+  types `RateLimit`. Declare it in `wrangler.jsonc`; its `period` is 10 or 60 seconds:
 
   ```jsonc
   "ratelimits": [{ "name": "SIGN_IN_LIMITER", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } }]
