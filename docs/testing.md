@@ -88,9 +88,10 @@ value a response set for a declared cookie.
 A test that makes several requests as one visitor, such as adding to a cart
 and then checking out, uses `testBrowser(app, env)`. It keeps the cookies
 responses set, sends them to the paths they cover, names the page it last
-showed as the `Referer` of a form it posts, and follows redirects with
-`browser.follow(res)`; `browser.setCookie(name, value, path)` gives it a
-cookie.
+showed as the `Referer` of a form it posts and that page's origin as its
+`Origin`, as a browser does for any request but a `GET` or `HEAD`, and follows
+redirects with `browser.follow(res)`; `browser.setCookie(name, value, path)`
+gives it a cookie.
 
 A form's next page receives its `flash` values and field errors through a
 cookie the redirect sets. `testBrowser(app, env).follow(res)` requests the

@@ -447,5 +447,18 @@ describe('testBrowser', () => {
     await browser.request('/later')
     expect(browser.cookies.get('session')).toBe('kept')
   })
+
+  test('names the page’s origin on a request that may change something, as a browser does', async () => {
+    const app = new Hono().all('*', (c) => c.text(c.req.header('Origin') ?? 'none'))
+    const browser = testBrowser(app)
+
+    expect(await (await browser.request('/projects', { method: 'POST' })).text()).toBe('http://localhost')
+    expect(await (await browser.request('/projects')).text()).toBe('none')
+
+    // A form on the page it shows names that page's origin, wherever it posts.
+    await browser.request('https://0123abcd-app.example.workers.dev/projects')
+    expect(await (await browser.request('/projects', { method: 'DELETE' })).text()).toBe('https://0123abcd-app.example.workers.dev')
+    expect(await (await browser.request('/projects', { method: 'POST', headers: { Origin: 'https://partner.example' } })).text()).toBe('https://partner.example')
+  })
 })
 

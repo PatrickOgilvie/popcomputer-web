@@ -669,6 +669,21 @@ async function sendThroughHandler(
 
   if (input.body !== undefined) headers.set('content-type', 'application/json')
 
+  // Better Auth sees the call at its baseURL. A form posted from the address
+  // the request reached, such as a Version URL or another hostname the Worker
+  // answers, is same-origin there, as setupWeb's cross-site check found, so
+  // its Origin and Referer move to baseURL with it: Better Auth, which trusts
+  // its baseURL, would refuse the application's own page otherwise. Another
+  // site's Origin reaches Better Auth as it came, for its trusted origins.
+  const arrived = new URL(original.url).origin
+
+  if (url.origin !== arrived) {
+    if (headers.get('origin') === arrived) headers.set('origin', url.origin)
+
+    const referer = URL.parse(headers.get('referer') ?? '')
+    if (referer?.origin === arrived) headers.set('referer', `${url.origin}${referer.pathname}${referer.search}`)
+  }
+
   return auth.handler(new Request(url, {
     method,
     headers,

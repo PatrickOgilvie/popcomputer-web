@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `betterAuthRedirect`, `betterAuthCall` and `betterAuthLogoutAction` work in a browser at every address the Worker answers, such as a Version URL from `bun run preview` or a tenant's hostname. They send the call to Better Auth at its `baseURL`, and the form's `Origin` and `Referer` still named the address it was posted from, which Better Auth, trusting only its `baseURL`, refused: signing out there cleared the browser's cookies but left the session live until it expired, and signing up or in there, by password, magic link or emailed code, answered `Invalid origin`. A form posted from the address the request reached, which setupWeb's cross-site check finds same-origin, now has its `Origin` and `Referer` moved to `baseURL` with the call. Another site's `Origin` reaches Better Auth as it came, so its `trustedOrigins` still decide; a site setupWeb's `verifyOrigin.allowedOrigins` lets post is not trusted by Better Auth for that. The demo template's `trustedOrigins: (request) => [new URL(request.url).origin]`, which never saw the address a forwarded call came from, now matters only to `betterAuthHandler()` routes.
+
+### Changed
+
+- `testBrowser` sends `Origin` on every request but a `GET` or `HEAD`, as a browser does: the origin of the page it last showed, or of the request's own URL, unless the test gives one. Better Auth skips its origin and CSRF checks under a test runner unless `betterAuth({ advanced: { disableOriginCheck: false, disableCSRFCheck: false } })` says otherwise, and the package's Better Auth tests now run with them on, as a Worker does.
+
 ## [1.8.0] - 2026-10-30
 
 This release lets an application's routes and actions change while Vite's dev server runs its Worker, and widens two lint rules to a page's components. `@popcomputer/web/vite`'s `reloadWorkerModules()` runs the Worker's modules afresh when one of them changes, where an edit to `src/routes.ts` or an action had every request fail with `GET /login is registered twice` until the dev server restarted. `no-server-imports-in-pages` reports server code a component under `src/components/` or `src/layouts/` imports, and `no-module-level-mutable-state` passes such a component's module state, as it passes a page's.

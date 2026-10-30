@@ -19,7 +19,7 @@ import { betterAuthSession } from '../../src/auth.js'
 import { isLimitedPath } from '../../src/effect/sign-in-limits.js'
 import { tableSchema } from '../../src/schema.js'
 import { acme, createAuth, createDatabase, newOutbox, schema, SECRET, type CreateAuthOptions } from './fixture.js'
-import { app } from './app.js'
+import { app, PARTNER_ORIGIN } from './app.js'
 
 const repoRoot = join(import.meta.dir, '..', '..')
 
@@ -255,6 +255,32 @@ describe('signing up, in and out', () => {
     expect(visitor.cookies.has(SESSION)).toBe(false)
     expect(db.select().from(schema.session).all()).toEqual([])
     expect((await me(visitor)).status).toBe(401)
+  })
+
+  test('signing out at another of the app’s addresses, such as a Version URL, ends the session in the database too', async () => {
+    const { browser, db, join } = setup()
+    const visitor = browser()
+    await join(visitor, 'ada@example.com')
+    const version = 'https://0123abcd-app.example.workers.dev'
+
+    const res = await visitor.request(`${version}/sign-out`, { method: 'POST', headers: { Origin: version, Referer: `${version}/` } })
+
+    expect(res.status).toBe(303)
+    expect(db.select().from(schema.session).all()).toEqual([])
+  })
+
+  test('signing out there from another site setupWeb lets post leaves that site to Better Auth’s own trusted origins', async () => {
+    const { browser, db, join } = setup()
+    const visitor = browser()
+    await join(visitor, 'ada@example.com')
+    const version = 'https://0123abcd-app.example.workers.dev'
+
+    const res = await visitor.request(`${version}/sign-out`, { method: 'POST', headers: { Origin: PARTNER_ORIGIN, Referer: `${PARTNER_ORIGIN}/` } })
+
+    // The action clears the browser's cookies whatever Better Auth answers,
+    // but Better Auth, which trusts only its baseURL, refuses to end the session.
+    expect(res.status).toBe(303)
+    expect(db.select().from(schema.session).all()).toHaveLength(1)
   })
 
   test('signing out of a Better Auth loaded on first use ends the session in the database too', async () => {

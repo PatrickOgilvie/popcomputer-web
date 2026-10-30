@@ -229,6 +229,9 @@ export function createAuth(options: CreateAuthOptions) {
     user: { additionalFields: betterAuthFields(user, { timeZone: { input: true } }), changeEmail: { enabled: true } },
     session: options.session,
     rateLimit: { enabled: false },
+    // Better Auth skips its origin and CSRF checks under a test runner
+    // unless told otherwise; an application's Worker runs them.
+    advanced: { disableOriginCheck: false, disableCSRFCheck: false },
     logger: { disabled: true },
     plugins: [
       organization({

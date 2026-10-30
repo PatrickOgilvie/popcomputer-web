@@ -28,6 +28,9 @@ export interface Bindings {
   readonly LAZY?: boolean
 }
 
+/** A site whose forms setupWeb's cross-site check accepts, and Better Auth's trusted origins leave out. */
+export const PARTNER_ORIGIN = 'https://partner.example'
+
 export const paths = {
   home: '/',
   signUp: '/sign-up',
@@ -61,6 +64,8 @@ export const web = setupWeb(new Hono<{ Bindings: Bindings }>(), {
   },
   schema,
   paths,
+  // Another site the app lets post, which Better Auth itself doesn't trust.
+  security: { verifyOrigin: { allowedOrigins: [PARTNER_ORIGIN] } },
   bindings: { organization: schema.organization },
   auth: {
     client: (c, { db }) => {

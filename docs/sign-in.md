@@ -30,23 +30,23 @@ export const signIn = action(
 )
 ```
 
-The call goes through Better Auth's request handler, as its own client's
-calls do, so its rate limits, origin checks and plugins' hooks apply to the
-form as they do to its routes; a call to `auth.api` from server code skips
-them, which leaves a sign-in form open to password guessing. Better Auth's
-types name the endpoints, including those its plugins add, and type each
-one's body and result, so a misspelled endpoint or a missing password is a
-type error. A sign-in refused for its rate limit fails with
-`AuthRateLimitError`, which the error page answers with a 429; show it on the
-form instead with
+The call goes through Better Auth's request handler, as its own client's calls
+do, so its rate limits, origin checks and plugins' hooks apply to the form as
+they do to its routes; a call to `auth.api` skips them, leaving a sign-in form
+open to password guessing. It reaches Better Auth at `baseURL`, and a form's
+own origin, such as a Version URL's, moves there with it, so the origin check
+passes the application's own pages and judges other sites by `trustedOrigins`.
+Better Auth's types name every endpoint, plugins' too, and type each one's body
+and result, so a misspelled endpoint or a missing password is a type error. A
+sign-in its rate limit refuses fails with `AuthRateLimitError`, which the error
+page answers with a 429; show it on the form instead with
 `Effect.catchTag('AuthRateLimitError', () => invalid({ email: 'Too many attempts. Try again in a minute.' }))`.
 Validate a sign-in's password with `currentPassword`, which keeps it as typed:
-`requiredString` trims, so a password chosen with outer spaces would never
-sign in. `password({ min: 12 })` checks one a visitor chooses, on signing up.
-`RequireGuestLayer` sends a signed-in visitor from a guest page to
-`setupWeb`'s `auth.homePath`, `/` by default.
-In tests, each `testBrowser` is a client at its own address, so the limits
-count each browser apart.
+`requiredString` trims, so a password chosen with outer spaces would never sign
+in. `password({ min: 12 })` checks one a visitor chooses, on signing up.
+`RequireGuestLayer` sends a signed-in visitor from a guest page to `setupWeb`'s
+`auth.homePath`, `/` by default. In tests, each `testBrowser` is a client at
+its own address, so the limits count each browser apart.
 
 ```ts
 // src/auth-routes.ts

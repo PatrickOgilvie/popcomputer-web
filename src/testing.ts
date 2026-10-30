@@ -591,6 +591,9 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
     if (!headers.has('CF-Connecting-IP')) headers.set('CF-Connecting-IP', address)
     if (!headers.has('X-Forwarded-For')) headers.set('X-Forwarded-For', address)
     if (page !== undefined && !headers.has('Referer')) headers.set('Referer', page)
+    // A browser names the page's origin on every request that may change
+    // something, a same-origin form's included.
+    if (!['GET', 'HEAD'].includes(method) && !headers.has('Origin')) headers.set('Origin', new URL(page ?? url.href).origin)
 
     const response = keep(await app.request(path, { ...init, headers }, env))
     received.add(response)
