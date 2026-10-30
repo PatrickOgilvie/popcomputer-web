@@ -5,9 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.9.0] - 2026-10-30
 
-What an application on 1.8.1 may need to change: one whose users share an IPv6 network, such as an office's /64, finds them sharing one per-address sign-in budget, as people behind one IPv4 address already do. `auth.signInLimits.ipv6Prefix` sets the network's size, and 128 counts each address alone again.
+This release fixes a gap in the sign-in limits: an IPv6 client could send each password guess from another address in its network and never be slowed by the per-address limit, the gap Better Auth's CVE-2026-45364 describes in its own limiter. `auth.signInLimits` now counts an IPv6 client by its network, its /64 unless `ipv6Prefix` says otherwise. The per-account limit was never affected. The README and npm's description also say what the framework is.
+
+What an application on 1.8.1 may need to change, which `UPGRADING.md`'s "From 1.8 to 1.9" details:
+
+- One whose users share an IPv6 network, such as an office's /64, finds them sharing one per-address sign-in budget, as people behind one IPv4 address already do. `auth.signInLimits.ipv6Prefix` sets the network's size, and 128 counts each address alone again.
 
 ### Security
 

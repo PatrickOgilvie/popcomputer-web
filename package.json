@@ -1,6 +1,6 @@
 {
   "name": "@popcomputer/web",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "description": "A batteries-included Effect framework for full-stack apps on Cloudflare Workers: Hono, Inertia and React, Better Auth and Drizzle, with secure defaults.",
   "type": "module",
   "main": "./dist/index.js",

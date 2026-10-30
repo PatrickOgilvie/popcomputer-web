@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.8.1
+# Upgrading to @popcomputer/web 1.9.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.8.1.
+`honertia` package it was renamed from, to 1.9.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -15,11 +15,13 @@ the state the framework keeps between requests and adds
 `@popcomputer/web/fuzz`, which [From 1.6 to 1.7](#from-16-to-17) lists.
 1.8.0 adds `@popcomputer/web/vite` and widens two lint rules to a page's
 components, which [From 1.7 to 1.8](#from-17-to-18) lists, and 1.8.1 changes
-nothing more. So the path is one jump: make the 1.0.0 changes below, install
-1.8.1, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
-shows, check the lists in [From 1.4 to 1.5](#from-14-to-15),
-[From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17) and
-[From 1.7 to 1.8](#from-17-to-18), and you are done.
+nothing more. 1.9.0 counts an IPv6 client's sign-ins by its network, which
+[From 1.8 to 1.9](#from-18-to-19) lists. So the path is one jump: make the
+1.0.0 changes below, install 1.9.0, give each binding its option as
+[From 1.3 to 1.4](#from-13-to-14) shows, check the lists in
+[From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16),
+[From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18) and
+[From 1.8 to 1.9](#from-18-to-19), and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -46,9 +48,10 @@ you installed:
 11. [From 1.5 to 1.6](#from-15-to-16)
 12. [From 1.6 to 1.7](#from-16-to-17)
 13. [From 1.7 to 1.8](#from-17-to-18)
-14. [Tooling after the upgrade](#tooling-after-the-upgrade)
-15. [Checklist](#checklist)
-16. [A worked example](#a-worked-example)
+14. [From 1.8 to 1.9](#from-18-to-19)
+15. [Tooling after the upgrade](#tooling-after-the-upgrade)
+16. [Checklist](#checklist)
+17. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -62,7 +65,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.8.1 needs:
+- **Check the peer dependencies.** 1.9.0 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -77,12 +80,12 @@ you installed:
   Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
-- **Install 1.8.1** with the peers your application uses, removing `honertia`
+- **Install 1.9.0** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.8.1 effect@^4.0.0
+  bun add @popcomputer/web@^1.9.0 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
@@ -102,12 +105,13 @@ you installed:
 | 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.7.x | [0.7 to 1.0](#from-07-to-10) |
-| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), then [1.7 to 1.8](#from-17-to-18) |
-| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), then [1.7 to 1.8](#from-17-to-18) |
-| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), then [1.7 to 1.8](#from-17-to-18) |
-| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), then [1.7 to 1.8](#from-17-to-18) |
-| 1.6.x | [1.6 to 1.7](#from-16-to-17), then [1.7 to 1.8](#from-17-to-18) |
-| 1.7.x | [1.7 to 1.8](#from-17-to-18) only |
+| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
+| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
+| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
+| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
+| 1.6.x | [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
+| 1.7.x | [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
+| 1.8.x | [1.8 to 1.9](#from-18-to-19) only |
 
 `honertia` and `@popcomputer/web` share one version line, so `honertia` 0.1.45
 is "0.1.x". The 0.4 to 0.7 sections hardly apply to an application coming from
@@ -1443,6 +1447,36 @@ Changes you may notice without acting on them:
 
 [CHANGELOG.md](CHANGELOG.md) has the detail of each.
 
+## From 1.8 to 1.9
+
+Install 1.9.0:
+
+```bash
+bun add @popcomputer/web@^1.9.0
+```
+
+1.9.0 closes a gap in `auth.signInLimits`: the Rate Limiting binding counted
+each IPv6 address alone, and an ISP or a host gives each customer a /64, so
+one client could send each guess from another of its addresses and never be
+slowed. Check this against yours:
+
+- **Users who share an IPv6 network.** The binding now counts an IPv6 client
+  by its first 64 bits, so people on one /64, such as an office, share one
+  per-address budget, as people behind one IPv4 address already do. Where a
+  provider gives each customer a /48 or a /56, give `auth.signInLimits`
+  `ipv6Prefix: 48` or `56`; `ipv6Prefix: 128` counts each address alone, as
+  before, and brings the gap back. `setupWeb` refuses one that is not a whole
+  number from 1 to 128. [`docs/auth.md`](docs/auth.md) has the limits.
+
+Changes you may notice without acting on them:
+
+- An IPv4 address carried in IPv6, `::ffff:203.0.113.7`, counts as that IPv4
+  address, and every spelling of one IPv6 address as one.
+- The README and npm's description say what the framework is, and npm's
+  homepage is https://web.popcomputer.com.
+
+[CHANGELOG.md](CHANGELOG.md) has the detail of each.
+
 ## Tooling after the upgrade
 
 - **`tsconfig.json`** needs the DOM library and JSX for React pages, and
@@ -1503,8 +1537,8 @@ Changes you may notice without acting on them:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.8.1`.
-- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17) and [From 1.7 to 1.8](#from-17-to-18) that applies to your application is done.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.9.0`.
+- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18) and [From 1.8 to 1.9](#from-18-to-19) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
