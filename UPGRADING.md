@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.7.0
+# Upgrading to @popcomputer/web 1.8.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.7.0.
+`honertia` package it was renamed from, to 1.8.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -12,11 +12,14 @@ to change something, which [From 1.4 to 1.5](#from-14-to-15) lists. 1.6.0
 fixes what a second audit found in 1.5.0's changes and adds lint rules, which
 [From 1.5 to 1.6](#from-15-to-16) lists. 1.7.0 fixes four security issues in
 the state the framework keeps between requests and adds
-`@popcomputer/web/fuzz`, which [From 1.6 to 1.7](#from-16-to-17) lists. So
-the path is one jump: make the 1.0.0 changes below, install 1.7.0, give each
-binding its option as [From 1.3 to 1.4](#from-13-to-14) shows, check the
-lists in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16)
-and [From 1.6 to 1.7](#from-16-to-17), and you are done.
+`@popcomputer/web/fuzz`, which [From 1.6 to 1.7](#from-16-to-17) lists.
+1.8.0 adds `@popcomputer/web/vite` and widens two lint rules to a page's
+components, which [From 1.7 to 1.8](#from-17-to-18) lists. So the path is
+one jump: make the 1.0.0 changes below, install 1.8.0, give each binding its
+option as [From 1.3 to 1.4](#from-13-to-14) shows, check the lists in
+[From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16),
+[From 1.6 to 1.7](#from-16-to-17) and [From 1.7 to 1.8](#from-17-to-18), and
+you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -42,9 +45,10 @@ you installed:
 10. [From 1.4 to 1.5](#from-14-to-15)
 11. [From 1.5 to 1.6](#from-15-to-16)
 12. [From 1.6 to 1.7](#from-16-to-17)
-13. [Tooling after the upgrade](#tooling-after-the-upgrade)
-14. [Checklist](#checklist)
-15. [A worked example](#a-worked-example)
+13. [From 1.7 to 1.8](#from-17-to-18)
+14. [Tooling after the upgrade](#tooling-after-the-upgrade)
+15. [Checklist](#checklist)
+16. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -58,7 +62,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.7.0 needs:
+- **Check the peer dependencies.** 1.8.0 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -68,16 +72,17 @@ you installed:
   | `better-auth` | `>=1.7.7 <1.8.0` | You use the Better Auth integration |
   | `miniflare` | `>=4.0.0 <5.0.0` | You test against Cloudflare D1 |
   | `@types/react` | `>=18` | You use the React page types |
+  | `vite` | `>=6.1.0` | You use `reloadWorkerModules` in `vite.config.ts` |
 
   Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
-- **Install 1.7.0** with the peers your application uses, removing `honertia`
+- **Install 1.8.0** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.7.0 effect@^4.0.0
+  bun add @popcomputer/web@^1.8.0 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
@@ -97,11 +102,12 @@ you installed:
 | 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
 | 0.7.x | [0.7 to 1.0](#from-07-to-10) |
-| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), then [1.6 to 1.7](#from-16-to-17) |
-| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), then [1.6 to 1.7](#from-16-to-17) |
-| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), then [1.6 to 1.7](#from-16-to-17) |
-| 1.5.x | [1.5 to 1.6](#from-15-to-16), then [1.6 to 1.7](#from-16-to-17) |
-| 1.6.x | [1.6 to 1.7](#from-16-to-17) only |
+| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), then [1.7 to 1.8](#from-17-to-18) |
+| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), then [1.7 to 1.8](#from-17-to-18) |
+| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), then [1.7 to 1.8](#from-17-to-18) |
+| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), then [1.7 to 1.8](#from-17-to-18) |
+| 1.6.x | [1.6 to 1.7](#from-16-to-17), then [1.7 to 1.8](#from-17-to-18) |
+| 1.7.x | [1.7 to 1.8](#from-17-to-18) only |
 
 `honertia` and `@popcomputer/web` share one version line, so `honertia` 0.1.45
 is "0.1.x". The 0.4 to 0.7 sections hardly apply to an application coming from
@@ -1403,6 +1409,40 @@ runs on, see [Fuzzing](docs/fuzzing.md).
 
 [CHANGELOG.md](CHANGELOG.md) has the detail of each.
 
+## From 1.7 to 1.8
+
+Install 1.8.0:
+
+```bash
+bun add @popcomputer/web@^1.8.0
+```
+
+1.8.0 adds `@popcomputer/web/vite` and widens two lint rules to a page's
+components. Check each item against yours:
+
+- **The Worker under Vite's dev server.** An application whose Worker runs
+  inside Vite's dev server, as the demo's `bun run dev` runs it with
+  Cloudflare's Vite plugin, adds `reloadWorkerModules()` from
+  `@popcomputer/web/vite` to `vite.config.ts`'s plugins, as
+  [`docs/installation.md`](docs/installation.md) shows. Without it, an edit
+  to an action or to `src/routes.ts` runs `src/routes.ts` again on the routes
+  already loaded, and every request fails with `GET /login is registered
+  twice` until the dev server restarts.
+- **Server code in a component.** `no-server-imports-in-pages` reports a file
+  under `src/components/` or `src/layouts/` that imports server code, such
+  as `drizzle-orm`, `@popcomputer/web/effect` or the schema, as it reports a
+  page: the component ships to the browser. Give the component what it shows
+  as props from its page. Type-only imports still pass.
+
+Changes you may notice without acting on them:
+
+- `no-module-level-mutable-state` passes a component's or a layout's
+  module-scope `let`, or a `Map` its hook changes, as it passes a page's: the
+  module runs in one visitor's browser.
+- The `registered twice` error's hint names `reloadWorkerModules()`.
+
+[CHANGELOG.md](CHANGELOG.md) has the detail of each.
+
 ## Tooling after the upgrade
 
 - **`tsconfig.json`** needs the DOM library and JSX for React pages, and
@@ -1463,8 +1503,8 @@ runs on, see [Fuzzing](docs/fuzzing.md).
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.7.0`.
-- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16) and [From 1.6 to 1.7](#from-16-to-17) that applies to your application is done.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.8.0`.
+- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17) and [From 1.7 to 1.8](#from-17-to-18) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.

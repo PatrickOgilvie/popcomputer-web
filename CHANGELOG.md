@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.8.0] - 2026-10-30
+
+This release lets an application's routes and actions change while Vite's dev server runs its Worker, and widens two lint rules to a page's components. `@popcomputer/web/vite`'s `reloadWorkerModules()` runs the Worker's modules afresh when one of them changes, where an edit to `src/routes.ts` or an action had every request fail with `GET /login is registered twice` until the dev server restarted. `no-server-imports-in-pages` reports server code a component under `src/components/` or `src/layouts/` imports, and `no-module-level-mutable-state` passes such a component's module state, as it passes a page's.
+
+What an application on 1.7.0 may need to change, which `UPGRADING.md`'s "From 1.7 to 1.8" details:
+
+- One whose Worker runs in Vite's dev server, as the demo's does, adds `reloadWorkerModules()` to `vite.config.ts`'s plugins.
+- One whose component under `src/components/` or `src/layouts/` imports server code, such as `drizzle-orm`, `@popcomputer/web/effect` or the schema, passes what it shows as props from its page.
 
 ### Added
 
