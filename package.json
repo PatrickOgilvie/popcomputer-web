@@ -1,7 +1,7 @@
 {
   "name": "@popcomputer/web",
   "version": "1.8.1",
-  "description": "Effect-native server-driven web applications on Hono",
+  "description": "A batteries-included Effect framework for full-stack apps on Cloudflare Workers: Hono, Inertia and React, Better Auth and Drizzle, with secure defaults.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -108,12 +108,25 @@
     "prepublishOnly": "bun run test"
   },
   "keywords": [
+    "framework",
+    "full-stack",
+    "web-framework",
+    "effect",
+    "effect-ts",
+    "typescript",
+    "cloudflare",
+    "cloudflare-workers",
+    "d1",
     "hono",
     "inertia",
-    "spa",
+    "inertiajs",
     "react",
-    "cloudflare",
-    "workers"
+    "better-auth",
+    "drizzle",
+    "laravel",
+    "monolith",
+    "vibe-coding",
+    "ai-agents"
   ],
   "author": "Patrick Ogilvie",
   "license": "MIT",
@@ -124,7 +137,7 @@
     "type": "git",
     "url": "git+https://github.com/patrickogilvie/popcomputer-web.git"
   },
-  "homepage": "https://github.com/patrickogilvie/popcomputer-web#readme",
+  "homepage": "https://web.popcomputer.com",
   "bugs": {
     "url": "https://github.com/patrickogilvie/popcomputer-web/issues"
   },

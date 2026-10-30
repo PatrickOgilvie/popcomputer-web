@@ -2,13 +2,40 @@
 
 # @popcomputer/web
 
-Effect-native, server-driven web applications on Hono.
+`@popcomputer/web`, popweb for short, is a batteries-included Effect framework
+for full-stack apps on Cloudflare Workers, in the spirit of Laravel. Hono routes
+the requests, Inertia and React render the pages, Better Auth signs people in,
+and Drizzle reads and writes D1 or Postgres. Forms, validation, caching,
+background work and tests come with it, and so do a rulebook and lint rules for
+coding agents. Its website is [web.popcomputer.com](https://web.popcomputer.com).
 
-`@popcomputer/web` combines the Inertia protocol, Hono routing, Effect programs,
-typed request boundaries, optional Better Auth integration, and Drizzle route
-model binding. It is designed for applications that want a Laravel-like
-request-to-page workflow without giving up explicit dependencies and typed
-failures.
+- **Laravel's request-to-page workflow, on Workers.** A route loads its record,
+  its action validates the request and renders a page or redirects, and a
+  failed form goes back with its errors. Pages, forms, scheduled jobs and
+  queues run in one Cloudflare Worker.
+- **Effect from request to page, with typed failures.** Each action is an
+  Effect that names the services it needs and the failures it can return. A
+  route whose services are missing or whose failures go unhandled is a type
+  error, and so is a page given the wrong props.
+- **Secure defaults, tested against other frameworks' advisories.** The
+  [security suite](tests/security/) attacks the framework the way published
+  vulnerabilities attacked Next.js, Laravel, Hono, Better Auth and others, and
+  fails if one works here.
+  [The list](https://web.popcomputer.com/security/tested-against) names each
+  one.
+
+To start a new app from the template:
+
+```bash
+bun create PatrickOgilvie/popcomputer-web-demo my-app
+```
+
+To build with an AI, paste the
+[setup prompt](https://web.popcomputer.com/#install) into it. It tells your AI
+where the docs are, how to make the app from the template, and how to check its
+work.
+
+An action that shows a project:
 
 ```ts
 // Only its owner loads a project: anyone else gets the 404 a missing one gets.
