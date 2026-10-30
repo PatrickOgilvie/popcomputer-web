@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.8.0
+# Upgrading to @popcomputer/web 1.8.1
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.8.0.
+`honertia` package it was renamed from, to 1.8.1.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -14,12 +14,12 @@ fixes what a second audit found in 1.5.0's changes and adds lint rules, which
 the state the framework keeps between requests and adds
 `@popcomputer/web/fuzz`, which [From 1.6 to 1.7](#from-16-to-17) lists.
 1.8.0 adds `@popcomputer/web/vite` and widens two lint rules to a page's
-components, which [From 1.7 to 1.8](#from-17-to-18) lists. So the path is
-one jump: make the 1.0.0 changes below, install 1.8.0, give each binding its
-option as [From 1.3 to 1.4](#from-13-to-14) shows, check the lists in
-[From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16),
-[From 1.6 to 1.7](#from-16-to-17) and [From 1.7 to 1.8](#from-17-to-18), and
-you are done.
+components, which [From 1.7 to 1.8](#from-17-to-18) lists, and 1.8.1 changes
+nothing more. So the path is one jump: make the 1.0.0 changes below, install
+1.8.1, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
+shows, check the lists in [From 1.4 to 1.5](#from-14-to-15),
+[From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17) and
+[From 1.7 to 1.8](#from-17-to-18), and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -62,7 +62,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.8.0 needs:
+- **Check the peer dependencies.** 1.8.1 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -77,12 +77,12 @@ you installed:
   Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
-- **Install 1.8.0** with the peers your application uses, removing `honertia`
+- **Install 1.8.1** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.8.0 effect@^4.0.0
+  bun add @popcomputer/web@^1.8.1 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
@@ -1503,7 +1503,7 @@ Changes you may notice without acting on them:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.8.0`.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.8.1`.
 - [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17) and [From 1.7 to 1.8](#from-17-to-18) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.

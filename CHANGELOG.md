@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.8.1] - 2026-10-30
+
+Nothing an application on 1.8.0 needs to change. Signing out, up or in through `betterAuthRedirect`, `betterAuthCall` or `betterAuthLogoutAction` works in a browser at every address the Worker answers, such as a Version URL, where Better Auth refused the form's origin and a sign-out left the session live. An application whose own tests turn Better Auth's origin checks on finds `testBrowser` sending `Origin`, as a browser does.
 
 ### Fixed
 
