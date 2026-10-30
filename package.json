@@ -67,6 +67,11 @@
       "import": "./dist/fence/index.js",
       "default": "./dist/fence/index.js"
     },
+    "./fuzz": {
+      "types": "./dist/fuzz.d.ts",
+      "import": "./dist/fuzz.js",
+      "default": "./dist/fuzz.js"
+    },
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js",

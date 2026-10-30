@@ -237,7 +237,14 @@ here, as the demo's does.
     runs a request whose retries wait on the clock. A new test must fail
     when the behaviour it covers is reverted: plant the bug first (undo the
     fix, or break the rule), watch the test fail, then restore the code. A
-    test that passes either way checks nothing.
+    test that passes either way checks nothing. Fuzz the application's
+    routes with `fuzzRequest({ paths, params, people, forms })` from
+    `@popcomputer/web/fuzz`, sending each request with `sendFuzzRequest`
+    and checking its answer with `brokenPromises`, `leaks`, `strangerWrites`
+    and `refusedWrites`, as `docs/fuzzing.md` shows, and add the
+    application's own rules beside them; give each new action a form there,
+    and each new placeholder its values. Check any other rule on generated
+    inputs with `fuzz(arbitrary, holds)`.
 13. **Declare every JSON endpoint once, as a contract,** in `src/endpoints.ts`:
     `endpoint.post(paths.apiProjects, { body, success, status: 201, errors:
     { 409: SlugTaken } })` from `@popcomputer/web/endpoint`, with `query`,
@@ -268,7 +275,9 @@ Better Auth integration; `@popcomputer/web/cache` for the KV cache;
 `@popcomputer/web/fence` for `commandPolicy` and `disableDirectives`,
 behind the `popweb-fence` command an agent's hook and the commit gate run;
 `@popcomputer/web/react` for page component types; `@popcomputer/web/paths`
-for `href`, in React and actions alike; `@popcomputer/web/testing` in tests.
+for `href`, in React and actions alike; `@popcomputer/web/testing` in tests;
+`@popcomputer/web/fuzz` for `fuzz`, `fuzzRequest` and the rules answers keep,
+in tests.
 
 ## A complete action
 

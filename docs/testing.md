@@ -195,4 +195,5 @@ that reads every tenant's rows, such as a monthly invoicing cron, sees other
 files' seeds too, so seed through the application's own writes (or keep
 counters and sequences consistent), and give such a test its own database.
 
-[A database for tests](test-database.md) shows the database a test runs against.
+[A database for tests](test-database.md) shows the database a test runs against,
+and [Fuzzing](fuzzing.md) checks the application's routes on generated requests.

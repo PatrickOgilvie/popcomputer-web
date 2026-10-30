@@ -45,6 +45,20 @@ export const memberships = sqliteTable('memberships', {
 
 const schema = { user, projects, tasks, organizations, memberships }
 
+/** Every route's path, declared once, as an application's src/paths.ts declares them. */
+export const paths = {
+  home: '/',
+  projects: '/projects',
+  project: '/projects/{project}',
+  task: '/projects/{project}/tasks/{task}',
+  showcase: '/showcase/{showcase}',
+  organization: '/orgs/{organization}',
+  signIn: '/sign-in',
+  search: '/search',
+  orders: '/orders',
+  afterSignIn: '/after-sign-in',
+} as const
+
 /** Names only the owner of each private project may ever see. */
 export const CANARIES = { ada: 'canary-ada-7f3a', grace: 'canary-grace-91c2' } as const
 
@@ -123,16 +137,16 @@ export function createApp() {
   }))
 
   routes
-    .get('/projects/{project}', action(Effect.flatMap(bound('project'), (project) => json(project))))
-    .put('/projects/{project}', action(Effect.gen(function* () {
+    .get(paths.project, action(Effect.flatMap(bound('project'), (project) => json(project))))
+    .put(paths.project, action(Effect.gen(function* () {
       const project = S.decodeUnknownSync(Id)(yield* bound('project'))
       const input = yield* validateRequest(ProjectForm)
 
       yield* dbMutation((given) => client(given).update(projects).set({ name: input.name }).where(eq(projects.id, project.id)))
 
-      return yield* redirect('/projects/{project}', { project: project.id })
+      return yield* redirect(paths.project, { project: project.id })
     })))
-    .patch('/projects/{project}', action(Effect.gen(function* () {
+    .patch(paths.project, action(Effect.gen(function* () {
       const project = S.decodeUnknownSync(Id)(yield* bound('project'))
       const input = yield* validateRequest(ProjectForm)
 
@@ -140,15 +154,15 @@ export function createApp() {
 
       return yield* json({ ok: true })
     })))
-    .delete('/projects/{project}', action(Effect.gen(function* () {
+    .delete(paths.project, action(Effect.gen(function* () {
       const project = S.decodeUnknownSync(Id)(yield* bound('project'))
 
       yield* dbMutation((given) => client(given).delete(tasks).where(eq(tasks.projectId, project.id)))
       yield* dbMutation((given) => client(given).delete(projects).where(eq(projects.id, project.id)))
 
-      return yield* redirect('/projects')
+      return yield* redirect(paths.projects)
     })))
-    .post('/projects', action(Effect.gen(function* () {
+    .post(paths.projects, action(Effect.gen(function* () {
       const auth = yield* authorize()
       const input = yield* validateRequest(ProjectForm)
       const id = `p-${crypto.randomUUID()}`
@@ -157,15 +171,15 @@ export function createApp() {
 
       return yield* json({ id })
     })))
-    .get('/projects/{project}/tasks/{task}', action(Effect.flatMap(bound('task'), (task) => json(task))))
-    .get('/showcase/{showcase}', action(Effect.flatMap(bound('showcase'), (project) => json(project))), { cache: { maxAge: 60 } })
-    .post('/sign-in', action(Effect.flatMap(validateRequest(SignInForm), (input) => json({ email: input.email }))))
-    .get('/search', action(Effect.flatMap(validateRequest(Search), (input) => json(input))))
-    .post('/orders', action(Effect.flatMap(validateRequest(Order), (input) => json(input))))
-    .get('/after-sign-in', action(Effect.flatMap(intendedUrl('/home'), (url) => json({ url }))))
+    .get(paths.task, action(Effect.flatMap(bound('task'), (task) => json(task))))
+    .get(paths.showcase, action(Effect.flatMap(bound('showcase'), (project) => json(project))), { cache: { maxAge: 60 } })
+    .post(paths.signIn, action(Effect.flatMap(validateRequest(SignInForm), (input) => json({ email: input.email }))))
+    .get(paths.search, action(Effect.flatMap(validateRequest(Search), (input) => json(input))))
+    .post(paths.orders, action(Effect.flatMap(validateRequest(Order), (input) => json(input))))
+    .get(paths.afterSignIn, action(Effect.flatMap(intendedUrl('/home'), (url) => json({ url }))))
 
-  routes.prefix('/orgs/{organization}').provide(RequireMember)
-    .get('/orgs/{organization}', action(Effect.flatMap(CurrentMember, (member) => json(member))))
+  routes.prefix(paths.organization).provide(RequireMember)
+    .get(paths.organization, action(Effect.flatMap(CurrentMember, (member) => json(member))))
 
   const rows = () => sqlite.query<ProjectRow, []>('SELECT id, user_id, name, visibility FROM projects ORDER BY id').all()
 

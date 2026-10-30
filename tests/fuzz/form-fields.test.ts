@@ -10,7 +10,7 @@ import { describe } from 'bun:test'
 import { Arbitrary } from 'effect'
 import { nestFields } from '../../src/effect/form-fields'
 import { anyText, oneOf, pick, property, textOf } from './property'
-import { realmGuard } from './realm'
+import { realmGuard } from '../../src/fuzz.js'
 
 /** How many more slots than items sent a list may hold, as nestFields allows. */
 const MAX_LIST_GAP = 20

@@ -30,7 +30,7 @@ The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `no-auth-api-in-action` | `auth.api.signInEmail(...)` and Better Auth's other endpoints called from an action, which skips its rate limits | `betterAuthRedirect('signInEmail', { body }, ...)` or `betterAuthCall(...)` |
 | `no-floating-effect` | A framework call that builds an Effect, written as a statement, so nothing runs it: `dbMutation(...)`, `flash(...)`, `redirect(...)`, `cart.set(...)`, `Effect.log(...)`; and `yield` without `*` | `yield* dbMutation(...)`, or `return` it |
 | `no-module-level-mutable-state` | A module-scope `let` or `var`, or a module-scope `Map`, `Set` or array a function changes, outside tests, configuration, scripts and pages: a Worker's isolate shares it with every request, so one visitor's data can reach another's | Values inside the action, `web.services({ app })` for a service built once, `cache(key, effect, schema, { ttl, tags })` for data kept across requests |
-| `no-testing-in-production` | An import of `@popcomputer/web/testing` (whose `signedIn` signs a request in with no session) from a file that is not a test | The helpers in tests only; `authorize()` or `currentUser` in the application |
+| `no-testing-in-production` | An import of `@popcomputer/web/testing` (whose `signedIn` signs a request in with no session) or `@popcomputer/web/fuzz` from a file that is not a test | The helpers in tests only; `authorize()` or `currentUser` in the application |
 | `no-server-imports-in-pages` | A page or component (under `src/pages/`, or importing `@popcomputer/web/react`) importing server code: `@popcomputer/web`, `/effect`, `/auth`, `/env`, `/cache`, `/drizzle`, `drizzle-orm`, the Drizzle schema, the env module or an action | Props declared in `src/pages.ts`, `href` from `@popcomputer/web/paths`, and `import type` for types |
 | `require-disable-reason` | A comment turning off one of these rules, or every rule, with no reason after `--` | `// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`, or the API the rule names |
 | `explain-security-loosening` (a warning) | A setting that weakens a protection the framework gives: `routeBinding(table, { public: true })`, `betterAuthHandler({ settable: [...] })`, `verifyOrigin`'s `allowedOrigins` or `verifyOrigin: false`, `security.headers: false`, a `bodyLimit` over 1 MiB, `history: { encrypt: false }` or `encryptHistory: false`, and `betterAuth` with password sign-in but no `requireEmailVerification: true`, or with `autoSignInAfterVerification: true` | The default, or a reasoned disable comment where it is set, which puts the choice before a reviewer |
@@ -75,10 +75,10 @@ written in the file, and nothing a helper in another module does.
   outside `src/pages/` that does not import `@popcomputer/web/react`, such
   as a client entry: say why on its disable comment.
 - `no-testing-in-production`. Covers: `import`, `export ... from`,
-  `import('...')` and `require('...')` of `@popcomputer/web/testing` with the
-  source written as a string, in any file that is not a test as
-  `no-module-level-mutable-state` counts them. `import type` passes: the
-  build erases it. Does not see: a production module importing a test
+  `import('...')` and `require('...')` of `@popcomputer/web/testing` or
+  `@popcomputer/web/fuzz` with the source written as a string, in any file
+  that is not a test as `no-module-level-mutable-state` counts them.
+  `import type` passes: the build erases it. Does not see: a production module importing a test
   helper that imports the testing helpers (`src/app.ts` importing
   `./test-db`), a source built at runtime, or a re-export of the helpers
   under another package's name.

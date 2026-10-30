@@ -1,7 +1,9 @@
 # Fuzz tests
 
 Each file states a property the framework must keep for any input, and
-checks it on inputs Effect generates (`effect/Arbitrary`), in three layers:
+checks it on inputs Effect generates (`effect/Arbitrary`), with the tools
+`@popcomputer/web/fuzz` gives applications (`src/fuzz.ts`,
+`docs/fuzzing.md`), in three layers:
 functions that read or write a visitor's text; whole requests through
 `setupWeb`, to `app.ts` and to endpoint contracts (`requests.test.ts`,
 `endpoints.test.ts`); and sequences of steps over state that lasts between
@@ -32,7 +34,7 @@ security audits, on the release that had it:
 | `better-auth-body.test.ts` | `bodyOf` reads the body Better Auth's own parser reads, or none | run-2 N2, on 1.5.0 |
 | `database-errors.test.ts` | a failed write's constraint never depends on the request text its error quotes | run-1 C10 on 1.4.2, run-2 F9 on 1.5.0 |
 | `validators.test.ts` | every validator answers any input, decodes its own encoding to the same value, and no text makes it slow | run-1 C5, on 1.4.2 |
-| `requests.test.ts` | any request to `app.ts`, from a visitor, ada or grace, is answered without a defect or a write it refused, shows and changes no one's private record but its owner's, refuses another site's writes, keeps signed-in answers from shared caches, and answers a JSON client in the envelope | 1.4.2's cross-site check, which ran after route lookup and answered a write to an unrouted path 404 |
+| `requests.test.ts` | any request `fuzzRequest` generates to `app.ts`'s paths and forms, from a visitor, ada or grace, is answered without a defect or a write it refused, shows and changes no one's private record but its owner's, refuses another site's writes, keeps signed-in answers from shared caches, and answers a JSON client in the envelope | 1.4.2's cross-site check, which ran after route lookup and answered a write to an unrouted path 404 |
 | `endpoints.test.ts` | an endpoint carries any value of its types through `call` and back, answers any other body before its handler runs, and with `auth: true` answers 401 before reading input | three `call` bugs it found after 1.6.0 |
 | `data-cache.test.ts` | over any steps, held computations among them, no read that starts after a purge returns a value from before its write, and `cache` returns nothing stored longer ago than its `ttl` | 1.6.0's `cacheSet`, which stored no tags (`DataCache.tla`'s counterexample) |
 | `page-cache.test.ts` | over any requests from a guest, a guest with a cookie and two members, the default page cache answers as a fresh render does, and stores no page a guard, middleware or sign-in decides for | run-1 C6 and C12 on 1.4.2, run-2 F11 on 1.5.0 |
@@ -43,5 +45,5 @@ security audits, on the release that had it:
 
 A property whose bug leaves lasting changes, such as one written onto
 `Object.prototype`, puts the realm right after each case, as
-`realm.ts`'s `realmGuard` does: otherwise every later case fails
+`realmGuard` from `@popcomputer/web/fuzz` does: otherwise every later case fails
 too, and shrinking cannot find the input that made the change.

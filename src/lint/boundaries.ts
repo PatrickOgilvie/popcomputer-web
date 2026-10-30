@@ -80,6 +80,8 @@ function visitModules(found: (source: ModuleSource) => void): Record<(typeof MOD
 }
 
 const TESTING = '@popcomputer/web/testing'
+/** Entrypoints for tests alone: the testing helpers, and the fuzzing tools that build on them. */
+const TEST_ONLY = [TESTING, '@popcomputer/web/fuzz']
 
 export const noTestingInProduction: LintRule = {
   meta: {
@@ -87,7 +89,7 @@ export const noTestingInProduction: LintRule = {
     docs: { description: "The testing helpers, which fake the session, the bindings and the database, stay in tests." },
     messages: {
       testing:
-        "@popcomputer/web/testing is for tests: signedIn signs a request in with no session, testEnv replaces the bindings, testD1 the database. Use it only in a test (a *.test.ts file, tests/, or the file bunfig.toml's [test] preload names), and read the visitor in the application with authorize() or currentUser.",
+        "@popcomputer/web/testing and @popcomputer/web/fuzz are for tests: signedIn signs a request in with no session, testEnv replaces the bindings, testD1 the database. Use them only in a test (a *.test.ts file, tests/, or the file bunfig.toml's [test] preload names), and read the visitor in the application with authorize() or currentUser.",
     },
   },
   create(context) {
@@ -95,7 +97,7 @@ export const noTestingInProduction: LintRule = {
 
     return {
       ...visitModules((module) => {
-        if (!module.typeOnly && (module.source === TESTING || module.source.startsWith(`${TESTING}/`))) found.push(module)
+        if (!module.typeOnly && TEST_ONLY.some((entry) => module.source === entry || module.source.startsWith(`${entry}/`))) found.push(module)
       }),
       'Program:exit'() {
         if (found.length === 0 || isTestFile(context, projectPath(context))) return

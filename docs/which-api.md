@@ -98,6 +98,8 @@ and the lint rules name it where an action reaches for something else.
 | Replace a service that reaches another system | `Layer.succeed(Service, fake)` in `testEnv`'s layer | [Fakes](testing.md#fakes-for-other-systems) |
 | Move time | `testClock()` | [Time](testing.md#time) |
 | Use the production database family | PGlite, migrated with `applyMigrations`, or a D1 database of each test's own from `testD1` | [A database for tests](test-database.md) |
+| Check a rule on generated inputs | `fuzz(arbitrary, holds)` from `@popcomputer/web/fuzz` | [Fuzzing](fuzzing.md) |
+| Fuzz the application's routes | `fuzzRequest({ paths, params, people, forms })`, `sendFuzzRequest`, and `brokenPromises`, `leaks`, `strangerWrites`, `refusedWrites` | [Requests to the application](fuzzing.md#requests-to-the-application) |
 | Sign in through an OAuth provider in a test | `testOAuthProvider({ ... })`, then `signIn(browser, path, person)` | [Signing in with an OAuth provider](auth-plugins.md#signing-in-with-an-oauth-provider) |
 | Run a Queue consumer | `testBatch(bodies)` | [Scheduled and queued work](background.md#scheduled-and-queued-work) |
 
