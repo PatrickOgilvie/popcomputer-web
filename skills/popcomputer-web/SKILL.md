@@ -283,6 +283,7 @@ Better Auth integration; `@popcomputer/web/cache` for the KV cache;
 `@popcomputer/web/env` for `defineEnv`, `secret`, `variable` and
 `checkEnv`, in the Worker and in scripts alike;
 `@popcomputer/web/lint` for `webLint`, in `oxlint.config.ts`;
+`@popcomputer/web/vite` for `reloadWorkerModules`, in `vite.config.ts`;
 `@popcomputer/web/fence` for `commandPolicy` and `disableDirectives`,
 behind the `popweb-fence` command an agent's hook and the commit gate run;
 `@popcomputer/web/react` for page component types; `@popcomputer/web/paths`

@@ -83,6 +83,28 @@ export default defineConfig(webLint())
 ES module: give `package.json` `"type": "module"`, or Node warns
 `MODULE_TYPELESS_PACKAGE_JSON` on every run.
 
+An application whose Worker runs inside Vite's dev server, as the demo's
+`bun run dev` runs it with Cloudflare's Vite plugin, gives Vite the package's
+plugin beside `cloudflare()`:
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite'
+import { reloadWorkerModules } from '@popcomputer/web/vite'
+
+export default defineConfig({
+  plugins: [reloadWorkerModules() /* , cloudflare() from @cloudflare/vite-plugin */],
+})
+```
+
+The routes register once, when `src/routes.ts` runs. Vite's hot update runs
+again only the modules that import the file that changed, so without the
+plugin an edit to an action or to `src/routes.ts` runs `src/routes.ts` again on
+the routes already loaded, and every request fails with `GET /login is
+registered twice` until the dev server restarts. The plugin runs all the
+Worker's modules again instead, on a new app. The Worker's main module, such
+as `src/worker.ts`, and the browser's modules keep Vite's hot updates.
+
 Coding agents should read `node_modules/@popcomputer/web/AGENTS.md`, a short
 rulebook naming the one API to use for each task, and the files in
 `node_modules/@popcomputer/web/docs/` as a task needs them:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `@popcomputer/web/vite`, whose `reloadWorkerModules()` Vite plugin runs the Worker's modules afresh, on a new app, when one of them changes under Vite's dev server, as the demo's `bun run dev` runs it with Cloudflare's Vite plugin. The routes register once, when `src/routes.ts` runs, and Vite's hot update ran again only the modules that import the changed file, up to the Cloudflare plugin's Worker entry, which accepts it: an edit to an action or to `src/routes.ts` ran `src/routes.ts` again on the routes `src/app.ts` had already made, and every request failed with `GET /login is registered twice` until the dev server restarted. The Worker's main module, such as `src/worker.ts`, and the browser's modules keep Vite's hot updates, so the Cloudflare plugin still restarts the dev server when what the Worker exports changes. A route registered twice in one load is still refused, and that error's hint now names the plugin. An application whose Worker runs in Vite's dev server adds it to `vite.config.ts`'s plugins, as `docs/installation.md` shows; Vite 6.1 or later, an optional peer.
+
 ### Changed
 
 - `no-server-imports-in-pages` also reports server code imported by a file under `src/components/` or `src/layouts/`, at any depth and with any extension, other than a test. It covered only `src/pages/` and files importing `@popcomputer/web/react`, and a page's sub-component needn't import that, so `src/components/admin/office/InvoiceCard.tsx` importing `drizzle-orm`, `@popcomputer/web/effect` or `../../../schema` passed, and shipped it to the browser. Type-only imports still pass. An application may see new reports: pass what the component shows as props from its page.

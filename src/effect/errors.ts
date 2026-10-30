@@ -676,7 +676,7 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
 
     return new RouteConfigurationError({
       message: `${verb} ${path} is registered twice; the second registration is never reached.`,
-      hint: 'Remove one registration, or give the second its own path.',
+      hint: `Remove one registration, or give the second its own path. If it appeared under Vite's dev server after a file changed, the routes ran again on the app already loaded: add reloadWorkerModules() from @popcomputer/web/vite to vite.config.ts's plugins.`,
       code: ErrorCodes.CFG_305_INVALID_CONFIG,
     })
   }

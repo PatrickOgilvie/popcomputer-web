@@ -76,6 +76,11 @@
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js",
       "default": "./dist/testing.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js",
+      "default": "./dist/vite.js"
     }
   },
   "bin": {
@@ -133,7 +138,8 @@
     "better-auth": ">=1.7.7 <1.8.0",
     "miniflare": ">=4.0.0 <5.0.0",
     "drizzle-orm": ">=0.45.2 <1.0.0",
-    "@types/react": ">=18"
+    "@types/react": ">=18",
+    "vite": ">=6.1.0"
   },
   "peerDependenciesMeta": {
     "@types/react": {
@@ -146,6 +152,9 @@
       "optional": true
     },
     "drizzle-orm": {
+      "optional": true
+    },
+    "vite": {
       "optional": true
     }
   },
@@ -165,6 +174,7 @@
     "miniflare": "4.20260730.0",
     "oxlint": "1.82.0",
     "postgres": "^3.4.9",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^6.4.4"
   }
 }

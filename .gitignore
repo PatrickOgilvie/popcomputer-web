@@ -8,6 +8,7 @@ dist/
 !tests/docs/app/dist/
 tests/docs/.generated/
 tests/better-auth/.generated/
+tests/.generated/
 
 # IDE
 .idea/

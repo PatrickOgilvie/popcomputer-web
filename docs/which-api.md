@@ -41,6 +41,7 @@ and the lint rules name it where an action reaches for something else.
 | Take a page's fields from a table | `tableSchema(table).mapFields(Struct.pick([...]))` | [Describe the pages](pages.md#describe-the-pages) |
 | Type a form | `useForm<FormInput<typeof Schema>>`, `FormErrors<typeof Schema>` | [Forms](forms.md) |
 | Type the error page | `WebErrorPage` | [The error page](pages.md#the-error-page) |
+| Edit routes and actions while Vite's dev server runs the Worker | `reloadWorkerModules()` from `@popcomputer/web/vite` in `vite.config.ts`'s plugins | [Installation](installation.md) |
 
 **Auth**
 
