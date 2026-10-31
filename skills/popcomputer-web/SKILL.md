@@ -255,7 +255,9 @@ TypeScript example here and in `docs/` type-checks against the package.
     and `refusedWrites`, as `docs/fuzzing.md` shows, and add the
     application's own rules beside them; give each new action a form there,
     and each new placeholder its values. Check any other rule on generated
-    inputs with `fuzz(arbitrary, holds)`.
+    inputs with `fuzz(arbitrary, holds)`, and a lifecycle on sequences of
+    its steps from `stepsOf(step, { maxLength })`, not Effect's
+    `Arbitrary.array`, whose sequences hold two or three steps.
 13. **Declare every JSON endpoint once, as a contract,** in `src/endpoints.ts`:
     `endpoint.post(paths.apiProjects, { body, success, status: 201, errors:
     { 409: SlugTaken } })` from `@popcomputer/web/endpoint`, with `query`,
@@ -288,8 +290,8 @@ Better Auth integration; `@popcomputer/web/cache` for the KV cache;
 behind the `popweb-fence` command an agent's hook and the commit gate run;
 `@popcomputer/web/react` for page component types; `@popcomputer/web/paths`
 for `href`, in React and actions alike; `@popcomputer/web/testing` in tests;
-`@popcomputer/web/fuzz` for `fuzz`, `fuzzRequest` and the rules answers keep,
-in tests.
+`@popcomputer/web/fuzz` for `fuzz`, `stepsOf`, `fuzzRequest` and the rules
+answers keep, in tests.
 
 ## A complete action
 

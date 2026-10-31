@@ -42,6 +42,7 @@ security audits, on the release that had it:
 | `page-html.test.ts` | for any page data, the HTML document parses into an empty page's elements, and its data element back into the page | the escaping of `/` alone that `fdd3f31` replaced before 1.0.0, planted on main |
 | `sign-in-limits.test.ts` | over any guesses sent together, the owner's sign-ins and time passing, at each password door and spelling, a sign-in during a cooldown is refused before its password is checked, and each row holds the count the rules give | 1.6.0's count, which spent its cooldown toward the window (`SignInLimits.tla`'s counterexample), planted on main |
 | `history.test.ts` | over any visits, Back, sign-ins, sign-outs, expiries, prefetches and session refetches in two tabs, Back never shows another person's page from history, under `history.encrypt`'s default and `true` | 1.6.0's page version, the assets' alone (`HistoryClear.tla`'s counterexample), planted on main |
+| `steps.test.ts` | `stepsOf` gives sequences of every length up to its `maxLength`, and finds a bug three steps deep from each of ten seeds within the default runs, shrunk to those three steps; `textOf` gives text of every number of pieces up to its `maxPieces` | `Arbitrary.array`'s lengths, which grow with the run whatever its `maxLength`, found fuzzing fieldops' job lifecycle and planted on main |
 
 A property whose bug leaves lasting changes, such as one written onto
 `Object.prototype`, puts the realm right after each case, as

@@ -4,10 +4,11 @@
  * paths, and the rules every answer from the framework keeps.
  *
  * Each piece stands alone, so an application's own fuzz tests build on
- * them: `fuzz` checks any property, `fuzzRequest` generates hostile
- * requests to the application's routes, `sendFuzzRequest` sends one, and
- * `brokenPromises`, `leaks`, `strangerWrites` and `refusedWrites` say how an
- * answer broke a rule. A property returns why it refused an input, or
+ * them: `fuzz` checks any property, `stepsOf` generates sequences of a
+ * lifecycle's steps, `fuzzRequest` generates hostile requests to the
+ * application's routes, `sendFuzzRequest` sends one, and `brokenPromises`,
+ * `leaks`, `strangerWrites` and `refusedWrites` say how an answer broke a
+ * rule. A property returns why it refused an input, or
  * nothing when it holds.
  *
  * Each property runs a few hundred cases from a fixed seed, so a commit gate
@@ -102,9 +103,57 @@ export function weighted<A>(...choices: readonly [readonly [A, number], ...(read
   return first === undefined ? Arbitrary.Constant(choices[0][0]) : oneOf(first, ...rest)
 }
 
+export interface StepsOptions {
+  /** The most steps a sequence holds. Default 12. */
+  readonly maxLength?: number
+}
+
+/** The whole numbers from `first` to `last`, as a list `S.Literals` takes. */
+function upTo(first: number, last: number): readonly [number, ...number[]] {
+  return [first, ...Array.from({ length: Math.max(0, last - first) }, (_, index) => first + index + 1)]
+}
+
+/**
+ * Whether a slot holds its step. Effect keeps only shrinks its schema could
+ * generate, so one slot in 16 holds none, and every other shrinks to none.
+ */
+const held = Arbitrary.schema(S.Literals(upTo(0, 15)), { shrink: (value) => (value === 0 ? [] : [0]) })
+
+/**
+ * Sequences of `step`, for state that lasts between requests: a lifecycle's
+ * steps, as `pick(['finish', 'invoice', 'signOff'])`, or a record whose
+ * fields are each generated, as `{ act: pick([...]), quantity: pick([...]) }`.
+ * Each sequence's length is drawn evenly from none to `maxLength`, so most
+ * are long enough to take a lifecycle down a path several steps deep. A
+ * failing sequence shrinks by dropping each step it does not need, and then
+ * each step toward its first choice.
+ */
+export function stepsOf<A>(step: Arbitrary.Arbitrary<A>, options?: StepsOptions): Arbitrary.Arbitrary<Array<A>>
+export function stepsOf<Fields extends Readonly<Record<string, Arbitrary.Arbitrary<unknown>>>>(
+  fields: Fields,
+  options?: StepsOptions
+): Arbitrary.Arbitrary<Array<{ readonly [Name in keyof Fields]: Fields[Name] extends Arbitrary.Arbitrary<infer A> ? A : never }>>
+export function stepsOf(
+  step: Arbitrary.Arbitrary<unknown> | Readonly<Record<string, Arbitrary.Arbitrary<unknown>>>,
+  options: StepsOptions = {}
+): Arbitrary.Arbitrary<Array<unknown>> {
+  const maxLength = options.maxLength ?? 12
+
+  if (!Number.isSafeInteger(maxLength) || maxLength < 0) throw new RangeError(`stepsOf: maxLength must be a whole number, not ${maxLength}`)
+
+  const each = Arbitrary.isArbitrary(step) ? step : Arbitrary.all(step)
+  const slot = Arbitrary.flatMap(held, (holds) => (holds === 0 ? Arbitrary.Constant<Array<unknown>>([]) : Arbitrary.map(each, (value) => [value])))
+  // `Arbitrary.array` grows with the check's size, from none in its first run
+  // to ten in its last, whatever its maxLength. The length is drawn here and
+  // never shrinks: dropping a slot's step shrinks the sequence instead.
+  const length = Arbitrary.schema(S.Literals(upTo(0, maxLength)))
+
+  return Arbitrary.flatMap(length, (count) => Arbitrary.map(Arbitrary.all(Array.from({ length: count }, () => slot)), (slots) => slots.flat()))
+}
+
 /** Text made of the given pieces, up to `maxPieces` of them. */
 export function textOf(pieces: readonly [string, ...string[]], maxPieces = 8): Arbitrary.Arbitrary<string> {
-  return Arbitrary.map(Arbitrary.array(pick(pieces), { maxLength: maxPieces }), (chosen) => chosen.join(''))
+  return Arbitrary.map(stepsOf(pick(pieces), { maxLength: maxPieces }), (chosen) => chosen.join(''))
 }
 
 /** Any string, as Effect generates `Schema.String`. */

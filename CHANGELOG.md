@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `stepsOf(step, { maxLength })` in `@popcomputer/web/fuzz`, the sequences of steps a property over lasting state runs: each sequence's length is drawn evenly from none to `maxLength`, 12 unless given, and a failing one shrinks by dropping each step it does not need, then moving each step toward its first choice. A step is a generator, such as `pick(['finish', 'invoice', 'signOff'])`, or a record of generated fields. Effect's `Arbitrary.array`, which `docs/fuzzing.md` used, grows with the run, from no steps in the first to ten in the last whatever its `maxLength`: over twelve steps it averaged 2.4, and in the 300 runs `fuzz` gives it missed a bug three steps deep from 4 seeds in 10. `stepsOf` averages 5.6 and finds that bug from each of them, shrunk to its three steps. `AGENTS.md`'s rule 12 and `docs/which-api.md` name it for a lifecycle.
+
+### Fixed
+
+- `textOf(pieces, maxPieces)` gives text of every number of pieces up to `maxPieces`, 3.7 on average for the default 8. Built on `Arbitrary.array`, it gave 2.3, and never more than ten whatever `maxPieces` said. A property using it sees other text from the same seed, so it may find a bug it missed.
+- `docs/fuzzing.md`'s steps over lasting state build their sequences with `stepsOf`, and none of its examples uses `effect/Arbitrary`, which Effect marks unstable: an application whose type check runs the Effect language service, as `AGENTS.md` asks, failed on the cart's `Arbitrary.all` and `Arbitrary.array` and on `Arbitrary.map` with TS377136. A test of an API adds its key in the property, to the request it sends and checks.
+
 ## [1.9.0] - 2026-10-30
 
 This release fixes a gap in the sign-in limits: an IPv6 client could send each password guess from another address in its network and never be slowed by the per-address limit, the gap Better Auth's CVE-2026-45364 describes in its own limiter. `auth.signInLimits` now counts an IPv6 client by its network, its /64 unless `ipv6Prefix` says otherwise. The per-account limit was never affected. The README and npm's description also say what the framework is.
