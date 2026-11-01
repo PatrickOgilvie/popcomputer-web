@@ -617,7 +617,17 @@ describe('an ownedBy column', () => {
     })
 
     expect(setup({ note: routeBinding(notes, { ownedBy: 'authorEmail' }) }, { user: users, notes }))
-      .toThrow('Route binding "note" is ownedBy "authorEmail"')
+      .toThrow('Route binding "note" is ownedBy "authorEmail", which references "user".email, not "user".id')
+
+    try {
+      setup({ note: routeBinding(notes, { ownedBy: 'authorEmail' }) }, { user: users, notes })()
+    } catch (error) {
+      assert(error instanceof RouteConfigurationError)
+      expect(error.code).toBe(ErrorCodes.RTE_607_BINDING_OWNER_NOT_USER)
+      // Not the advice for a column that references another table's row: there is no parent to scope it to.
+      expect(error.hint).toContain('authorEmail: text(...).references(() => user.id)')
+      expect(error.hint).not.toContain('scope:')
+    }
   })
 
   test('that references nothing fails, asking for the reference', () => {

@@ -123,6 +123,8 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['watch -n 5 git commit -n', ['deny', 'hook-bypass']],
   ["pnpm node -e \"require('child_process').execSync('git commit -n')\"", ['deny', 'hook-bypass']],
   ["deno eval \"await new Deno.Command('sh', { args: ['-c', 'git commit --no-verify'] }).output()\"", ['deny', 'hook-bypass']],
+  ["deno eval \"await new Deno.Command('git', { args: ['commit', '--no-verify'] }).output()\"", ['deny', 'hook-bypass']],
+  ["node -e \"require('child_process').spawnSync('git', ['commit', '-n'], { stdio: 'inherit' })\"", ['deny', 'hook-bypass']],
   ['nohup nice -n 5 git commit -n', ['deny', 'hook-bypass']],
   ['node -e "require(\'child_process\').execSync(\'git commit --no-verify\')"', ['deny', 'hook-bypass']],
   ['python3 -c "import subprocess; subprocess.run([\'git\', \'commit\', \'--no-verify\'])"', ['deny', 'hook-bypass']],

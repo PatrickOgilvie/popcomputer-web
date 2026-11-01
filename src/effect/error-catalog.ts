@@ -472,7 +472,7 @@ export const ErrorCatalog = {
     category: 'routing',
     title: 'Route Binding Owner Not A User',
     messageTemplate:
-      'Route binding "{binding}" is ownedBy a column that does not reference the users table.',
+      'Route binding "{binding}" is ownedBy a column that does not reference the users table\'s id.',
     httpStatus: 500,
     defaultFixes: [],
   },

@@ -296,6 +296,14 @@ function referencesId(table: RouteBindingTable, key: string, users: RouteBinding
   return id !== undefined && inlineReferences(table, key).some((reference) => reference.table === users && reference.column === id)
 }
 
+/** The key of the column of `users` a column references, or its SQL name when no key holds it. */
+function referencedUsersColumn(table: RouteBindingTable, key: string, users: RouteBindingTable): string {
+  const column: unknown = inlineReferences(table, key).find((reference) => reference.table === users)?.column
+
+  return Object.keys(users).find((name) => Object.getOwnPropertyDescriptor(users, name)?.value === column) ??
+    String(column instanceof Object ? Reflect.get(column, 'name') : column)
+}
+
 /** A Drizzle table's SQL name. */
 function tableNameOf(table: RouteBindingTable): string {
   const name: unknown = Reflect.get(table, DRIZZLE_TABLE_NAME)
@@ -326,7 +334,17 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: obj
     if (config.ownedBy !== undefined && isBindingTable(source) && isBindingTable(users)) {
       const referenced = referencedTable(source, config.ownedBy)
 
-      if (referenced !== users || !referencesId(source, config.ownedBy, users)) {
+      if (referenced === users && !referencesId(source, config.ownedBy, users)) {
+        throw RouteConfigurationError.bindingOwnerNotUsersId(
+          name,
+          tableNameOf(source),
+          config.ownedBy,
+          tableNameOf(users),
+          referencedUsersColumn(source, config.ownedBy, users)
+        ).atStartup()
+      }
+
+      if (referenced !== users) {
         throw RouteConfigurationError.bindingOwnerNotUser(
           name,
           tableNameOf(source),
