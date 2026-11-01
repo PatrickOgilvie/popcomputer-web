@@ -26,7 +26,7 @@
  * }), fuzzTimeout)
  * ```
  */
-import { Arbitrary, Effect, Predicate, Schema as S, type SchemaAST } from 'effect'
+import { Arbitrary, Effect, Predicate, Schema as S, SchemaGetter, type SchemaAST } from 'effect'
 import type { PathParamName } from './paths.js'
 import type { TestApp, TestBindings } from './testing.js'
 
@@ -128,13 +128,31 @@ function upTo(first: number, last: number): readonly [number, ...number[]] {
 const held = Arbitrary.schema(S.Literals(upTo(0, 15)), { shrink: (value) => (value === 0 ? [] : [0]) })
 
 /**
+ * The positions of the steps a sequence drops, none as generated. A schema
+ * of literals generates each of its values, so this one is declared: it
+ * generates through its link, always none, and keeps any positions a shrink
+ * gives it.
+ */
+const Dropped = S.declare((value): value is ReadonlyArray<number> => Array.isArray(value), {
+  toCodecArbitrary: () => S.link<ReadonlyArray<number>>()(S.Literal(0), { decode: SchemaGetter.transform(() => []), encode: SchemaGetter.forbiddenEncoding }),
+})
+
+/** Which of `count` steps a sequence drops: none, shrinking by dropping any one step left. */
+function droppedOf(count: number): Arbitrary.Arbitrary<ReadonlyArray<number>> {
+  return Arbitrary.schema(Dropped, {
+    shrink: (dropped) => Array.from({ length: count }, (_, index) => index).filter((index) => !dropped.includes(index)).map((index) => [...dropped, index]),
+  })
+}
+
+/**
  * Sequences of `step`, for state that lasts between requests: a lifecycle's
  * steps, as `pick(['finish', 'invoice', 'signOff'])`, or a record whose
  * fields are each generated, as `{ act: pick([...]), quantity: pick([...]) }`.
  * Each sequence's length is drawn evenly from none to `maxLength`, so most
  * are long enough to take a lifecycle down a path several steps deep. A
- * failing sequence shrinks by dropping each step it does not need, and then
- * each step toward its first choice.
+ * failing sequence shrinks from its last step back, dropping each step it
+ * does not need and shrinking each other toward its first choice, and then
+ * drops each step left that it no longer needs, until it needs every one.
  */
 export function stepsOf<A>(step: Arbitrary.Arbitrary<A>, options?: StepsOptions): Arbitrary.Arbitrary<Array<A>>
 export function stepsOf<Fields extends Readonly<Record<string, Arbitrary.Arbitrary<unknown>>>>(
@@ -156,7 +174,20 @@ export function stepsOf(
   // never shrinks: dropping a slot's step shrinks the sequence instead.
   const length = Arbitrary.schema(S.Literals(upTo(0, maxLength)))
 
-  return Arbitrary.flatMap(length, (count) => Arbitrary.map(Arbitrary.all(Array.from({ length: count }, () => slot)), (slots) => slots.flat()))
+  // Effect shrinks the slots in order and never returns to one. The first
+  // slot holds the last step, since a step can need the ones before it, as a
+  // request names the record an earlier one created: the earlier steps it
+  // stops needing as it shrinks are dropped before their own fields shrink,
+  // which the hundred candidates a check tries cannot spare. The dropped
+  // positions shrink last, over the steps the slots kept, so a step needed
+  // only while another stood, as one undoing it, is dropped too.
+  return Arbitrary.flatMap(length, (count) =>
+    Arbitrary.flatMap(Arbitrary.all(Array.from({ length: count }, () => slot)), (slots) => {
+      const steps = slots.flat().reverse()
+
+      return Arbitrary.map(droppedOf(steps.length), (dropped) => steps.filter((_, index) => !dropped.includes(index)))
+    })
+  )
 }
 
 /** Text made of the given pieces, up to `maxPieces` of them. */
