@@ -113,7 +113,7 @@ application reads its types from:
 | `schema`, `bindings` | `bound('project')`, its keys, the model's row type and who may load it |
 | `auth.client` | `AuthService`, and the endpoints `betterAuthRedirect` and `betterAuthCall` call |
 | `auth.session` | `authorize()`, `currentUser`, `AuthUserService`, `signedIn` |
-| `auth.share` | `auth.user` in `SharedProps` and `WebPage` (default: `id`, `name`, `image`) |
+| `auth.share` | `auth.user` in `SharedProps` and `WebPage` (default: `id`, `name`, `image`, the `id` a number when `auth.session`'s is, as Better Auth's serial ids are) |
 | `pages` | `render`, `jsonOrRender`, `WebPage`, `readPage` |
 | `paths` | the paths `routes.get(...)` and the other registrations accept |
 | `shared`, `flash` | `shareProps(effect)`, `share(key, value)`, `flash(key, value)`, `SharedProps`, `FlashData` |

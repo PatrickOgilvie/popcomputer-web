@@ -8,7 +8,7 @@ import { web } from './middleware.js'
 import { activeSignInLimits, assertSignInLimitsConfig, signInLimitsStorageError, type RateLimiterName, type SignInLimitsConfig } from './effect/sign-in-limits.js'
 import { originRefusal, securityHeaders, verifyOrigin, type SecurityHeadersConfig, type VerifyOriginConfig } from './security.js'
 import type { WebConfig } from './types.js'
-import { loadUserMiddleware, shareAuthMiddleware, usersTableOf } from './effect/auth.js'
+import { defaultPublicUserFor, loadUserMiddleware, shareAuthMiddleware, usersTableOf } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
 import { readTestDatabase } from './effect/test-env.js'
 import { markRouteCacheDynamic, observedRequestContext, pageCache, privateByDefault } from './page-cache.js'
@@ -20,7 +20,7 @@ import type {
   AuthUser,
   DefaultAuthUser,
 } from './effect/services.js'
-import type { DefaultPublicUser } from './effect/auth.js'
+import type { DefaultPublicUserOf } from './effect/auth.js'
 import type { WebDeclaration, WebTypes } from './effect/register.js'
 import { checkEnv, EnvInvalid, type EnvDeclaration } from './env.js'
 import {
@@ -71,7 +71,8 @@ export interface WebAuthOptions<
    * The user pages receive as `auth.user`, as an Effect Schema. The signed-in
    * user is encoded through it, so a field it does not name never reaches the
    * browser, and `WebPage` types `auth.user` from it. Defaults to `id`, `name`
-   * and `image`.
+   * and `image`, the id of `session`'s type when it is a number, as Better
+   * Auth's serial ids are.
    */
   readonly share?: S.Codec<PublicUser, unknown, never, never>
   readonly sessionCookie?: string
@@ -204,7 +205,7 @@ export interface WebSetupConfig<
   DB extends object = never,
   Auth = never,
   User = DefaultAuthUser,
-  PublicUser extends object = DefaultPublicUser,
+  PublicUser extends object = DefaultPublicUserOf<User>,
   Schema extends object = never,
   RouteBindings extends RouteBindingsConfig = never,
   Pages extends PageSchemas = never,
@@ -387,7 +388,7 @@ export function setupWeb<
   DB extends object = never,
   Auth = never,
   User = DefaultAuthUser,
-  PublicUser extends object = DefaultPublicUser,
+  PublicUser extends object = DefaultPublicUserOf<User>,
   Schema extends object = never,
   const RouteBindings extends RouteBindingsConfig = never,
   const Pages extends PageSchemas = never,
@@ -618,7 +619,7 @@ function createSetupMiddleware<
       session: config.auth?.session as S.Codec<AuthUser, unknown, never, never> | undefined,
     }),
     shareAuthMiddleware<E>({
-      schema: config.auth?.share,
+      schema: config.auth?.share ?? defaultPublicUserFor(config.auth?.session),
     }),
     effectBridge<E, never>(effectConfig),
     // A header the application's middleware reads keeps a route's own cache

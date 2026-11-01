@@ -20,7 +20,9 @@ import {
   NotFoundError,
   validateRequest,
 } from '@popcomputer/web/effect'
-import { betterAuthRedirect } from '@popcomputer/web/auth'
+import { betterAuthRedirect, betterAuthSession } from '@popcomputer/web/auth'
+import { tableSchema } from '@popcomputer/web/schema'
+import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import type { WebDeclaration } from '@popcomputer/web'
 
 type TestDatabase = {
@@ -335,4 +337,36 @@ const usesCache = action(Effect.gen(function* () {
   }).services({ request: () => kvCache(kv) })
 
   routes.get('/count', usesCache)
+}
+
+// The user pages see unless auth.share declares one: id, name and image, the
+// id of the session user's own type when it is a number, as Better Auth's
+// serial ids are, and text otherwise.
+type PublicUserOf<Web> = Web extends WebDeclaration<infer Types> ? Types['publicUser'] : never
+
+{
+  const serialUsers = sqliteTable('user', {
+    id: integer('id').primaryKey(),
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    emailVerified: integer('email_verified', { mode: 'boolean' }).notNull(),
+    image: text('image'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  })
+  const serial = setupWeb(new Hono<TestEnv>(), {
+    version: 'type-test',
+    render: (page) => JSON.stringify(page),
+    auth: { session: betterAuthSession(tableSchema(serialUsers)) },
+  })
+  const textIds = setupWeb(new Hono<TestEnv>(), { version: 'type-test', render: (page) => JSON.stringify(page) })
+
+  const serialUser: PublicUserOf<typeof serial> = { id: 1, name: 'Ada', image: null }
+  // @ts-expect-error A serial id is a number.
+  const serialAsText: PublicUserOf<typeof serial> = { id: '1', name: 'Ada', image: null }
+  const textUser: PublicUserOf<typeof textIds> = { id: 'user-1', name: null, image: null }
+  // @ts-expect-error Better Auth's default id is text.
+  const textAsNumber: PublicUserOf<typeof textIds> = { id: 1, name: null, image: null }
+
+  void [serialUser, serialAsText, textUser, textAsNumber]
 }

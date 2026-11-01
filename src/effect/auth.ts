@@ -186,6 +186,32 @@ export const DefaultPublicUser = S.Struct({
 /** The default public user: `id`, `name` and `image`. */
 export interface DefaultPublicUser extends S.Schema.Type<typeof DefaultPublicUser> {}
 
+/**
+ * The user pages receive when `auth.share` declares none, for the signed-in
+ * user `auth.session` decodes: DefaultPublicUser, with the session user's own
+ * id when that id is not text, as Better Auth's serial ids are numbers.
+ */
+export type DefaultPublicUserOf<User> = User extends { readonly user: { readonly id: infer Id } }
+  ? [Id] extends [string] ? DefaultPublicUser : Omit<DefaultPublicUser, 'id'> & { readonly id: Id }
+  : DefaultPublicUser
+
+/**
+ * The schema of `DefaultPublicUserOf` for setupWeb's `auth.session`: one
+ * whose user's id takes a number or a bigint gives pages that id, which
+ * DefaultPublicUser's text id would refuse on every signed-in page.
+ */
+export function defaultPublicUserFor(session: S.Codec<unknown, unknown, never, never> | undefined): S.Codec<object, unknown, never, never> {
+  const field = structFields(structFields(session)?.user)?.id
+
+  if (field === undefined || !(S.is(S.toType(field))(1) || S.is(S.toType(field))(1n))) return DefaultPublicUser
+
+  // SAFETY: the field is the session schema's own, which setupWeb's
+  // auth.session types as a codec with no services.
+  const id = field as S.Codec<unknown, unknown, never, never>
+
+  return S.Struct({ ...DefaultPublicUser.fields, id })
+}
+
 /** How the signed-in user is shared with pages. */
 export interface ShareAuthUserConfig {
   /**

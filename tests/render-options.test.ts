@@ -87,6 +87,30 @@ describe("a page's history", () => {
   const PageHistory = S.Struct({ encryptHistory: S.optional(S.Boolean), clearHistory: S.optional(S.Boolean) })
   const member = () => testEnv(signedIn({ id: 'user-1' }))
 
+  // Better Auth's serial ids: the user table's id is an integer.
+  const serialUsers = sqliteTable('user', {
+    id: integer('id').primaryKey(),
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    emailVerified: integer('email_verified', { mode: 'boolean' }).notNull(),
+    image: text('image'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  })
+  const serialApp = () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      auth: { client: () => ({}), session: betterAuthSession(tableSchema(serialUsers)) },
+    })
+    routes.get('/account', action(render('Account/Show')))
+
+    return app
+  }
+  // SAFETY: the unregistered user type says string; a serial id arrives as a number.
+  const serialMember = (id: number) => testEnv(signedIn({ id: id as unknown as string, name: 'Ada' }))
+
   const historyOf = async (app: Hono, path: string, env?: ReturnType<typeof member>) =>
     S.decodeUnknownSync(PageHistory)(await (await app.request(path, inertia, env)).json())
 
@@ -145,37 +169,22 @@ describe("a page's history", () => {
   // Inertia shows a page from history only when its version is the current
   // page's, so each member's pages need a version of their own.
   test("is kept apart per member by its version, when ids are numbers, as Better Auth's serial ids are", async () => {
-    const users = sqliteTable('user', {
-      id: integer('id').primaryKey(),
-      name: text('name').notNull(),
-      email: text('email').notNull(),
-      emailVerified: integer('email_verified', { mode: 'boolean' }).notNull(),
-      image: text('image'),
-      createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-      updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
-    })
-    const app = new Hono()
-    const { routes } = setupWeb(app, {
-      version: '1',
-      render: (page) => JSON.stringify(page),
-      auth: {
-        client: () => ({}),
-        session: betterAuthSession(tableSchema(users)),
-        share: S.Struct({ id: S.Number, name: S.NullOr(S.String), image: S.NullOr(S.String) }),
-      },
-    })
-    routes.get('/account', action(render('Account/Show')))
-
-    // SAFETY: the unregistered user type says string; a serial id arrives as a number.
-    const serial = (id: number) => testEnv(signedIn({ id: id as unknown as string }))
     const versionOf = async (env?: ReturnType<typeof member>) =>
-      S.decodeUnknownSync(S.Struct({ version: S.String }))(await (await app.request('/account', inertia, env)).json()).version
+      S.decodeUnknownSync(S.Struct({ version: S.String }))(await (await serialApp().request('/account', inertia, env)).json()).version
 
-    const [first, second, guest] = await Promise.all([versionOf(serial(1)), versionOf(serial(2)), versionOf()])
+    const [first, second, guest] = await Promise.all([versionOf(serialMember(1)), versionOf(serialMember(2)), versionOf()])
 
     expect(first).not.toBe(second)
     expect(guest).toBe('1')
     expect([first, second]).not.toContain(guest)
+  })
+
+  test('shares a serial id with the page as the number it is, with no auth.share declared', async () => {
+    const res = await serialApp().request('/account', inertia, serialMember(7))
+    const page = S.decodeUnknownSync(S.Struct({ props: S.Struct({ auth: S.Struct({ user: S.Unknown }) }) }))(await res.json())
+
+    expect(res.status).toBe(200)
+    expect(page.props.auth.user).toEqual({ id: 7, name: 'Ada', image: null })
   })
 })
 
