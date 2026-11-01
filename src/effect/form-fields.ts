@@ -17,9 +17,15 @@ const SEGMENT = /\[([^\]]*)\]|\.([^.[\]]+)/g
 const FIELD_NAME = /^[^.[\]]+(?:\[[^\]]*\]|\.[^.[\]]+)*$/
 const INDEX = /^(?:0|[1-9]\d{0,3})$/
 const UNSAFE = new Set(['__proto__', 'prototype', 'constructor'])
-const MAX_DEPTH = 32
-/** How many more slots than items sent a list may hold, as qs's `arrayLimit` bounds it. */
-const MAX_LIST_GAP = 20
+
+/** How far fields nest: the most segments a name may have, and how many more slots than items sent a list may hold, as qs's `arrayLimit` bounds it. */
+export interface FieldLimits {
+  readonly maxDepth: number
+  readonly maxListGap: number
+}
+
+/** The limits every request's fields nest within, which a fuzz test shrinks to reach their edges. */
+export const FIELD_LIMITS: FieldLimits = { maxDepth: 32, maxListGap: 20 }
 
 type Nested = { [key: string]: unknown }
 
@@ -42,19 +48,19 @@ function isMade(value: unknown, made: WeakSet<object>): value is Nested {
 
 /**
  * An object keyed only by list indices, as a list, when its largest index is
- * within `MAX_LIST_GAP` of the items sent; anything else as it is. A sparse
+ * within `maxListGap` of the items sent; anything else as it is. A sparse
  * index, `a[9999]`, stays a key, so a few bytes never make a long list.
  */
-function listsOf(value: unknown, made: WeakSet<object>): unknown {
+function listsOf(value: unknown, made: WeakSet<object>, maxListGap: number): unknown {
   if (!isMade(value, made)) return value
 
   const keys = Object.keys(value)
-  const entries = keys.map((key) => [key, listsOf(value[key], made)] as const)
+  const entries = keys.map((key) => [key, listsOf(value[key], made, maxListGap)] as const)
 
   if (keys.length > 0 && keys.every((key) => INDEX.test(key))) {
     const largest = keys.reduce((most, key) => Math.max(most, Number(key)), 0)
 
-    if (largest < keys.length + MAX_LIST_GAP) {
+    if (largest < keys.length + maxListGap) {
       const list: unknown[] = []
 
       for (const [key, item] of entries) list[Number(key)] = item
@@ -70,7 +76,7 @@ function listsOf(value: unknown, made: WeakSet<object>): unknown {
  * Nest the fields of a form or query string. Values under a `[]` name are a
  * list; a field sent twice under another name keeps the value given.
  */
-export function nestFields(fields: Readonly<Record<string, unknown>>): Record<string, unknown> {
+export function nestFields(fields: Readonly<Record<string, unknown>>, limits: FieldLimits = FIELD_LIMITS): Record<string, unknown> {
   const nested: Nested = {}
   const made = new WeakSet<object>()
   const created = new Set<string>()
@@ -89,7 +95,7 @@ export function nestFields(fields: Readonly<Record<string, unknown>>): Record<st
       continue
     }
 
-    if (segments.length > MAX_DEPTH || segments.some((segment) => UNSAFE.has(segment))) continue
+    if (segments.length > limits.maxDepth || segments.some((segment) => UNSAFE.has(segment))) continue
 
     // Only a trailing `[]` collects values; `a[][b]` names nothing a list can hold.
     const appends = segments[segments.length - 1] === ''
@@ -111,7 +117,7 @@ export function nestFields(fields: Readonly<Record<string, unknown>>): Record<st
     created.add(path[0])
   }
 
-  for (const key of created) nested[key] = listsOf(nested[key], made)
+  for (const key of created) nested[key] = listsOf(nested[key], made, limits.maxListGap)
 
   return nested
 }

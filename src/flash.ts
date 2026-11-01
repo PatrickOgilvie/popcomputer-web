@@ -31,7 +31,7 @@ export interface FlashedPageData {
   readonly clearHistory: boolean
 }
 
-interface MutableFlash {
+export interface MutableFlash {
   errors: Record<string, string | Readonly<Record<string, string>>>
   flash: Record<string, unknown>
   clearHistory: boolean
@@ -190,12 +190,12 @@ function stored(data: MutableFlash): string {
 }
 
 /**
- * Keep field errors before flash values when the data outgrows a cookie,
- * and clearing the history before either.
+ * Keep field errors before flash values when the data outgrows a cookie of
+ * `maxBytes`, and clearing the history before either.
  */
-function withinBudget(data: MutableFlash): MutableFlash {
+export function withinBudget(data: MutableFlash, maxBytes = MAX_COOKIE_BYTES): MutableFlash {
   const fits = (candidate: MutableFlash) =>
-    toBase64Url(stored(candidate)).length <= MAX_COOKIE_BYTES
+    toBase64Url(stored(candidate)).length <= maxBytes
 
   if (fits(data)) return data
 

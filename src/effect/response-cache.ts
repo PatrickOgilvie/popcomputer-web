@@ -88,9 +88,10 @@ interface ResponseCacheHeaders {
  * characters remain unchanged; whitespace, Unicode, control characters, and
  * commas are percent-encoded so reads and purges use the same stable value.
  */
-function prepareCacheTagsWithLimits(
+export function prepareCacheTagsWithLimits(
   tags: readonly string[],
   limits: {
+    readonly maxLength: number
     readonly maxCount: number
     readonly maxAggregateLength?: number
   }
@@ -129,11 +130,11 @@ function prepareCacheTagsWithLimits(
       }
     }
 
-    if (encoded.length > MAX_CACHE_TAG_LENGTH) {
+    if (encoded.length > limits.maxLength) {
       return PreparedCacheTags.invalid({
         reason:
           `cache tag at index ${index} exceeds Cloudflare's ` +
-          `${MAX_CACHE_TAG_LENGTH}-character limit after encoding`
+          `${limits.maxLength}-character limit after encoding`
       })
     }
 
@@ -171,6 +172,7 @@ export function prepareCacheTags(
   tags: readonly string[]
 ): PreparedCacheTags {
   return prepareCacheTagsWithLimits(tags, {
+    maxLength: MAX_CACHE_TAG_LENGTH,
     maxCount: MAX_CACHE_TAG_COUNT,
     maxAggregateLength: MAX_CACHE_TAG_HEADER_LENGTH,
   })
@@ -180,6 +182,7 @@ export function prepareCachePurgeTags(
   tags: readonly string[]
 ): PreparedCacheTags {
   return prepareCacheTagsWithLimits(tags, {
+    maxLength: MAX_CACHE_TAG_LENGTH,
     maxCount: MAX_CACHE_PURGE_TAG_COUNT,
   })
 }

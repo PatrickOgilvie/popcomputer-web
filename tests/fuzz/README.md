@@ -29,6 +29,7 @@ security audits, on the release that had it:
 
 | File | Property | Finds again |
 | --- | --- | --- |
+| `limits.test.ts` | each limit set from the input, one less than it needs, exactly that or one more: a field name nests while it is within the depth, indices make a list while they are within the gap, flash keeps everything that fits its cookie, then errors alone, and cache tags pass while each tag, their count and their header are within their limits | eleven off-by-one checks at those limits, planted on main, eight of which the rest of the suite let through |
 | `form-fields.test.ts` | `nestFields` never writes to the realm's built-ins, and holds no list longer than the fields sent allow | run-1 C1 and C4, on 1.4.2 |
 | `links.test.ts` | `href`, `sameOriginReferer` and `intendedUrl` give only URLs a browser keeps on this site and on their route | run-1 C17 and N9 on 1.4.2, run-2 F16 on 1.5.0 |
 | `better-auth-body.test.ts` | `bodyOf` reads the body Better Auth's own parser reads, or none | run-2 N2, on 1.5.0 |

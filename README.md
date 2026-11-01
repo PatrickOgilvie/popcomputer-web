@@ -105,6 +105,7 @@ Testing and reference:
 - [Testing](docs/testing.md): requests through the application, the readers, one visitor, fakes and time
 - [Fuzzing](docs/fuzzing.md): properties on generated inputs, generated requests to the application's routes and the rules their answers keep, and sequences of steps
 - [A database for tests](docs/test-database.md): PGlite for Postgres, and D1 through Miniflare
+- [Fuzzing at the limits](docs/fuzz-limits.md): each limit set from the input, so every case lands on its edge
 - [Lower-level composition](docs/lower-level.md): the middleware without `setupWeb`
 - [State machines](docs/state-machines.md): what the framework keeps across requests, the rule each keeps, and the models that check them
 
