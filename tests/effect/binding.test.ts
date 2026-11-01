@@ -152,10 +152,10 @@ describe('compiled route binding contract', () => {
     )
 
     await expect(
-      decodeBoundRow(binding, {
+      Effect.runPromise(decodeBoundRow(binding, {
         id: 'project-1',
         name: 'Internal name',
-      })
+      }))
     ).resolves.toEqual({ id: 'project-1' })
   })
 })
@@ -178,13 +178,13 @@ describe('table bindings', () => {
     const row = { id: 'm1', handle: 'ada', role: 'owner', joinedAt: new Date(0), bio: null }
 
     expect(binding.tableName).toBe('members')
-    await expect(decodeBoundRow(binding, row)).resolves.toEqual(row)
-    await expect(decodeBoundRow(binding, { ...row, role: 'admin' })).rejects.toMatchObject({
+    await expect(Effect.runPromise(decodeBoundRow(binding, row))).resolves.toEqual(row)
+    await expect(Effect.runPromise(Effect.flip(decodeBoundRow(binding, { ...row, role: 'admin' })))).resolves.toMatchObject({
       // oxlint-disable-next-line popcomputer/effect-no-manual-tagged-construction -- Assert the literal external error shape independently of its production constructor.
       _tag: 'RouteConfigurationError',
       binding: 'member',
     })
-    await expect(decodeBoundRow(binding, { ...row, joinedAt: 0 })).rejects.toMatchObject({ binding: 'member' })
+    await expect(Effect.runPromise(Effect.flip(decodeBoundRow(binding, { ...row, joinedAt: 0 })))).resolves.toMatchObject({ binding: 'member' })
   })
 
   test('load a route\'s model under any parameter name', async () => {

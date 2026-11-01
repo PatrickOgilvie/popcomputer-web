@@ -407,6 +407,26 @@ Done when `resolveBindings` and `loadModels` are gone from `routing.ts`,
 `createHandler` is about 250 lines or fewer, and the binding, guard,
 route-model, security and fuzz (`leaks`, `strangerWrites`) tests pass.
 
+Done, in `src/effect/route-models.ts` beside `binding.ts`, not inside it:
+`binding.ts` already holds 1,200 lines of configuration and compilation.
+- The module holds `RouteRecords`, `routeModelsOnce` (now also the
+  compiled plan, memoised, as an Effect) and `routeModelsLayer(request)`.
+  That layer gives `BoundModels`, `RouteRecords` and `GuardVerdicts`, with
+  the `decided` set, the loading lock and the positions it needs.
+- `loadRecords` is the old `resolveBindings` as an `Effect.gen`. It decodes
+  the param with `S.decodeUnknownOption`, adds the access SQL to the same
+  query, reads through `dbQuery` (a failure is a `DatabaseError` defect),
+  and decodes the row with `decodeBoundRow`, now an Effect. 404, 401 and
+  configuration failures are yielded, not thrown and caught again.
+- `routing.ts` imports three names from it and none of `binding.ts`'s
+  loader internals. `decodeBindingParam` is gone.
+- Planting the access filter's removal fails 12 security, binding, guard
+  and fuzz tests.
+
+Decision 2 is not taken: `ensureParams` still answers a malformed
+parameter with Hono's 404, its params schema now worked out once per
+route.
+
 ## Step 6 — Cache policy has one recorder and one finisher
 
 - `finishRouteResponse(response, option, facts)` in `response-cache.ts`
