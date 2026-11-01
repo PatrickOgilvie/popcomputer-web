@@ -28,7 +28,6 @@ import type { Context, Env, MiddlewareHandler } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import {
   BROWSER_PAGE_CACHE_CONTROL,
-  hasSessionCookie,
   isPageResponse,
   isPartialReloadRequest,
 } from './effect/response-cache.js'
@@ -36,6 +35,7 @@ import { copyTestState } from './effect/test-env.js'
 import { openWebContext } from './request-context.js'
 import { HEADERS } from './types.js'
 import { isCurrentVersion } from './page-version.js'
+import { cookieNames, sessionCookies } from './session-cookies.js'
 
 /** Response header reporting what the page cache did: HIT, MISS, DYNAMIC or BYPASS. */
 export const PAGE_CACHE_HEADER = 'X-Popweb-Cache'
@@ -218,7 +218,7 @@ export function defaultCacheControl<E extends Env>(c: Context<E>, setsCookie: bo
     context.authUser !== undefined ||
     context.signedIn === true ||
     c.req.header('Authorization') !== undefined ||
-    hasSessionCookie(c.req.header('Cookie'), context.sessionCookies ?? [])
+    sessionCookies(context.sessionCookies).sentIn(c.req.header('Cookie'))
 
   return personal || setsCookie ? PRIVATE_CACHE_CONTROL : DEFAULT_CACHE_CONTROL
 }
@@ -459,7 +459,7 @@ function isDevelopment<E extends Env>(c: Context<E>): boolean {
 function hasPrivateRequest<E extends Env>(c: Context<E>, sessionCookie: string | undefined): boolean {
   return (
     c.req.header('Authorization') !== undefined ||
-    hasSessionCookie(c.req.header('Cookie'), sessionCookie ? [sessionCookie] : [])
+    sessionCookies(sessionCookie === undefined ? [] : [sessionCookie]).sentIn(c.req.header('Cookie'))
   )
 }
 
@@ -498,17 +498,6 @@ function isCacheableRequest<E extends Env>(c: Context<E>, version: string, varia
   return cookieNames(c.req.header('Cookie')).every((name) =>
     IGNORED_COOKIE_PREFIXES.some((prefix) => name.startsWith(prefix))
   )
-}
-
-function cookieNames(header: string | undefined): readonly string[] {
-  if (!header) {
-    return []
-  }
-
-  return header
-    .split(';')
-    .map((part) => part.split('=', 1)[0].trim())
-    .filter((name) => name.length > 0)
 }
 
 function deployIdentity<E extends Env>(

@@ -17,6 +17,7 @@ import { applyDefaultCacheControl, markPageDynamic, observedRequestContext } fro
 import { ConfigurationError } from './effect/errors.js'
 import { webUrl } from './locations.js'
 import { isCurrentVersion, pageVersion, userIdOf } from './page-version.js'
+import { sessionCookies, setCookieName } from './session-cookies.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
@@ -194,7 +195,7 @@ export function web(config: WebConfig): MiddlewareHandler {
         const signedIn = options.signedIn === true || context.authUser !== undefined
         // A session the lookup found ended, or one ended or started since the
         // last page, leaves history the previous session's pages wrote.
-        const sessionChanged = flashed.clearHistory || endsSession(context.sessionLookupCookies ?? [], context.sessionCookies ?? [])
+        const sessionChanged = flashed.clearHistory || sessionCookies(context.sessionCookies).endsSession(context.sessionLookupCookies ?? [])
         // While signed-in pages are the encrypted ones, every page rendered to
         // a visitor who is not signed in clears the history, however the
         // session ended: in another tab, by the cookie's expiry, or where a
@@ -296,9 +297,9 @@ export function web(config: WebConfig): MiddlewareHandler {
     // previous session's pages wrote.
     if (c.res && !historyCleared) {
       const answered = answeredCookies(c.res, context)
-      const sessionCookies = context.sessionCookies ?? []
+      const session = sessionCookies(context.sessionCookies)
 
-      if (endsSession(answered, sessionCookies) || startsSession(answered, sessionCookies, c.req.header('Cookie'))) {
+      if (session.endsSession(answered) || session.startsSession(answered, c.req.header('Cookie'))) {
         flash.clearHistory()
       }
     }
@@ -351,15 +352,10 @@ function withResponseCookies(response: Response, cookies: readonly string[] | un
 function withSessionLookupCookies(response: Response, cookies: readonly string[] | undefined): Response {
   if (cookies === undefined || cookies.length === 0) return response
 
-  const set = new Set(response.headers.getSetCookie().map(cookieName))
-  const kept = cookies.filter((cookie) => !set.has(cookieName(cookie)))
+  const set = new Set(response.headers.getSetCookie().map(setCookieName))
+  const kept = cookies.filter((cookie) => !set.has(setCookieName(cookie)))
 
   return withResponseCookies(response, kept)
-}
-
-/** A Set-Cookie header's cookie name. */
-function cookieName(setCookie: string): string {
-  return setCookie.slice(0, setCookie.indexOf('=')).trim()
 }
 
 /**
@@ -369,76 +365,13 @@ function cookieName(setCookie: string): string {
  */
 function answeredCookies(response: Response, context: WebRequestContext): string[] {
   const own = [...response.headers.getSetCookie(), ...(context.responseCookies ?? [])]
-  const set = new Set(own.map(cookieName))
+  const set = new Set(own.map(setCookieName))
 
   return [
     ...own,
-    ...(context.sessionLookupCookies ?? []).filter((cookie) => !set.has(cookieName(cookie))),
+    ...(context.sessionLookupCookies ?? []).filter((cookie) => !set.has(setCookieName(cookie))),
     ...(context.responseHeaders ?? []).filter(([name]) => name.toLowerCase() === 'set-cookie').map(([, value]) => value),
   ]
-}
-
-/** A session token cookie as a response leaves it: its value, unless it expires it. */
-interface SessionCookieState {
-  readonly value: string
-  readonly expired: boolean
-}
-
-/**
- * The session token cookies these Set-Cookie headers leave, applied in order,
- * by name: Better Auth's, under any prefix, or the one setupWeb's
- * `auth.sessionCookie` names.
- */
-function sessionCookieStates(setCookies: readonly string[], sessionCookies: readonly string[]): Map<string, SessionCookieState> {
-  const states = new Map<string, SessionCookieState>()
-
-  for (const setCookie of setCookies) {
-    const name = cookieName(setCookie)
-    const unprefixed = name.replace(/^__(?:Secure|Host)-/, '')
-
-    if (unprefixed.endsWith('.session_token') || sessionCookies.includes(unprefixed)) {
-      const [pair = '', ...attributes] = setCookie.split(';')
-      const value = pair.slice(pair.indexOf('=') + 1).trim()
-
-      states.set(name, {
-        value,
-        expired: value === '' || attributes.some(expiresTheCookie),
-      })
-    }
-  }
-
-  return states
-}
-
-/** Whether a Set-Cookie attribute expires the cookie: a Max-Age of 0 or less, or an Expires already past. */
-function expiresTheCookie(attribute: string): boolean {
-  if (/^\s*max-age\s*=\s*(?:0|-\d+)\s*$/i.test(attribute)) return true
-
-  const expires = /^\s*expires\s*=(.*)$/i.exec(attribute)?.[1]
-
-  return expires !== undefined && Date.parse(expires) <= Date.now()
-}
-
-/** Whether these Set-Cookie headers, applied in order, leave the session token cookie expired. */
-function endsSession(setCookies: readonly string[], sessionCookies: readonly string[]): boolean {
-  return [...sessionCookieStates(setCookies, sessionCookies).values()].some((state) => state.expired)
-}
-
-/**
- * Whether these Set-Cookie headers leave the session token cookie holding
- * another value than the request sent: a new session, as signing in starts,
- * not the same one renewed.
- */
-function startsSession(setCookies: readonly string[], sessionCookies: readonly string[], cookieHeader: string | undefined): boolean {
-  const sent = new Map<string, string>()
-
-  for (const pair of (cookieHeader ?? '').split(';')) {
-    const separator = pair.indexOf('=')
-
-    if (separator > 0) sent.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim())
-  }
-
-  return [...sessionCookieStates(setCookies, sessionCookies)].some(([name, state]) => !state.expired && sent.get(name) !== state.value)
 }
 
 /** The response with the headers an action or layer added with responseHeader. */

@@ -377,44 +377,6 @@ function hasCacheControlDirective(
 }
 
 /**
- * Cookie-name prefixes that carry framework-managed session state.
- * better-auth's cookies all share one prefix (session_token, session_data,
- * account_data, dont_remember), with a `__Secure-` variant over HTTPS.
- */
-const SESSION_COOKIE_PREFIXES = ['better-auth.', '__Secure-better-auth.']
-
-/**
- * Whether a Cookie header carries a session cookie the framework knows about:
- * better-auth's cookies by prefix, plus any custom names registered on the
- * request context (e.g. via loadUser's `sessionCookie` config), including
- * their `__Secure-` variants.
- *
- * Unknown cookies (analytics, consent, bot-management) do NOT count —
- * they don't personalize responses, and treating every cookie as
- * private would disable caching for essentially all browser traffic.
- * Apps with custom cookie auth outside the framework must register their cookie
- * name or avoid the `cache` option on authenticated routes.
- */
-export function hasSessionCookie(
-  cookieHeader: string | undefined,
-  sessionCookieNames: readonly string[]
-): boolean {
-  if (!cookieHeader) {
-    return false
-  }
-
-  const cookieNames = cookieHeader.split(';').map((part) => part.split('=', 1)[0].trim())
-
-  return cookieNames.some(
-    (name) =>
-      SESSION_COOKIE_PREFIXES.some((prefix) => name.startsWith(prefix)) ||
-      sessionCookieNames.some(
-        (registered) => name === registered || name === `__Secure-${registered}`
-      )
-  )
-}
-
-/**
  * Whether a response is a page: an HTML document, or an Inertia page object
  * (JSON marked with X-Inertia: true).
  */

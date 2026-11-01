@@ -26,6 +26,7 @@ import {
   type BetterAuthActionError,
 } from './better-auth-boundary.js'
 import { openWebContext } from '../request-context.js'
+import { sessionCookies } from '../session-cookies.js'
 import { BodyTooLarge, DEFAULT_BODY_LIMIT, formatBytes, readBody } from './body-limit.js'
 import { bodyOf } from './better-auth-body.js'
 import { schemaExport, tableOfSchema } from './table-schema.js'
@@ -341,14 +342,11 @@ export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): Middl
       return c.res
     }
 
-    const cookieHeader = c.req.header('Cookie') ?? ''
-
-    const hasSessionCookie = sessionCookie
-      ? cookieHeader.includes(`${sessionCookie}=`) ||
-        cookieHeader.includes(`__Secure-${sessionCookie}=`)
-      : true
-
-    if (!hasSessionCookie) {
+    // With a session cookie of its own, a request without a session token
+    // has no session to look up. Without one, every request is looked up:
+    // Better Auth may find a session in another header, as its bearer
+    // plugin does.
+    if (sessionCookie && !sessionCookies([sessionCookie]).tokenSentIn(c.req.header('Cookie'))) {
       await next()
 
       return c.res
@@ -1180,7 +1178,7 @@ export function betterAuthLogoutAction<const Path extends string = '/'>(
     const headers = new Headers({ Location: config.redirectTo ?? '/' })
 
     if (answered !== undefined) appendSetCookies(headers, answered.headers)
-    if (!headers.has('set-cookie')) appendLogoutCookies(headers, config.cookieNames)
+    if (!headers.has('set-cookie')) appendLogoutCookies(headers, sessionCookies().toExpireOnSignOut(request.header('Cookie'), config.cookieNames))
 
     return new Response(null, { status: 303, headers })
   })
@@ -1225,18 +1223,11 @@ function appendExpiredCookie(
   target.append('set-cookie', value)
 }
 
-function appendLogoutCookies(target: Headers, cookieNames?: string[]): void {
-  const defaults = [
-    'better-auth.session_token',
-    'better-auth.session_data',
-    'better-auth.account_data',
-    'better-auth.dont_remember',
-  ]
-
-  const names = cookieNames?.length ? cookieNames : defaults
-
+/** Expire each of these cookies, and its `__Secure-` and `__Host-` forms, which only a secure cookie expires. */
+function appendLogoutCookies(target: Headers, names: readonly string[]): void {
   for (const name of names) {
     appendExpiredCookie(target, name)
     appendExpiredCookie(target, `__Secure-${name}`, { secure: true })
+    appendExpiredCookie(target, `__Host-${name}`, { secure: true })
   }
 }

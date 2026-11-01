@@ -22,7 +22,7 @@ describe. A change touches a model when it changes any of these:
 | Model | Code it describes | Replay tests |
 |---|---|---|
 | `SignInLimits.tla` | `src/effect/sign-in-limits.ts`: `withinSignInLimits`, `rowStates`, `cooldownAfter`, `sweepSignInFailures`, `assertSignInLimitsConfig`; its callers in `src/effect/auth.ts` (`callEndpoint`, `betterAuthHandler`) | `tests/effect/sign-in-limits.test.ts` |
-| `HistoryClear.tla` | `src/middleware.ts` `web()`: the render's `encryptHistory`, `clearHistory` and `version`, the 409 check, the clear raised after `next()`, `endsSession`, `startsSession`, `expiresTheCookie`; `src/page-version.ts`; the clear in `src/flash.ts`; `isCacheableRequest`'s version check in `src/page-cache.ts`; `renderPage` in `src/effect/responses.ts`; `@inertiajs/core`'s popstate and back-forward version checks | `tests/security/history.test.ts`, `tests/render-options.test.ts` |
+| `HistoryClear.tla` | `src/middleware.ts` `web()`: the render's `encryptHistory`, `clearHistory` and `version`, the 409 check, the clear raised after `next()`; `src/session-cookies.ts`: `endsSession`, `startsSession`, `expiresTheCookie`; `src/page-version.ts`; the clear in `src/flash.ts`; `isCacheableRequest`'s version check in `src/page-cache.ts`; `renderPage` in `src/effect/responses.ts`; `@inertiajs/core`'s popstate and back-forward version checks | `tests/security/history.test.ts`, `tests/render-options.test.ts` |
 | `DataCache.tla` | `src/cache.ts`: `cache`, `cacheGet`, `cacheSet` given its read or a value, `readTagGenerations`, `invalidateCacheTags` | `tests/cache.test.ts` (`cache tags`); `tests/fuzz/data-cache.test.ts` drives the same calls through random sequences |
 | `MagicLink.tla` | the magic link in `docs/auth-plugins.md`; `showMagicLink`, `verifyMagicLink` and their routes in `tests/better-auth/app.ts`; `better-auth`'s magic-link plugin | `tests/better-auth/seam.test.ts` (`magic links`) |
 | `Flash.tla` | `src/flash.ts` `openFlash`; the render's `flash.take()` in `src/middleware.ts` | none: its rule breaks, a known limit |
@@ -34,7 +34,9 @@ generation), code that moved or was renamed, and an upgrade of
 
 The models were last confirmed to describe the code at commit `197689c`
 (2026-10-29). Run `git diff 197689c -- <the files above>` to see what changed
-since.
+since. `HistoryClear.tla` was confirmed again on 2026-11-01, when
+`endsSession`, `startsSession` and `expiresTheCookie` moved from
+`src/middleware.ts` to `src/session-cookies.ts`, the commit after `8d412b8`.
 
 ## Run the check
 

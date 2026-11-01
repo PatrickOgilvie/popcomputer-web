@@ -4,11 +4,12 @@
  * asks Better Auth, whether a response that sets one clears Inertia's
  * history, and whether sign-out expires one.
  *
- * Each place has its own rule today, and they disagree: a `__Host-` session
- * cookie, or one under Better Auth's `cookiePrefix`, is no one's own to the
- * cache policy yet starts a session for the history. The table pins today's
- * answers. Step 1a of plans/request-pipeline.md gives every place one rule,
- * and changes the rows it fixes.
+ * Every place reads one rule (src/session-cookies.ts): Better Auth's cookies
+ * under any prefix, and the name `auth.sessionCookie` registers, each also
+ * under `__Secure-` and `__Host-`. Before it, each place had its own rule: a
+ * `__Host-` session cookie, or one under Better Auth's `cookiePrefix`, was no
+ * one's own to the cache policy yet started a session for the history, and a
+ * cookie named `notsid` sent the session lookup to Better Auth for `sid`.
  */
 
 import { describe, expect, test } from 'bun:test'
@@ -37,18 +38,21 @@ interface Decisions {
   readonly expiredOnSignOut: boolean
 }
 
-const today: ReadonlyArray<readonly [name: string, decisions: Decisions]> = [
-  ['better-auth.session_token', { personal: true, lookedUp: false, clearsHistory: true, expiredOnSignOut: true }],
-  ['__Secure-better-auth.session_token', { personal: true, lookedUp: false, clearsHistory: true, expiredOnSignOut: true }],
-  ['__Host-better-auth.session_token', { personal: false, lookedUp: false, clearsHistory: true, expiredOnSignOut: false }],
+// Sign-out expires a registered name only when given it as `cookieNames`,
+// since the action cannot yet read `auth.sessionCookie`.
+const decisions: ReadonlyArray<readonly [name: string, decisions: Decisions]> = [
+  ['better-auth.session_token', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: true }],
+  ['__Secure-better-auth.session_token', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: true }],
+  ['__Host-better-auth.session_token', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: true }],
   // Better Auth's `advanced.cookiePrefix: 'myapp'`.
-  ['myapp.session_token', { personal: false, lookedUp: false, clearsHistory: true, expiredOnSignOut: false }],
+  ['myapp.session_token', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: true }],
+  ['__Host-myapp.session_data', { personal: true, lookedUp: false, clearsHistory: false, expiredOnSignOut: true }],
   ['better-auth.session_data', { personal: true, lookedUp: false, clearsHistory: false, expiredOnSignOut: true }],
   ['sid', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: false }],
   ['__Secure-sid', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: false }],
-  ['__Host-sid', { personal: false, lookedUp: true, clearsHistory: true, expiredOnSignOut: false }],
+  ['__Host-sid', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: false }],
   // Another cookie whose name ends in the session cookie's.
-  ['notsid', { personal: false, lookedUp: true, clearsHistory: false, expiredOnSignOut: false }],
+  ['notsid', { personal: false, lookedUp: false, clearsHistory: false, expiredOnSignOut: false }],
   ['theme', { personal: false, lookedUp: false, clearsHistory: false, expiredOnSignOut: false }],
 ]
 
@@ -102,7 +106,8 @@ async function decisionsFor(name: string): Promise<Decisions> {
   const next = await browser.request('/page', { headers: { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } })
   const page = S.decodeUnknownSync(PageHistory)(await next.json())
 
-  const signOut = await testBrowser(app).request('/sign-out', { method: 'POST' })
+  // Signing out while holding the cookie, as a browser does.
+  const signOut = await app.request('/sign-out', { method: 'POST', headers: { Origin: 'http://localhost', Cookie: `${name}=value` } })
   const expired = signOut.headers.getSetCookie().map((cookie) => cookie.slice(0, cookie.indexOf('=')))
 
   return {
@@ -118,7 +123,7 @@ describe('session cookies', () => {
     expect(await decisionsFor('')).toEqual({ personal: false, lookedUp: false, clearsHistory: false, expiredOnSignOut: false })
   })
 
-  test.each(today)('%s', async (name, decisions) => {
-    expect(await decisionsFor(name)).toEqual(decisions)
+  test.each(decisions)('%s', async (name, expected) => {
+    expect(await decisionsFor(name)).toEqual(expected)
   })
 })

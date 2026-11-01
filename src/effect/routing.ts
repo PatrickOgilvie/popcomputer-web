@@ -28,6 +28,7 @@ import {
   UnauthorizedError,
 } from './errors.js'
 import { openWebContext } from '../request-context.js'
+import { sessionCookies } from '../session-cookies.js'
 import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
@@ -36,7 +37,6 @@ import { allowDefaultPageCache, defaultCacheControl, keepPageOutOfCache, observe
 import {
   applyCachePolicy,
   decideCachePolicy,
-  hasSessionCookie,
   isPageResponse,
   isPartialReloadRequest,
   purgeTags,
@@ -454,7 +454,7 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
     // API key a route's own layer reads, is no part of a shared cache's key.
     requestCtx.readRequestState === true ||
     c.req.header('Authorization') !== undefined ||
-    hasSessionCookie(c.req.header('Cookie'), requestCtx.sessionCookies ?? [])
+    sessionCookies(requestCtx.sessionCookies).sentIn(c.req.header('Cookie'))
   )
 }
 

@@ -126,6 +126,21 @@ Behaviour change (Fixed): every consumer uses the same rule. For privacy
 checks, the rule must never call fewer cookies personal than today's widest
 copy does. Run `verify-state-machines` (HistoryClear).
 
+Done. `src/session-cookies.ts` holds the rule: Better Auth's cookies under
+any prefix, by the `better-auth.` prefix or a `session_token`,
+`session_data`, `account_data` or `dont_remember` suffix, plus registered
+names, each under `__Secure-` and `__Host-`. Two departures from the
+wording above:
+- The privacy checks read cookie names with the module's own reader, not
+  Hono's `parse`. `parse` drops a pair whose value it finds invalid, and a
+  session cookie it dropped would read as a guest's.
+- `betterAuthLogoutAction` cannot read `auth.sessionCookie` until step 2's
+  `WebSetup` service exists. It expires Better Auth's cookies the request
+  sent, and a registered name only when given it as `cookieNames`.
+
+HistoryClear's four configs gave what the skill requires, and the replay
+tests passed.
+
 **1b. Development mode.** One `isDevelopment(env, errors)` honouring
 `errors.envKey` / `devValue` (today only `handler.ts:114` does), used by
 `page-cache.ts:449` and `routing.ts:439`. Behaviour change (Fixed):
