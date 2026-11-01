@@ -9,7 +9,7 @@ the application's own records and rules.
 
 | Piece | What it gives |
 | --- | --- |
-| `fuzz(arbitrary, holds, { runs })` | runs a property: resolves when every case holds, rejects with the shrunk case, why it was refused and a replay token |
+| `fuzz(arbitrary, holds, { runs, shrinks })` | runs a property: resolves when every case holds, rejects with the case shrunk through up to `shrinks` candidates (1,000, or `FUZZ_SHRINKS`), why it was refused and a replay token; shrinking stops, saying so, with a quarter of `fuzzTimeout` left |
 | `pick`, `oneOf`, `weighted`, `textOf`, `stepsOf`, `anyText`, `show` | generators that shrink toward their first choice, sequences of a lifecycle's steps of every length up to `maxLength`, and a value shown with its invisible characters escaped |
 | `fuzzRequest({ paths, params, people, forms })` | requests to the application's declared paths, from each person and a signed-out visitor |
 | `sendFuzzRequest(app, sent, env)` | sends one through the application, as `app.request` does |

@@ -13,9 +13,9 @@
  *
  * Each property runs a few hundred cases from a fixed seed, so a commit gate
  * is repeatable. `FUZZ_RUNS` sets the number of cases, `FUZZ_SEED=random`
- * picks a seed per run, and a failure prints the shrunk input, why the
- * property refused it, and a replay token for `FUZZ_REPLAY`, which runs that
- * case again.
+ * picks a seed per run, `FUZZ_SHRINKS` the candidates a failure shrinks
+ * through, and a failure prints the shrunk input, why the property refused
+ * it, and a replay token for `FUZZ_REPLAY`, which runs that case again.
  *
  * @example
  * ```ts
@@ -31,6 +31,7 @@ import type { PathParamName } from './paths.js'
 import type { TestApp, TestBindings } from './testing.js'
 
 const configuredRuns = process.env.FUZZ_RUNS === undefined ? undefined : Number(process.env.FUZZ_RUNS)
+const configuredShrinks = process.env.FUZZ_SHRINKS === undefined ? undefined : Number(process.env.FUZZ_SHRINKS)
 // `random` picks a seed per run; the replay token a failure prints records it.
 const seed = process.env.FUZZ_SEED === 'random' ? Date.now() : process.env.FUZZ_SEED ?? 'popweb'
 const replay = process.env.FUZZ_REPLAY
@@ -41,6 +42,12 @@ export type Refusal = string | ReadonlyArray<string> | undefined
 export interface FuzzOptions {
   /** Cases to run, for a property whose cases are slow; `FUZZ_RUNS` overrides it. Default 300. */
   readonly runs?: number
+  /**
+   * Candidates a failure shrinks through, each a run of the property;
+   * `FUZZ_SHRINKS` overrides it. Default 1,000, where Effect's check stops
+   * at 100: dropping each step a long sequence does not need takes one.
+   */
+  readonly shrinks?: number
 }
 
 /**
@@ -53,7 +60,9 @@ export const fuzzTimeout = configuredRuns === undefined ? 60_000 : 3_600_000
  * Check `holds` on generated inputs. Resolves when every case holds, and
  * rejects with the shrunk input, why `holds` refused it and a replay token
  * otherwise. Run it as a test of any runner:
- * `test(name, () => fuzz(arbitrary, holds), fuzzTimeout)`.
+ * `test(name, () => fuzz(arbitrary, holds), fuzzTimeout)`. Shrinking stops
+ * with a quarter of `fuzzTimeout` left, and the failure says so, so a slow
+ * property reports its failure before its test times out.
  */
 export async function fuzz<A>(
   arbitrary: Arbitrary.Arbitrary<A>,
@@ -69,19 +78,43 @@ export async function fuzz<A>(
       return `threw ${error instanceof Error ? `${error.name}: ${error.message}` : show(error)}`
     }
   }
+  const shrinkUntil = Date.now() + fuzzTimeout * 0.75
+  let shrinking = false
+  let stopped = false
   const result = await Effect.runPromise(
-    Arbitrary.checkEffect(arbitrary, (value) => Effect.promise(async () => (await reasonFor(value)) === undefined), {
-      runs: configuredRuns ?? options.runs ?? 300,
-      seed,
-      replay,
-    })
+    Arbitrary.checkEffect(
+      arbitrary,
+      (value) =>
+        Effect.promise(async () => {
+          // A candidate that holds is one Effect's shrink passes over, so
+          // past the deadline every candidate holds and the shrink ends.
+          if (shrinking && Date.now() > shrinkUntil) {
+            stopped = true
+
+            return true
+          }
+
+          const holding = (await reasonFor(value)) === undefined
+
+          shrinking ||= !holding
+
+          return holding
+        }),
+      { runs: configuredRuns ?? options.runs ?? 300, maxShrinks: configuredShrinks ?? options.shrinks ?? 1000, seed, replay }
+    )
   )
 
   if (result._tag === 'Passed') return
 
   const refusal = result._tag === 'Falsified' ? await reasonFor(result.shrunkInput) : undefined
 
-  throw new Error([Arbitrary.formatCheckFailure(result), refusal && `Refused: ${refusal}`].filter(Boolean).join('\n'))
+  throw new Error(
+    [
+      Arbitrary.formatCheckFailure(result),
+      refusal && `Refused: ${refusal}`,
+      stopped && 'Stopped shrinking with a quarter of fuzzTimeout left: a smaller input may fail too.',
+    ].filter(Boolean).join('\n')
+  )
 }
 
 function reasonOf(refusal: Refusal): string | undefined {
