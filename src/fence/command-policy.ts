@@ -7,7 +7,7 @@
  * prefixes, the package.json scripts a runner names, and the shell scripts
  * a command runs.
  */
-import { readCommands, splitWords, type SimpleCommand } from './shell.js'
+import { readCommands, splitWords, UNREAD, UNREAD_WORDS, type SimpleCommand } from './shell.js'
 
 /** What a command or a file change breaks: the fence's own rule, or a step that needs the owner. */
 export type FenceRule =
@@ -121,6 +121,23 @@ const COMMIT_VALUE_LONG = new Set([
   '--squash', '--trailer', '--pathspec-from-file',
 ])
 const CONFIG_VALUE_OPTIONS = new Set(['-f', '--file', '--blob', '--type', '--default', '--comment', '--value'])
+/** git's commands that write a commit by hand, which runs none of its hooks. */
+const COMMIT_WRITERS = new Set(['commit-tree', 'fast-import'])
+
+/** The setting that moves git's hooks, as `-c` names it before its value. */
+const HOOKS_PATH = 'core.hooksPath'
+/**
+ * The words that, in place of one the fence cannot read, would make a command
+ * a way around the commit gate: git, its commit, commit's `-n`, which skips
+ * the hooks only there, and the setting that moves them.
+ */
+const GATE_WORDS: ReadonlyArray<string> = ['git', 'commit', '-n', HOOKS_PATH]
+/** The same, for an unquoted expansion, which the shell may split into several words, as `$(echo git commit)`. */
+const GATE_RUNS: ReadonlyArray<ReadonlyArray<string>> = [['git', 'commit'], ['commit', '-n'], ['git', 'commit', '-n']]
+/** How many unread words of one command take another reading at once: git, its commit and the flag. */
+const MAX_REREAD = 3
+/** How many unread words of one command are read otherwise; the rest are read as the shell's own expansion. */
+const MAX_UNREAD_WORDS = 6
 
 const WRANGLER_VALUE_OPTIONS = new Set(['-c', '--config', '-e', '--env', '--env-file', '--cwd'])
 const SECRET_WRITES = new Set(['put', 'bulk', 'delete'])
@@ -140,6 +157,10 @@ const UNREVIEWED_FILES = [
 const FENCE_FILES = [
   /(^|\/)\.?lefthook\.ya?ml$/,
   /(^|\/)\.githooks(\/|$)/,
+  // The hook managers whose switches the policy refuses: husky, pre-commit, simple-git-hooks.
+  /(^|\/)\.husky(\/|$)/,
+  /(^|\/)\.pre-commit-config\.ya?ml$/,
+  /(^|\/)\.?simple-git-hooks\.(?:json|[cm]?js)$/,
   /(^|\/)oxlint\.config\.[cm]?[jt]s$/,
   /(^|\/)\.?oxlintrc\.json$/,
   /(^|\/)\.claude\/settings(\.local)?\.json$/,
@@ -215,6 +236,47 @@ class Inspection {
     for (const { name, value } of command.assignments) this.environment(name, value, text, via, basename(command.words[0] ?? ''))
     for (const target of command.writes) this.findings.push(...fileFindings(target, from(`${text} > ${target}`, via)))
     this.words(command.words, command, depth, via)
+    if (command.marked !== undefined) this.unread(command, command.marked, depth, via)
+  }
+
+  /**
+   * A command some of whose words come from a substitution or a variable the
+   * fence cannot read, as `git $(echo commit) -n`'s subcommand does. Each
+   * such word is read as each of the words that would make the command skip
+   * the commit gate in its place, a few at once, and a command one of those
+   * readings refuses is refused: it may be that command.
+   */
+  private unread(command: SimpleCommand, marked: ReadonlyArray<string>, depth: number, via: string | undefined): void {
+    let unread = 0
+    const choices = marked.map((word): ReadonlyArray<ReadonlyArray<string>> => {
+      const read = known(word) === '' ? [] : [known(word)]
+
+      if (word === known(word) || unread++ >= MAX_UNREAD_WORDS) return [read]
+
+      return [
+        read,
+        ...GATE_WORDS.filter((target) => couldRead(word, target)).map((target) => [target]),
+        ...(word === UNREAD_WORDS ? GATE_RUNS : []),
+        ...clusterReading(word),
+        ...hooksPathReading(word),
+      ]
+    })
+    const tried = new Set<string>()
+
+    for (const reading of readings(choices, 0, 0)) {
+      const key = reading.join(UNREAD)
+      if (tried.has(key)) continue
+      tried.add(key)
+
+      const probe = new Inspection(this.options)
+      probe.words(reading, command, depth, via)
+
+      if (probe.findings.some((finding) => finding.decision === 'deny')) {
+        const subject = shown(marked.map((word) => unreadParts(word).join('$(…)')))
+        this.deny(subject, `may run \`${shown(reading)}\`, which skips the git hooks that run the commit gate: the fence cannot read what a substitution or a variable in it gives. Write the command out in full.`, via)
+        return
+      }
+    }
   }
 
   private deny(subject: string, reason: string, via: string | undefined): void {
@@ -579,6 +641,11 @@ class Inspection {
       return
     }
 
+    if (COMMIT_WRITERS.has(sub) || (sub === 'hash-object' && writesCommitObject(options))) {
+      this.deny(subject, 'writes a commit by hand, which runs none of the git hooks that run the commit gate. Commit with `git commit`, which runs them.', via)
+      return
+    }
+
     switch (sub) {
       case 'push':
         if (!options.includes('--dry-run') && !options.includes('-n')) this.ask('push', subject, via)
@@ -683,6 +750,61 @@ function producedText(command: SimpleCommand | undefined): string | undefined {
   }
   if (name === 'cat' && args.length === 0) return command.input
   return undefined
+}
+
+/** A word without the text the shell reader could not know. */
+function known(word: string): string {
+  return word.replaceAll(UNREAD, '').replaceAll(UNREAD_WORDS, '')
+}
+
+/** A word's parts the shell reader could read, between those it could not, quoted or not. */
+function unreadParts(word: string): string[] {
+  return word.split(UNREAD).flatMap((part) => part.split(UNREAD_WORDS))
+}
+
+/** Whether a word with unread parts could be `target`, its unread parts giving whatever text it needs. */
+function couldRead(word: string, target: string): boolean {
+  const pattern = unreadParts(word).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^]*')
+
+  return new RegExp(`^${pattern}$`).test(target)
+}
+
+/** A short-option cluster an unread part ends, `-a$(...)` as `-an`: `git commit`'s `-n` among them. */
+function clusterReading(word: string): ReadonlyArray<ReadonlyArray<string>> {
+  const [before = ''] = unreadParts(word)
+
+  return /^-[A-Za-z]*$/.test(before) ? [[`${before}n`]] : []
+}
+
+/** `-c`'s `name=value` whose unread name could be `core.hooksPath`, as `"$(...)"=/dev/null`. */
+function hooksPathReading(word: string): ReadonlyArray<ReadonlyArray<string>> {
+  const equals = word.indexOf('=')
+
+  return equals !== -1 && couldRead(word.slice(0, equals), HOOKS_PATH) ? [[`${HOOKS_PATH}${known(word.slice(equals))}`]] : []
+}
+
+/**
+ * Each reading of a command's words, the first choice of each word being
+ * how the shell reader read it: at most `MAX_REREAD` words read otherwise.
+ */
+function* readings(choices: ReadonlyArray<ReadonlyArray<ReadonlyArray<string>>>, at: number, reread: number): Generator<ReadonlyArray<string>> {
+  if (at === choices.length) {
+    yield []
+    return
+  }
+
+  const [read = [], ...others] = choices[at] ?? []
+
+  for (const option of reread < MAX_REREAD ? [read, ...others] : [read]) {
+    for (const rest of readings(choices, at + 1, option === read ? reread : reread + 1)) yield [...option, ...rest]
+  }
+}
+
+/** `git hash-object -w -t commit`, which writes a commit object by hand. */
+function writesCommitObject(options: ReadonlyArray<string>): boolean {
+  return options.some((arg, index) =>
+    arg === '-tcommit' || arg === '--type=commit' || ((arg === '-t' || arg === '--type') && options[index + 1] === 'commit')
+  )
 }
 
 /** `git commit -n`, alone or in a cluster such as `-anm`, which skips the hooks as `--no-verify` does. */

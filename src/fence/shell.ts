@@ -3,8 +3,22 @@
  * command policy: quotes and escapes, `&&`, `||`, `;`, pipes, subshells,
  * command substitutions, heredocs, and the variables and aliases the line
  * assigns itself. It reads and never runs anything. What it cannot know,
- * such as a variable from the environment, expands to nothing.
+ * such as a substitution's output or a variable from the environment,
+ * expands to nothing in a command's words, and to a mark in its marked words.
  */
+
+/**
+ * Where a command's marked words hold text the reader cannot know, inside quotes,
+ * so it stays in its one word. No argument a program receives can hold a
+ * NUL or a U+0001 from a command line, so no text the line spells out is one.
+ */
+export const UNREAD = '\u0000'
+
+/** Where a command's marked words hold an unquoted expansion the reader cannot know, which the shell may split into several words. */
+export const UNREAD_WORDS = '\u0001'
+
+/** A word without the text the reader could not know. */
+const known = (word: string): string => word.replaceAll(UNREAD, '').replaceAll(UNREAD_WORDS, '')
 
 /** A `NAME=value` before a command, or on its own. */
 export interface Assignment {
@@ -17,6 +31,12 @@ export interface SimpleCommand {
   readonly assignments: ReadonlyArray<Assignment>
   /** The command and its arguments. */
   readonly words: ReadonlyArray<string>
+  /**
+   * The words with `UNREAD` where they hold what the reader cannot know,
+   * such as `git $(echo commit) -n`'s subcommand, which `words` drops.
+   * Present only when some word does.
+   */
+  readonly marked: ReadonlyArray<string> | undefined
   /** The files its output is redirected to. */
   readonly writes: ReadonlyArray<string>
   /** The text of its heredoc or herestring, which it reads as input. */
@@ -27,7 +47,13 @@ export interface SimpleCommand {
 
 interface Command {
   assignments: Assignment[]
+  /** Each assignment's value with its marks kept, which the variable it sets carries on. */
+  markedValues: string[]
   words: string[]
+  /** The words with their marks kept, as they are read. */
+  markedWords: string[]
+  /** `markedWords`, once the command is read, when some word holds a mark. */
+  marked: ReadonlyArray<string> | undefined
   writes: string[]
   input: string | undefined
   pipedFrom: SimpleCommand | undefined
@@ -154,7 +180,7 @@ class Reader {
 
   private targetWord(): string {
     while (this.text[this.i] === ' ' || this.text[this.i] === '\t') this.i++
-    return this.readWord(false).join(' ')
+    return this.readWord(false).words.join(' ')
   }
 
   private processSubstitution(): void {
@@ -170,12 +196,14 @@ class Reader {
     if (command.words.length === 0 && ASSIGNMENT.test(rest)) {
       const name = NAME.exec(rest)![0]
       this.i += rest.indexOf('=') + 1
-      command.assignments.push({ name, value: this.readWord(false).join(' ') })
+      const value = this.readWord(false)
+      command.assignments.push({ name, value: value.words.join(' ') })
+      command.markedValues.push(value.marked.join(' '))
       return
     }
 
     const start = this.i
-    const fields = this.readWord(true)
+    const { words, marked } = this.readWord(true)
     const raw = this.text.slice(start, this.i)
 
     // `{` and `}` group commands wherever they stand alone, as in `f() { ...; }`.
@@ -192,25 +220,30 @@ class Reader {
       const alias = this.aliases.get(raw)
       if (alias !== undefined) {
         command.words.push(...splitWords(alias))
+        command.markedWords.push(...splitWords(alias))
         return
       }
     }
 
-    command.words.push(...fields)
+    command.words.push(...words)
+    command.markedWords.push(...marked)
   }
 
   /**
    * One word from the current position, as the fields it expands to: an
    * unquoted variable with spaces in it splits into several when `split`.
+   * The marked fields keep a mark where the word holds what the reader
+   * cannot know, and a field that is nothing else, which the words drop.
    */
-  private readWord(split: boolean): string[] {
+  private readWord(split: boolean) {
     const text = this.text
     const fields: string[] = ['']
     let quoted = false
     const append = (value: string) => {
       fields[fields.length - 1] += value
     }
-    const appendSplit = (value: string) => {
+    const appendSplit = (unquoted: string) => {
+      const value = unquoted.replaceAll(UNREAD, UNREAD_WORDS)
       if (!split) return append(value)
       value.split(/[ \t\n]+/).forEach((part, index) => {
         if (index > 0) fields.push('')
@@ -246,15 +279,20 @@ class Reader {
           appendSplit(value)
         }
       } else if (c === '`') {
-        this.readBackticks()
+        appendSplit(this.readBackticks())
       } else {
         append(c)
         this.i++
       }
     }
 
-    const nonEmpty = fields.filter((field) => field !== '')
-    return nonEmpty.length > 0 || !quoted ? nonEmpty : ['']
+    const words = fields.map(known).filter((field) => field !== '')
+    const marked = fields.filter((field) => field !== '')
+
+    return {
+      words: words.length > 0 || !quoted ? words : [''],
+      marked: marked.length > 0 || !quoted ? marked : [''],
+    }
   }
 
   private readDoubleQuoted(): string {
@@ -270,7 +308,7 @@ class Reader {
       } else if (c === '$') {
         value += this.readDollar(true).value
       } else if (c === '`') {
-        this.readBackticks()
+        value += this.readBackticks()
       } else {
         value += c
         this.i++
@@ -294,7 +332,7 @@ class Reader {
       const end = closingParen(text, this.i + 2)
       this.substitute(text.slice(this.i + 2, end))
       this.i = end + 1
-      return { value: '', isQuoted: inDoubleQuotes }
+      return { value: UNREAD, isQuoted: inDoubleQuotes }
     }
     if (next === '{') {
       const end = text.indexOf('}', this.i + 2)
@@ -315,11 +353,13 @@ class Reader {
     const name = NAME.exec(text.slice(this.i + 1))
     if (name) {
       this.i += 1 + name[0].length
-      return { value: this.variables.get(name[0]) ?? '', isQuoted: inDoubleQuotes }
+      return { value: this.variables.get(name[0]) ?? UNREAD, isQuoted: inDoubleQuotes }
     }
+    // A script's arguments are anything; the status, process ids, count and
+    // flags are numbers and letters no command is named by.
     if (next !== undefined && /[0-9@*#?$!-]/.test(next)) {
       this.i += 2
-      return { value: '', isQuoted: inDoubleQuotes }
+      return { value: /[0-9@*]/.test(next) ? UNREAD : '', isQuoted: inDoubleQuotes }
     }
 
     this.i++
@@ -337,7 +377,7 @@ class Reader {
 
     if (operator?.endsWith('+')) return value ? fallback : ''
     if (operator !== undefined && (value === undefined || (operator.startsWith(':') && value === ''))) return fallback
-    return value ?? ''
+    return value ?? UNREAD
   }
 
   private readAnsiQuoted(): string {
@@ -370,7 +410,8 @@ class Reader {
     return value
   }
 
-  private readBackticks(): void {
+  /** A backquoted substitution, whose commands run too; it gives what the reader cannot know. */
+  private readBackticks(): string {
     const text = this.text
     let inner = ''
     this.i++
@@ -386,6 +427,7 @@ class Reader {
 
     this.i++
     this.substitute(inner)
+    return UNREAD
   }
 
   /** The commands of a substitution run too, with the variables assigned so far. */
@@ -424,8 +466,12 @@ class Reader {
     const command = this.current
     this.current = newCommand(undefined)
 
-    if (command.ignored || (command.words.length === 0 && command.assignments.length === 0)) return
+    // A command whose every word is unread, such as `$(echo git commit -n)`,
+    // has its marked words alone.
+    if (command.ignored || (command.markedWords.length === 0 && command.assignments.length === 0)) return
 
+    // The command itself, whose heredoc is read after it.
+    command.marked = command.markedWords.some((word) => word !== known(word)) ? command.markedWords : undefined
     const simple: SimpleCommand = command
     this.commands.push(simple)
     this.remember(command)
@@ -437,9 +483,10 @@ class Reader {
     const [name, ...args] = command.words
 
     if (name === undefined) {
-      for (const { name, value } of command.assignments) this.variables.set(name, value)
+      command.assignments.forEach(({ name }, index) => this.variables.set(name, command.markedValues[index] ?? ''))
     } else if (name === 'export' || name === 'declare' || name === 'typeset' || name === 'local' || name === 'readonly') {
-      for (const arg of args) {
+      // The marked words, so a value the reader cannot know stays unread.
+      for (const arg of command.markedWords.slice(command.markedWords.indexOf(name) + 1)) {
         const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(arg)
         if (assignment) this.variables.set(assignment[1], assignment[2])
       }
@@ -455,7 +502,7 @@ class Reader {
 }
 
 function newCommand(pipedFrom: SimpleCommand | undefined): Command {
-  return { assignments: [], words: [], writes: [], input: undefined, pipedFrom, ignored: false }
+  return { assignments: [], markedValues: [], words: [], markedWords: [], marked: undefined, writes: [], input: undefined, pipedFrom, ignored: false }
 }
 
 /** The index of the `)` that closes a `(` opened just before `start`, past quotes and nested parentheses. */

@@ -68,13 +68,13 @@ agent's hook passes it, and answers in that agent's format.
 
 | It finds | For example | It |
 | --- | --- | --- |
-| A way around the commit gate | `git commit --no-verify`, `-n`, `HUSKY=0`, `LEFTHOOK=0`, `-c core.hooksPath=...`, `lefthook uninstall`, a write into `.git/hooks/` | refuses it |
+| A way around the commit gate | `git commit --no-verify`, `-n`, `HUSKY=0`, `LEFTHOOK=0`, `-c core.hooksPath=...`, `lefthook uninstall`, a write into `.git/hooks/`, a commit written by hand with `git commit-tree`, `git fast-import` or `git hash-object -t commit` | refuses it |
 | A deploy | `wrangler deploy`, `wrangler versions deploy`, `wrangler rollback` | asks the owner |
 | Remote data | `wrangler d1 migrations apply --remote`, `wrangler d1 execute --remote`, any `wrangler ... --remote` | asks the owner |
 | A secret | `wrangler secret put`, `bulk` or `delete` | asks the owner |
 | A release | `npm publish`, `bun publish`, `pnpm publish` | asks the owner |
 | A push | `git push` | asks the owner |
-| A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/`, `.claude/settings.json`, `lint-debt.json`, `popweb-fence debt --allow-increase` | asks the owner |
+| A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/`, `.husky/`, `.pre-commit-config.yaml`, `.simple-git-hooks.json`, `.claude/settings.json`, `lint-debt.json`, `popweb-fence debt --allow-increase` | asks the owner |
 
 `wrangler deploy --dry-run`, `npm publish --dry-run`, `git push --dry-run`
 and D1's local database (`--local`, the default) need no one.
@@ -85,7 +85,12 @@ escapes, `&&`, `||`, `;` and pipes, `sh -c` and `bash -lc`, `eval`,
 `node_modules/.bin`, the variables the line sets itself, and the
 `package.json` scripts a runner names, so `bun run deploy` asks when its
 script deploys. It also reads a shell script the command runs, and the
-strings of a JavaScript or TypeScript one.
+strings of a JavaScript or TypeScript one. What a substitution gives, or a
+variable the line does not set, it cannot read: it tries each such word as
+`git`, `commit` and commit's `-n`, and refuses a command one of those makes
+a way around the gate, as `git $(echo commit) -n`, so write such a command
+out in full. A quoted substitution is one word, so `git commit -m
+"$(cat <<'EOF' ... EOF)"` runs.
 
 ### Claude Code
 

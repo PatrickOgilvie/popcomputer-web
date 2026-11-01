@@ -67,6 +67,18 @@ const allowed: ReadonlyArray<string> = [
   'popweb-fence debt --update',
   'sed -n 1,20p oxlint.config.ts',
   'rm -rf node_modules && bun install',
+  // Substitutions and variables the fence cannot read, where no reading of them skips the gate.
+  'git commit -m "$(cat <<\'EOF\'\nAdd projects\nEOF\n)"',
+  'git commit -am "$(date)"',
+  'git commit -F "$MSG_FILE"',
+  'git log -n $(echo 5)',
+  'git diff $(git merge-base HEAD main)',
+  'git -C "$REPO" status',
+  'git add $(git diff --name-only) && git commit -m wip',
+  'git push --dry-run origin $(git branch --show-current)',
+  '"$(git rev-parse --show-toplevel)/node_modules/.bin/tsc" --noEmit',
+  'echo -n $(date)',
+  'git hash-object -w notes.txt',
 ]
 
 const refused: ReadonlyArray<readonly [string, Expected]> = [
@@ -134,6 +146,22 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['echo "exit 0" > .git/hooks/pre-commit', ['deny', 'hook-bypass']],
   ['printf "skip: true" >> lefthook-local.yml', ['deny', 'hook-bypass']],
   ['rm -rf node_modules/@popcomputer/web/dist/fence', ['deny', 'hook-bypass']],
+  // A command whose words come from what the fence cannot read, which may skip the gate.
+  ['git $(echo commit) -n', ['deny', 'hook-bypass']],
+  ['git `echo commit` --no-verify', ['deny', 'hook-bypass']],
+  ['$(echo git) commit -n', ['deny', 'hook-bypass']],
+  ['"$(which git)" commit -n', ['deny', 'hook-bypass']],
+  ['g$(printf i)t commit -n', ['deny', 'hook-bypass']],
+  ['$(echo git commit -n)', ['deny', 'hook-bypass']],
+  ['git commit $(echo -n) -m wip', ['deny', 'hook-bypass']],
+  ['git commit -a$(echo n) -m wip', ['deny', 'hook-bypass']],
+  ['SUB=$(echo commit); git $SUB -n', ['deny', 'hook-bypass']],
+  ['timeout 5 $(echo git) commit -n', ['deny', 'hook-bypass']],
+  ['git -c "$(echo core.hooksPath)=/dev/null" commit', ['deny', 'hook-bypass']],
+  // Writing a commit by hand, which runs no hook.
+  ['git update-ref refs/heads/main $(git commit-tree HEAD^{tree} -p HEAD -m wip)', ['deny', 'hook-bypass']],
+  ['git hash-object -w -t commit commit.txt', ['deny', 'hook-bypass']],
+  ['git fast-import < history.stream', ['deny', 'hook-bypass']],
 
   // The owner's steps: deploys, remote data, secrets, releases, pushes.
   ['wrangler deploy', ['ask', 'deploy']],
@@ -200,6 +228,8 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['perl -pi -e "s/error/off/" oxlint.config.ts', ['ask', 'fence-change']],
   ['cat > .claude/settings.json <<EOF\n{}\nEOF', ['ask', 'fence-change']],
   ['rm -rf .githooks', ['ask', 'fence-change']],
+  ['rm .husky/pre-commit', ['ask', 'fence-change']],
+  ['echo > .pre-commit-config.yaml', ['ask', 'fence-change']],
   ['cp /tmp/empty.yml lefthook.yml', ['ask', 'fence-change']],
   ['popweb-fence debt --update --allow-increase', ['ask', 'fence-change']],
   ['bun node_modules/@popcomputer/web/dist/fence/cli.js debt --update --allow-increase', ['ask', 'fence-change']],
@@ -226,6 +256,13 @@ describe('commandPolicy', () => {
     expect(verdict.decision !== 'allow' && verdict.reason).toContain('Fix what the gate reports')
   })
 
+  test('shows where a word could not be read, and the reading that skips the gate', () => {
+    const verdict = commandPolicy('git $(echo commit) -n')
+
+    expect(verdict).toMatchObject({ decision: 'deny', subject: "git '$(…)' -n" })
+    expect(verdict.decision !== 'allow' && verdict.reason).toContain('may run `git commit -n`')
+  })
+
   test('names the script a command came from', () => {
     const verdict = commandPolicy('bun run deploy', { scripts })
 
@@ -244,6 +281,9 @@ describe('filePolicy', () => {
     ['/repo/lefthook-local.yml', 'deny', 'hook-bypass'],
     ['/repo/lefthook.yml', 'ask', 'fence-change'],
     ['/repo/.githooks/pre-commit', 'ask', 'fence-change'],
+    ['/repo/.husky/pre-commit', 'ask', 'fence-change'],
+    ['/repo/.pre-commit-config.yaml', 'ask', 'fence-change'],
+    ['/repo/.simple-git-hooks.json', 'ask', 'fence-change'],
     ['/repo/oxlint.config.ts', 'ask', 'fence-change'],
     ['/repo/.claude/settings.json', 'ask', 'fence-change'],
     ['/repo/.claude/settings.local.json', 'ask', 'fence-change'],

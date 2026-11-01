@@ -12,6 +12,7 @@ What an application may need to change: one that copied `docs/auth.md`'s verify-
 ### Security
 
 - A signed-in page's version marks its user when the user's id is a number, as Better Auth's serial ids are, so Back in a tab whose page went to another member asks the server for theirs there too. Only string ids marked their user: every member of an application with serial ids shared one mark, so their pages, cached in a tab's history, passed as each other's.
+- The agent's command hook refuses a command that skips the commit gate through words it cannot read: a substitution or a variable it does not set as git, its subcommand or commit's `-n`, as `git $(echo commit) -n`, `$(which git) commit -n` or `git commit -a$(echo n)`. Each such word is tried as `git`, `commit`, `-n` and `core.hooksPath`, and as several words when unquoted, and a quoted substitution such as a commit message from a heredoc still runs. It refuses a commit written by hand too, `git commit-tree`, `git fast-import` and `git hash-object -t commit`, which run no hook, and asks the owner before a change to husky's `.husky/`, `.pre-commit-config.yaml` and `.simple-git-hooks.json`, whose switches it already refused. All three were found by a review of 1.0 to 1.10.
 
 ### Fixed
 
