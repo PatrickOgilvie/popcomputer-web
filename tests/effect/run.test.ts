@@ -7,13 +7,39 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { Clock, Config, Context, Effect, Layer, Schema as S } from 'effect'
+import { Clock, Config, Context, Deferred, Effect, Layer, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
+import { web } from '../../src/middleware.js'
+import { webServices } from '../../src/request-context.js'
+import { background } from '../../src/effect/background.js'
+import { effectBridge } from '../../src/effect/bridge.js'
+import { effectRoutes } from '../../src/effect/routing.js'
 import { purgeCache, ResponseCachePurgeError } from '../../src/effect/response-cache.js'
+import { DatabaseService } from '../../src/effect/services.js'
+import type { WebDeclaration } from '../../src/effect/register.js'
 import { testBatch, testClock, testEnv } from '../../src/testing.js'
 
 class Counter extends Context.Service<Counter, { readonly next: Effect.Effect<number> }>()('test/Counter') {}
+
+/** A request service, which counts the times it was built. */
+class Reading extends Context.Service<Reading, { readonly count: number }>()('test/Reading') {}
+
+/** A scoped service, which says whether it has been released. */
+class Resource extends Context.Service<Resource, { readonly isReleased: () => boolean }>()('test/Resource') {}
+
+/** The database these tests give a job: it names the region its bindings say. */
+interface RegionDatabase {
+  readonly region: string
+}
+
+declare module '../../src/effect/register.js' {
+  interface Register {
+    web: WebDeclaration<{
+      database: RegionDatabase
+    }>
+  }
+}
 
 class SweepFailed extends S.TaggedError<SweepFailed>()('SweepFailed', { reason: S.String }) {}
 
@@ -66,6 +92,99 @@ describe('routes.run', () => {
     expect(now).toBe(Date.parse('2026-05-01T00:00:00Z'))
   })
 
+  test("gives the Effect setupWeb's database, built from the bindings it is given, and testEnv's in its place", async () => {
+    const app = new Hono<{ Bindings: { readonly REGION: string } }>()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      database: (c) => ({ region: c.env.REGION }),
+    })
+    const region = Effect.map(DatabaseService, (db) => db.region)
+
+    expect(await routes.run(region, { REGION: 'weur' })).toBe('weur')
+    expect(await routes.run(region, testEnv({ REGION: 'weur' }, { database: { region: 'test' } }))).toBe('test')
+  })
+
+  test("builds web.services' request services for each run, and its app services once", async () => {
+    const app = new Hono<{ Bindings: { readonly REGION: string } }>()
+    const built = { app: 0, request: 0 }
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) }).services({
+      app: Layer.effect(Counter, Effect.sync(() => {
+        built.app += 1
+
+        return Counter.of({ next: Effect.succeed(built.app) })
+      })),
+      request: () => Layer.effect(Reading, Effect.sync(() => {
+        built.request += 1
+
+        return Reading.of({ count: built.request })
+      })),
+    })
+    const reading = Effect.all([Effect.flatMap(Counter, (counter) => counter.next), Effect.map(Reading, (r) => r.count)])
+
+    expect(await routes.run(reading, { REGION: 'weur' })).toEqual([1, 1])
+    expect(await routes.run(reading, { REGION: 'weur' })).toEqual([1, 2])
+    expect(built).toEqual({ app: 1, request: 2 })
+  })
+
+  // A route keeps the scoped services it is provided until its background
+  // work settles; `run` releases them when the job's Effect ends, so work it
+  // handed the Worker reads a released service. Step 3 of
+  // plans/request-pipeline.md fixes it, and this test then passes: drop
+  // `.failing`.
+  test.failing('resolves before background work the Effect hands the Worker, and keeps the services its builder provides until that work settles', async () => {
+    const { routes } = createApp()
+    let released = false
+    let sawReleased: boolean | undefined
+    const settled: Promise<unknown>[] = []
+    const go = Deferred.makeUnsafe<void>()
+    const resource = Layer.effect(
+      Resource,
+      Effect.acquireRelease(Effect.succeed(Resource.of({ isReleased: () => released })), () => Effect.sync(() => {
+        released = true
+      }))
+    )
+    const ctx = { waitUntil: (promise: Promise<unknown>) => settled.push(promise), passThroughOnException: () => {}, props: {} }
+
+    const job = background('jobs.later', Effect.andThen(Deferred.await(go), Effect.map(Resource, (r) => {
+      sawReleased = r.isReleased()
+    })))
+
+    expect(await routes.provide(resource).run(Effect.as(job, 'started'), { REGION: 'weur' }, ctx)).toBe('started')
+    expect(sawReleased).toBeUndefined()
+    expect(released).toBe(false)
+
+    await Effect.runPromise(Deferred.succeed(go, undefined))
+    await Promise.allSettled(settled)
+
+    expect(sawReleased).toBe(false)
+    expect(released).toBe(true)
+  })
+
+  test('without a Worker execution context, finishes background work before it resolves', async () => {
+    const { routes } = createApp()
+    let finished = false
+
+    await routes.run(background('jobs.inline', Effect.sync(() => {
+      finished = true
+    })), { REGION: 'weur' })
+
+    expect(finished).toBe(true)
+  })
+
+  test("runs on a stack composed by hand, with the database webServices gives and the layers effectRoutes' builder is given", async () => {
+    type RegionEnv = { Bindings: { readonly REGION: string } }
+    const app = new Hono<RegionEnv>()
+    app.use('*', web({ version: '1', render: (page) => JSON.stringify(page) }))
+    app.use('*', webServices<RegionEnv>((c) => ({ db: { region: c.env.REGION } })))
+    app.use('*', effectBridge())
+    const routes = effectRoutes(app).provide(Layer.succeed(Counter, Counter.of({ next: Effect.succeed(7) })))
+
+    const read = Effect.all([Effect.map(DatabaseService, (db) => db.region), Effect.flatMap(Counter, (counter) => counter.next)])
+
+    expect(await routes.run(read, { REGION: 'weur' })).toEqual(['weur', 7])
+  })
+
   test('cannot be reached by a request', async () => {
     const { app } = createApp()
     const res = await app.request('/__popweb/run', {}, { REGION: 'weur' })
@@ -106,6 +225,20 @@ describe('routes.queue', () => {
 
     expect(sent).toEqual(['1:order-1:1', '2:order-2:1'])
     expect(batch.acked()).toHaveLength(2)
+  })
+
+  test("builds web.services' request services afresh for each message", async () => {
+    const app = new Hono<{ Bindings: { readonly REGION: string } }>()
+    let built = 0
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) }).services({
+      request: () => Layer.effect(Reading, Effect.sync(() => Reading.of({ count: ++built }))),
+    })
+    const seen: number[] = []
+    const queue = routes.queue(Reminder, () => Effect.map(Reading, (reading) => seen.push(reading.count)))
+
+    await queue(testBatch([{ orderId: 'order-1' }, { orderId: 'order-2' }, { orderId: 'order-3' }]), { REGION: 'weur' })
+
+    expect(seen).toEqual([1, 2, 3])
   })
 
   test('leaves a message whose body does not decode or whose work fails for the queue to retry', async () => {
