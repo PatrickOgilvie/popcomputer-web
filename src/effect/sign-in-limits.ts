@@ -36,7 +36,8 @@ import type { Column, SQL, Table } from 'drizzle-orm'
 import { Clock, Context, Duration, Effect, Option } from 'effect'
 import { AuthRateLimitError, HttpError } from './errors.js'
 import { loadDrizzle } from './binding.js'
-import { DatabaseService } from './services.js'
+import { DatabaseService, type DatabaseType } from './services.js'
+import { dbMutation, dbQuery, type DatabaseResult } from './database.js'
 
 // Drizzle is an optional peer: it loads when an application limits sign-ins.
 const drizzle = Effect.promise(loadDrizzle)
@@ -442,14 +443,31 @@ interface CountsClient {
   delete(table: Table): { where(condition: unknown): PromiseLike<unknown> }
 }
 
-const counts = Effect.flatMap(Effect.serviceOption(DatabaseService), (db) =>
+/** The request's database, which keeps the counts: without one the limits cannot run, a defect. */
+const countsDatabase = Effect.flatMap(Effect.serviceOption(DatabaseService), (db) =>
   Option.isNone(db)
     ? Effect.die(new Error('auth.signInLimits counts failed sign-ins in Better Auth\'s rateLimit table, but setupWeb has no database.'))
-    // SAFETY: the database is the application's Drizzle client, and the
-    // table one of its tables; the counts use the builder calls Drizzle's
-    // Postgres and SQLite dialects share, and setupWeb refuses another's table.
-    : Effect.succeed(db.value as unknown as CountsClient)
+    : Effect.succeed(db.value)
 )
+
+/** The database's builder calls the counts use. */
+function asCounts(db: DatabaseType): CountsClient {
+  // SAFETY: the database is the application's Drizzle client, and the
+  // table one of its tables; the counts use the builder calls Drizzle's
+  // Postgres and SQLite dialects share, and setupWeb refuses another's table.
+  return db as unknown as CountsClient
+}
+
+/**
+ * One statement on the counts, through dbQuery, or dbMutation for a write,
+ * as an action's query runs, with its span. A statement that fails is a
+ * defect: a sign-in the limits cannot count is not let through.
+ */
+const readCounts = <A>(db: DatabaseType, statement: (counts: CountsClient) => PromiseLike<A>): Effect.Effect<Awaited<A>> =>
+  dbQuery((client) => statement(asCounts(client))).pipe(Effect.provideService(DatabaseService, db), Effect.orDie)
+
+const writeCounts = <A>(db: DatabaseType, statement: (counts: CountsClient) => PromiseLike<A>): Effect.Effect<DatabaseResult<Awaited<A>>> =>
+  dbMutation((client) => statement(asCounts(client))).pipe(Effect.provideService(DatabaseService, db), Effect.orDie)
 
 /**
  * Whether the registered Better Auth keeps its own request counts through
@@ -524,7 +542,7 @@ export function withinSignInLimits<E, R>(
 
     yield* limit(limits, key)
 
-    const db = yield* counts
+    const db = yield* countsDatabase
     const { eq, sql } = yield* drizzle
     const table = limits.table
     const now = yield* Clock.currentTimeMillis
@@ -532,8 +550,8 @@ export function withinSignInLimits<E, R>(
 
     // One statement counts the sign-in, afresh once the row is spent, unless
     // the account is cooling down, when it writes nothing and returns no row.
-    const counted = yield* Effect.promise(() =>
-      db.insert(table)
+    const counted = yield* writeCounts(db, (counts) =>
+      counts.insert(table)
         .values({ id: crypto.randomUUID(), key, count: 1, lastRequest: now })
         .onConflictDoUpdate({
           target: table.key,
@@ -544,14 +562,14 @@ export function withinSignInLimits<E, R>(
     )
 
     if (counted.length === 0) {
-      const [row] = yield* Effect.promise(() => db.select({ count: table.count, lastRequest: table.lastRequest }).from(table).where(eq(table.key, key)).limit(1))
+      const [row] = yield* readCounts(db, (counts) => counts.select({ count: table.count, lastRequest: table.lastRequest }).from(table).where(eq(table.key, key)).limit(1))
 
       return yield* Effect.fail(refused(row === undefined ? 0 : row.lastRequest + cooldownAfter(limits, row.count) - now))
     }
 
     const response = yield* call
 
-    if (response.ok) yield* Effect.promise(() => db.delete(table).where(eq(table.key, key)))
+    if (response.ok) yield* writeCounts(db, (counts) => counts.delete(table).where(eq(table.key, key)))
 
     return response
   })
@@ -570,10 +588,10 @@ export const sweepSignInFailures: Effect.Effect<void> = Effect.gen(function* () 
   }
 
   const limits = configured.value
-  const db = yield* counts
+  const db = yield* countsDatabase
   const { and, like, sql } = yield* drizzle
   const now = yield* Clock.currentTimeMillis
   const table = limits.table
 
-  yield* Effect.promise(() => db.delete(table).where(and(like(table.key, 'sign-in:%'), rowStates(limits, table, now, sql).spent)))
+  yield* writeCounts(db, (counts) => counts.delete(table).where(and(like(table.key, 'sign-in:%'), rowStates(limits, table, now, sql).spent)))
 })

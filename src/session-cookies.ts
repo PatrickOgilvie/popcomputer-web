@@ -141,7 +141,12 @@ function withoutBrowserPrefix(name: string): string {
   return name.replace(BROWSER_PREFIX, '')
 }
 
-/** Whether a Set-Cookie attribute expires the cookie: a Max-Age of 0 or less, or an Expires already past. */
+/**
+ * Whether a Set-Cookie attribute expires the cookie: a Max-Age of 0 or less,
+ * or an Expires already past. Past by the real clock, not Effect's: Better
+ * Auth writes Expires from the real clock and the browser judges it by its
+ * own, so a test that moves testClock would otherwise see live sessions end.
+ */
 function expiresTheCookie(attribute: string): boolean {
   if (/^\s*max-age\s*=\s*(?:0|-\d+)\s*$/i.test(attribute)) return true
 

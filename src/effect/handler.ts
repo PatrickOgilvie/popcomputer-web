@@ -6,7 +6,7 @@
 
 import { sameOriginReferer } from './referer.js'
 import { webUrl } from '../locations.js'
-import { Option, Effect, Exit, Cause, ManagedRuntime, Result } from 'effect'
+import { Option, Effect, Exit, Cause, ManagedRuntime, Predicate, Result } from 'effect'
 import type { Context as HonoContext, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { readTestLayer } from './test-env.js'
@@ -38,8 +38,6 @@ import {
   type EffectErrorEvent,
 } from './error-observer.js'
 import { openWebContext } from '../request-context.js'
-
-const structuredErrorsByCause = new WeakMap<Error, StructuredError>()
 
 /**
  * Memoized formatter instances to avoid recreation on every error.
@@ -125,17 +123,69 @@ export interface ErrorBoundaryConfig {
 }
 
 /**
+ * How the boundary answers each of the framework's failures, beyond the
+ * error page or JSON envelope its structured error gives: every failure an
+ * action may fail with names one, so a new one does not compile until
+ * someone decides how it is answered.
+ */
+type Answer =
+  /** Better Auth's own redirect, as it answered. */
+  | 'auth-redirect'
+  /** Back to the form, its errors flashed; a JSON client gets them. */
+  | 'form'
+  /** To sign in, or home; a JSON client gets 401 and the scheme it must use. */
+  | 'sign-in'
+  /** The error page, with when to try again. */
+  | 'retry-after'
+  /** Its own body, when it carries one. */
+  | 'its-body'
+  /** Not a failure: a redirect, which the route answers before the boundary. */
+  | 'redirect'
+  /** The error page, or the JSON envelope. */
+  | 'error-page'
+
+const ANSWERS = {
+  AuthRedirect: 'auth-redirect',
+  ValidationError: 'form',
+  UnauthorizedError: 'sign-in',
+  AuthRateLimitError: 'retry-after',
+  HttpError: 'its-body',
+  Redirect: 'redirect',
+  NotFoundError: 'error-page',
+  ForbiddenError: 'error-page',
+  DatabaseError: 'error-page',
+  DatabaseConstraintViolation: 'error-page',
+  SessionLookupUnavailable: 'error-page',
+  InvalidAuthSession: 'error-page',
+  RouteConfigurationError: 'error-page',
+  ConfigurationError: 'error-page',
+  CacheError: 'error-page',
+  ResponseCachePurgeError: 'error-page',
+  ConfigError: 'error-page',
+} satisfies { readonly [Tag in AppError['_tag']]: Answer }
+
+/** How the boundary answers a failure: by its tag, or the error page for anything else thrown. */
+function answerOf(error: unknown): Answer {
+  if (!Predicate.hasProperty(error, '_tag') || !Predicate.isString(error._tag) || !Object.hasOwn(ANSWERS, error._tag)) return 'error-page'
+
+  // SAFETY: Object.hasOwn checked the tag is one of ANSWERS' keys.
+  return ANSWERS[error._tag as AppError['_tag']]
+}
+
+/**
  * Render any request failure through the single error boundary.
  */
 // oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
 export async function renderErrorResponse<E extends Env>(
   cause: unknown,
   c: HonoContext<E>,
-  config: ErrorBoundaryConfig = {}
+  config: ErrorBoundaryConfig = {},
+  known?: StructuredError
 ): Promise<Response> {
   const error = cause
+  const answer = answerOf(error)
 
-  if (error instanceof AuthRedirect) {
+  if (answer === 'auth-redirect' && error instanceof AuthRedirect) {
     return new Response(null, {
       status: error.status,
       headers: error.headers,
@@ -147,9 +197,7 @@ export async function renderErrorResponse<E extends Env>(
 
   const format = openWebContext(c).jsonApi === true || answersErrorAsJson(createFormatDetectionContext(c)) ? 'json' : 'page'
 
-  const structured = error instanceof Error
-    ? getStructuredFromThrown(error) ?? toStructuredError(error, context)
-    : toStructuredError(error, context)
+  const structured = known ?? toStructuredError(error, context)
 
   const formatter = isDev ? memoizedFormatters.dev : memoizedFormatters.prod
 
@@ -162,7 +210,7 @@ export async function renderErrorResponse<E extends Env>(
     logStructuredError(structured, isDev)
   }
 
-  if (error instanceof ValidationError) {
+  if (answer === 'form' && error instanceof ValidationError) {
     if (format === 'json') {
       // SAFETY: a validation failure's status is 400 or 422, both contentful.
       return finalize(c.json(formatter.json.format(structured), structured.httpStatus as ContentfulStatusCode))
@@ -180,7 +228,7 @@ export async function renderErrorResponse<E extends Env>(
     openWebContext(c).web?.setErrors(error.errors)
   }
 
-  if (error instanceof UnauthorizedError) {
+  if (answer === 'sign-in' && error instanceof UnauthorizedError) {
     if (format === 'json') {
       // A JSON client is told the scheme it must use: the one the failure
       // names, or Bearer for a request that sent a bearer token.
@@ -197,7 +245,7 @@ export async function renderErrorResponse<E extends Env>(
     ))
   }
 
-  if (error instanceof AuthRateLimitError && error.retryAfterSeconds !== undefined) {
+  if (answer === 'retry-after' && error instanceof AuthRateLimitError && error.retryAfterSeconds !== undefined) {
     c.header('Retry-After', String(error.retryAfterSeconds))
   }
 
@@ -205,7 +253,7 @@ export async function renderErrorResponse<E extends Env>(
 
   // An HttpError with a body owns its response format; every other failure
   // renders the error page for page and HTML requests.
-  if (format === 'json' || (error instanceof HttpError && error.body !== undefined)) {
+  if (format === 'json' || (answer === 'its-body' && error instanceof HttpError && error.body !== undefined)) {
     // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
     return finalize(c.json(formatter.json.format(structured), status as ContentfulStatusCode))
   }
@@ -483,10 +531,7 @@ async function handleExit<E extends Env>(
           },
           runtime
         )
-        const wrapped = new Error(err instanceof Error ? err.message : structured.message)
-        structuredErrorsByCause.set(wrapped, structured)
-
-        return renderErrorResponse(wrapped, c, boundaryConfig)
+        return renderErrorResponse(new Error(err instanceof Error ? err.message : structured.message), c, boundaryConfig, structured)
       }
 
       // Otherwise create a generic defect error
@@ -507,16 +552,7 @@ async function handleExit<E extends Env>(
         runtime
       )
 
-      if (err instanceof Error) {
-        structuredErrorsByCause.set(err, structured)
-
-        return renderErrorResponse(err, c, boundaryConfig)
-      }
-
-      const wrapped = new Error(String(err))
-      structuredErrorsByCause.set(wrapped, structured)
-
-      return renderErrorResponse(wrapped, c, boundaryConfig)
+      return renderErrorResponse(err instanceof Error ? err : new Error(String(err)), c, boundaryConfig, structured)
     }
   }
 
@@ -537,18 +573,7 @@ async function handleExit<E extends Env>(
     },
     runtime
   )
-  const fallbackError = new Error('Unknown effect failure')
-  structuredErrorsByCause.set(fallbackError, structured)
-
-  return renderErrorResponse(fallbackError, c, boundaryConfig)
-}
-
-/**
- * Get structured error from a thrown error (if available).
- * Used by Hono's onError handler.
- */
-export function getStructuredFromThrown(error: Error): StructuredError | undefined {
-  return structuredErrorsByCause.get(error)
+  return renderErrorResponse(new Error('Unknown effect failure'), c, boundaryConfig, structured)
 }
 
 /**

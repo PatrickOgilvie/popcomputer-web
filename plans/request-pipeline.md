@@ -495,6 +495,30 @@ Independent and small. Any order after step 3.
 - `expiresTheCookie` takes `now` from the request's Effect `Clock`, so
   `testClock()` moves it.
 
+Done in part. Two items are done, two are not:
+- **Error boundary: done.** `handler.ts` holds an `ANSWERS` table keyed by
+  every `AppError` tag (auth redirect, form, sign in, retry after, its own
+  body, redirect, error page), and the boundary dispatches on it. Taking
+  one entry out of the table fails `tsc`. The `structuredErrorsByCause`
+  WeakMap and `getStructuredFromThrown` are gone: `renderErrorResponse`
+  takes the structured error as an argument.
+- **Sign-in limits: done.** The four statements run through `dbQuery` and
+  `dbMutation` (`readCounts`, `writeCounts`), each still one statement.
+  SignInLimits' configs gave what the skill requires, and its line
+  references are current again; they had drifted before this step.
+- **Cookie expiry: not changed, on purpose.** Better Auth writes `Expires`
+  from the real clock and the browser judges it by its own. Reading
+  Effect's `Clock` would make a test that moves `testClock()` see live
+  sessions end and raise a false history clear. The reason is recorded at
+  the function.
+- **Background `FiberSet`: not done.** `FiberSet.make` needs a `Scope`, but
+  the supervisor is built outside Effect, before any runtime, because
+  Better Auth's `waitUntil` hook needs it. It also tracks raw promises,
+  which a FiberSet cannot hold. The change would add `runSync` scaffolding
+  and keep the promise tracker, which is no simpler than the tested
+  supervisor. Worth revisiting in 2.0, if the hand-composition exports go
+  and the supervisor can live in the request's runtime.
+
 ## Decisions for the owner
 
 1. **Job types in 1.x?** Taking request-only services away from `run`,

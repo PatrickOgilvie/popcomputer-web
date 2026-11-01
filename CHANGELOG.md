@@ -17,6 +17,7 @@ What an application may need to change: one that copied `docs/auth.md`'s verify-
 
 ### Changed
 
+- The sign-in limits' statements on Better Auth's `rateLimit` table go through `dbQuery` and `dbMutation`: a statement that fails reaches the error observer as a `DatabaseError` with its span, and still fails the sign-in.
 - A route's record lookups, the ones `bound()` reads, go through `dbQuery`: a lookup that fails reaches the error observer as a `DatabaseError` with its span, as an action's query does, rather than as the driver's error. It still answers 500.
 - A job, from `routes.run`, `routes.scheduled` or `routes.queue`, runs with setupWeb's services directly, not as a request to a hidden route. It passes through none of the HTTP middleware, the application's `middleware` included: no page cache, origin check or session lookup, which had nothing to answer, and an application middleware that refused requests without a header no longer refuses its jobs. A job's own failures, a refused env or a failed purge among them, reject as before. A stack composed by hand, without setupWeb, still sends its jobs through a request.
 - A routed request builds one Effect runtime where it built two: `effectBridge` readies the request's services as a layer, and the route builds the request's runtime from it with its own layers.

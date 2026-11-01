@@ -41,7 +41,9 @@ when `web()` came to read the session cookie's names from setupWeb's
 settings (step 2 of `plans/request-pipeline.md`). `HistoryClear.tla` and
 `Flash.tla` were confirmed on 2026-11-01 when the clear's raise and the
 flash cookie moved into `src/response-output.ts`'s `finishResponse`
-(step 4).
+(step 4). `SignInLimits.tla` was confirmed on 2026-11-01 when its
+statements came to run through `dbQuery` and `dbMutation` (step 7), each
+still one statement.
 
 ## Run the check
 
