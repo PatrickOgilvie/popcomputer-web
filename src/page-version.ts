@@ -8,15 +8,20 @@
  * page after the session changed.
  */
 
+import { Option, Schema as S } from 'effect'
+
 /** The mark's separator, and the mark: the first 12 hex digits of a SHA-256. */
 const MARK = /^~[0-9a-f]{12}$/
 
-/** The id of the signed-in user an AuthUser gives, if its user has one. */
-export function userIdOf(authUser: unknown): string | undefined {
-  const user: unknown = authUser instanceof Object ? Reflect.get(authUser, 'user') : undefined
-  const id: unknown = user instanceof Object ? Reflect.get(user, 'id') : undefined
+/**
+ * An AuthUser's user id: Better Auth's are strings, or numbers when it
+ * generates serial ids, and each must mark its own user's pages.
+ */
+const SignedInUserId = S.Struct({ user: S.Struct({ id: S.Union([S.String, S.Number, S.BigInt]) }) })
 
-  return typeof id === 'string' ? id : undefined
+/** The id of the signed-in user an AuthUser gives, if its user has one, as text. */
+export function userIdOf(authUser: unknown): string | undefined {
+  return Option.getOrUndefined(Option.map(S.decodeUnknownOption(SignedInUserId)(authUser), ({ user }) => String(user.id)))
 }
 
 /**

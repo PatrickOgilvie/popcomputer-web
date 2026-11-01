@@ -12,6 +12,9 @@ import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
 import { redirect, render } from '../src/effect/responses.js'
 import { responseHeader } from '../src/effect/response-headers.js'
+import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { betterAuthSession } from '../src/effect/auth.js'
+import { tableSchema } from '../src/effect/table-schema.js'
 import { signedIn, testBrowser, testEnv } from '../src/testing.js'
 import type { HistoryConfig } from '../src/types.js'
 
@@ -137,6 +140,42 @@ describe("a page's history", () => {
     const res = await historyApp().request('/account', {}, member())
 
     expect(await res.text()).toContain('"encryptHistory":true')
+  })
+
+  // Inertia shows a page from history only when its version is the current
+  // page's, so each member's pages need a version of their own.
+  test("is kept apart per member by its version, when ids are numbers, as Better Auth's serial ids are", async () => {
+    const users = sqliteTable('user', {
+      id: integer('id').primaryKey(),
+      name: text('name').notNull(),
+      email: text('email').notNull(),
+      emailVerified: integer('email_verified', { mode: 'boolean' }).notNull(),
+      image: text('image'),
+      createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+      updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+    })
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      auth: {
+        client: () => ({}),
+        session: betterAuthSession(tableSchema(users)),
+        share: S.Struct({ id: S.Number, name: S.NullOr(S.String), image: S.NullOr(S.String) }),
+      },
+    })
+    routes.get('/account', action(render('Account/Show')))
+
+    // SAFETY: the unregistered user type says string; a serial id arrives as a number.
+    const serial = (id: number) => testEnv(signedIn({ id: id as unknown as string }))
+    const versionOf = async (env?: ReturnType<typeof member>) =>
+      S.decodeUnknownSync(S.Struct({ version: S.String }))(await (await app.request('/account', inertia, env)).json()).version
+
+    const [first, second, guest] = await Promise.all([versionOf(serial(1)), versionOf(serial(2)), versionOf()])
+
+    expect(first).not.toBe(second)
+    expect(guest).toBe('1')
+    expect([first, second]).not.toContain(guest)
   })
 })
 
