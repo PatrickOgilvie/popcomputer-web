@@ -40,6 +40,7 @@ What an application may need to change: one that copied `docs/auth.md`'s verify-
 
 ### Deprecated
 
+- `webContext(c)`'s `signedIn` and `readRequestState`, and the page cache's `dynamic`: one recorder now keeps why a response may not be shared, and each cache reads it. They still hold the same values; 2.0 removes them.
 - `webContext(c).runtime`: a route builds the request's one runtime itself. The field still gives a runtime of the request's services, built only when read; 2.0 removes it.
 - `webContext(c)`'s `errorBoundary`, `signInPath`, `homePath`, `bodyLimit`, `schema`, `bindings` and `sessionCookies`: copies of the application's setupWeb configuration, which the framework now reads from one value it builds once. They still hold the same values; 2.0 removes them.
 

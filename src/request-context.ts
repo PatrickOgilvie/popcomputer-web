@@ -18,6 +18,7 @@ import type {
 import type { ErrorBoundaryConfig } from './effect/handler.js'
 import type { RouteBindingsConfig } from './effect/binding.js'
 import type { WebSetup } from './web-setup.js'
+import type { PrivacyReason } from './privacy.js'
 
 /**
  * A request's services, typed over any services: which ones depends on each
@@ -48,15 +49,22 @@ export interface WebRequestContext<E extends Env = Env> {
   /** loadUser() — present only when the request carries a valid session */
   authUser?: AuthUser
   /**
+   * privacy.ts — why the response may not be shared, which the page cache,
+   * a route's `cache` option and the default Cache-Control read.
+   */
+  privacy?: ReadonlySet<PrivacyReason>
+  /**
    * web()'s render — a page went to a visitor the action's AuthUserService
    * signed in, whichever layer gave it: the session lookup, a layer the
    * route provides, or web.services.
+   * @deprecated privacy.ts records it as 'signed-in'. Removed in 2.0.
    */
   signedIn?: boolean
   /**
    * Set when producing the response read a request header, a cookie or
    * request state, none of which a shared cache's key holds: a route's
    * `cache` option then stores nothing.
+   * @deprecated privacy.ts records why. Removed in 2.0.
    */
   readRequestState?: boolean
   /**

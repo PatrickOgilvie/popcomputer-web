@@ -13,7 +13,8 @@ import type {
 import { HEADERS } from './types.js'
 import { openWebContext } from './request-context.js'
 import { openFlash } from './flash.js'
-import { applyDefaultCacheControl, markPageDynamic, observedRequestContext } from './page-cache.js'
+import { applyDefaultCacheControl, observedRequestContext } from './page-cache.js'
+import { recordPrivacy } from './privacy.js'
 import { ConfigurationError } from './effect/errors.js'
 import { isCurrentVersion, pageVersion, userIdOf } from './page-version.js'
 import { setupOf } from './web-setup.js'
@@ -216,8 +217,7 @@ export function web(config: WebConfig): MiddlewareHandler {
 
         if (signedIn) {
           // The page is the visitor's own, which no cache may keep.
-          context.signedIn = true
-          markPageDynamic(c)
+          recordPrivacy(c, 'signed-in')
         }
 
         const status = options.status ?? 200

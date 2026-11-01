@@ -449,6 +449,37 @@ Done when `WebRequestContext` keeps one cache field, `page-cache.ts` exports
 are back near 1.0's 11 (plus the kept wrappers), and every step 0 test still
 passes.
 
+Done:
+- **One recorder.** `src/privacy.ts` holds `recordPrivacy(c, reason)`,
+  `keptFrom(c, 'page' | 'route')` and `renderedSignedIn(c)`, with one table
+  of what each reason keeps out:
+  - `request` (a header, the raw request, request state, `markPageDynamic`):
+    the page and route caches;
+  - `setup` (setupWeb's database factory, the app's middleware): the route
+    cache only;
+  - `guard` and `data`: the page cache only;
+  - `signed-in`: both, and the default `Cache-Control` says `no-store`.
+  That is exactly what the five flags did.
+- **What it replaced.** `markRouteCacheDynamic` and `keepPageOutOfCache`
+  are gone, and `observedRequestContext` takes a reason. `markPageDynamic`
+  stays exported, as `request`. `signedIn`, `readRequestState` and the page
+  cache's `dynamic` are deprecated mirrors that the framework reads nowhere.
+- **`cacheControlByDefault` stays.** It says whether `privateByDefault` is
+  installed, which is not a reason a response is private.
+- **One finisher.** `applyRouteCacheOption(response, option, facts)` in
+  `response-cache.ts` applies `no-store`, `private` and the object form.
+  `recordingTags`, `routePurgesOf` and `purgingOnSuccess` took the purge and
+  record-tag composition out of `createHandler`, which is now 175 lines.
+- **Plants.** Taking any reason out of the table fails a test: request 9,
+  setup 1, guard 2, data 4. `signed-in` failed none until
+  `tests/privacy.test.ts` pinned it. A page rendered to a visitor signed in
+  by a route's own layer, as an API key's would be, must stay out of the
+  page cache. That test passes on HEAD's code too, so it pins existing
+  behaviour.
+- **Checks.** The fuzz suite ran at 20,000 runs with a random seed, and
+  HistoryClear's four configs gave what the skill requires. The page
+  version check is untouched.
+
 ## Step 7 — Effect-way cleanups
 
 Independent and small. Any order after step 3.

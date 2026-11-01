@@ -4,7 +4,7 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Cause, Predicate, Effect, Exit, Layer, ManagedRuntime, Schema as S } from 'effect'
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Schema as S } from 'effect'
 import { Context as HonoRequestContext } from 'hono'
 import type { Context as HonoContext, ExecutionContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { runEffectWithRuntime } from './handler.js'
@@ -26,16 +26,15 @@ import {
 import { openWebContext } from '../request-context.js'
 import { isDevelopment } from '../development.js'
 import { setupOf } from '../web-setup.js'
-import { finishResponse, setsRecipientState } from '../response-output.js'
+import { finishResponse } from '../response-output.js'
 import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
 import type { ResponseHeaders } from './response-headers.js'
-import { allowDefaultPageCache, defaultCacheControl, isPersonalRequest, keepPageOutOfCache, observedRequestContext } from '../page-cache.js'
+import { allowDefaultPageCache, defaultCacheControl, isPersonalRequest, observedRequestContext } from '../page-cache.js'
+import { keptFrom, recordPrivacy } from '../privacy.js'
 import {
-  applyCachePolicy,
-  decideCachePolicy,
-  isPageResponse,
+  applyRouteCacheOption,
   isPartialReloadRequest,
   purgeTags,
   type ResponseCachePurgeError,
@@ -49,7 +48,7 @@ import {
 } from './response-cache.js'
 import { RequestService, type DatabaseService } from './services.js'
 import { isGuard } from './guard.js'
-import { RouteRecords, routeModelsLayer, routeModelsOnce } from './route-models.js'
+import { RouteRecords, routeModelsLayer, routeModelsOnce, type RouteModels } from './route-models.js'
 import type {
   AuthService,
   ExecutionContextService,
@@ -423,12 +422,77 @@ export interface EffectRouteOptions {
 const BODYLESS_METHODS = new Set(['GET', 'HEAD'])
 
 /**
+ * The action, and once a page it answers succeeds, the records its route read
+ * and the tags it added with tagCache, handed to `record` for the page's
+ * Cache-Tag.
+ */
+function recordingTags<A, Err, R>(
+  effect: Effect.Effect<A, Err, R>,
+  hasModels: boolean,
+  record: (tags: readonly string[]) => void
+): Effect.Effect<A, Err | BoundModelError, R | RouteRecords | PendingCacheTags> {
+  return effect.pipe(
+    Effect.tap((result) =>
+      result instanceof Response && result.status >= 200 && result.status < 300
+        ? Effect.gen(function* () {
+            const records = hasModels ? yield* Effect.flatMap(RouteRecords, (route) => route.tags) : []
+            const added = yield* Effect.flatMap(PendingCacheTags, (pending) => pending.take)
+
+            record([...new Set([...records, ...added])])
+          })
+        : Effect.void
+    )
+  )
+}
+
+/**
+ * The tags a route purges once its action succeeds: those it declares, or
+ * for `purges: true` its records' and the table the last of them is in,
+ * which a write to it changes.
+ */
+function routePurgesOf(
+  purges: true | readonly CacheTag[] | undefined,
+  route: RouteModels
+): Effect.Effect<readonly string[], BoundModelError, RouteRecords> {
+  if (purges !== true) return Effect.succeed(purges ?? [])
+
+  const written = route.modelBindings[route.modelBindings.length - 1]
+  const writtenTable = written ? [bindingTableName(written, route.configuredBindings, route.schema)] : []
+
+  return Effect.map(Effect.flatMap(RouteRecords, (records) => records.tags), (tags) => [...tags, ...writtenTable])
+}
+
+/**
+ * The action, then, once it succeeds (any redirect, or a response below
+ * 400), the route's purges and those it asked for with purgeCache, once:
+ * inside the Effect, so a failed purge surfaces as its failure rather than
+ * leaving stale entries silently. `onFailure` hears a failed purge first.
+ */
+function purgingOnSuccess<Err, R>(
+  effect: Effect.Effect<Response | Redirect, Err, R>,
+  routePurges: Effect.Effect<readonly string[], BoundModelError, RouteRecords>,
+  onFailure: (error: BoundModelError | ResponseCachePurgeError) => void
+): Effect.Effect<Response | Redirect, Err | BoundModelError | ResponseCachePurgeError, R | RouteRecords | PendingPurges | ResponseCacheService> {
+  return effect.pipe(
+    Effect.tap((result) => {
+      if (!(result instanceof Redirect || (result instanceof Response && result.status < 400))) return Effect.void
+
+      return Effect.gen(function* () {
+        const requested = yield* Effect.flatMap(PendingPurges, (pending) => pending.take)
+
+        yield* purgeTags([...new Set([...(yield* routePurges), ...requested])])
+      }).pipe(Effect.tapError((error) => Effect.sync(() => onFailure(error))))
+    })
+  )
+}
+
+/**
  * Whether a route's response depends on what no shared cache's key holds:
  * it is someone's own, or producing it read a header, a cookie or request
  * state, such as an API key a route's own layer reads.
  */
 function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
-  return isPersonalRequest(c) || openWebContext(c).readRequestState === true
+  return isPersonalRequest(c) || keptFrom(c, 'route')
 }
 
 
@@ -770,7 +834,7 @@ export class EffectRouteBuilder<
     // header it reads keeps a route's own cache option from sharing the
     // response, as one read through RequestService does.
     const checked = handlers.map((handler): MiddlewareHandler<E> => (c, next) => {
-      keepPageOutOfCache(c)
+      recordPrivacy(c, 'guard')
 
       return handler(observedRequestContext(c), next)
     })
@@ -939,7 +1003,7 @@ export class EffectRouteBuilder<
       }
 
       const routeModels = routeModelsOf(c)
-      const { schema, configuredBindings, modelBindings } = routeModels
+      const { modelBindings } = routeModels
       const validation = await this.ensureParams(c, routeModels.paramsSchema)
 
       if (validation) return validation
@@ -963,7 +1027,7 @@ export class EffectRouteBuilder<
         bindings,
         models: routeModels,
         param: (name) => c.req.param(name),
-        onGuard: Effect.sync(() => keepPageOutOfCache(c)),
+        onGuard: Effect.sync(() => recordPrivacy(c, 'guard')),
       }))
 
       let fullLayer: Layer.Layer<never, AppError, never> = Layer.provideMerge(
@@ -1005,58 +1069,20 @@ export class EffectRouteBuilder<
       // A cacheable page is tagged with the records its route read, so a
       // write to any of them purges it.
       let recordTags: readonly string[] = []
-      const cacheOption = options?.cache
 
-      if (typeof cacheOption === 'object' && BODYLESS_METHODS.has(c.req.method)) {
-        handlerEffect = handlerEffect.pipe(
-          Effect.tap((result) =>
-            result instanceof Response && result.status >= 200 && result.status < 300
-              ? Effect.gen(function* () {
-                  const records = modelBindings.length > 0 ? yield* Effect.flatMap(RouteRecords, (route) => route.tags) : []
-                  const added = yield* Effect.flatMap(PendingCacheTags, (pending) => pending.take)
-
-                  recordTags = [...new Set([...records, ...added])]
-                })
-              : Effect.void
-          )
-        )
+      if (typeof options?.cache === 'object' && BODYLESS_METHODS.has(c.req.method)) {
+        handlerEffect = recordingTags(handlerEffect, modelBindings.length > 0, (tags) => {
+          recordTags = tags
+        })
       }
 
-      // After a successful mutation, purge the declared Workers Cache tags.
-      // Runs inside the effect so a failed purge surfaces in the typed error
-      // channel instead of leaving stale entries silently.
-      const purges = options?.purges
-
-      const writtenModel = modelBindings[modelBindings.length - 1]
-      const writtenTable = writtenModel ? [bindingTableName(writtenModel, configuredBindings, schema)] : []
-
-      const routePurges: Effect.Effect<readonly string[], BoundModelError, RouteRecords> =
-        purges === true
-          ? Effect.flatMap(RouteRecords, (records) => records.tags).pipe(
-              Effect.map((tags) => [...tags, ...writtenTable])
-            )
-          : Effect.succeed(purges ?? [])
-
       // The route's purges and any the action asked for with purgeCache run
-      // once, after the action succeeds.
-      handlerEffect = handlerEffect.pipe(
-        Effect.tap((result) => {
-          const succeeded =
-            result instanceof Redirect ||
-            (result instanceof Response && result.status < 400)
-
-          if (!succeeded) return Effect.void
-
-          return Effect.gen(function* () {
-            const requested = yield* Effect.flatMap(PendingPurges, (pending) => pending.take)
-
-            yield* purgeTags([...new Set([...(yield* routePurges), ...requested])])
-          }).pipe(
-            // routes.run's job has succeeded by now; a failed purge of what it
-            // changed fails its run, so the queue retries and the cron fails.
-            Effect.tapError((error) => Effect.sync(() => failRun(c.req.raw, error)))
-          )
-        })
+      // once, after the action succeeds, so a failed purge fails it. A job
+      // that routes.run sent here fails its run, so the queue retries.
+      handlerEffect = purgingOnSuccess(
+        handlerEffect,
+        routePurgesOf(options?.purges, routeModels),
+        (error) => failRun(c.req.raw, error)
       )
 
       // The route runtime owns every provided Layer until background work has
@@ -1082,53 +1108,20 @@ export class EffectRouteBuilder<
       // cache policy below reads what the browser will receive.
       response = finishResponse(c, response)
 
-      if (options?.cache === 'no-store' && !response.headers.has('Cache-Control')) {
-        const headers = new Headers(response.headers)
-        headers.set('Cache-Control', 'no-store')
-
-        return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
-      }
-
-      // The route says so itself, so it holds in an application composed
-      // without setupWeb's privateByDefault: only the visitor's browser keeps
-      // the page, or no cache at all when it is someone's own or sets a cookie.
-      if (options?.cache === 'private') {
-        if (response.headers.has('Cache-Control')) return response
-
-        const headers = new Headers(response.headers)
-        headers.set('Cache-Control', defaultCacheControl(c, setsRecipientState(response)))
-
-        return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
-      }
-
-      if (typeof options?.cache !== 'object') {
-        return response
-      }
-
-      const decision = decideCachePolicy({
+      return applyRouteCacheOption(response, options?.cache, {
         method: c.req.method,
-        status: response.status,
         isPartialReload: isPartialReloadRequest((name) => c.req.header(name)),
-        setsCookie: setsRecipientState(response),
-        hasPrivateRequestState: hasPrivateRequestState(c),
-        existingCacheControl: response.headers.get('Cache-Control'),
-        isPage: isPageResponse(response.headers),
+        hasPrivateRequestState: () => hasPrivateRequestState(c),
         derivedTags: recordTags,
-        options: options.cache,
+        defaultCacheControl: (setsCookie) => defaultCacheControl(c, setsCookie),
+        warn: (warning) => {
+          if (warnedIneffectiveCache || !isDevelopment(c, setupOf(c).errors)) return
+
+          warnedIneffectiveCache = true
+          // oxlint-disable-next-line effecttsgo/global-console -- This outer Hono adapter emits a once-per-route development configuration warning after the request runtime has been disposed.
+          console.warn(`[@popcomputer/web] Route '${c.req.path}' ${warning}`)
+        },
       })
-
-      if (
-        Predicate.isTagged(decision, 'skip') &&
-        decision.warning &&
-        !warnedIneffectiveCache &&
-        isDevelopment(c, setupOf(c).errors)
-      ) {
-        warnedIneffectiveCache = true
-        // oxlint-disable-next-line effecttsgo/global-console -- This outer Hono adapter emits a once-per-route development configuration warning after the request runtime has been disposed.
-        console.warn(`[@popcomputer/web] Route '${c.req.path}' ${decision.warning}`)
-      }
-
-      return applyCachePolicy(response, decision)
     }
   }
 
