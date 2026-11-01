@@ -349,7 +349,13 @@ the framework's calls: `bun add -d @effect/tsgo`, `"plugins": [{ "name":
 plugin until it is patched (`docs/lint-rules.md` has the details). Each
 lint message names the API to use instead; fix the code rather than
 disabling the rule, and when a line breaks one on purpose, say why in the
-disable comment. A type error
+disable comment.
+
+In this package's own repository, also run `bun run mutate`: it plants small
+bugs in the `src/` lines a change touches and lists each one no test catches,
+so each needs the test rule 12 asks for.
+
+A type error
 at `routes.get(...)` names the problem: `missingServices` lists services the
 setup does not provide (configure them in `setupWeb`, or `routes.provide(layer)`),
 `unhandledErrors` lists failures that are not the package's errors (answer
