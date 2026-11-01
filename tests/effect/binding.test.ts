@@ -609,6 +609,17 @@ describe('an ownedBy column', () => {
     }
   })
 
+  test("that references another column of the users table fails too: compared with the user's id, it matches no record", () => {
+    const users = sqliteTable('user', { id: text('id').primaryKey(), email: text('email').notNull().unique() })
+    const notes = sqliteTable('notes', {
+      id: text('id').primaryKey(),
+      authorEmail: text('author_email').notNull().references(() => users.email),
+    })
+
+    expect(setup({ note: routeBinding(notes, { ownedBy: 'authorEmail' }) }, { user: users, notes }))
+      .toThrow('Route binding "note" is ownedBy "authorEmail"')
+  })
+
   test('that references nothing fails, asking for the reference', () => {
     expect(setup({ project: routeBinding(projects, { ownedBy: 'createdBy' }) }))
       .toThrow('Route binding "project" is ownedBy "createdBy", which does not reference "user"')

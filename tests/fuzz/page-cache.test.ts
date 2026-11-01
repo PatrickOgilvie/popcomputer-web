@@ -11,7 +11,10 @@
  * cached (C24). A gate, opened and closed by a step, stands for what a guard
  * may decide by that no request names, such as the time: its pages, however
  * the guard is composed, admit a cookieless guest while it is open. No page
- * a guard, middleware or sign-in decides for is ever stored.
+ * a guard, middleware or sign-in decides for is ever stored. And the cache
+ * keeps pages: a cookieless guest who repeats a request the cache has just
+ * stored or served is served it from the cache, as a cache that kept
+ * nothing would answer every request as a fresh render does too.
  */
 import { describe } from 'bun:test'
 import { Database } from 'bun:sqlite'
@@ -28,7 +31,8 @@ import { flash, forbidden, redirect, render } from '../../src/effect/responses.j
 import { RequestService } from '../../src/effect/services.js'
 import { setupWeb } from '../../src/setup.js'
 import { signedIn, testBrowser, testEnv, type TestBrowser } from '../../src/testing.js'
-import type { PageCacheStore } from '../../src/page-cache.js'
+import { PAGE_CACHE_HEADER, type PageCacheStore } from '../../src/page-cache.js'
+import { stepsOf } from '../../src/fuzz.js'
 import { property, show, weighted } from './property'
 
 const counters = sqliteTable('counters', { id: text('id').primaryKey(), value: integer('value').notNull() })
@@ -212,8 +216,8 @@ async function send(browser: TestBrowser, sent: Step): Promise<Response> {
 
 describe('the default page cache', () => {
   property(
-    'answers every request as a fresh render would, and keeps no page a guard decides for',
-    Arbitrary.array(step, { minLength: 1, maxLength: 16 }),
+    'answers every request as a fresh render would, keeps no page a guard decides for, and serves a guest the pages it keeps',
+    stepsOf(step, { maxLength: 16 }),
     async (steps) => {
       const store = new MemoryCache()
 
@@ -223,14 +227,26 @@ describe('the default page cache', () => {
         const cached = browsersFor(createApp(true))
         const fresh = browsersFor(createApp(false))
 
+        // What the cache said of the previous step's answer: whether it stored or served the page.
+        let previousReport: string | null = null
+        let previous: Step | undefined
+
         for (const [index, given] of steps.entries()) {
-          const previous = index === 0 ? undefined : steps[index - 1]
           const sent = given.again && previous !== undefined ? { ...previous, person: given.person } : given
-          const served = await answerOf(await send(cached[sent.person], sent))
+          const answer = await send(cached[sent.person], sent)
+          const report = answer.headers.get(PAGE_CACHE_HEADER)
+          const served = await answerOf(answer)
           await store.settled()
           const rendered = await answerOf(await send(fresh[sent.person], sent))
 
           if (served !== rendered) return `step ${index + 1} of ${show(steps)}: the cache answered ${served}, a fresh render ${rendered}`
+
+          if (given.again && sent.person === 'guest' && sent.method === 'GET' && (previousReport === 'MISS' || previousReport === 'HIT') && report !== 'HIT') {
+            return `step ${index + 1} of ${show(steps)}: a guest repeated a request the cache had ${previousReport === 'MISS' ? 'stored' : 'served'}, and the cache said ${show(report)}`
+          }
+
+          previousReport = report
+          previous = sent
         }
 
         const kept = (await store.bodies()).find((body) => body.includes(SECRET))

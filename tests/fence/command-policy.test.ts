@@ -118,6 +118,11 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['echo --no-verify | xargs git commit -m wip', ['deny', 'hook-bypass']],
   ['find . -name x -exec git commit --no-verify \\;', ['deny', 'hook-bypass']],
   ['timeout 60 git commit -n', ['deny', 'hook-bypass']],
+  // Runners that run what follows them, or the code they are given.
+  ['pnpm exec git commit -n', ['deny', 'hook-bypass']],
+  ['watch -n 5 git commit -n', ['deny', 'hook-bypass']],
+  ["pnpm node -e \"require('child_process').execSync('git commit -n')\"", ['deny', 'hook-bypass']],
+  ["deno eval \"await new Deno.Command('sh', { args: ['-c', 'git commit --no-verify'] }).output()\"", ['deny', 'hook-bypass']],
   ['nohup nice -n 5 git commit -n', ['deny', 'hook-bypass']],
   ['node -e "require(\'child_process\').execSync(\'git commit --no-verify\')"', ['deny', 'hook-bypass']],
   ['python3 -c "import subprocess; subprocess.run([\'git\', \'commit\', \'--no-verify\'])"', ['deny', 'hook-bypass']],
@@ -206,11 +211,13 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['pnpm -r publish', ['ask', 'publish']],
   ['yarn npm publish', ['ask', 'publish']],
   ['git push', ['ask', 'push']],
+  ['watch git push', ['ask', 'push']],
   ['git push origin main', ['ask', 'push']],
   ['git -C app push --force-with-lease', ['ask', 'push']],
 
   // Scripts and files the command runs.
   ['bun run deploy', ['ask', 'deploy']],
+  ['yarn workspace web run deploy', ['ask', 'deploy']],
   ['npm run deploy', ['ask', 'deploy']],
   ['bun deploy', ['ask', 'deploy']],
   ['pnpm run deploy', ['ask', 'deploy']],

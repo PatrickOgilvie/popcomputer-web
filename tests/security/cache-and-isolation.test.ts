@@ -45,11 +45,16 @@ describe('a cached route', () => {
       ['Authorization', '/showcase/p2', asJson({ headers: { Authorization: 'Bearer key' } }), as()],
       ['partial reload', '/showcase/p2', asJson({ headers: { 'X-Inertia': 'true', 'X-Inertia-Partial-Data': 'project', 'X-Inertia-Partial-Component': 'Showcase' } }), as()],
       ['not found', '/showcase/p1', asJson(), as()],
+      // A route that asks to be cached, written to.
       ['written to', '/showcase/p2', asJson({ method: 'POST' }), as()],
     ]
 
     for (const [name, path, init, env] of requests) {
-      if (stored(await app.request(path, init, env))) kept.push(name)
+      const res = await app.request(path, init, env)
+
+      // Each answer but the missing record's comes from the route, so it is the cache's policy that refused to keep it.
+      if (name !== 'not found') expect({ name, status: res.status }).toEqual({ name, status: 200 })
+      if (stored(res)) kept.push(name)
     }
 
     expect(kept).toEqual([])

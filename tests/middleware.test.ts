@@ -247,6 +247,22 @@ describe('Page middleware', () => {
       expect(res.headers.get(HEADERS.LOCATION)).toBe('http://localhost/')
     })
 
+    test("returns 409 for a version that only starts with the assets' version", async () => {
+      const app = createApp('2')
+      app.get('/', (c) => c.var.web.render('Home'))
+
+      // A signed-in page's version adds `~` and twelve hex digits; nothing else is the current version.
+      for (const stale of ['20', '2.1', '2~', '2~0123456789ab0', '2-0123456789ab']) {
+        const res = await app.request('/', { headers: { [HEADERS.INERTIA]: 'true', [HEADERS.VERSION]: stale } })
+
+        expect({ stale, status: res.status }).toEqual({ stale, status: 409 })
+      }
+
+      const marked = await app.request('/', { headers: { [HEADERS.INERTIA]: 'true', [HEADERS.VERSION]: '2~0123456789ab' } })
+
+      expect(marked.status).toBe(200)
+    })
+
     test('does not trigger version check for non-GET requests', async () => {
       const app = createApp('2.0.0')
       app.post('/', (c) => c.var.web.render('Home'))

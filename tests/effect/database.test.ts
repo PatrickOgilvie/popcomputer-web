@@ -612,6 +612,32 @@ describe('dbTransaction', () => {
     expect(countPages(sqlite)).toBe(2)
   })
 
+  test("runs the Effect's queries on the transaction's client, never the root one", async () => {
+    // This database sends every client's statements down one connection, so
+    // the rollbacks below would pass on the root client too. On a pool, a
+    // write on the root client commits outside the transaction.
+    const { layer, db: root } = openDatabase()
+    const clients: unknown[] = []
+
+    await Effect.runPromise(
+      dbTransaction(Effect.gen(function* () {
+        yield* dbMutation((db) => {
+          clients.push(db)
+
+          return db.insert(pages).values({ workspaceId: 1, slug: 'a', title: 'A' })
+        })
+        yield* dbQuery((db) => {
+          clients.push(db)
+
+          return db.select({ title: pages.title }).from(pages)
+        })
+      })).pipe(Effect.provide(layer))
+    )
+
+    expect(clients).toHaveLength(2)
+    expect(clients.map((client) => client === root)).toEqual([false, false])
+  })
+
   test('reads inside the transaction see its own writes', async () => {
     const { layer } = openDatabase()
 

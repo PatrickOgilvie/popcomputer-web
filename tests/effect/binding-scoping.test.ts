@@ -141,6 +141,13 @@ function createTestDb() {
       parentId: 'parent-2',
       name: 'Second child',
     },
+    // Names parent-1, but in another tenant: only the tenant column tells it apart.
+    {
+      id: 'child-3',
+      tenantId: 'tenant-2',
+      parentId: 'parent-1',
+      name: 'Another tenant\'s child',
+    },
   ]).run()
 
   return db
@@ -254,6 +261,15 @@ describe('nested binding scoping', () => {
       expect(res.status).toBe(404)
     })
 
+    test('child matching only the second relation column returns 404', async () => {
+      const app = createApp()
+
+      // child-3 names parent-1 from tenant-2. Scoping by parentId alone would
+      // resolve it under parent-1, whose tenant is tenant-1.
+      const res = await app.request('/parents/parent-1/childs/child-3')
+      expect(res.status).toBe(404)
+    })
+
     test('child matching every relation column resolves', async () => {
       const app = createApp()
 
@@ -300,6 +316,7 @@ describe("a schema whose tables are getters, as Vite's dev server gives `import 
 
         expect((await app.request('/parents/parent-1/childs/child-1')).status).toBe(200)
         expect((await app.request('/parents/parent-1/childs/child-2')).status).toBe(404)
+        expect((await app.request('/parents/parent-1/childs/child-3')).status).toBe(404)
       })
     })
   }

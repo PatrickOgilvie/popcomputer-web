@@ -2,7 +2,8 @@
  * The application the security regression tests attack: each binding says
  * who may load its record, a guard decides an organization's, a form creates
  * a member's project, a signed-out form takes anyone's input as sign-in does,
- * one page is cached, and five routes redirect where a request asks, two of
+ * one page is cached, a write to it asks the cache to keep its answer too,
+ * and five routes redirect where a request asks, two of
  * them to any URL a form names, as an application's open redirect would, and
  * one to a path filled from a form's fields.
  * Every statement the database receives is logged.
@@ -113,6 +114,8 @@ export function createApp() {
     })))
     .get('/projects/{project}/tasks/{task}', action(Effect.flatMap(bound('task'), (task) => json(task))))
     .get('/showcase/{showcase}', action(Effect.flatMap(bound('showcase'), (project) => json(project))), { cache: { maxAge: 60 } })
+    // A write whose route asks to be cached, which no cache may keep.
+    .post('/showcase/{showcase}', action(Effect.flatMap(bound('showcase'), (project) => json(project))), { cache: { maxAge: 60 } })
     .post('/projects', action(Effect.gen(function* () {
       const auth = yield* authorize()
       const input = yield* validateRequest(ProjectForm)

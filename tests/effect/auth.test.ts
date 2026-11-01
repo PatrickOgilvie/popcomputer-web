@@ -414,6 +414,16 @@ describe('betterAuthLogoutAction', () => {
     expect(response.headers.getSetCookie()).toEqual(['myapp.session=; Max-Age=0; Path=/'])
   })
 
+  test('expires each __Secure- and __Host- cookie as a browser applies it: Secure, and a __Host- one at / with no Domain', async () => {
+    const response = await Effect.runPromise(answeredBy(signedOut(), betterAuthLogoutAction({ redirectTo: '/login' })))
+    const prefixed = response.headers.getSetCookie().filter((cookie) => /^__(Secure|Host)-/.test(cookie))
+
+    // A browser ignores a __Secure- or __Host- cookie set without Secure, so the session would outlive sign-out.
+    expect(prefixed.length).toBeGreaterThan(0)
+    expect(prefixed.filter((cookie) => !/;\s*Secure(;|$)/i.test(cookie))).toEqual([])
+    expect(prefixed.filter((cookie) => cookie.startsWith('__Host-') && (!/;\s*Path=\/(;|$)/.test(cookie) || /;\s*Domain=/i.test(cookie)))).toEqual([])
+  })
+
   test('clears default cookies when better-auth returns no Set-Cookie', async () => {
     const response = await Effect.runPromise(answeredBy(signedOut(), betterAuthLogoutAction({ redirectTo: '/login' })))
     const cookies = response.headers.get('set-cookie') ?? ''

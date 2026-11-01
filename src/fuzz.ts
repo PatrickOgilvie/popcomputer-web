@@ -60,7 +60,15 @@ export async function fuzz<A>(
   holds: (value: A) => Refusal | Promise<Refusal>,
   options: FuzzOptions = {}
 ): Promise<void> {
-  const reasonFor = async (value: A): Promise<string | undefined> => reasonOf(await holds(value))
+  // A property that throws, as an `expect` or the code under test does,
+  // refuses its input like any other, so the failure shrinks and replays.
+  const reasonFor = async (value: A): Promise<string | undefined> => {
+    try {
+      return reasonOf(await holds(value))
+    } catch (error) {
+      return `threw ${error instanceof Error ? `${error.name}: ${error.message}` : show(error)}`
+    }
+  }
   const result = await Effect.runPromise(
     Arbitrary.checkEffect(arbitrary, (value) => Effect.promise(async () => (await reasonFor(value)) === undefined), {
       runs: configuredRuns ?? options.runs ?? 300,
@@ -303,6 +311,13 @@ const MATCHING_TYPE = {
 /** The Content-Type header's stand-in for the type that names the body's shape. */
 const MATCHING = '(matching)'
 
+/** The headers a generated request may carry, by lowercase name. */
+const HEADER_NAMES = ['accept', 'content-type', 'origin', 'referer', 'x-inertia', 'x-inertia-version', 'x-http-method-override', 'authorization', 'user-agent', 'sec-fetch-site', 'cookie'] as const
+type HeaderName = (typeof HEADER_NAMES)[number]
+
+/** The parts of a request a generated one may send otherwise than a browser on the site does. */
+type Part = 'target' | 'query' | 'body' | 'fields' | HeaderName
+
 const placeholder = /\{([^}:]+)(?::[^}]+)?\}/g
 
 /** The path's placeholder names, in order. */
@@ -322,9 +337,25 @@ function nonEmpty(values: ReadonlyArray<string>, fallback: string): readonly [st
   return [first, ...rest]
 }
 
-/** A list of fixed pieces with the ones a person's id, a parameter's values and the application's own fields add. */
-function pieces(fixed: readonly [string, ...string[]], added: readonly string[]): readonly [string, ...string[]] {
-  return nonEmpty([...fixed, ...added], fixed[0])
+/**
+ * One piece: half the time one of the fixed pieces, which test what any
+ * application may be sent, and otherwise one that a person's id, a
+ * parameter's values or the application's own fields add, so the fixed ones
+ * stay as likely however many the application adds.
+ */
+function pieceOf(fixed: readonly [string, ...string[]], added: readonly string[]): Arbitrary.Arbitrary<string> {
+  const [first, ...rest] = [...new Set(added)].filter((value) => !fixed.includes(value))
+
+  return first === undefined ? pick(fixed) : oneOf(pick(fixed), pick([first, ...rest]))
+}
+
+/**
+ * A query of up to `maxPieces` of the pieces, each its own parameter, so a
+ * piece such as `redirect=//evil.test` reaches the code that reads it. The
+ * pieces `&` and `=` still make the odd spellings.
+ */
+function queryOf(piece: Arbitrary.Arbitrary<string>, maxPieces: number): Arbitrary.Arbitrary<string> {
+  return Arbitrary.map(stepsOf(piece, { maxLength: maxPieces }), (chosen) => chosen.join('&'))
 }
 
 /** Where a request goes, and the fields of the form it fills, if any. */
@@ -339,9 +370,12 @@ interface Target {
  * attacker sends them: any method, each declared path with each of its
  * placeholders' values, the same paths spelled another way, each form with
  * fields added, queries, bodies in every shape, and headers from this site
- * and others, from each person and a signed-out visitor. Most requests are
- * ones a browser on the site would send, so they reach their actions; the
- * rest test the refusals. Wrap or map the generator for more.
+ * and others, from each person and a signed-out visitor. Three requests in
+ * ten are what a browser on the site sends, its pages and its forms, so they
+ * reach their actions; four send one part of such a request another way, so
+ * a refusal shows the part it refused; the rest send every part any way. A
+ * failing request shrinks toward the browser's. Wrap or map the generator
+ * for more.
  */
 export function fuzzRequest<const Paths extends Readonly<Record<string, string>>, const Person extends string>(
   options: FuzzRequestOptions<Paths, Person>
@@ -359,17 +393,17 @@ export function fuzzRequest<const Paths extends Readonly<Record<string, string>>
       (values: Readonly<Record<string, string>>) => template.replace(placeholder, (_match, name: string) => encodeURIComponent(values[name] ?? 'x'))
     )
 
-  const method = weighted(...METHODS)
-  const declared = Arbitrary.flatMap(pick(templates), (template) =>
+  const declaredBy = (method: Arbitrary.Arbitrary<string>) => Arbitrary.flatMap(pick(templates), (template) =>
     Arbitrary.map(Arbitrary.all({ method, path: filled(template) }), (target): Target => ({ ...target, form: [] }))
   )
+  const declared = declaredBy(weighted(...METHODS))
 
   const segments = templates.flatMap((template) => template.split('/').filter((segment) => segment !== '' && !segment.startsWith('{')).map((segment) => `/${segment}`))
   const craftedPath = Arbitrary.map(
-    textOf(pieces(PATH_PIECES, [...segments, ...segments.map((segment) => segment.toUpperCase()), ...paramValues, ...paramValues.map(encodedFirst)]), 6),
-    (path) => (path.startsWith('/') ? path : `/${path}`)
+    stepsOf(pieceOf(PATH_PIECES, [...segments, ...segments.map((segment) => segment.toUpperCase()), ...paramValues, ...paramValues.map(encodedFirst)]), { maxLength: 6 }),
+    (chosen) => (chosen.join('').startsWith('/') ? chosen.join('') : `/${chosen.join('')}`)
   )
-  const crafted = Arbitrary.map(Arbitrary.all({ method, path: craftedPath }), (target): Target => ({ ...target, form: [] }))
+  const crafted = Arbitrary.map(Arbitrary.all({ method: weighted(...METHODS), path: craftedPath }), (target): Target => ({ ...target, form: [] }))
 
   const [firstForm, ...otherForms] = options.forms ?? []
   const forms = firstForm === undefined
@@ -383,7 +417,7 @@ export function fuzzRequest<const Paths extends Readonly<Record<string, string>>
     ...Object.keys(params).flatMap((name) => params[name].flatMap((value) => [`${name}=${value}`, `id=${value}`])),
     ...options.people.flatMap((person) => [`userId=${person}`, `user_id=${person}`]),
   ]
-  const added = Arbitrary.array(pick(pieces(FIELD_PIECES, [...asFields, ...(options.fields ?? [])])), { maxLength: 3 })
+  const added = stepsOf(pieceOf(FIELD_PIECES, [...asFields, ...(options.fields ?? [])]), { maxLength: 3 })
   const encoding = oneOf<FuzzBody['as']>(
     Arbitrary.Constant('form'),
     Arbitrary.Constant('json'),
@@ -395,8 +429,8 @@ export function fuzzRequest<const Paths extends Readonly<Record<string, string>>
   const host = URL.canParse(origin) ? new URL(origin).host : 'localhost'
   const otherScheme = origin.startsWith('https:') ? origin.replace('https:', 'http:') : origin.replace('http:', 'https:')
   const firstPath = templates[0].replace(placeholder, (_match, name: string) => valuesOf(name)[0])
-  // Each header mostly as a browser on this site sends it, and otherwise each way that tests a refusal.
-  const headers = Arbitrary.all({
+  // Each header any way that tests a refusal, and as a browser on this site sends it.
+  const headers: Arbitrary.Arbitrary<Readonly<Record<HeaderName, string>>> = Arbitrary.all({
     accept: weighted(['', 2], ['application/json', 2], ['text/html', 1], ['*/*', 1], ['text/html,application/xhtml+xml', 1], ['application/json, text/html', 1]),
     'content-type': weighted([MATCHING, 6], ['', 1], ['application/x-www-form-urlencoded', 1], ['application/json', 1], ['multipart/form-data; boundary=x', 1], ['text/plain', 1], [' application/json', 1], ['APPLICATION/JSON', 1]),
     origin: weighted(['', 3], [origin, 3], ['https://evil.test', 1], ['null', 1], [`http://${host}.evil.test`, 1], [otherScheme, 1]),
@@ -409,30 +443,64 @@ export function fuzzRequest<const Paths extends Readonly<Record<string, string>>
     'sec-fetch-site': weighted(['', 3], ['same-origin', 1], ['cross-site', 1]),
     cookie: weighted(['', 4], ['session=x', 1], ['better-auth.session_token=forged', 1]),
   })
+  const browserHeaders: Arbitrary.Arbitrary<Readonly<Record<HeaderName, string>>> = Arbitrary.all({
+    accept: weighted(['', 2], ['text/html,application/xhtml+xml', 2], ['application/json', 2]),
+    'content-type': Arbitrary.Constant(MATCHING),
+    origin: weighted(['', 1], [origin, 2]),
+    referer: weighted(['', 1], [`${origin}${firstPath}`, 2]),
+    'x-inertia': pick(['', 'true']),
+    'x-inertia-version': Arbitrary.Constant(''),
+    'x-http-method-override': Arbitrary.Constant(''),
+    authorization: Arbitrary.Constant(''),
+    'user-agent': pick(['', 'curl/8.0']),
+    'sec-fetch-site': pick(['', 'same-origin']),
+    cookie: Arbitrary.Constant(''),
+  })
 
   const person = oneOf<Person | null>(Arbitrary.Constant(null), ...options.people.map((each) => Arbitrary.Constant(each)))
+  // The part a request sends another way: what it asks for and sends as often as all its headers together.
+  const onePart = weighted<Part>(['target', 3], ['query', 3], ['body', 2], ['fields', 3], ...HEADER_NAMES.map((name) => [name, 1] as const))
+
+  // Every part of a request any way at all, and as a browser on this site
+  // sends it: its pages by GET, its forms with their own fields and a body
+  // that matches its Content-Type, no added fields and no forged headers.
+  const anyWay = Arbitrary.all({
+    target,
+    query: queryOf(pieceOf(QUERY_PIECES, [...asFields, ...(options.query ?? [])]), 4),
+    headers,
+    encoding,
+    added,
+    text: pick(RAW_BODIES),
+  })
+  const browsed = Arbitrary.all({
+    target: forms === undefined ? declaredBy(weighted(['GET', 6], ['HEAD', 1])) : oneOf(forms, declaredBy(weighted(['GET', 6], ['HEAD', 1])), forms),
+    query: oneOf(Arbitrary.Constant(''), queryOf(pieceOf(['page=2'], options.query ?? []), 2)),
+    headers: browserHeaders,
+    encoding: oneOf<FuzzBody['as']>(Arbitrary.Constant('form'), Arbitrary.Constant('json'), Arbitrary.Constant('multipart')),
+    added: Arbitrary.Constant<ReadonlyArray<string>>([]),
+    text: Arbitrary.Constant(RAW_BODIES[0]),
+  })
 
   return Arbitrary.map(
-    Arbitrary.all({
-      person,
-      target,
-      query: textOf(pieces(QUERY_PIECES, [...asFields, ...(options.query ?? [])]), 4),
-      headers,
-      encoding,
-      added,
-      text: pick(RAW_BODIES),
-    }),
+    // A browser's request, or one with a single part sent another way, so a
+    // refusal shows what it refused and most requests reach their actions;
+    // else every part any way. A failure shrinks toward a browser's request.
+    Arbitrary.all({ person, browsed, anyWay, mode: weighted(['browser', 3], ['one part', 4], ['any', 3]), part: onePart }),
     (parts): FuzzRequest<Person> => {
-      const fields = [...parts.target.form, ...parts.added]
-      const body: FuzzBody = parts.encoding === 'none' ? { as: 'none' } : parts.encoding === 'text' ? { as: 'text', text: parts.text } : { as: parts.encoding, fields }
-      const contentType = parts.headers['content-type'] === MATCHING ? MATCHING_TYPE[parts.encoding] : parts.headers['content-type']
+      const from = (name: Part) => (parts.mode === 'any' || (parts.mode === 'one part' && parts.part === name) ? parts.anyWay : parts.browsed)
+      const target = from('target').target
+      const { encoding, text } = from('body')
+      const sentHeaders = Object.fromEntries(HEADER_NAMES.map((name) => [name, from(name).headers[name]]))
+      const fields = [...target.form, ...from('fields').added]
+      const body: FuzzBody = encoding === 'none' ? { as: 'none' } : encoding === 'text' ? { as: 'text', text } : { as: encoding, fields }
+      const contentType = sentHeaders['content-type'] === MATCHING ? MATCHING_TYPE[encoding] : sentHeaders['content-type']
 
       return {
         person: parts.person,
-        method: parts.target.method,
-        path: parts.target.path,
-        query: parts.query,
-        headers: { ...parts.headers, 'content-type': contentType },
+        method: target.method,
+        path: target.path,
+        query: from('query').query,
+        headers: { ...sentHeaders, 'content-type': contentType },
         body,
       }
     }
@@ -527,6 +595,61 @@ function originOf(referer: string): string {
 }
 
 /**
+ * Whether a request reads JSON, by the rule docs/json.md states: not an
+ * Inertia visit, and it asks for JSON or sends it, or asks for no HTML while
+ * it sends an Accept or an Authorization header.
+ */
+function readsJson(header: (name: string) => string): boolean {
+  if (header('x-inertia') === 'true') return false
+
+  const accept = header('accept')
+
+  if (accept.includes('application/json') || header('content-type').includes('application/json')) return true
+
+  return !accept.includes('text/html') && (accept !== '' || header('authorization') !== '')
+}
+
+/** Text with each percent-encoding undone, as often as it nests, so `%252f` reads as `/`. */
+function decoded(text: string): string {
+  let current = text
+
+  for (let round = 0; round < 3; round++) {
+    let next: string
+
+    try {
+      next = decodeURIComponent(current)
+    } catch {
+      return current
+    }
+
+    if (next === current) return current
+
+    current = next
+  }
+
+  return current
+}
+
+/**
+ * The hosts, other than the site's own, that a request names in any text its
+ * sender chose: its path, query, body, Origin and Referer, where `//host` or
+ * `\\host` reads as another site.
+ */
+function namedHosts(sent: FuzzRequest, siteHost: string): Set<string> {
+  const body = sent.body.as === 'none' ? [] : sent.body.as === 'text' ? [sent.body.text] : sent.body.fields
+  const text = decoded([sent.path, sent.query, sent.headers.origin ?? '', sent.headers.referer ?? '', ...body].join(' '))
+  const hosts = new Set<string>()
+
+  for (const match of text.matchAll(/[/\\]{2}([^/\\?#\s&"'=;]+)/g)) {
+    const host = URL.canParse(`http://${match[1]}`) ? new URL(`http://${match[1]}`).host : ''
+
+    if (host !== '' && host !== siteHost) hosts.add(host)
+  }
+
+  return hosts
+}
+
+/**
  * How an answer breaks the rules the framework keeps for every
  * application, empty when it keeps them all:
  *
@@ -536,9 +659,11 @@ function originOf(referer: string): string {
  *   browser attaches by itself, such as Bearer;
  * - an answer to a signed-in person, or one that sets a cookie, is never
  *   kept by a shared cache;
- * - a JSON client gets every failure in the JSON envelope, and is never
- *   sent to sign in;
- * - an Inertia visit that changes something is redirected with a 303.
+ * - a JSON client, by docs/json.md's rule, gets every failure in the JSON
+ *   envelope, and is never sent to sign in;
+ * - an Inertia visit that changes something is redirected with a 303;
+ * - no answer sends the visitor to another site the request named, such as
+ *   `?redirect=//evil.test`, by its Location or its X-Inertia-Location.
  */
 export function brokenPromises(sent: FuzzRequest, answer: FuzzAnswer, options: PromisesOptions = {}): string[] {
   const broken: string[] = []
@@ -563,7 +688,7 @@ export function brokenPromises(sent: FuzzRequest, answer: FuzzAnswer, options: P
     broken.push(`${sent.person === null ? 'a cookie-setting' : 'a signed-in'} answer has Cache-Control ${show(cacheControl)}`)
   }
 
-  if (header('accept') === 'application/json' && header('x-inertia') !== 'true') {
+  if (readsJson(header)) {
     if (response.status >= 400 && method !== 'HEAD') {
       const envelope = S.decodeUnknownExit(S.fromJsonString(Envelope))(text)
 
@@ -581,6 +706,15 @@ export function brokenPromises(sent: FuzzRequest, answer: FuzzAnswer, options: P
 
   if (header('x-inertia') === 'true' && ['PUT', 'PATCH', 'DELETE'].includes(method) && response.status >= 300 && response.status < 400 && response.status !== 303 && response.status !== 304) {
     broken.push(`an Inertia ${method} was redirected with ${response.status}`)
+  }
+
+  const siteHost = URL.canParse(origin) ? new URL(origin).host : 'localhost'
+  const named = namedHosts(sent, siteHost)
+
+  for (const location of [response.headers.get('location'), response.headers.get('x-inertia-location')]) {
+    const target = location !== null && URL.canParse(location, origin) ? new URL(location, origin) : undefined
+
+    if (target !== undefined && named.has(target.host)) broken.push(`sent the visitor to ${target.host}, a site the request named, by ${show(location)}`)
   }
 
   return broken

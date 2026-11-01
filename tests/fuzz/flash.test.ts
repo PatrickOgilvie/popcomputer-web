@@ -8,7 +8,12 @@
  *
  * - a page shows only messages and errors its own browser's posts made;
  * - each message is shown at most once, and the errors once per post that
- *   made them.
+ *   made them;
+ * - and they are shown: a browser that follows its post's redirect before
+ *   it sends any other request, or only requests that redirect it on, as a
+ *   guard does, is shown the message, or the errors, where it lands.
+ *   Without it, a flash that never reached any page would keep the rules
+ *   above.
  */
 import { describe } from 'bun:test'
 import { Hono } from 'hono'
@@ -19,6 +24,7 @@ import { requiredString } from '../../src/effect/schema.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { setupWeb } from '../../src/setup.js'
 import { testBrowser, testEnv, type TestBrowser } from '../../src/testing.js'
+import { stepsOf } from '../../src/fuzz.js'
 import { property, show, weighted } from './property'
 
 const Note = S.Struct({ name: requiredString, token: requiredString })
@@ -30,6 +36,8 @@ function createApp() {
   routes
     .get('/notes', action(render('Notes', {})))
     .get('/other', action(render('Other', {})))
+    // A page that sends the visitor on, as a guard does.
+    .get('/elsewhere', action(redirect('/notes')))
     .post('/notes', action(Effect.gen(function* () {
       const note = yield* validateRequest(Note)
 
@@ -45,7 +53,7 @@ type Browser = 'one' | 'two'
 
 const step = Arbitrary.all({
   browser: weighted<Browser>(['one', 1], ['two', 1]),
-  act: weighted(['save', 2], ['fail', 2], ['visit', 2], ['other', 1], ['json', 1], ['follow', 2]),
+  act: weighted(['save', 2], ['fail', 2], ['visit', 2], ['other', 1], ['json', 1], ['follow', 2], ['bounce', 1]),
   inertia: weighted([true, 2], [false, 1]),
 })
 
@@ -71,6 +79,14 @@ interface State {
   failed: number
   // The redirect a post answered, which the browser has not followed yet.
   pending?: Response
+  // What the post that answered it made, while the browser has sent nothing since.
+  untouched?: { readonly token: string } | 'errors'
+}
+
+/** What a page showed of the flash: its message and its errors' fields. */
+interface Seen {
+  readonly message: string | undefined
+  readonly errors: ReadonlyArray<string>
 }
 
 async function runSteps(steps: readonly Step[]): Promise<string[]> {
@@ -82,12 +98,12 @@ async function runSteps(steps: readonly Step[]): Promise<string[]> {
   const broken: string[] = []
   let tokens = 0
 
-  const read = async (who: Browser, res: Response) => {
-    if (res.status !== 200 || !(res.headers.get('content-type') ?? '').includes('json')) return
+  const read = async (who: Browser, res: Response): Promise<Seen | undefined> => {
+    if (res.status !== 200 || !(res.headers.get('content-type') ?? '').includes('json')) return undefined
 
     const page = S.decodeUnknownExit(S.fromJsonString(Shown))(await res.text())
 
-    if (page._tag === 'Failure') return
+    if (page._tag === 'Failure') return undefined
 
     const state = states[who]
     const message = page.value.flash?.success
@@ -110,12 +126,19 @@ async function runSteps(steps: readonly Step[]): Promise<string[]> {
       // The cookie holds one set of errors, so one page shows every failed post's.
       state.failed = 0
     }
+
+    return { message, errors }
   }
 
   const headersOf = (sent: Step): Record<string, string> => (sent.inertia ? { 'X-Inertia': 'true', 'X-Inertia-Version': '1' } : {})
 
   for (const sent of steps) {
     const state = states[sent.browser]
+    const untouched = state.untouched
+
+    // Any request but following the redirect, or one that only redirects on,
+    // leaves the post's flash to whichever page comes first.
+    state.untouched = sent.act === 'bounce' ? untouched : undefined
 
     switch (sent.act) {
       case 'save': {
@@ -123,21 +146,38 @@ async function runSteps(steps: readonly Step[]): Promise<string[]> {
 
         state.unshown.add(token)
         state.pending = await state.browser.request('/notes', form({ name: 'A note', token }))
+        state.untouched = { token }
         break
       }
       case 'fail':
         state.failed += 1
         state.pending = await state.browser.request('/notes', form({ name: '', token: 'x' }))
+        state.untouched = 'errors'
         break
-      case 'follow':
-        if (state.pending !== undefined) await read(sent.browser, await state.browser.follow(state.pending, { headers: headersOf(sent) }))
+      case 'follow': {
+        if (state.pending === undefined) break
+
+        const seen = await read(sent.browser, await state.browser.follow(state.pending, { headers: headersOf(sent) }))
+
         state.pending = undefined
+
+        // An Inertia visit reads the page as JSON; a full visit's HTML is not read.
+        if (untouched !== undefined && sent.inertia) {
+          const shown = untouched === 'errors' ? (seen?.errors.length ?? 0) > 0 : seen?.message === `saved ${untouched.token}`
+
+          if (!shown) broken.push(`browser ${sent.browser} followed its post's redirect at once and was not shown ${untouched === 'errors' ? 'its errors' : `saved ${untouched.token}`}`)
+        }
         break
+      }
       case 'visit':
         await read(sent.browser, await state.browser.request('/notes', { headers: headersOf(sent) }))
         break
       case 'other':
         await read(sent.browser, await state.browser.request('/other', { headers: headersOf(sent) }))
+        break
+      case 'bounce':
+        // The redirect carries what the browser received on to where it lands.
+        state.pending = await state.browser.request('/elsewhere', { headers: headersOf(sent) })
         break
       case 'json':
         await read(sent.browser, await state.browser.request('/notes', { headers: { Accept: 'application/json' } }))
@@ -150,8 +190,8 @@ async function runSteps(steps: readonly Step[]): Promise<string[]> {
 
 describe('flash and a failed form’s errors', () => {
   property(
-    'reach only the browser that posted, and each at most once',
-    Arbitrary.array(step, { maxLength: 14 }),
+    'reach only the browser that posted, each at most once, and the page its redirect lands on',
+    stepsOf(step, { maxLength: 14 }),
     async (steps) => {
       const broken = await runSteps(steps)
 

@@ -24,6 +24,7 @@ import { currentUser } from '../../src/effect/auth.js'
 import { render } from '../../src/effect/responses.js'
 import { setupWeb } from '../../src/setup.js'
 import { testBrowser, testEnv, type TestBrowser } from '../../src/testing.js'
+import { stepsOf } from '../../src/fuzz.js'
 import { pick, property, show, weighted } from './property'
 
 const MEMBERS = { ada: 'ada@example.com', grace: 'grace@example.com' } as const
@@ -72,7 +73,8 @@ const tabStep = Arbitrary.all({
 const turn = Arbitrary.all({
   change: weighted<Change>(['signIn', 3], ['signOut', 1], ['expire', 1]),
   member: pick(['ada', 'grace']),
-  steps: Arbitrary.array(tabStep, { minLength: 1, maxLength: 4 }),
+  // At least one tab step each turn, and up to four.
+  steps: Arbitrary.map(Arbitrary.all([tabStep, stepsOf(tabStep, { maxLength: 3 })]), ([first, rest]) => [first, ...rest]),
 })
 
 type Change = 'signIn' | 'signOut' | 'expire'
@@ -81,7 +83,7 @@ type Step =
   | (typeof tabStep extends Arbitrary.Arbitrary<infer A> ? A : never)
   | { readonly [Act in Change]: { readonly act: Act; readonly member: 'ada' | 'grace' } }[Change]
 
-const steps = Arbitrary.map(Arbitrary.array(turn, { maxLength: 4 }), (turns): Step[] =>
+const steps = Arbitrary.map(stepsOf(turn, { maxLength: 4 }), (turns): Step[] =>
   turns.flatMap((each) => [{ act: each.change, member: each.member }, ...each.steps])
 )
 

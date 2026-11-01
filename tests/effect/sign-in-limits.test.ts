@@ -24,7 +24,7 @@ import { betterAuthCall, betterAuthHandler, betterAuthRedirect } from '../../src
 import { json } from '../../src/effect/responses.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { currentPassword, email, requiredString } from '../../src/effect/schema.js'
-import { accountOf, activeSignInLimits, SignInLimits, sweepSignInFailures, withinSignInLimits } from '../../src/effect/sign-in-limits.js'
+import { accountOf, activeSignInLimits, addressRange, SignInLimits, sweepSignInFailures, withinSignInLimits } from '../../src/effect/sign-in-limits.js'
 import { DatabaseService } from '../../src/effect/services.js'
 import { testBrowser, testClock, testEnv, testRateLimiter, type TestRateLimiter } from '../../src/testing.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
@@ -172,6 +172,27 @@ describe('sign-in limits', () => {
     expect(limiter.refused[0]).toBe('address:2001:db8:1234:5678:0:0:0:0/64')
   })
 
+  test('an IPv6 address counts as its network, one that carries an IPv4 address as that address, and other text as it is', () => {
+    const counted: ReadonlyArray<readonly [string, number, string]> = [
+      // Zero groups in the network or the host part: still that network.
+      ['2001:db8:0:0:1:2:3:4', 64, '2001:db8:0:0:0:0:0:0/64'],
+      ['2001:0:0:0:0:ffff:cb00:7107', 64, '2001:0:0:0:0:0:0:0/64'],
+      ['0:0:0:0:1:ffff:cb00:7107', 64, '0:0:0:0:0:0:0:0/64'],
+      ['2001:db8::1%eth0', 64, '2001:db8:0:0:0:0:0:0/64'],
+      ['2001:db8:abcd:12ff::1', 56, '2001:db8:abcd:1200:0:0:0:0/56'],
+      // An IPv4-mapped address, written either way, is its IPv4 client.
+      ['::ffff:203.0.113.7', 64, '203.0.113.7'],
+      ['::ffff:cb00:7107', 64, '203.0.113.7'],
+      // No address: counted as the text it is.
+      ['2001:db8::1.2.3.999', 64, '2001:db8::1.2.3.999'],
+      ['1::2::3', 64, '1::2::3'],
+      ['203.0.113.7', 64, '203.0.113.7'],
+      ['unknown', 64, 'unknown'],
+    ]
+
+    expect(counted.map(([address, prefix]) => [address, prefix, addressRange(address, prefix)] as const)).toEqual([...counted])
+  })
+
   test('ipv6Prefix widens the network an address counts with, and refuses a prefix that is not one', async () => {
     const auth = createAuth()
     const config = (ipv6Prefix: number) => ({
@@ -196,7 +217,13 @@ describe('sign-in limits', () => {
       count: int('count').notNull(),
       lastRequest: mysqlBigint('last_request', { mode: 'number' }).notNull(),
     })
-    const setup = (table: typeof counts | typeof rateLimit) => () => setupWeb(new Hono(), {
+    const postgresCounts = pgTable('rate_limit', {
+      id: pgText('id').primaryKey(),
+      key: pgText('key').notNull().unique(),
+      count: pgInteger('count').notNull(),
+      lastRequest: bigint('last_request', { mode: 'number' }).notNull(),
+    })
+    const setup = (table: typeof counts | typeof rateLimit | typeof postgresCounts) => () => setupWeb(new Hono(), {
       version: '1',
       render: (page) => JSON.stringify(page),
       auth: { client: () => createAuth(), signInLimits: { limiter: 'SIGN_IN_LIMITER', table } },
@@ -204,6 +231,7 @@ describe('sign-in limits', () => {
 
     expect(setup(counts)).toThrow("auth.signInLimits.table's key is a MySqlVarChar column")
     expect(setup(rateLimit)).not.toThrow()
+    expect(setup(postgresCounts)).not.toThrow()
   })
 
   test("an account's failures from many addresses cool it down, before its password is checked", async () => {
@@ -498,7 +526,13 @@ describe('each password sign-in counts against the account its endpoint checks',
       ['/sign-in/phone-number', { phoneNumber: null, password: 'guess' }],
     ]
 
-    for (const [path, body] of unnamed) expect({ path, body, status: (await api(path, body)).status }).toEqual({ path, body, status: 400 })
+    // Better Auth's own validation answers these 400 too: the message says the limits refused them first.
+    for (const [path, body] of unnamed) {
+      const res = await api(path, body)
+
+      expect({ path, body, status: res.status, namesNoAccount: (await res.text()).includes('names no account') })
+        .toEqual({ path, body, status: 400, namesNoAccount: true })
+    }
 
     expect(rows()).toEqual([])
     expect((await api('/sign-in/username', { username: 'ada', password: 'correct horse' })).status).toBe(200)

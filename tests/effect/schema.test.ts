@@ -143,8 +143,7 @@ describe('String Types', () => {
       const schema = required('Name is required')
       expect(decode(schema, 'John')).toBe('John')
 
-      const exit = decodeEither(schema, '')
-      expect(exit._tag).toBe('Failure')
+      expect(() => decode(schema, '')).toThrow('Name is required')
     })
   })
 
@@ -494,9 +493,10 @@ describe('Date Types', () => {
       expect(result).toBeInstanceOf(Date)
     })
 
-    test('fails if date is before reference', () => {
+    test('fails if date is before reference, or the reference itself', () => {
       const schema = after('2024-01-01')
       expect(decodeEither(schema, '2023-01-01')._tag).toBe('Failure')
+      expect(decodeEither(schema, '2024-01-01')._tag).toBe('Failure')
     })
   })
 
@@ -516,9 +516,10 @@ describe('Date Types', () => {
       expect(result).toBeInstanceOf(Date)
     })
 
-    test('fails if date is after reference', () => {
+    test('fails if date is after reference, or the reference itself', () => {
       const schema = before('2024-01-01')
       expect(decodeEither(schema, '2024-06-15')._tag).toBe('Failure')
+      expect(decodeEither(schema, '2024-01-01')._tag).toBe('Failure')
     })
   })
 
@@ -899,7 +900,11 @@ describe('Password', () => {
       })
 
       expect(decode(schema, 'Password1!')).toBe('Password1!')
-      expect(decodeEither(schema, 'password')._tag).toBe('Failure')
+
+      // Each breaks one rule alone, so each rule must still hold beside the others.
+      for (const breaksOne of ['Pa1!', 'password1!', 'Password!!', 'Password12']) {
+        expect({ breaksOne, outcome: decodeEither(schema, breaksOne)._tag }).toEqual({ breaksOne, outcome: 'Failure' })
+      }
     })
   })
 })

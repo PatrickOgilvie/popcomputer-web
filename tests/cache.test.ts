@@ -88,9 +88,11 @@ const makeNoopExecutionContext = () => {
 // Test Cache Layer
 // ============================================================================
 
-const makeTestCache = () => {
+/** `keepAtLeastSeconds` keeps every entry that long whatever its expiry, as Workers KV keeps one at least 60 seconds. */
+const makeTestCache = (options: { readonly keepAtLeastSeconds?: number } = {}) => {
   const store = new Map<string, { value: string; expiresAt: number }>()
 
+  const keepAtLeast = options.keepAtLeastSeconds ?? 0
   const client: CacheClient = {
     get: (key) =>
       Effect.gen(function* () {
@@ -105,10 +107,10 @@ const makeTestCache = () => {
 
         return entry.value
       }),
-    put: (key, value, options) =>
+    put: (key, value, entryOptions) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
-        const ttlMs = (options?.expirationTtl ?? 3600) * 1000
+        const ttlMs = Math.max(keepAtLeast, entryOptions?.expirationTtl ?? 3600) * 1000
         store.set(key, { value, expiresAt: now + ttlMs })
       }),
     delete: (key) =>
@@ -167,7 +169,9 @@ const ProjectSchema = S.Struct({
 
 describe('cache', () => {
   it('uses the Effect clock for cache freshness and stored timestamps', async () => {
-    const { layer, store } = makeTestCache()
+    // The store keeps the entry past its ttl, as KV does, so cache() alone
+    // decides that one exactly ttl old is stale.
+    const { layer, store } = makeTestCache({ keepAtLeastSeconds: 60 })
     let computations = 0
     const value = { id: 'clock-user', name: 'Clock User', email: 'clock@example.com' }
 

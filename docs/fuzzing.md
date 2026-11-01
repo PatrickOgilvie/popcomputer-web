@@ -62,8 +62,8 @@ them: any method, each path with each of its placeholders' values, the same
 paths spelled another way (encoded, doubled slashes, dot segments, other
 case), each form an action accepts with fields added, queries, bodies in
 every shape and Content-Type, and headers from this site and others. Most
-requests are ones a browser on the site sends, so they reach their actions;
-the rest test the refusals.
+are a browser's own, or one with a single part sent another way, so they
+reach their actions; the rest send every part any way.
 
 ```ts
 // src/requests.test.ts
@@ -159,13 +159,15 @@ The rules each answer keeps:
   by itself; a signed-in answer, or one that sets a cookie, is never kept by
   a shared cache; a JSON client gets each failure in the JSON envelope and is
   never sent to sign in; an Inertia visit that changes something is
-  redirected with a 303. Give it `{ origin, signInPath }` when the
-  application's differ from `http://localhost` and `/login`.
+  redirected with a 303; no answer redirects to a site the request named.
+  Give it `{ origin, signInPath }` when the application's differ from
+  `http://localhost` and `/login`.
 - `leaks`: no answer shows one person's canary to anyone else, in its body
   or its headers.
 - `strangerWrites`: no row is changed or deleted by anyone but its owner,
   moved to another owner, or created for someone other than its sender.
-- `refusedWrites`: a 4xx answer changed no rows.
+- `refusedWrites`: a 4xx answer changed no rows. Refusing everything keeps
+  every rule, so also check after `fuzz` that a share reached the actions.
 
 ## Building on it
 
@@ -186,8 +188,7 @@ function madePublic(sent: FuzzRequest, change: RowsChange<{ readonly id: string;
 
 A property may change a request before sending and checking it, as an API's
 test adds its key: `{ ...sent, headers: { ...sent.headers, authorization: 'Bearer test-key' } }`.
-A person per role the application has (an owner, a member, a guest) lets
-the rules see more.
+A person per role (an owner, a member, a guest) lets the rules see more.
 
 ## Steps over lasting state
 
@@ -243,8 +244,7 @@ test('the cart holds what its model holds', () => fuzz(cartSteps, async (steps) 
 
 The property returns the first step where the application and the model
 disagree, with the steps before it. `stepsOf` draws each sequence's length
-evenly up to `maxLength`, where Effect's unstable `Arbitrary.array` averages
-two or three steps, and shrinks a failing sequence to the steps it needs.
+evenly up to `maxLength` and shrinks a failing one to the steps it needs.
 Steps sent together, `Promise.all` over a step's requests, find the races a
-sequence alone cannot. The package's own suite (`tests/fuzz` in its
-repository) has one for each lifecycle `docs/state-machines.md` lists.
+sequence alone cannot. The package's own `tests/fuzz` has one for each
+lifecycle `docs/state-machines.md` lists.

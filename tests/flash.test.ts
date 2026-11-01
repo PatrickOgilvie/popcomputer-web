@@ -186,7 +186,9 @@ describe('flash', () => {
     expect(res.headers.getSetCookie()).toEqual([])
   })
 
-  test('ignores a cookie the server did not write', async () => {
+  // The cookie is unsigned: one a visitor writes that decodes is read as any
+  // other, and shows only on that visitor's own page.
+  test('ignores a cookie that does not decode', async () => {
     const res = await createApp().request('/projects', {
       headers: { ...page, Cookie: 'popweb-flash=bm90LWpzb24' },
     })

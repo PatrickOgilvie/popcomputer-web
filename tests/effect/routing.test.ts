@@ -234,11 +234,16 @@ describe('EffectRouteBuilder', () => {
 
       effectRoutes(app).get(
         '/projects/:projectId/tasks/:taskId',
-        Effect.succeed(new Response('OK'))
+        Effect.gen(function* () {
+          const { projectId, taskId } = yield* validateRequest(S.Struct({ projectId: S.String, taskId: S.String }))
+
+          return new Response(`Project ${projectId}, task ${taskId}`)
+        })
       )
 
       const res = await app.request('/projects/1/tasks/2')
       expect(res.status).toBe(200)
+      expect(await res.text()).toBe('Project 1, task 2')
     })
 
     test('validates params schema and 404s invalid values', async () => {

@@ -27,6 +27,7 @@ import { Hono } from 'hono'
 import { betterAuthHandler } from '../../src/auth.js'
 import { setupWeb } from '../../src/setup.js'
 import { testBrowser, testClock, testEnv, testRateLimiter } from '../../src/testing.js'
+import { stepsOf } from '../../src/fuzz.js'
 import { pick, property, show, weighted } from './property'
 
 const MAX = 2
@@ -193,7 +194,7 @@ async function runSteps(steps: readonly Step[]): Promise<string | undefined> {
 describe("an account's sign-in count", () => {
   property(
     'lets in no guess the rules refuse, before its password is checked, at each door and spelling',
-    Arbitrary.array(step, { maxLength: 12 }),
+    stepsOf(step, { maxLength: 12 }),
     async (steps) => {
       const refusal = await runSteps(steps)
 

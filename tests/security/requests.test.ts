@@ -71,6 +71,10 @@ describe('another spelling of a guarded path', () => {
   test("a child under its owner's record is never another member's, however its ids are spelled", async () => {
     const { app } = createApp()
 
+    // The task loads for its owner, and only under its own project, so the refusals below are the scope's and the owner's.
+    expect((await app.request('/projects/p1/tasks/t1', asJson(), as('ada'))).status).toBe(200)
+    expect((await app.request('/projects/p2/tasks/t1', asJson(), as('ada'))).status).toBe(404)
+
     for (const path of ['/projects/p1/tasks/t1', '/projects/p2/tasks/t1', '/projects/p1/tasks/%74%31', '//projects/p1/tasks/t1']) {
       expect({ path, status: (await app.request(path, asJson(), as('grace'))).status }).not.toEqual({ path, status: 200 })
     }
@@ -111,17 +115,19 @@ describe('headers a client may send about the request', () => {
     expect(leaked).toEqual([])
   })
 
-  test('none of them makes a shared cache keep a response it would not keep', async () => {
+  test('none of them changes what a shared cache keeps of a visitor\'s page, but a partial reload, which it never keeps', async () => {
     const { app } = createApp()
-    const stored: string[] = []
+    const policies: Record<string, string> = {}
+
+    // A shared cache keeps this page, so a header that stops it is the policy's doing.
+    const kept = (await app.request('/showcase/p2', asJson(), as())).headers.get('Cache-Control') ?? ''
+    expect(kept).toContain('public')
 
     for (const [name, value] of Object.entries(reserved)) {
-      const res = await app.request('/projects/p1', asJson({ headers: { [name]: value } }), as('ada'))
-
-      if (/public/.test(res.headers.get('Cache-Control') ?? '')) stored.push(name)
+      policies[name] = (await app.request('/showcase/p2', asJson({ headers: { [name]: value } }), as())).headers.get('Cache-Control') ?? ''
     }
 
-    expect(stored).toEqual([])
+    expect(policies).toEqual(Object.fromEntries(Object.keys(reserved).map((name) => [name, name.startsWith('X-Inertia-Partial-') ? 'no-store' : kept])))
   })
 
   test('a method override in a header or a field changes nothing another member may not change', async () => {
@@ -138,9 +144,16 @@ describe('headers a client may send about the request', () => {
 
     for (const init of overrides) {
       await app.request('/projects/p1', asJson(init), as('grace'))
+
+      // Its owner's own PUT changes the row, so the override, sent by its owner, would too if it were honoured.
+      expect((await app.request('/projects/p1', asJson(init), as('ada'))).status).toBe(404)
     }
 
     expect(row('p1')).toEqual(before)
+
+    // Its owner's real PUT does change it.
+    expect((await app.request('/projects/p1', asJson({ method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Taken' }) }), as('ada'))).status).toBe(200)
+    expect(row('p1')).not.toEqual(before)
   })
 
   test('a redirect never names the host a header gives', async () => {

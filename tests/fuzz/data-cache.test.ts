@@ -16,12 +16,21 @@
  * - `cache` returns no value stored longer ago than its `ttl`, except the
  *   one its own computation produced. `ttl` counts from when the value was
  *   stored, so a value whose computation was slow holds data older than
- *   `ttl` by the computation's time, as a TTL counted from the write does.
+ *   `ttl` by the computation's time, as a TTL counted from the write does;
+ * - and it caches: a computation started while the value stored for its key
+ *   is younger than `ttl`, with no write to its records since, returns that
+ *   value without running. Without it, a cache that never kept anything
+ *   would keep the rules above.
+ *
+ * The store keeps an entry at least 60 seconds whatever its expiry, as
+ * Workers KV does, so `cache` alone decides what is fresh, and time passes
+ * in steps that land on `ttl` exactly.
  */
 import { describe } from 'bun:test'
 import { Arbitrary, Clock, Deferred, Effect, Fiber, Layer, Option, Schema as S } from 'effect'
 import { TestClock } from 'effect/testing'
 import { CacheService, cache, cacheGet, cacheSet, invalidateCacheTags, type CacheClient, type CacheError } from '../../src/cache.js'
+import { stepsOf } from '../../src/fuzz.js'
 import { oneOf, pick, property, show, weighted } from './property'
 
 type Version = { a: number; b: number }
@@ -63,10 +72,10 @@ const step = oneOf<Step>(
   Arbitrary.map(pick(['a', 'b']), (record) => ({ _tag: 'Write', record })),
   Arbitrary.Constant({ _tag: 'Release' }),
   Arbitrary.map(keys, (key) => ({ _tag: 'Set', key })),
-  Arbitrary.map(pick([400, 700, 1100]), (ms) => ({ _tag: 'Tick', ms }))
+  Arbitrary.map(pick([400, 600, 1100]), (ms) => ({ _tag: 'Tick', ms }))
 )
 
-/** A store in memory that forgets an entry once its expiry passes on the effect's clock, as KV does. */
+/** A store in memory that forgets an entry once its expiry passes on the effect's clock, and keeps it at least 60 seconds, as KV does. */
 function memoryStore(): CacheClient {
   const store = new Map<string, { value: string; expiresAt: number }>()
 
@@ -78,7 +87,7 @@ function memoryStore(): CacheClient {
         return entry === undefined || entry.expiresAt <= now ? null : entry.value
       }),
     put: (key, value, options) =>
-      Effect.map(Clock.currentTimeMillis, (now) => void store.set(key, { value, expiresAt: now + (options?.expirationTtl ?? 3600) * 1000 })),
+      Effect.map(Clock.currentTimeMillis, (now) => void store.set(key, { value, expiresAt: now + Math.max(60, options?.expirationTtl ?? 3600) * 1000 })),
     delete: (key) => Effect.sync(() => void store.delete(key)),
     list: (options) =>
       Effect.sync(() => ({
@@ -110,6 +119,8 @@ const runSteps = (steps: readonly Step[]) =>
     const broken: string[] = []
     // When each computation's value was stored, by the call that computed it.
     const storedAt = new Map<number, number>()
+    // The value each key holds that `cache` must return without computing: by the call that stored it, or 0 for `cacheSet`'s given value.
+    const fresh = new Map<Key, { readonly by: number; readonly at: number }>()
     let calls = 0
 
     const checkRead = (what: string, key: Key, value: Value, purgedBefore: Version, now: number, own: number | undefined) => {
@@ -163,8 +174,14 @@ const runSteps = (steps: readonly Step[]) =>
 
           if (!current.hold) {
             const value = yield* cache(current.key, compute(call), Value, optionsFor(current.key))
+            const kept = fresh.get(current.key)
+
+            if (kept !== undefined && now - kept.at < TTL_MS && value.by !== kept.by) {
+              broken.push(`cache ${current.key} computed again ${now - kept.at} ms after it stored a value, with no write since`)
+            }
 
             storedAt.set(call, now)
+            if (value.by === call) fresh.set(current.key, { by: call, at: now })
             checkRead('cache', current.key, value, purgedBefore, now, call)
             break
           }
@@ -186,6 +203,9 @@ const runSteps = (steps: readonly Step[]) =>
         case 'Release': {
           const oldest = held.shift()
 
+          // A held value lands in the store now, fresh or stale: no key's value is known.
+          fresh.clear()
+
           if (oldest !== undefined) yield* release(oldest)
           break
         }
@@ -198,6 +218,7 @@ const runSteps = (steps: readonly Step[]) =>
         }
         case 'Set':
           yield* cacheSet(current.key, { a: db.a, b: db.b, at: now, by: 0 }, Value, optionsFor(current.key))
+          fresh.set(current.key, { by: 0, at: now })
           break
         case 'SetRead': {
           const call = ++calls
@@ -205,6 +226,7 @@ const runSteps = (steps: readonly Step[]) =>
           if (!current.hold) {
             yield* cacheSet(current.key, compute(call), Value, optionsFor(current.key))
             storedAt.set(call, now)
+            fresh.set(current.key, { by: call, at: now })
             break
           }
 
@@ -218,6 +240,10 @@ const runSteps = (steps: readonly Step[]) =>
           break
         }
         case 'Write':
+          for (const key of Object.keys(KEYS) as Key[]) {
+            if ((KEYS[key] as ReadonlyArray<keyof Version>).includes(current.record)) fresh.delete(key)
+          }
+
           db[current.record] += 1
           yield* invalidateCacheTags([`records:${current.record}`])
           purged[current.record] = db[current.record]
@@ -235,8 +261,8 @@ const runSteps = (steps: readonly Step[]) =>
 
 describe('the data cache', () => {
   property(
-    'never returns a value from before a purge that ran, or one older than its ttl',
-    Arbitrary.array(step, { maxLength: 16 }),
+    'never returns a value from before a purge that ran, or one older than its ttl, and returns one it keeps',
+    stepsOf(step, { maxLength: 16 }),
     async (steps) => {
       const broken = await Effect.runPromise(runSteps(steps))
 
