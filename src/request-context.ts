@@ -2,7 +2,7 @@
 
 import type { ActiveSignInLimits } from './effect/sign-in-limits.js'
 import type { Context, Env, MiddlewareHandler } from 'hono'
-import type { Config, Context as EffectContext, ManagedRuntime } from 'effect'
+import type { Config, Context as EffectContext, Layer, ManagedRuntime } from 'effect'
 import type {
   AuthType,
   AuthUser,
@@ -18,6 +18,14 @@ import type {
 import type { ErrorBoundaryConfig } from './effect/handler.js'
 import type { RouteBindingsConfig } from './effect/binding.js'
 import type { WebSetup } from './web-setup.js'
+
+/**
+ * A request's services, typed over any services: which ones depends on each
+ * application's bridge config, and the route that builds its runtime from
+ * them checks its actions against its own.
+ */
+// oxlint-disable-next-line no-explicit-any -- SAFETY: see doc comment above
+export type RequestServicesLayer = Layer.Layer<any, Config.ConfigError>
 
 /**
  * Framework composition state for one request.
@@ -61,12 +69,17 @@ export interface WebRequestContext<E extends Env = Env> {
   /** web() middleware — flash data from the previous request and for the next. */
   flash?: FlashStore
   /**
-   * effectBridge() — per-request Effect runtime.
-   * Typed over `any` services: the concrete union depends on per-app bridge
-   * config, matching the existing getEffectRuntime() contract.
+   * effectBridge() — the request's services, which its route or job builds
+   * the request's one runtime from.
    */
-  // oxlint-disable-next-line no-explicit-any -- SAFETY: see doc comment above
-  runtime?: ManagedRuntime.ManagedRuntime<any, Config.ConfigError>
+  requestLayer?: RequestServicesLayer
+  /**
+   * effectBridge() — a runtime of the request's services, built only when
+   * read.
+   * @deprecated Routes build the request's one runtime from `requestLayer`.
+   * Removed in 2.0.
+   */
+  runtime?: ManagedRuntime.ManagedRuntime<never, Config.ConfigError>
   /** setupWeb() / effectBridge() — owns detached request work and teardown. */
   backgroundSupervisor?: BackgroundSupervisor
   /** effectBridge() — bridge config for downstream route handlers */

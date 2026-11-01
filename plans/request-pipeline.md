@@ -300,6 +300,42 @@ tests must pass, with the scoped-service lifetime test's `.failing` dropped:
 a job's runtime owns its builder's layers until its background work settles,
 as a route's does.
 
+Done, in a different shape than the plan above:
+- **No `services-layer.ts`.** The bridge's `requestServicesFactory` builds
+  each request's layer: app runtime context, request services, Config. The
+  app runtime is still built once per isolate, and a failed build is still
+  not kept. `createEffectBridge(config)` gives `{ middleware, prepare }`,
+  and `effectBridge` is its middleware.
+  - `prepare(c)` records the layer as `requestLayer` and builds testEnv's
+    services once, in a scope of the request's own. It returns what
+    releases them once background work settles (`disposeAfterBackground`).
+  - `ctx.runtime` became a getter that builds a runtime only when read, and
+    is deprecated.
+- **Database and auth stay in setupWeb.** The session lookup is middleware
+  and needs auth before the route runs, so they could not move into a
+  Layer. `prepareServices(c)` builds them and returns the env or storage
+  failure instead of throwing. The middleware throws it; a job rejects
+  with it.
+- **One runtime per routed request.** The route builds it from
+  `requestLayer`, then its own layers, then testEnv's services.
+- **Jobs.** setupWeb declares `prepareJob` with `declareAppJobs`. `run`
+  builds a Hono `Context`, readies the services through `prepareJob`, and
+  builds one runtime from them and the builder's layers. It runs the job
+  and its purges, and releases everything after background work settles.
+  The lifetime test passes without `.failing`.
+  - A job runs through no HTTP middleware, the application's included. A
+    test pins it, and the CHANGELOG says so.
+- **Hand-composed stacks keep `runThroughRequest`**, the old route, the
+  `runJobs` WeakMap and `failRun` (decision 3). So `failRun` has one call
+  left, in the route's purge, not none.
+- **Decision 1 is not taken yet**: jobs still type-check against the
+  request-only services.
+
+Measures: `ManagedRuntime.make` sites 3 -> 4, but per request 2 -> 1 and per
+job 2 plus a fake request -> 1. The four sites are the app runtime (once per
+isolate), the route, the job and the deprecated getter. `failRun` calls 3 ->
+1. Disable directives stay at 80.
+
 ## Step 4 — One owner for response output
 
 New `src/effect/response-output.ts`: a per-request `ResponseOutput` holding

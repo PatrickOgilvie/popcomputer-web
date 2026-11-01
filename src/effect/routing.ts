@@ -5,6 +5,7 @@
  */
 
 import { Cause, Predicate, Context, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S, Semaphore } from 'effect'
+import { Context as HonoRequestContext } from 'hono'
 import type { Context as HonoContext, ExecutionContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { runEffectWithRuntime } from './handler.js'
 import {
@@ -12,7 +13,6 @@ import {
   buildContextLayer,
   disposeRequestRuntime,
   getEffectBridgeConfig,
-  getEffectRuntime,
   serviceRequestContext,
   setEffectBridgeConfig,
   type EffectBridgeConfig,
@@ -247,7 +247,36 @@ export function declareAppBindings(app: object, declared: { readonly bindings?: 
   declaredBindings.set(app, declared)
 }
 
-/** The path the route that `run` sends its Effects through answers on. */
+/**
+ * What readying a job's services gave: the failure that refuses every job,
+ * such as bindings the env declaration refuses, or what releases them once
+ * the job's background work has settled.
+ */
+export type JobPreparation =
+  | { readonly failure: Error }
+  | { readonly release: () => Promise<void> }
+
+type JobPreparer<E extends Env> = (c: HonoContext<E>) => Promise<JobPreparation>
+
+/**
+ * How each app's setupWeb readies a job's services on a context of the
+ * job's own, kept for any app's Env: each is read back by that app's
+ * builders, with its own.
+ */
+const appJobs = new WeakMap<object, (c: never) => Promise<JobPreparation>>()
+
+/**
+ * Record how setupWeb readies a job's services, so `run`, `scheduled` and
+ * `queue` build them as a request's middleware would, with no request.
+ */
+export function declareAppJobs<E extends Env>(app: Hono<E>, prepare: JobPreparer<E>): void {
+  appJobs.set(app, prepare)
+}
+
+/**
+ * The path the route that `run` sends its Effects through answers on, for a
+ * stack composed by hand, which has no setupWeb to ready a job's services.
+ */
 const RUN_PATH = '/__popweb/run'
 
 /** An Effect waiting for `run`'s request, keyed by that request. */
@@ -258,6 +287,13 @@ interface RunJob {
 
 const runJobs = new WeakMap<Request, RunJob>()
 const appsWithRunner = new WeakSet<object>()
+
+/** A job's value, or its failure thrown, as `run` rejects with it. */
+function jobResult<A>(exit: Exit.Exit<A, unknown>): A {
+  if (Exit.isFailure(exit)) throw Cause.squash(exit.cause)
+
+  return exit.value
+}
 
 /**
  * Ends `run`'s job with a failure the framework found outside the job, such
@@ -570,7 +606,7 @@ export class EffectRouteBuilder<
    * but `run`'s own, which carries its Effect by identity.
    */
   private installRunner(): void {
-    if (appsWithRunner.has(this.app)) return
+    if (appsWithRunner.has(this.app) || appJobs.has(this.app)) return
 
     appsWithRunner.add(this.app)
 
@@ -615,6 +651,67 @@ export class EffectRouteBuilder<
     env: Partial<E['Bindings']>,
     executionCtx?: ExecutionContext
   ): Promise<A> {
+    // SAFETY: setupWeb declared it for this app, whose Env this builder has.
+    const prepare = appJobs.get(this.app) as JobPreparer<E> | undefined
+
+    if (prepare === undefined) return this.runThroughRequest(effect, env, executionCtx)
+
+    // A job has no request. Its context carries the bindings and the Worker's
+    // execution context to the factories setupWeb builds services with.
+    const c = new HonoRequestContext<E>(new Request('http://localhost/'), { env, executionCtx })
+    const prepared = await prepare(c)
+
+    if ('failure' in prepared) throw prepared.failure
+
+    const requestLayer = openWebContext(c).requestLayer ?? Layer.empty
+    let fullLayer: Layer.Layer<never, AppError, never> = Layer.mergeAll(
+      requestLayer,
+      Layer.succeed(PendingPurges, makePendingPurges()),
+      Layer.succeed(PendingCacheTags, makePendingCacheTags())
+    )
+
+    for (const layer of this.layers) {
+      fullLayer = Layer.provideMerge(layer, fullLayer)
+    }
+
+    // testEnv's services replace those the builder provides, as in a route.
+    const testServices = openWebContext(c).testServices
+
+    if (testServices !== undefined) {
+      fullLayer = Layer.provideMerge(Layer.succeedContext(testServices), fullLayer)
+    }
+
+    // What the job names with purgeCache is purged once it succeeds; a
+    // failed purge fails its run, so the queue retries and the cron fails.
+    const job = Effect.tap(effect, () => Effect.flatMap(Effect.flatMap(PendingPurges, (pending) => pending.take), purgeTags))
+
+    // One runtime holds the job's services, the builder's scoped layers
+    // among them, until the background work it started has settled.
+    // SAFETY: RunCheck admits only Effects whose services this builder's
+    // routes provide, which the layers above are.
+    const runtime = ManagedRuntime.make(fullLayer as Layer.Layer<R | PendingPurges | ResponseCacheService, unknown>)
+    let exit: Exit.Exit<A, unknown>
+
+    try {
+      exit = await runtime.runPromiseExit(job)
+    } finally {
+      await disposeRequestRuntime(c, runtime)
+      await prepared.release()
+    }
+
+    return jobResult(exit)
+  }
+
+  /**
+   * `run` on a stack composed by hand, which has no setupWeb to ready a
+   * job's services: a request to a route of its own carries the job through
+   * the application's middleware.
+   */
+  private async runThroughRequest<A, Err, R>(
+    effect: Effect.Effect<A, Err, R>,
+    env: Partial<E['Bindings']>,
+    executionCtx?: ExecutionContext
+  ): Promise<A> {
     let provided: Layer.Layer<never, AppError, never> = Layer.empty
 
     for (const layer of this.layers) {
@@ -651,10 +748,8 @@ export class EffectRouteBuilder<
       runJobs.delete(request)
     }
 
-    if (Exit.isFailure(result)) throw Cause.squash(result.cause)
-
     // SAFETY: the job's exit is the exit of `effect`, whose success is A.
-    return result.value as A
+    return jobResult(result) as A
   }
 
   /**
@@ -1143,15 +1238,13 @@ export class EffectRouteBuilder<
 
       if (validation) return validation
 
-      const requestRuntime = getEffectRuntime(c)
+      // The request's services, which effectBridge readied. A request
+      // service that fails to build, such as one reading a missing binding
+      // with Config, fails the action with its error.
+      const requestLayer = openWebContext(c).requestLayer
+      let contextLayer = requestLayer ?? buildContextLayer(c, bridgeConfig ?? getEffectBridgeConfig(c))
 
-      // A request service that fails to build, such as one reading a missing
-      // binding with Config, fails the action with its error.
-      let contextLayer = requestRuntime
-        ? Layer.effectContext(requestRuntime.contextEffect)
-        : buildContextLayer(c, bridgeConfig ?? getEffectBridgeConfig(c))
-
-      if (requestRuntime && bridgeConfig?.services) {
+      if (requestLayer !== undefined && bridgeConfig?.services) {
         contextLayer = Layer.merge(
           contextLayer,
           bridgeConfig.services(serviceRequestContext(c)).pipe(Layer.provide(bindingsConfiguration(c.env)))

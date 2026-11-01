@@ -5,14 +5,14 @@
  */
 
 import { SignInLimits } from './sign-in-limits.js'
-import { Cause, Config, ConfigProvider, Duration, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import { Cause, Config, ConfigProvider, Context as EffectContext, Duration, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S, Scope } from 'effect'
 import { getCookie } from 'hono/cookie'
 import { serialize } from 'hono/utils/cookie'
 import { CookieService, type CookieJar } from './cookies.js'
 import { ResponseHeaders } from './response-headers.js'
 import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
-import type { WebRequestContext } from '../request-context.js'
+import type { RequestServicesLayer, WebRequestContext } from '../request-context.js'
 import { openWebContext } from '../request-context.js'
 import { HEADER_READS, markPageDynamic, observedRequestContext, trackDatabase } from '../page-cache.js'
 import {
@@ -337,6 +337,25 @@ export async function disposeRequestRuntime<E extends Env, R, RuntimeError>(
 
   await supervisor?.drain(runtime)
   await runtime.dispose()
+}
+
+/**
+ * Release what a request holds, such as testEnv's services, only after its
+ * background work settles, as disposeRequestRuntime releases a runtime.
+ */
+export function disposeAfterBackground<E extends Env>(
+  c: HonoContext<E>,
+  release: () => Promise<void>
+): Promise<void> {
+  const supervisor = openWebContext(c).backgroundSupervisor
+
+  if (supervisor?.hasPending() && supervisor.client.isAvailable) {
+    supervisor.extendLifetime(supervisor.drain().then(release))
+
+    return Promise.resolve()
+  }
+
+  return (supervisor?.drain() ?? Promise.resolve()).then(release)
 }
 
 /**
@@ -760,74 +779,64 @@ export function getEffectBridgeConfig<E extends Env>(
 }
 
 /**
- * Middleware that sets up the Effect runtime for each request.
+ * Each request's services as one layer: the application's own, built once
+ * per isolate and shared, the request's, and its bindings as Effect Config.
+ * Later layers win: request services replace app services.
  */
-export function effectBridge<E extends Env, CustomServices = never>(
+function requestServicesFactory<E extends Env, CustomServices>(
   config?: EffectBridgeConfig<E, CustomServices>
-): MiddlewareHandler<E> {
+): (c: HonoContext<E>) => RequestServicesLayer {
   // Built by the first request, with that request's bindings as its
   // configuration, and kept for the isolate's lifetime: a Worker's bindings
   // are the same for every request it serves.
   let appRuntime: ManagedRuntime.ManagedRuntime<CustomServices, Config.ConfigError> | undefined
 
-  // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
-  return async (c, next) => {
-    setEffectBridgeConfig(c, config)
+  return (c) => {
     const configuration = bindingsConfiguration(c.env)
 
     if (config?.app !== undefined && appRuntime === undefined) {
       appRuntime = ManagedRuntime.make(config.app.pipe(Layer.provide(configuration)))
     }
 
-    // Later layers win: request services replace app services, and services
-    // from testEnv (@popcomputer/web/testing) replace both. A layer that
-    // fails to build fails the action with its error.
+    // A layer that fails to build fails the action with its error.
     const requestLayer = Layer.merge(buildContextLayer(c, config, configuration), configuration)
     const requestAppRuntime = appRuntime
 
-    const appAndRequestLayer = requestAppRuntime === undefined
-      ? requestLayer
-      : Layer.merge(
-          Layer.effectContext(requestAppRuntime.contextEffect.pipe(
-            // A failed build is not kept: the next request builds the
-            // application services again.
-            Effect.tapError(() => Effect.sync(() => {
-              if (appRuntime === requestAppRuntime) appRuntime = undefined
-            }))
-          )),
-          requestLayer
-        )
+    if (requestAppRuntime === undefined) return requestLayer
 
-    const testLayer = readTestLayer(c.env)
-    const requestCtx = openWebContext(c)
-
-    // Built once, with the request's runtime, and recorded: the route gives
-    // the same services over its own layers, so a test's fake replaces the
-    // service a route provides as well.
-    const testServices: Layer.Layer<never> | undefined = testLayer === undefined
-      ? undefined
-      : Layer.effectContext(Layer.build(testLayer).pipe(
-          Effect.tap((services) => Effect.sync(() => {
-            requestCtx.testServices = services
-          }))
-        ))
-
-    const runtime = ManagedRuntime.make(
-      testServices === undefined ? appAndRequestLayer : Layer.merge(appAndRequestLayer, testServices)
+    return Layer.merge(
+      Layer.effectContext(requestAppRuntime.contextEffect.pipe(
+        // A failed build is not kept: the next request builds the
+        // application services again.
+        Effect.tapError(() => Effect.sync(() => {
+          if (appRuntime === requestAppRuntime) appRuntime = undefined
+        }))
+      )),
+      requestLayer
     )
+  }
+}
 
-    // Store runtime and binding schema on the request context
-    requestCtx.runtime = runtime
+/** An application's Effect bridge: its middleware, and how it readies one request's services. */
+export interface EffectBridge<E extends Env> {
+  readonly middleware: MiddlewareHandler<E>
+  readonly prepare: (c: HonoContext<E>) => Promise<() => Promise<void>>
+}
 
-    // A user that testEnv signs in replaces the session for shared props and
-    // page caching, as it does for actions.
-    if (testLayer !== undefined) {
-      const testUser = await runtime.runPromiseExit(Effect.serviceOption(AuthUserService))
+/**
+ * The Effect bridge of one application: `prepare` readies a request's
+ * services on its context, for its route or its job to build the request's
+ * one runtime from, and returns what releases them once its background work
+ * has settled. `middleware` prepares each request.
+ */
+export function createEffectBridge<E extends Env, CustomServices = never>(
+  config?: EffectBridgeConfig<E, CustomServices>
+): EffectBridge<E> {
+  const servicesOf = requestServicesFactory(config)
 
-      if (Exit.isSuccess(testUser) && Option.isSome(testUser.value)) {
-        requestCtx.authUser = testUser.value.value
-      }
-    }
+  const prepare = (c: HonoContext<E>): Promise<() => Promise<void>> => {
+    setEffectBridgeConfig(c, config)
+    const requestCtx = openWebContext(c)
 
     if (config?.schema) {
       requestCtx.schema = config.schema
@@ -837,14 +846,84 @@ export function effectBridge<E extends Env, CustomServices = never>(
       requestCtx.bindings = config.bindings
     }
 
+    // testEnv's services, built once in a scope of the request's own and
+    // recorded: the route gives them over its own layers, so a test's fake
+    // replaces the service a route provides as well.
+    const testLayer = readTestLayer(c.env)
+    const testScope = Scope.makeUnsafe()
+    const built = testLayer === undefined
+      ? Promise.resolve(undefined)
+      : Effect.runPromiseExit(Layer.buildWithScope(testLayer.pipe(Layer.provide(bindingsConfiguration(c.env))), testScope))
+
+    return built.then((tests) => readied(c, servicesOf(c), tests, testScope))
+  }
+
+  /** The request's services readied on its context, with testEnv's; what releases them. */
+  const readied = (
+    c: HonoContext<E>,
+    services: RequestServicesLayer,
+    built: Exit.Exit<EffectContext.Context<never>> | undefined,
+    testScope: Scope.Closeable
+  ): () => Promise<void> => {
+    const requestCtx = openWebContext(c)
+    let layer = services
+
+    if (built !== undefined) {
+      if (Exit.isSuccess(built)) {
+        requestCtx.testServices = built.value
+        // They replace the request's services beneath the route's layers too.
+        layer = Layer.merge(layer, Layer.succeedContext(built.value))
+        // A user that testEnv signs in replaces the session for shared props
+        // and page caching, as it does for actions.
+        const testUser = EffectContext.getOption(built.value, AuthUserService)
+
+        if (Option.isSome(testUser)) requestCtx.authUser = testUser.value
+      } else {
+        // A test layer that fails to build fails the action with its error.
+        layer = Layer.merge(layer, Layer.effectDiscard(Effect.failCause(built.cause)))
+      }
+    }
+
+    requestCtx.requestLayer = layer
+
+    // Code that read the request's runtime from its context still finds one,
+    // built only when it is read: routes build their own, one per request.
+    let runtime: ManagedRuntime.ManagedRuntime<never, Config.ConfigError> | undefined
+    Object.defineProperty(requestCtx, 'runtime', {
+      configurable: true,
+      enumerable: true,
+      get: () => runtime ??= ManagedRuntime.make(layer),
+    })
+
+    return () => disposeAfterBackground(c, () =>
+      (runtime?.dispose() ?? Promise.resolve()).then(() => Effect.runPromise(Scope.close(testScope, Exit.void)))
+    )
+  }
+
+  // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request's services.
+  const middleware: MiddlewareHandler<E> = async (c, next) => {
+    const release = await prepare(c)
+
     try {
       await next()
     } finally {
-      await disposeRequestRuntime(c, runtime)
+      await release()
     }
 
     // Return response for proper propagation in forwarding/proxy scenarios
     return c.res
   }
+
+  return { middleware, prepare }
+}
+
+/**
+ * Middleware that readies each request's Effect services, for the routes
+ * after it.
+ */
+export function effectBridge<E extends Env, CustomServices = never>(
+  config?: EffectBridgeConfig<E, CustomServices>
+): MiddlewareHandler<E> {
+  return createEffectBridge(config).middleware
 }
 
