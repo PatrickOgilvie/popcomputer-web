@@ -23,6 +23,7 @@ import type {
 import type { DefaultPublicUserOf } from './effect/auth.js'
 import type { WebDeclaration, WebTypes } from './effect/register.js'
 import { checkEnv, EnvInvalid, type EnvDeclaration } from './env.js'
+import { useSetup, webSetup } from './web-setup.js'
 import {
   EffectRouteBuilder,
   declareAppBindings,
@@ -503,10 +504,6 @@ function createSetupMiddleware<
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
   const setupServices: MiddlewareHandler<E> = createMiddleware<E>(async (c, next) => {
     const requestCtx = openWebContext(c)
-    requestCtx.errorBoundary = config.errors
-    requestCtx.signInPath = config.auth?.signInPath
-    requestCtx.homePath = config.auth?.homePath
-    requestCtx.bodyLimit = config.bodyLimit
     const signInLimits = config.auth?.signInLimits
     requestCtx.signInLimits = signInLimits === undefined ? undefined : activeSignInLimits(signInLimits, c.env ?? {})
     const executionContext = getRequestExecutionContextClient(c)
@@ -591,7 +588,24 @@ function createSetupMiddleware<
   // a page it would refuse is cached only when the application says so.
   const cachesPages = config.pageCache ?? (config.middleware ?? []).length === 0
 
+  // The settings every request reads, resolved once.
+  const setup = webSetup({
+    errors: config.errors,
+    signInPath: config.auth?.signInPath,
+    homePath: config.auth?.homePath,
+    bodyLimit: config.bodyLimit,
+    sessionCookie: config.auth?.sessionCookie,
+    schema: config.schema,
+    bindings: config.bindings,
+  })
+
   const middlewares: MiddlewareHandler<E>[] = [
+    // First, so every member and the error page read the same settings.
+    (c, next) => {
+      useSetup(c, setup)
+
+      return next()
+    },
     // Outermost, so they see every response, including the page cache's own.
     ...(config.security?.headers === false ? [] : [securityHeaders<E>(config.security?.headers ?? {})]),
     privateByDefault<E>(),
@@ -601,8 +615,6 @@ function createSetupMiddleware<
       : [
           pageCache<E>({
             version: config.version ?? '',
-            sessionCookie: config.auth?.sessionCookie,
-            development: config.errors,
           }),
         ]),
     setupServices,

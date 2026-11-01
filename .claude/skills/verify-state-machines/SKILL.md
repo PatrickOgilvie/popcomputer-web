@@ -34,9 +34,11 @@ generation), code that moved or was renamed, and an upgrade of
 
 The models were last confirmed to describe the code at commit `197689c`
 (2026-10-29). Run `git diff 197689c -- <the files above>` to see what changed
-since. `HistoryClear.tla` was confirmed again on 2026-11-01, when
+since. `HistoryClear.tla` was confirmed again on 2026-11-01, after
 `endsSession`, `startsSession` and `expiresTheCookie` moved from
-`src/middleware.ts` to `src/session-cookies.ts`, the commit after `8d412b8`.
+`src/middleware.ts` to `src/session-cookies.ts` (`911d7b2`), and once more
+when `web()` came to read the session cookie's names from setupWeb's
+settings (step 2 of `plans/request-pipeline.md`).
 
 ## Run the check
 

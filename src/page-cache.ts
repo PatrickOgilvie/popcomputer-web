@@ -35,8 +35,9 @@ import { copyTestState } from './effect/test-env.js'
 import { openWebContext } from './request-context.js'
 import { HEADERS } from './types.js'
 import { isCurrentVersion } from './page-version.js'
-import { cookieNames, sessionCookies } from './session-cookies.js'
-import { isDevelopment, type DevelopmentSignal } from './development.js'
+import { cookieNames, sessionCookies, type SessionCookies } from './session-cookies.js'
+import { isDevelopment } from './development.js'
+import { setupOf } from './web-setup.js'
 
 /** Response header reporting what the page cache did: HIT, MISS, DYNAMIC or BYPASS. */
 export const PAGE_CACHE_HEADER = 'X-Popweb-Cache'
@@ -114,13 +115,6 @@ export interface PageCacheOptions {
   readonly sessionCookie?: string
   /** The cache to use. Defaults to `caches.default` when the runtime has one. */
   readonly store?: PageCacheStore
-  /**
-   * setupWeb's `errors.envKey` and `errors.devValue`, which say when the
-   * application runs in development, where nothing is cached.
-   *
-   * @internal
-   */
-  readonly development?: DevelopmentSignal
 }
 
 /**
@@ -216,15 +210,11 @@ export function allowDefaultPageCache<E extends Env>(c: Context<E>): void {
 }
 
 /**
- * Whether the request carries credentials: an `Authorization` header, or a
- * session cookie of `registered`'s application. The page cache asks before
- * the session lookup has run, so it gives the names itself.
+ * Whether the request carries credentials: an `Authorization` header, or one
+ * of the application's session cookies.
  */
-export function carriesCredentials<E extends Env>(
-  c: Context<E>,
-  registered: readonly string[] = openWebContext(c).sessionCookies ?? []
-): boolean {
-  return c.req.header('Authorization') !== undefined || sessionCookies(registered).sentIn(c.req.header('Cookie'))
+export function carriesCredentials<E extends Env>(c: Context<E>, cookies: SessionCookies = setupOf(c).sessionCookies): boolean {
+  return c.req.header('Authorization') !== undefined || cookies.sentIn(c.req.header('Cookie'))
 }
 
 /**
@@ -290,7 +280,9 @@ export function privateByDefault<E extends Env>(): MiddlewareHandler<E> {
 export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and the Cache API use native next()/Response promises.
   return createMiddleware<E>(async (c, next) => {
-    if (carriesCredentials(c, options.sessionCookie === undefined ? [] : [options.sessionCookie])) {
+    // setupWeb's settings name the session cookie; a stack composed by hand
+    // gives it here, since the page cache runs before the session lookup.
+    if (carriesCredentials(c, options.sessionCookie === undefined ? setupOf(c).sessionCookies : sessionCookies([options.sessionCookie]))) {
       await next()
       markPrivate(c)
       markResponse(c, 'BYPASS')
@@ -300,7 +292,7 @@ export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareH
 
     const store = options.store ?? defaultPageCacheStore()
 
-    if (!store || isDevelopment(c, options.development) || c.req.method !== 'GET') {
+    if (!store || isDevelopment(c, setupOf(c).errors) || c.req.method !== 'GET') {
       await next()
 
       // A request signed in without a session cookie, as testEnv's signedIn

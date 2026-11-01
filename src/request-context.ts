@@ -17,6 +17,7 @@ import type {
 } from './effect/bridge.js'
 import type { ErrorBoundaryConfig } from './effect/handler.js'
 import type { RouteBindingsConfig } from './effect/binding.js'
+import type { WebSetup } from './web-setup.js'
 
 /**
  * Framework composition state for one request.
@@ -24,6 +25,14 @@ import type { RouteBindingsConfig } from './effect/binding.js'
  * absent until their middleware has run — consumers branch on absence.
  */
 export interface WebRequestContext<E extends Env = Env> {
+  /**
+   * setupWeb() — the application's settings, the same value for every
+   * request. The framework reads them with `setupOf(c)`, which a stack
+   * composed by hand answers too.
+   *
+   * @internal
+   */
+  setup?: WebSetup
   /** webServices() / setupWeb's `database` factory. */
   db?: DatabaseType
   /** webServices() / setupWeb's `auth.client` factory. */
@@ -62,24 +71,43 @@ export interface WebRequestContext<E extends Env = Env> {
   backgroundSupervisor?: BackgroundSupervisor
   /** effectBridge() — bridge config for downstream route handlers */
   bridgeConfig?: EffectBridgeConfig<E, unknown>
-  /** effectBridge() / effectRoutes() — Drizzle schema for route model binding */
+  /**
+   * effectBridge() — Drizzle schema for route model binding.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   schema?: object
-  /** effectBridge() / effectRoutes() — registered row parsers and scopes. */
+  /**
+   * effectBridge() — registered row parsers and scopes.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   bindings?: RouteBindingsConfig
-  /** setupWeb() — response policy shared by every error entrypoint. */
+  /**
+   * setupWeb() — response policy shared by every error entrypoint.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   errorBoundary?: ErrorBoundaryConfig
-  /** setupWeb() — where a signed-out visitor goes when a route needs a user. */
+  /**
+   * setupWeb() — where a signed-out visitor goes when a route needs a user.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   signInPath?: string
-  /** setupWeb() — where a signed-in visitor goes from a page for guests. */
+  /**
+   * setupWeb() — where a signed-in visitor goes from a page for guests.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   homePath?: string
-  /** setupWeb() — the most bytes the framework reads of a request body. */
+  /**
+   * setupWeb() — the most bytes the framework reads of a request body.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   bodyLimit?: number
   /** setupWeb() — the sign-in limits, with the request's Rate Limiting binding. */
   signInLimits?: ActiveSignInLimits
   /**
-   * loadUser() — custom session cookie names registered for this request.
-   * The response-cache policy treats these (and better-auth's default
-   * cookies) as private request state.
+   * loadUser() — custom session cookie names registered for this request,
+   * which a stack composed by hand tells the cache policies and the history
+   * clear through.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
    */
   sessionCookies?: readonly string[]
   /** pageCache() — present while a request may still be served from or stored in the page cache. */

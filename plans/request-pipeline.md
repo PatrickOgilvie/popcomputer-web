@@ -225,6 +225,30 @@ Done when no file in `src/` reads those fields, and the per-route values that
 depend only on setup (model bindings, the params schema, guarded bindings,
 purge tables) are computed at registration instead of on every request.
 
+Done, with one departure. `src/web-setup.ts` holds `WebSetup`, its
+`webSetup(options)` constructor with every default, `setupOf(c)` and the
+`WebSetupService`. setupWeb builds one and its first middleware hands each
+request the same value, before the page cache. A stack composed by hand
+passes its settings between middleware through the request:
+`loadUser({ sessionCookie })` tells `web()` and the page cache, and
+`effectBridge({ schema, bindings })` tells the routes. So in 1.x the request
+carries one reference to the immutable setup, not closures; `setupOf` builds
+a hand-composed stack's value from what its middleware registered. Closing
+over it everywhere waits for 2.0, when the hand-composition exports go.
+- The error boundary, the bridge's body limit, the routes, `web()`'s
+  history clear and the page cache read `setupOf(c)`. The copied fields are
+  still written, marked `@deprecated`, and read only by `setupOf`'s
+  hand-composed fallback.
+- `pageCache`'s `@internal` `development` option from 1b is gone.
+- `betterAuthLogoutAction` reads `WebSetupService`, so sign-out's fallback
+  expires `auth.sessionCookie`'s name.
+- `getEffectSchema` and `getEffectBindings` are gone.
+  `setEffectBridgeConfig` stays until step 3 rewrites the bridge.
+- A route works out its model bindings, params schema and guarded bindings
+  on its first request, not on every one. Registration can't do it: a
+  hand-composed stack gives effectBridge its bindings, which only a request
+  carries.
+
 ## Step 3 — One services factory; jobs stop faking requests
 
 New internal module `src/effect/services-layer.ts`:

@@ -7,15 +7,11 @@
 import { sameOriginReferer } from './referer.js'
 import { webUrl } from '../locations.js'
 import { Option, Effect, Exit, Cause, ManagedRuntime, Result } from 'effect'
-import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
+import type { Context as HonoContext, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
-import {
-  getEffectBridgeConfig,
-  buildContextLayer,
-  disposeRequestRuntime,
-} from './bridge.js'
 import { readTestLayer } from './test-env.js'
 import { declaresEnvironment, isDevelopment } from '../development.js'
+import { setupOf } from '../web-setup.js'
 import {
   ValidationError,
   UnauthorizedError,
@@ -196,7 +192,7 @@ export async function renderErrorResponse<E extends Env>(
     }
 
     return finalize(c.redirect(
-      error.redirectTo ?? (error.home === true ? openWebContext(c).homePath ?? '/' : signInUrl(c)),
+      error.redirectTo ?? (error.home === true ? setupOf(c).homePath : signInUrl(c)),
       c.req.header('X-Inertia') === 'true' ? 303 : 302
     ))
   }
@@ -241,7 +237,7 @@ export async function renderErrorResponse<E extends Env>(
  * `redirect`, for `intendedUrl` to return to after signing in.
  */
 function signInUrl<E extends Env>(c: HonoContext<E>): string {
-  const signInPath = openWebContext(c).signInPath ?? '/login'
+  const { signInPath } = setupOf(c)
   // A visit returns to its page after signing in. A form post cannot be
   // replayed, so it returns to the page the form was on.
   const url = new URL(c.req.url)
@@ -347,7 +343,7 @@ export async function errorToResponse<E extends Env>(
   runtime: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<Response> {
   if (error instanceof AuthRedirect) {
-    return renderErrorResponse(error, c, openWebContext(c).errorBoundary)
+    return renderErrorResponse(error, c, setupOf(c).errors)
   }
 
   // redirectNow: leaving the action for another page is not an error.
@@ -368,7 +364,7 @@ export async function errorToResponse<E extends Env>(
     runtime
   )
 
-  return renderErrorResponse(error, c, openWebContext(c).errorBoundary)
+  return renderErrorResponse(error, c, setupOf(c).errors)
 }
 
 /**
@@ -436,7 +432,7 @@ async function handleExit<E extends Env>(
   c: HonoContext<E>,
   runtime: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<Response> {
-  const boundaryConfig = openWebContext(c).errorBoundary
+  const boundaryConfig = setupOf(c).errors
 
   if (Exit.isSuccess(exit)) {
     const value = exit.value

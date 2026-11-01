@@ -17,7 +17,8 @@ import { applyDefaultCacheControl, markPageDynamic, observedRequestContext } fro
 import { ConfigurationError } from './effect/errors.js'
 import { webUrl } from './locations.js'
 import { isCurrentVersion, pageVersion, userIdOf } from './page-version.js'
-import { sessionCookies, setCookieName } from './session-cookies.js'
+import { setCookieName } from './session-cookies.js'
+import { setupOf } from './web-setup.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
@@ -195,7 +196,7 @@ export function web(config: WebConfig): MiddlewareHandler {
         const signedIn = options.signedIn === true || context.authUser !== undefined
         // A session the lookup found ended, or one ended or started since the
         // last page, leaves history the previous session's pages wrote.
-        const sessionChanged = flashed.clearHistory || sessionCookies(context.sessionCookies).endsSession(context.sessionLookupCookies ?? [])
+        const sessionChanged = flashed.clearHistory || setupOf(c).sessionCookies.endsSession(context.sessionLookupCookies ?? [])
         // While signed-in pages are the encrypted ones, every page rendered to
         // a visitor who is not signed in clears the history, however the
         // session ended: in another tab, by the cookie's expiry, or where a
@@ -297,7 +298,7 @@ export function web(config: WebConfig): MiddlewareHandler {
     // previous session's pages wrote.
     if (c.res && !historyCleared) {
       const answered = answeredCookies(c.res, context)
-      const session = sessionCookies(context.sessionCookies)
+      const session = setupOf(c).sessionCookies
 
       if (session.endsSession(answered) || session.startsSession(answered, c.req.header('Cookie'))) {
         flash.clearHistory()

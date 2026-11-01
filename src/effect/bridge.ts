@@ -44,7 +44,8 @@ import { readTestLayer } from './test-env.js'
 import type { RouteBindingsConfig } from './binding.js'
 import type { DeclaredFields, PageSchemas } from './pages.js'
 import { observeOrLog } from './error-observer.js'
-import { DEFAULT_BODY_LIMIT, readBody } from './body-limit.js'
+import { readBody } from './body-limit.js'
+import { setupOf, WebSetupService } from '../web-setup.js'
 
 /**
  * Configuration for the Effect bridge.
@@ -127,7 +128,7 @@ function createRequestContext<E extends Env>(
 ): RequestContext<NonNullable<E['Bindings']>> {
   // SAFETY: Hono supplies c.env from the route Env; the empty object is used only when that optional binding bag is absent.
   const env = (c.env ?? {}) as NonNullable<E['Bindings']>
-  const bodyLimit = openWebContext(c).bodyLimit ?? DEFAULT_BODY_LIMIT
+  const { bodyLimit } = setupOf(c)
 
   return {
     method: c.req.method,
@@ -621,6 +622,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     },
   }))
   const pageLayer = Layer.succeed(PageService, createPageRenderer(c, config))
+  const setupLayer = Layer.succeed(WebSetupService, setupOf(c))
 
   // Bindings layer - always available, typed by the registered application's environment
   // SAFETY: The Hono adapter has already constrained this value at the request boundary; this assertion bridges an overload its generic context cannot retain.
@@ -665,6 +667,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     cookieLayer,
     headersLayer,
     pageLayer,
+    setupLayer,
     bindingsLayer,
     executionContextLayer,
     responseCacheLayer
@@ -845,18 +848,3 @@ export function effectBridge<E extends Env, CustomServices = never>(
   }
 }
 
-/**
- * Get the binding schema from the request context (set by effectBridge).
- */
-export function getEffectSchema<E extends Env>(
-  c: HonoContext<E>
-): object | undefined {
-  return openWebContext(c).schema
-}
-
-/** Get the route-model binding configuration from the request context. */
-export function getEffectBindings<E extends Env>(
-  c: HonoContext<E>
-): RouteBindingsConfig | undefined {
-  return openWebContext(c).bindings
-}

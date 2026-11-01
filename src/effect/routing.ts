@@ -12,9 +12,7 @@ import {
   buildContextLayer,
   disposeRequestRuntime,
   getEffectBridgeConfig,
-  getEffectBindings,
   getEffectRuntime,
-  getEffectSchema,
   serviceRequestContext,
   setEffectBridgeConfig,
   type EffectBridgeConfig,
@@ -29,6 +27,7 @@ import {
 } from './errors.js'
 import { openWebContext } from '../request-context.js'
 import { isDevelopment } from '../development.js'
+import { setupOf } from '../web-setup.js'
 import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
@@ -417,6 +416,60 @@ interface LoadingModels {
   /** Each loaded binding's row, which scopes the bindings under it. */
   readonly rows: Map<string, object>
   readonly recordTags: string[]
+}
+
+/** What a route's path names, as the application's settings read it: the same for every request. */
+interface RouteModels {
+  readonly schema: object | undefined
+  readonly configuredBindings: RouteBindingsConfig | undefined
+  /** The placeholders a binding loads a record for, in path order. */
+  readonly modelBindings: ParsedBinding[]
+  readonly paramsSchema: S.Codec<unknown, unknown, never, never> | undefined
+  /** The bindings a guard decides who may load. */
+  readonly guarded: readonly string[]
+}
+
+/**
+ * What a route's path names, worked out by its first request for every later
+ * one: it depends only on the application's settings. Registration can't
+ * work it out, since a stack composed by hand gives its schema and bindings
+ * to effectBridge, which hands them to each request.
+ */
+function routeModelsOnce<E extends Env>(
+  bindings: ParsedBinding[],
+  params: S.Codec<unknown, unknown, never, never> | undefined,
+  bridgeConfig: { readonly schema?: object; readonly bindings?: RouteBindingsConfig } | undefined
+): (c: HonoContext<E>) => RouteModels {
+  let routeModels: RouteModels | undefined
+
+  return (c) => {
+    if (routeModels !== undefined) return routeModels
+
+    const schema = bridgeConfig?.schema ?? setupOf(c).schema
+    const configuredBindings = bridgeConfig?.bindings ?? setupOf(c).bindings
+    // A {param} with a binding parser names a model; any other is a plain
+    // parameter the action reads with validateRequest.
+    const modelBindings = configuredBindings
+      ? bindings.filter((binding) => Object.hasOwn(configuredBindings, binding.param))
+      : []
+
+    routeModels = {
+      schema,
+      configuredBindings,
+      modelBindings,
+      // The params schema given, or one inferred from the tables' columns.
+      paramsSchema: params ?? (
+        modelBindings.length > 0 && schema
+          ? inferParamsSchema(modelBindings, schema, configuredBindings) ?? undefined
+          : undefined
+      ),
+      // A guarded binding loads once a guard(...) the route is provided has
+      // read it and let the visitor in.
+      guarded: modelBindings.map((binding) => binding.param).filter((name) => isGuardedBinding(configuredBindings?.[name])),
+    }
+
+    return routeModels
+  }
 }
 
 /** A signed-in user's id: Better Auth's are strings, or numbers when it generates serial ids. */
@@ -1070,6 +1123,8 @@ export class EffectRouteBuilder<
 
     const answersJson = this.answersJson
 
+    const routeModelsOf = routeModelsOnce<E>(bindings, options?.params, bridgeConfig)
+
     // oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits request parsing and runtime completion, then maps the result to an HTTP response.
     return async (c) => {
       setEffectBridgeConfig(c, bridgeConfig)
@@ -1083,22 +1138,7 @@ export class EffectRouteBuilder<
         allowDefaultPageCache(c)
       }
 
-      // Get schema from bridgeConfig or from context (set by setupWeb/effectBridge)
-      const schema = bridgeConfig?.schema ?? getEffectSchema(c)
-      const configuredBindings = bridgeConfig?.bindings ?? getEffectBindings(c)
-      // A {param} with a binding parser names a model; any other is a plain
-      // parameter the action reads with validateRequest.
-      const modelBindings = configuredBindings
-        ? bindings.filter((binding) => Object.hasOwn(configuredBindings, binding.param))
-        : []
-
-      // Use provided params schema, or infer from database schema if available
-      const paramsSchema = options?.params ?? (
-        modelBindings.length > 0 && schema
-          ? inferParamsSchema(modelBindings, schema, configuredBindings) ?? undefined
-          : undefined
-      )
-
+      const { schema, configuredBindings, modelBindings, paramsSchema, guarded } = routeModelsOf(c)
       const validation = await this.ensureParams(c, paramsSchema)
 
       if (validation) return validation
@@ -1125,7 +1165,6 @@ export class EffectRouteBuilder<
       // read it and let the visitor in. The route's records load together, so
       // until then nothing else may ask for any of them: an action, a layer
       // that reads a record for breadcrumbs, or a purge.
-      const guarded = modelBindings.map((binding) => binding.param).filter((name) => isGuardedBinding(configuredBindings?.[name]))
       const decided = new Set<string>()
       const undecided = (): string | undefined => guarded.find((name) => !decided.has(name))
       const positionOf = (key: string): number => modelBindings.findIndex((binding) => binding.param === key)
@@ -1449,7 +1488,7 @@ export class EffectRouteBuilder<
         Predicate.isTagged(decision, 'skip') &&
         decision.warning &&
         !warnedIneffectiveCache &&
-        isDevelopment(c, openWebContext(c).errorBoundary)
+        isDevelopment(c, setupOf(c).errors)
       ) {
         warnedIneffectiveCache = true
         // oxlint-disable-next-line effecttsgo/global-console -- This outer Hono adapter emits a once-per-route development configuration warning after the request runtime has been disposed.
