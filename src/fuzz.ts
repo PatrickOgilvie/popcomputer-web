@@ -28,6 +28,8 @@
  */
 import { Arbitrary, Effect, Predicate, Schema as S, type SchemaAST } from 'effect'
 import type { PathParamName } from './paths.js'
+import type { EffectErrorEvent } from './effect/error-observer.js'
+import { observingEnv } from './effect/test-env.js'
 import type { TestApp, TestBindings } from './testing.js'
 
 const configuredRuns = process.env.FUZZ_RUNS === undefined ? undefined : Number(process.env.FUZZ_RUNS)
@@ -557,16 +559,21 @@ export function requestOf(sent: FuzzRequest, origin = 'http://localhost'): Reque
   }
 }
 
-/** An answer to a generated request: its response, and the body read once. */
+/** An answer to a generated request: its response, the body read once, and what the error observer saw. */
 export interface FuzzAnswer {
   readonly response: Response
   readonly text: string
+  /** Each failure and defect the error observer saw while the request ran, its background work's among them. */
+  readonly observed: ReadonlyArray<EffectErrorEvent>
 }
 
 /**
  * Send `sent` through the application with `env`, the bindings for its
  * person: `testEnv(signedIn(row), bindings)` for a member, `testEnv(bindings)`
- * for a visitor. Nothing when `fetch` refuses to make the request.
+ * for a visitor. Nothing when `fetch` refuses to make the request. The answer
+ * holds what the error observer saw, which goes there in place of the
+ * application's own observer, so `brokenPromises` sees a defect no answer
+ * shows, such as one in background work after the action succeeded.
  */
 export async function sendFuzzRequest(
   app: TestApp,
@@ -577,9 +584,19 @@ export async function sendFuzzRequest(
   if (requestOf(sent, origin) === undefined) return undefined
 
   const { url, init } = partsOf(sent, origin)
-  const response = await app.request(url, init, env)
+  const { env: observing, observed } = observingEnv(env)
+  const response = await app.request(url, init, observing)
 
-  return { response, text: await response.text() }
+  return { response, text: await response.text(), observed }
+}
+
+/** An error as the reason a rule broke names it: its message, or the fields a tagged error without one carries. */
+function described(error: unknown): string {
+  if (!(error instanceof Error)) return show(error)
+
+  const fields = Object.fromEntries(Object.entries(error).filter(([key]) => key !== '_tag'))
+
+  return error.message === '' ? `${error.name} ${show(fields)}` : `${error.name}: ${error.message}`
 }
 
 export interface PromisesOptions {
@@ -666,7 +683,10 @@ function namedHosts(sent: FuzzRequest, siteHost: string): Set<string> {
  *   envelope, and is never sent to sign in;
  * - an Inertia visit that changes something is redirected with a 303;
  * - no answer sends the visitor to another site the request named, such as
- *   `?redirect=//evil.test`, by its Location or its X-Inertia-Location.
+ *   `?redirect=//evil.test`, by its Location or its X-Inertia-Location;
+ * - no request makes a defect, in its action, a layer, shared props or its
+ *   background work, and no background work fails: `sendFuzzRequest`
+ *   records what the error observer sees, which no answer may show.
  */
 export function brokenPromises(sent: FuzzRequest, answer: FuzzAnswer, options: PromisesOptions = {}): string[] {
   const broken: string[] = []
@@ -718,6 +738,14 @@ export function brokenPromises(sent: FuzzRequest, answer: FuzzAnswer, options: P
     const target = location !== null && URL.canParse(location, origin) ? new URL(location, origin) : undefined
 
     if (target !== undefined && named.has(target.host)) broken.push(`sent the visitor to ${target.host}, a site the request named, by ${show(location)}`)
+  }
+
+  for (const event of answer.observed) {
+    const operation = event.metadata?.operation
+
+    if (event.kind === 'defect') broken.push(`made a defect${Predicate.isString(operation) ? ` in ${operation}` : ''}: ${described(event.error)}`)
+    // Background work names its operation; an action's failure the error page answered names none.
+    else if (event.handling === 'unhandled' && Predicate.isString(operation)) broken.push(`its background work ${operation} failed: ${described(event.error)}`)
   }
 
   return broken

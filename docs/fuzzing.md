@@ -154,16 +154,16 @@ beside each new action, so its writes are generated with valid fields.
 The rules each answer keeps:
 
 - `brokenPromises`: the framework's, for any application. No request is
-  answered 500; another site's write, by its Origin or else its Referer, is
-  refused with a 403 unless it carries an Authorization no browser attaches
-  by itself; a signed-in answer, or one that sets a cookie, is never kept by
-  a shared cache; a JSON client gets each failure in the JSON envelope and is
-  never sent to sign in; an Inertia visit that changes something is
-  redirected with a 303; no answer redirects to a site the request named.
-  Give it `{ origin, signInPath }` when the application's differ from
-  `http://localhost` and `/login`.
-- `leaks`: no answer shows one person's canary to anyone else, in its body
-  or its headers.
+  answered 500 or makes a defect, even one no answer shows, as in background
+  work (`sendFuzzRequest` records what the error observer sees); another
+  site's write, by its Origin or else its Referer, is refused with a 403
+  unless it carries an Authorization no browser attaches by itself; a
+  signed-in answer, or one that sets a cookie, is never kept by a shared
+  cache; a JSON client gets each failure in the JSON envelope and is never
+  sent to sign in; an Inertia visit that changes something is redirected
+  with a 303; no answer redirects to a site the request named. Give it
+  `{ origin, signInPath }` unless they are `http://localhost` and `/login`.
+- `leaks`: no answer shows a person's canary to anyone else, in body or headers.
 - `strangerWrites`: no row is changed or deleted by anyone but its owner,
   moved to another owner, or created for someone other than its sender.
 - `refusedWrites`: a 4xx answer changed no rows. Refusing everything keeps

@@ -1,4 +1,5 @@
-import type { Layer } from 'effect'
+import { Effect, Layer } from 'effect'
+import { EffectErrorObserverService, type EffectErrorEvent } from './error-observer.js'
 
 /**
  * Test state attached to request env objects by `testEnv`
@@ -36,4 +37,22 @@ export function copyTestState(from: unknown, to: object): void {
 
   if (layer !== undefined) attachTestLayer(to, layer)
   if (database !== undefined) attachTestDatabase(to, database)
+}
+
+/**
+ * A copy of a test env whose requests give what the error observer sees to
+ * the list returned beside it, in place of the application's own observer,
+ * with the env's layer and database.
+ */
+export function observingEnv<Env extends object>(env: Env): { readonly env: Env; readonly observed: ReadonlyArray<EffectErrorEvent> } {
+  const observed: EffectErrorEvent[] = []
+  const copy = { ...env }
+  const observer = Layer.succeed(EffectErrorObserverService, EffectErrorObserverService.of({
+    observe: (event) => Effect.sync(() => void observed.push(event)),
+  }))
+
+  copyTestState(env, copy)
+  attachTestLayer(copy, Layer.merge(readTestLayer(env) ?? Layer.empty, observer))
+
+  return { env: copy, observed }
 }

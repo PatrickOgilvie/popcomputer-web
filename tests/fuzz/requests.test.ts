@@ -6,7 +6,8 @@
  * app.ts declares, from a visitor, ada or grace. Whatever arrives, each
  * answer keeps the rules the framework promises (`brokenPromises`):
  *
- * - no request makes a 500;
+ * - no request makes a 500, or a defect even where no answer shows it, as in
+ *   background work, which `sendFuzzRequest` reads from the error observer;
  * - a write another site's page sends, by its Origin or else its Referer,
  *   is refused with a 403, unless it carries an Authorization scheme no
  *   browser attaches by itself, such as Bearer (src/security.ts's
@@ -28,7 +29,7 @@
  *   refusal never tells whether someone else's record exists;
  * - the page a visitor signed in for is on this site;
  * - a refused request (4xx) sends the database no write;
- * - no request makes a defect, or changes the realm's built-ins.
+ * - no request changes the realm's built-ins.
  *
  * Every one of those holds for an application that refuses everything, so
  * the test also checks that the requests reached their actions: a quarter
@@ -129,7 +130,7 @@ function offSite(sent: FuzzRequest<Person>, answer: FuzzAnswer): string[] {
 }
 
 async function send(sent: FuzzRequest<Person>): Promise<Refusal> {
-  const { app, statements, observed, rows } = createApp()
+  const { app, statements, rows } = createApp()
   const before = rows()
 
   reached.cases += 1
@@ -141,7 +142,6 @@ async function send(sent: FuzzRequest<Person>): Promise<Refusal> {
   const after = rows()
   const status = answer.response.status
   const writes = statements.filter((statement) => WRITE_STATEMENT.test(statement))
-  const defects = observed.filter((event) => event.kind === 'defect').length
   const madePublic = after.filter((row) => before.some((was) => was.id === row.id && was.visibility !== row.visibility))
 
   reached.answered += 1
@@ -154,7 +154,6 @@ async function send(sent: FuzzRequest<Person>): Promise<Refusal> {
     ...strangerWrites(sent, { before, after }, { id: (row) => row.id, owner: (row) => row.user_id }),
     ...madePublic.map((row) => `${sent.person ?? 'a visitor'} made ${row.id} ${row.visibility}`),
     ...(status >= 400 && writes.length > 0 ? [`answered ${status} after writing: ${writes.join('; ')}`] : []),
-    ...(defects > 0 ? [`made ${defects} defects`] : []),
     ...offSite(sent, answer),
     ...(await existenceShown(sent, answer)),
     ...[realmChanges()].filter((change) => change !== undefined),
