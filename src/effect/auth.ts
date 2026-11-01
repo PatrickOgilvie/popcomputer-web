@@ -28,6 +28,7 @@ import {
 import { openWebContext } from '../request-context.js'
 import { sessionCookies } from '../session-cookies.js'
 import { WebSetupService } from '../web-setup.js'
+import { queueSessionLookupCookies } from '../response-output.js'
 import { BodyTooLarge, DEFAULT_BODY_LIMIT, formatBytes, readBody } from './body-limit.js'
 import { bodyOf } from './better-auth-body.js'
 import { schemaExport, tableOfSchema } from './table-schema.js'
@@ -367,9 +368,7 @@ export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): Middl
     // as the session, unless the response sets the session itself.
     const { session, cookies } = sessionLookup(looked)
 
-    if (cookies.length > 0) {
-      requestCtx.sessionLookupCookies = [...(requestCtx.sessionLookupCookies ?? []), ...cookies]
-    }
+    if (cookies.length > 0) queueSessionLookupCookies(c, cookies)
 
     if (session) {
       const exit = await Effect.runPromiseExit(S.decodeEffect(sessionSchema)(session))

@@ -361,6 +361,28 @@ Done when `withDeferredOutput` and `setsCookie` are gone, and the step 0
 cache-option tests and the flash, middleware, render-options and security
 tests pass.
 
+Done. `src/response-output.ts` owns what a response carries beside its
+body:
+- `queueCookie`, `queueSessionLookupCookies` and `queueHeader` are the only
+  writers, called by the cookie jar, the session lookup and
+  `ResponseHeaders`.
+- `finishResponse(c, response)` finishes a response once, in order: an
+  Inertia visit's followable redirect (302 to 303, another site to 409,
+  each keeping the response's cookies), the history clear, then the flash
+  cookie, the app's cookies, the lookup's cookies the response doesn't set,
+  and the queued headers, copying the headers at most once.
+- The route finishes its response before its cache option reads it, and
+  `web()` finishes only what no route did. A test plants the bug of
+  finishing twice.
+- `withDeferredOutput`, `PER_RECIPIENT_HEADERS` and `flash.setsCookie` are
+  gone. Flash gives `cookie(status)`, and `commit` is a wrapper over it.
+  `web()`'s own copies of the redirect and cookie helpers are gone.
+
+One departure: the three queue fields stay as the module's storage, not
+deprecated mirrors of a new object. Only `historyCleared` and `finished`
+are new, as `ctx.output`. `HistoryClear` and `Flash` were re-run and give
+what the skill requires.
+
 ## Step 5 — Route models become an Effect owned by `binding.ts`
 
 - `routeModels(plan)` in `binding.ts` returns the Layer providing

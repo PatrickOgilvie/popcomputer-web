@@ -28,6 +28,7 @@ import {
 import { openWebContext } from '../request-context.js'
 import { isDevelopment } from '../development.js'
 import { setupOf } from '../web-setup.js'
+import { finishResponse, setsRecipientState } from '../response-output.js'
 import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
@@ -530,50 +531,6 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
   return isPersonalRequest(c) || openWebContext(c).readRequestState === true
 }
 
-/** Headers that hand the recipient something of their own, as a cookie does. */
-const PER_RECIPIENT_HEADERS: ReadonlySet<string> = new Set(['set-cookie', 'set-auth-token'])
-
-/** A route's response as its cache policy sees it, with what web() writes on it later. */
-interface AnsweredResponse {
-  readonly response: Response
-  /** Whether the response sets a cookie, itself or through what web() writes. */
-  readonly setsCookie: boolean
-}
-
-/**
- * The route's response with what web() writes on it once the route has
- * answered, which its cache policy must see: the Cache-Control headers an
- * action or layer added with responseHeader, moved onto the response, where
- * the policy keeps a stricter one and replaces any other as it does the
- * response's own; and whether it sets a cookie, as an application cookie,
- * Better Auth's cookies or set-auth-token, the session lookup's renewal or
- * expiry, or the flash cookie does.
- */
-function withDeferredOutput<E extends Env>(c: HonoContext<E>, response: Response): AnsweredResponse {
-  const context = openWebContext(c)
-  const added = context.responseHeaders ?? []
-  const setsCookie =
-    response.headers.has('Set-Cookie') ||
-    (context.responseCookies ?? []).length > 0 ||
-    (context.sessionLookupCookies ?? []).length > 0 ||
-    added.some(([name]) => PER_RECIPIENT_HEADERS.has(name.toLowerCase())) ||
-    context.flash?.setsCookie(response.status) === true
-
-  const cacheControl = added.filter(([name]) => name.toLowerCase() === 'cache-control')
-
-  if (cacheControl.length === 0) return { response, setsCookie }
-
-  context.responseHeaders = added.filter(([name]) => name.toLowerCase() !== 'cache-control')
-
-  const headers = new Headers(response.headers)
-
-  for (const [, value] of cacheControl) headers.append('Cache-Control', value)
-
-  return {
-    response: new Response(response.body, { status: response.status, statusText: response.statusText, headers }),
-    setsCookie,
-  }
-}
 
 
 /**
@@ -1538,7 +1495,11 @@ export class EffectRouteBuilder<
         await disposeRequestRuntime(c, routeRuntime)
       }
 
-      if (options?.cache === 'no-store' && response instanceof Response && !response.headers.has('Cache-Control')) {
+      // The response with every cookie and header the request queued, so the
+      // cache policy below reads what the browser will receive.
+      response = finishResponse(c, response)
+
+      if (options?.cache === 'no-store' && !response.headers.has('Cache-Control')) {
         const headers = new Headers(response.headers)
         headers.set('Cache-Control', 'no-store')
 
@@ -1548,31 +1509,27 @@ export class EffectRouteBuilder<
       // The route says so itself, so it holds in an application composed
       // without setupWeb's privateByDefault: only the visitor's browser keeps
       // the page, or no cache at all when it is someone's own or sets a cookie.
-      if (options?.cache === 'private' && response instanceof Response) {
-        const answered = withDeferredOutput(c, response)
+      if (options?.cache === 'private') {
+        if (response.headers.has('Cache-Control')) return response
 
-        if (answered.response.headers.has('Cache-Control')) return answered.response
+        const headers = new Headers(response.headers)
+        headers.set('Cache-Control', defaultCacheControl(c, setsRecipientState(response)))
 
-        const headers = new Headers(answered.response.headers)
-        headers.set('Cache-Control', defaultCacheControl(c, answered.setsCookie))
-
-        return new Response(answered.response.body, { status: answered.response.status, statusText: answered.response.statusText, headers })
+        return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
       }
 
-      if (typeof options?.cache !== 'object' || !(response instanceof Response)) {
+      if (typeof options?.cache !== 'object') {
         return response
       }
 
-      const answered = withDeferredOutput(c, response)
-
       const decision = decideCachePolicy({
         method: c.req.method,
-        status: answered.response.status,
+        status: response.status,
         isPartialReload: isPartialReloadRequest((name) => c.req.header(name)),
-        setsCookie: answered.setsCookie,
+        setsCookie: setsRecipientState(response),
         hasPrivateRequestState: hasPrivateRequestState(c),
-        existingCacheControl: answered.response.headers.get('Cache-Control'),
-        isPage: isPageResponse(answered.response.headers),
+        existingCacheControl: response.headers.get('Cache-Control'),
+        isPage: isPageResponse(response.headers),
         derivedTags: recordTags,
         options: options.cache,
       })
@@ -1588,7 +1545,7 @@ export class EffectRouteBuilder<
         console.warn(`[@popcomputer/web] Route '${c.req.path}' ${decision.warning}`)
       }
 
-      return applyCachePolicy(answered.response, decision)
+      return applyCachePolicy(response, decision)
     }
   }
 

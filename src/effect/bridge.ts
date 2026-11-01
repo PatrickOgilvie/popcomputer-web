@@ -46,6 +46,7 @@ import type { DeclaredFields, PageSchemas } from './pages.js'
 import { observeOrLog } from './error-observer.js'
 import { readBody } from './body-limit.js'
 import { setupOf, WebSetupService } from '../web-setup.js'
+import { queueCookie, queueHeader } from '../response-output.js'
 
 /**
  * Configuration for the Effect bridge.
@@ -205,7 +206,6 @@ function createCookieJar<E extends Env>(c: HonoContext<E>): CookieJar {
       return getCookie(c, name)
     },
     set: ({ name, value, options }) => {
-      const context = openWebContext(c)
       const maxAge = options.maxAge === undefined ? undefined : Math.floor(Duration.toSeconds(Duration.fromInputUnsafe(options.maxAge)))
       const routeParams = c.req.param()
       const params: Readonly<Record<string, string>> = S.is(S.String)(routeParams) ? {} : routeParams
@@ -220,21 +220,15 @@ function createCookieJar<E extends Env>(c: HonoContext<E>): CookieJar {
         return encodeURIComponent(filled)
       })
 
-      context.responseCookies = [
-        ...(context.responseCookies ?? []),
-        serialize(name, value, {
-          path,
-          httpOnly: options.httpOnly ?? true,
-          secure,
-          sameSite: options.sameSite ?? 'Lax',
-          ...(maxAge === undefined ? {} : { maxAge }),
-        }),
-      ]
+      queueCookie(c, serialize(name, value, {
+        path,
+        httpOnly: options.httpOnly ?? true,
+        secure,
+        sameSite: options.sameSite ?? 'Lax',
+        ...(maxAge === undefined ? {} : { maxAge }),
+      }))
     },
-    append: (setCookie) => {
-      const context = openWebContext(c)
-      context.responseCookies = [...(context.responseCookies ?? []), setCookie]
-    },
+    append: (setCookie) => queueCookie(c, setCookie),
   }
 }
 
@@ -635,10 +629,7 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
   const responseLayer = Layer.succeed(ResponseFactoryService, createResponseFactory(c))
   const cookieLayer = Layer.succeed(CookieService, createCookieJar(c))
   const headersLayer = Layer.succeed(ResponseHeaders, ResponseHeaders.of({
-    append: (name, value) => {
-      const context = openWebContext(c)
-      context.responseHeaders = [...(context.responseHeaders ?? []), [name, value]]
-    },
+    append: (name, value) => queueHeader(c, name, value),
   }))
   const pageLayer = Layer.succeed(PageService, createPageRenderer(c, config))
   const setupLayer = Layer.succeed(WebSetupService, setupOf(c))
