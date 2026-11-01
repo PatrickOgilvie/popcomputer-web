@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.10.0] - 2026-11-01
+
+This release adds `stepsOf` to `@popcomputer/web/fuzz`, the sequences of steps a property over a lifecycle runs, of every length up to its `maxLength`, and builds `textOf` on it. Effect's `Arbitrary.array`, which `docs/fuzzing.md` used, kept sequences to two or three steps, and an application whose type check runs the Effect language service couldn't use it at all.
+
+What an application on 1.9.0 may need to change, which `UPGRADING.md`'s "From 1.9 to 1.10" details:
+
+- A fuzz test that builds its sequences with `Arbitrary.array`, or its steps with `Arbitrary.all`, as `docs/fuzzing.md` showed, moves to `stepsOf`, which its type check accepts.
+- A property using `textOf` sees other text from the same seed, so it may find a bug it missed.
 
 ### Added
 

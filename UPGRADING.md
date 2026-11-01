@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.9.0
+# Upgrading to @popcomputer/web 1.10.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.9.0.
+`honertia` package it was renamed from, to 1.10.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -16,12 +16,14 @@ the state the framework keeps between requests and adds
 1.8.0 adds `@popcomputer/web/vite` and widens two lint rules to a page's
 components, which [From 1.7 to 1.8](#from-17-to-18) lists, and 1.8.1 changes
 nothing more. 1.9.0 counts an IPv6 client's sign-ins by its network, which
-[From 1.8 to 1.9](#from-18-to-19) lists. So the path is one jump: make the
-1.0.0 changes below, install 1.9.0, give each binding its option as
-[From 1.3 to 1.4](#from-13-to-14) shows, check the lists in
-[From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16),
-[From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18) and
-[From 1.8 to 1.9](#from-18-to-19), and you are done.
+[From 1.8 to 1.9](#from-18-to-19) lists, and 1.10.0 adds `stepsOf` to
+`@popcomputer/web/fuzz`, which [From 1.9 to 1.10](#from-19-to-110) lists. So
+the path is one jump: make the 1.0.0 changes below, install 1.10.0, give
+each binding its option as [From 1.3 to 1.4](#from-13-to-14) shows, check
+the lists in [From 1.4 to 1.5](#from-14-to-15),
+[From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17),
+[From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19) and
+[From 1.9 to 1.10](#from-19-to-110), and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -49,9 +51,10 @@ you installed:
 12. [From 1.6 to 1.7](#from-16-to-17)
 13. [From 1.7 to 1.8](#from-17-to-18)
 14. [From 1.8 to 1.9](#from-18-to-19)
-15. [Tooling after the upgrade](#tooling-after-the-upgrade)
-16. [Checklist](#checklist)
-17. [A worked example](#a-worked-example)
+15. [From 1.9 to 1.10](#from-19-to-110)
+16. [Tooling after the upgrade](#tooling-after-the-upgrade)
+17. [Checklist](#checklist)
+18. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -1474,6 +1477,35 @@ Changes you may notice without acting on them:
   address, and every spelling of one IPv6 address as one.
 - The README and npm's description say what the framework is, and npm's
   homepage is https://web.popcomputer.com.
+
+[CHANGELOG.md](CHANGELOG.md) has the detail of each.
+
+## From 1.9 to 1.10
+
+Install 1.10.0:
+
+```bash
+bun add @popcomputer/web@^1.10.0
+```
+
+1.10.0 adds `stepsOf(step, { maxLength })` to `@popcomputer/web/fuzz`, the
+sequences of steps a property over lasting state runs, and nothing an
+application already does stops working. Check this against yours:
+
+- **Fuzz tests that build sequences with `effect/Arbitrary`.** Effect marks
+  `Arbitrary` unstable, so a type check that runs the Effect language
+  service, as `AGENTS.md` asks, fails on `Arbitrary.array`, `Arbitrary.all`
+  and `Arbitrary.map` with TS377136, and `Arbitrary.array` kept sequences to
+  two or three steps whatever its `maxLength`. Build them with `stepsOf`,
+  as [`docs/fuzzing.md`](docs/fuzzing.md)'s steps over lasting state do: a
+  step is a generator, such as `pick(['finish', 'invoice', 'signOff'])`, or
+  a record of generated fields.
+
+Changes you may notice without acting on them:
+
+- `textOf(pieces, maxPieces)` gives text of every number of pieces up to
+  `maxPieces`, so a property using it sees other text from the same seed,
+  and may find a bug it missed.
 
 [CHANGELOG.md](CHANGELOG.md) has the detail of each.
 
