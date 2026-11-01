@@ -51,11 +51,13 @@ import {
 } from '../../src/fuzz.js'
 import { signedIn, testEnv } from '../../src/testing.js'
 import { CANARIES, createApp, paths, type Person } from './app'
+import { existenceShown } from './existence'
 
-// Each placeholder's values: each person's records, a public one and a missing one.
+// Each placeholder's values: each person's records, a public one and a missing one. Only steps make notes.
 const params = {
   project: ['p1', 'g1', 'p2', 'missing'],
   task: ['t1', 't2'],
+  note: ['missing'],
   showcase: ['p2', 'p1', 'g1'],
   organization: ['acme', 'globex'],
 } as const satisfies Record<string, readonly [string, ...string[]]>
@@ -73,6 +75,8 @@ const request = fuzzRequest({
     { method: 'PUT', path: paths.project, fields: ['name=Renamed'] },
     { method: 'PATCH', path: paths.project, fields: ['name=Renamed'] },
     { method: 'DELETE', path: paths.project, fields: [] },
+    { method: 'POST', path: paths.notes, fields: ['body=Draft'] },
+    { method: 'PUT', path: paths.notes, fields: ['note={note}', 'body=Edited'] },
     { method: 'POST', path: paths.signIn, fields: ['email=ada%40example.com', 'password=correct'] },
     { method: 'POST', path: paths.orders, fields: ['address[city]=Oslo', 'lines[0][sku]=a', 'lines[0][quantity]=2'] },
   ],
@@ -88,36 +92,6 @@ const envFor = (person: Person | null) =>
 
 /** How many generated requests were answered, how many below 400, and how many of those wrote. */
 const reached = { cases: 0, answered: 0, accepted: 0, wrote: 0 }
-
-/**
- * How a refusal differs from the one the same request gets with each record
- * it names swapped, one at a time, for a missing one: in its status, or in
- * its body once the swapped name is read alike.
- */
-async function existenceShown(sent: FuzzRequest<Person>, answer: FuzzAnswer): Promise<string[]> {
-  const status = answer.response.status
-
-  if (status !== 401 && status !== 403 && status !== 404) return []
-
-  const segments = sent.path.split('/')
-  const shown: string[] = []
-
-  for (const [index, segment] of segments.entries()) {
-    if (!RECORDS.has(segment)) continue
-
-    const twin = { ...sent, path: segments.map((each, at) => (at === index ? 'missing' : each)).join('/') }
-    const missing = await sendFuzzRequest(createApp().app, twin, envFor(sent.person))
-    // Both names read alike, wherever the page echoes the URL, and so does the moment an error envelope names.
-    const alike = (text: string) => text.replaceAll(segment, '{record}').replaceAll('missing', '{record}').replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, '{time}')
-
-    if (missing === undefined) continue
-    if (missing.response.status !== status || alike(missing.text) !== alike(answer.text)) {
-      shown.push(`refused ${segment} with ${status} ${show(answer.text.slice(0, 60))}, but a missing record with ${missing.response.status} ${show(missing.text.slice(0, 60))}`)
-    }
-  }
-
-  return shown
-}
 
 /** The page /after-sign-in names, when it names one off this site. */
 function offSite(sent: FuzzRequest<Person>, answer: FuzzAnswer): string[] {
@@ -156,7 +130,7 @@ async function send(sent: FuzzRequest<Person>): Promise<Refusal> {
     ...(status >= 400 && writes.length > 0 ? [`answered ${status} after writing: ${writes.join('; ')}`] : []),
     ...(defects > 0 ? [`made ${defects} defects`] : []),
     ...offSite(sent, answer),
-    ...(await existenceShown(sent, answer)),
+    ...(await existenceShown(sent, answer, (segment) => RECORDS.has(segment), (twin) => sendFuzzRequest(createApp().app, twin, envFor(sent.person)))),
     ...[realmChanges()].filter((change) => change !== undefined),
   ]
 

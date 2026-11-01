@@ -7,9 +7,10 @@ checks it on inputs Effect generates (`effect/Arbitrary`), with the tools
 functions that read or write a visitor's text; whole requests through
 `setupWeb`, to `app.ts` and to endpoint contracts (`requests.test.ts`,
 `endpoints.test.ts`); and sequences of steps over state that lasts between
-requests, the data cache, the page cache, flash, an account's sign-in count
-and Inertia's history, which run the code of the lifecycles
-`docs/state-machines.md` models. `bun test` runs
+requests: sessions of `app.ts`'s requests against one database
+(`sessions.test.ts`), and the data cache, the page cache, flash, an
+account's sign-in count and Inertia's history, which run the code of the
+lifecycles `docs/state-machines.md` models. `bun test` runs
 every property for a few hundred cases from a fixed seed, so the commit gate
 is repeatable. `bun run fuzz` runs many more cases from a random seed:
 
@@ -35,6 +36,7 @@ security audits, on the release that had it:
 | `database-errors.test.ts` | a failed write's constraint never depends on the request text its error quotes | run-1 C10 on 1.4.2, run-2 F9 on 1.5.0 |
 | `validators.test.ts` | every validator answers any input, decodes its own encoding to the same value, and no text makes it slow | run-1 C5, on 1.4.2 |
 | `requests.test.ts` | any request `fuzzRequest` generates to `app.ts`'s paths and forms, from a visitor, ada or grace, is answered without a defect or a write it refused, shows and changes no one's private record but its owner's, refuses another site's writes, keeps signed-in answers from shared caches, answers a JSON client in the envelope, sends no one to a site the request named, and refuses a record exactly as it refuses a missing one; and a quarter of the requests reach their actions | 1.4.2's cross-site check, which ran after route lookup and answered a write to an unrouted path 404; and, planted on main, a `//host` Referer kept by `sameOriginReferer` (run-1 C17), an owner checked after the lookup, every write refused, a client asking for JSON and HTML answered a page, and `intendedUrl` taking any redirect |
+| `sessions.test.ts` | over any sessions of `fuzzSession`'s requests to `app.ts` against one database, from a visitor, ada and grace, each with a browser, where a step names a project or note an earlier step created, every answer keeps `requests.test.ts`'s rules against the session's model of who owns each record, and steps change created records and name other people's | two bugs `requests.test.ts` passes from every seed, planted on main: a note edited by the id its form sends without scoping the lookup to the bound project, and a project's delete that leaves its tasks for `/tasks`, which hides only private projects' tasks; each is found from ten seeds within the default runs, shrunk to two or three steps |
 | `endpoints.test.ts` | an endpoint carries any value of its types through `call` and back, answers any other body before its handler runs, and with `auth: true` answers 401 before reading input | three `call` bugs it found after 1.6.0 |
 | `data-cache.test.ts` | over any steps, held computations among them, no read that starts after a purge returns a value from before its write, `cache` returns nothing stored longer ago than its `ttl`, and returns what it keeps for a key no write has touched | 1.6.0's `cacheSet`, which stored no tags (`DataCache.tla`'s counterexample); and, planted on main, an entry served at exactly its `ttl` and a cache that served nothing it stored |
 | `page-cache.test.ts` | over any requests from a guest, a guest with a cookie and two members, the default page cache answers as a fresh render does, stores no page a guard, middleware or sign-in decides for, and serves a guest who repeats a request the page it just kept | run-1 C6 and C12 on 1.4.2, run-2 F11 on 1.5.0; and, planted on main, a cache that stored nothing or found nothing it stored |

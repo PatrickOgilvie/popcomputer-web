@@ -1,10 +1,12 @@
 /**
  * The application the request fuzz tests send generated requests to. Each
  * binding says who may load its record, as an application's would: ada's
- * and grace's private projects carry canary names no input ever holds, so a
- * response that shows one to anyone else has leaked it. Its routes read,
- * write, nest form fields, cache a public page and return to the page a
- * visitor signed in for, and none is meant to fail
+ * and grace's private projects, and their tasks, carry canary names no input
+ * ever holds, so a response that shows one to anyone else has leaked it. Its
+ * routes read, write, nest form fields, cache a public page, return to the
+ * page a visitor signed in for, list the tasks no private project holds, and
+ * add and edit a project's notes, which only steps create, and none is meant
+ * to fail
  * with a defect. Every statement the database receives, and every failure
  * the error observer sees, is kept.
  */
@@ -13,7 +15,7 @@ import { Context, Effect, Layer, Schema as S } from 'effect'
 import { Database } from 'bun:sqlite'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, notInArray } from 'drizzle-orm'
 import { action } from '../../src/effect/action.js'
 import { intendedUrl } from '../../src/effect/auth.js'
 import { bound, routeBinding } from '../../src/effect/binding.js'
@@ -36,6 +38,12 @@ export const projects = sqliteTable('projects', {
 export const tasks = sqliteTable('tasks', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull().references(() => projects.id),
+  title: text('title').notNull(),
+})
+export const notes = sqliteTable('notes', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull().references(() => projects.id),
+  body: text('body').notNull(),
 })
 export const organizations = sqliteTable('organizations', { id: text('id').primaryKey() })
 export const memberships = sqliteTable('memberships', {
@@ -43,7 +51,7 @@ export const memberships = sqliteTable('memberships', {
   userId: text('user_id').notNull(),
 })
 
-const schema = { user, projects, tasks, organizations, memberships }
+const schema = { user, projects, tasks, notes, organizations, memberships }
 
 /** Every route's path, declared once, as an application's src/paths.ts declares them. */
 export const paths = {
@@ -51,6 +59,9 @@ export const paths = {
   projects: '/projects',
   project: '/projects/{project}',
   task: '/projects/{project}/tasks/{task}',
+  tasks: '/tasks',
+  notes: '/projects/{project}/notes',
+  note: '/projects/{project}/notes/{note}',
   showcase: '/showcase/{showcase}',
   organization: '/orgs/{organization}',
   signIn: '/sign-in',
@@ -67,6 +78,8 @@ export type Person = keyof typeof CANARIES
 class CurrentMember extends Context.Service<CurrentMember, typeof memberships.$inferSelect>()('fuzz/CurrentMember') {}
 
 const ProjectForm = S.Struct({ name: requiredString })
+const NoteForm = S.Struct({ body: requiredString })
+const EditNote = S.Struct({ note: requiredString, body: requiredString })
 const SignInForm = S.Struct({ email, password: currentPassword })
 const Search = S.Struct({ q: nullableString, page: S.optional(coercedNumber), tags: S.optional(S.Array(S.String)) })
 const Order = S.Struct({
@@ -82,17 +95,29 @@ export interface ProjectRow {
   readonly visibility: string
 }
 
+/** A project, task or note, as the database holds it: the record its row belongs to, and its text. */
+export interface RecordRow {
+  readonly kind: 'project' | 'task' | 'note'
+  readonly id: string
+  /** A project's user, a task's or a note's project. */
+  readonly parent: string
+  /** A project's name and visibility, a task's title, a note's body. */
+  readonly text: string
+}
+
 export function createApp() {
   const sqlite = new Database(':memory:')
   sqlite.run('CREATE TABLE user (id TEXT PRIMARY KEY)')
   sqlite.run('CREATE TABLE projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, visibility TEXT NOT NULL)')
-  sqlite.run('CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL)')
+  sqlite.run('CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL)')
+  sqlite.run('CREATE TABLE notes (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, body TEXT NOT NULL)')
   sqlite.run('CREATE TABLE organizations (id TEXT PRIMARY KEY)')
   sqlite.run('CREATE TABLE memberships (organization_id TEXT NOT NULL, user_id TEXT NOT NULL)')
   sqlite.run("INSERT INTO user (id) VALUES ('ada'), ('grace')")
   sqlite.run(`INSERT INTO projects (id, user_id, name, visibility) VALUES
     ('p1', 'ada', '${CANARIES.ada}', 'private'), ('p2', 'ada', 'Launch', 'public'), ('g1', 'grace', '${CANARIES.grace}', 'private')`)
-  sqlite.run("INSERT INTO tasks (id, project_id) VALUES ('t1', 'p1'), ('t2', 'g1')")
+  sqlite.run(`INSERT INTO tasks (id, project_id, title) VALUES
+    ('t1', 'p1', '${CANARIES.ada} plan'), ('t2', 'g1', '${CANARIES.grace} plan'), ('t3', 'p2', 'Launch checklist')`)
   sqlite.run("INSERT INTO organizations (id) VALUES ('acme'), ('globex')")
   sqlite.run("INSERT INTO memberships (organization_id, user_id) VALUES ('acme', 'ada'), ('globex', 'grace')")
 
@@ -109,6 +134,7 @@ export function createApp() {
       project: routeBinding(projects, { ownedBy: 'userId' }),
       showcase: routeBinding(projects, { publicWhen: { visibility: 'public' } }),
       task: routeBinding(tasks, { scope: { project: { foreignKey: 'projectId' } } }),
+      note: routeBinding(notes, { scope: { project: { foreignKey: 'projectId' } } }),
       organization: routeBinding(organizations, { guarded: true }),
     },
   }).services({
@@ -157,6 +183,7 @@ export function createApp() {
     .delete(paths.project, action(Effect.gen(function* () {
       const project = S.decodeUnknownSync(Id)(yield* bound('project'))
 
+      yield* dbMutation((given) => client(given).delete(notes).where(eq(notes.projectId, project.id)))
       yield* dbMutation((given) => client(given).delete(tasks).where(eq(tasks.projectId, project.id)))
       yield* dbMutation((given) => client(given).delete(projects).where(eq(projects.id, project.id)))
 
@@ -172,6 +199,40 @@ export function createApp() {
       return yield* json({ id })
     })))
     .get(paths.task, action(Effect.flatMap(bound('task'), (task) => json(task))))
+    // The tasks no private project holds. It relies on every task having its
+    // project, which the delete keeps by taking a project's tasks with it.
+    .get(paths.tasks, action(Effect.flatMap(
+      dbQuery((given) => client(given).select().from(tasks).where(notInArray(
+        tasks.projectId,
+        client(given).select({ id: projects.id }).from(projects).where(eq(projects.visibility, 'private'))
+      ))),
+      (shown) => json(shown)
+    )))
+    .post(paths.notes, action(Effect.gen(function* () {
+      const project = S.decodeUnknownSync(Id)(yield* bound('project'))
+      const input = yield* validateRequest(NoteForm)
+      const id = `n-${crypto.randomUUID()}`
+
+      yield* dbMutation((given) => client(given).insert(notes).values({ id, projectId: project.id, body: input.body }))
+
+      return yield* json({ id })
+    })))
+    // A form that names the note it edits in its body, as a list of notes
+    // edited in place does: the note is looked up among the project's own.
+    .put(paths.notes, action(Effect.gen(function* () {
+      const project = S.decodeUnknownSync(Id)(yield* bound('project'))
+      const input = yield* validateRequest(EditNote)
+      const [note] = yield* dbQuery((given) =>
+        client(given).select().from(notes).where(and(eq(notes.id, input.note), eq(notes.projectId, project.id)))
+      )
+
+      if (note === undefined) return yield* notFound('Note')
+
+      yield* dbMutation((given) => client(given).update(notes).set({ body: input.body }).where(eq(notes.id, note.id)))
+
+      return yield* json({ ok: true })
+    })))
+    .get(paths.note, action(Effect.flatMap(bound('note'), (note) => json(note))))
     .get(paths.showcase, action(Effect.flatMap(bound('showcase'), (project) => json(project))), { cache: { maxAge: 60 } })
     .post(paths.signIn, action(Effect.flatMap(validateRequest(SignInForm), (input) => json({ email: input.email }))))
     .get(paths.search, action(Effect.flatMap(validateRequest(Search), (input) => json(input))))
@@ -182,6 +243,11 @@ export function createApp() {
     .get(paths.organization, action(Effect.flatMap(CurrentMember, (member) => json(member))))
 
   const rows = () => sqlite.query<ProjectRow, []>('SELECT id, user_id, name, visibility FROM projects ORDER BY id').all()
+  const records = () => sqlite.query<RecordRow, []>(`
+    SELECT 'project' AS kind, id, user_id AS parent, name || ' (' || visibility || ')' AS text FROM projects
+    UNION ALL SELECT 'task', id, project_id, title FROM tasks
+    UNION ALL SELECT 'note', id, project_id, body FROM notes
+    ORDER BY id`).all()
 
-  return { app, statements, observed, rows }
+  return { app, statements, observed, rows, records }
 }

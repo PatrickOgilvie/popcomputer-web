@@ -252,9 +252,12 @@ TypeScript example here and in `docs/` type-checks against the package.
     routes with `fuzzRequest({ paths, params, people, forms })` from
     `@popcomputer/web/fuzz`, sending each request with `sendFuzzRequest`
     and checking its answer with `brokenPromises`, `leaks`, `strangerWrites`
-    and `refusedWrites`, as `docs/fuzzing.md` shows, and add the
+    and `refusedWrites`, as `docs/fuzz-requests.md` shows, and add the
     application's own rules beside them; give each new action a form there,
-    and each new placeholder its values. Check any other rule on generated
+    and each new placeholder its values. Send sequences of them to one
+    database with `fuzzSession` and `startFuzzSession`, as
+    `docs/fuzz-sessions.md` shows, naming in `creates` each placeholder
+    whose records an action creates. Check any other rule on generated
     inputs with `fuzz(arbitrary, holds)`, and a lifecycle on sequences of
     its steps from `stepsOf(step, { maxLength })`, not Effect's
     `Arbitrary.array`, whose sequences hold two or three steps.

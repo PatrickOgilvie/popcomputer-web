@@ -6,10 +6,11 @@
  * Each piece stands alone, so an application's own fuzz tests build on
  * them: `fuzz` checks any property, `stepsOf` generates sequences of a
  * lifecycle's steps, `fuzzRequest` generates hostile requests to the
- * application's routes, `sendFuzzRequest` sends one, and `brokenPromises`,
- * `leaks`, `strangerWrites` and `refusedWrites` say how an answer broke a
- * rule. A property returns why it refused an input, or
- * nothing when it holds.
+ * application's routes, `sendFuzzRequest` sends one, `fuzzSession` and
+ * `startFuzzSession` send sequences of them to one database with a model of
+ * who owns each record, and `brokenPromises`, `leaks`, `strangerWrites` and
+ * `refusedWrites` say how an answer broke a rule. A property returns why it
+ * refused an input, or nothing when it holds.
  *
  * Each property runs a few hundred cases from a fixed seed, so a commit gate
  * is repeatable. `FUZZ_RUNS` sets the number of cases, `FUZZ_SEED=random`
@@ -28,7 +29,7 @@
  */
 import { Arbitrary, Effect, Predicate, Schema as S, type SchemaAST } from 'effect'
 import type { PathParamName } from './paths.js'
-import type { TestApp, TestBindings } from './testing.js'
+import { testBrowser, type TestApp, type TestBindings, type TestBrowser } from './testing.js'
 
 const configuredRuns = process.env.FUZZ_RUNS === undefined ? undefined : Number(process.env.FUZZ_RUNS)
 // `random` picks a seed per run; the replay token a failure prints records it.
@@ -253,8 +254,22 @@ type Values = readonly [string, ...string[]]
 export interface FuzzForm<Path extends string = string> {
   readonly method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   readonly path: Path
-  /** The fields, as `name=value`. */
+  /**
+   * The fields, as `name=value`. A `{placeholder}` in a value takes each of
+   * that placeholder's values, as the path's do, for a form that names a
+   * record in its body: `note={note}`.
+   */
   readonly fields: ReadonlyArray<string>
+}
+
+/** How often each kind of request is drawn, by whole-number weight. */
+export interface FuzzRequestMix {
+  /** What a browser on the site sends: its pages, and its forms with their own fields. */
+  readonly browser: number
+  /** A browser's request with one part sent another way: its target, query, body, added fields or one header. */
+  readonly onePart: number
+  /** A request with every part any way. */
+  readonly any: number
 }
 
 export interface FuzzRequestOptions<Paths extends Readonly<Record<string, string>>, Person extends string> {
@@ -280,7 +295,11 @@ export interface FuzzRequestOptions<Paths extends Readonly<Record<string, string
   readonly query?: ReadonlyArray<string>
   /** The site's origin. Default `http://localhost`, the origin `app.request` gives a path. */
   readonly origin?: string
+  /** How often each kind of request is drawn. Default `{ browser: 3, onePart: 4, any: 3 }`. */
+  readonly mix?: FuzzRequestMix
 }
+
+const REQUEST_MIX: FuzzRequestMix = { browser: 3, onePart: 4, any: 3 }
 
 /** Methods by how often a client sends them, with spellings a router may read apart. */
 const METHODS: readonly [readonly [string, number], ...(readonly [string, number])[]] = [
@@ -370,17 +389,23 @@ interface Target {
  * attacker sends them: any method, each declared path with each of its
  * placeholders' values, the same paths spelled another way, each form with
  * fields added, queries, bodies in every shape, and headers from this site
- * and others, from each person and a signed-out visitor. Three requests in
- * ten are what a browser on the site sends, its pages and its forms, so they
- * reach their actions; four send one part of such a request another way, so
- * a refusal shows the part it refused; the rest send every part any way. A
- * failing request shrinks toward the browser's. Wrap or map the generator
- * for more.
+ * and others, from each person and a signed-out visitor. By default three
+ * requests in ten are what a browser on the site sends, its pages and its
+ * forms, so they reach their actions; four send one part of such a request
+ * another way, so a refusal shows the part it refused; the rest send every
+ * part any way. `mix` weighs them otherwise. A failing request shrinks
+ * toward the browser's. Wrap or map the generator for more.
  */
 export function fuzzRequest<const Paths extends Readonly<Record<string, string>>, const Person extends string>(
   options: FuzzRequestOptions<Paths, Person>
 ): Arbitrary.Arbitrary<FuzzRequest<Person>> {
   const origin = options.origin ?? 'http://localhost'
+  const mix = options.mix ?? REQUEST_MIX
+
+  if (!Object.values(mix).every((weight) => Number.isSafeInteger(weight) && weight >= 0) || mix.browser + mix.onePart + mix.any === 0) {
+    throw new RangeError(`fuzzRequest: mix's weights must be whole numbers, not all 0, not ${show(mix)}`)
+  }
+
   const templates = nonEmpty(Object.values(options.paths), '/')
   const params: Readonly<Record<string, Values>> = options.params
   const valuesOf = (name: string): Values => (Object.hasOwn(params, name) ? params[name] : ['x'])
@@ -409,7 +434,7 @@ export function fuzzRequest<const Paths extends Readonly<Record<string, string>>
   const forms = firstForm === undefined
     ? undefined
     : Arbitrary.flatMap(oneOf(Arbitrary.Constant(firstForm), ...otherForms.map((form) => Arbitrary.Constant(form))), (form) =>
-        Arbitrary.map(filled(form.path), (path): Target => ({ method: form.method, path, form: form.fields }))
+        Arbitrary.map(Arbitrary.all({ path: filled(form.path), fields: Arbitrary.all(form.fields.map(filled)) }), (sent): Target => ({ method: form.method, path: sent.path, form: sent.fields }))
       )
   const target = forms === undefined ? oneOf(declared, declared, declared, crafted) : oneOf(declared, forms, forms, declared, crafted)
 
@@ -485,7 +510,7 @@ export function fuzzRequest<const Paths extends Readonly<Record<string, string>>
     // A browser's request, or one with a single part sent another way, so a
     // refusal shows what it refused and most requests reach their actions;
     // else every part any way. A failure shrinks toward a browser's request.
-    Arbitrary.all({ person, browsed, anyWay, mode: weighted(['browser', 3], ['one part', 4], ['any', 3]), part: onePart }),
+    Arbitrary.all({ person, browsed, anyWay, mode: weighted(['browser', mix.browser], ['one part', mix.onePart], ['any', mix.any]), part: onePart }),
     (parts): FuzzRequest<Person> => {
       const from = (name: Part) => (parts.mode === 'any' || (parts.mode === 'one part' && parts.part === name) ? parts.anyWay : parts.browsed)
       const target = from('target').target
@@ -728,16 +753,16 @@ export function brokenPromises(sent: FuzzRequest, answer: FuzzAnswer, options: P
 export function leaks<Person extends string>(
   sent: FuzzRequest<Person>,
   answer: FuzzAnswer,
-  canaries: Readonly<Record<Person, string | ReadonlyArray<string>>>
+  canaries: Readonly<Partial<Record<Person, string | ReadonlyArray<string>>>>
 ): string[] {
   const headers: string[] = []
 
   answer.response.headers.forEach((value, name) => void headers.push(`${name}: ${value}`))
 
   const shown = `${answer.text}\n${headers.join('\n')}`
-  const owned: ReadonlyArray<readonly [string, string | ReadonlyArray<string>]> = Object.entries(canaries)
+  const owned: ReadonlyArray<readonly [string, string | ReadonlyArray<string> | undefined]> = Object.entries(canaries)
 
-  return owned.flatMap(([owner, texts]) =>
+  return owned.flatMap(([owner, texts = []]) =>
     owner === sent.person
       ? []
       : (Predicate.isString(texts) ? [texts] : texts).filter((text) => shown.includes(text)).map((text) => `showed ${owner}'s ${show(text)} to ${sent.person ?? 'a visitor'}`)
@@ -786,4 +811,309 @@ export function refusedWrites<Row>(answer: FuzzAnswer, rows: RowsChange<Row>): s
   const status = answer.response.status
 
   return status >= 400 && status < 500 && show(rows.before) !== show(rows.after) ? [`answered ${status} after changing ${show(rows.before)} to ${show(rows.after)}`] : []
+}
+
+/** How many of the records a session's steps created a later step names: the latest, and the one before it. */
+const REFERENCES = 2
+
+/** A reference as a step holds it, `~note.0`, or with its `~` percent-encoded, as fuzzRequest spells a value another way. */
+const REFERENCE = /(~|%7[eE])([A-Za-z_$][\w$-]*)\.(\d+)/g
+
+/** A session's steps are mostly a browser's, so most reach their actions and leave state for the next. */
+const SESSION_MIX: FuzzRequestMix = { browser: 6, onePart: 3, any: 1 }
+
+export interface FuzzSessionOptions<Paths extends Readonly<Record<string, string>>, Person extends string> extends FuzzRequestOptions<Paths, Person> {
+  /**
+   * The placeholders whose records the session's steps create, as
+   * `startFuzzSession`'s `created` reads them. Each takes references
+   * beside its values: `~note.0` names the latest note a step created,
+   * `~note.1` the one before, counting round the ones there are.
+   */
+  readonly creates: ReadonlyArray<PathParamName<Paths[keyof Paths]>>
+  /** The most steps a session holds. Default 24. */
+  readonly maxLength?: number
+}
+
+/**
+ * Sessions of requests to one application, for state that lasts between
+ * them: `stepsOf` sequences of `fuzzRequest`'s requests, where a
+ * placeholder `creates` names may take a record an earlier step created,
+ * so "ada creates, grace reads, ada deletes, grace writes" is generated.
+ * Send each through `startFuzzSession`. By default six steps in ten are a
+ * browser's, three send one part another way and one every part.
+ */
+export function fuzzSession<const Paths extends Readonly<Record<string, string>>, const Person extends string>(
+  options: FuzzSessionOptions<Paths, Person>
+): Arbitrary.Arbitrary<Array<FuzzRequest<Person>>> {
+  const given: Readonly<Record<string, Values>> = options.params
+  const references = Object.fromEntries(options.creates.map((name) => [
+    name,
+    [...(Object.hasOwn(given, name) ? given[name] : []), ...Array.from({ length: REFERENCES }, (_, back) => `~${name}.${back}`)],
+  ]))
+
+  return stepsOf(
+    fuzzRequest({ ...options, params: { ...options.params, ...references }, mix: options.mix ?? SESSION_MIX }),
+    { maxLength: options.maxLength ?? 24 }
+  )
+}
+
+export interface StartFuzzSessionOptions<Person extends string> {
+  /** The application's declared paths, so the model reads which records a step's path names. */
+  readonly paths: Readonly<Record<string, string>>
+  /** The bindings each person's browser sends with: `testEnv(signedIn(row), bindings)` for a member, `testEnv(bindings)` for a visitor. */
+  readonly env: (person: Person | null) => TestBindings
+  /** Who owns each record the database starts with, by the value a path names it by. */
+  readonly owners: Readonly<Record<string, Person>>
+  /**
+   * The records a step created, by placeholder, as `{ note: id }`, read
+   * from an answer that succeeded: a JSON answer's id, or a redirect's
+   * Location, as the application's actions answer. Nothing for another.
+   */
+  readonly created: (sent: FuzzRequest<Person>, answer: FuzzAnswer) => Readonly<Record<string, string>> | undefined
+  /** The site's origin. Default `http://localhost`. */
+  readonly origin?: string
+  /** Where a signed-out visitor is sent to sign in, which no write that succeeded answers. Default `/login`. */
+  readonly signInPath?: string
+}
+
+/** A step a session sent, and its answer. */
+export interface FuzzStep<Person extends string = string> {
+  /** The request as sent, each reference replaced by the id of the record it names. */
+  readonly sent: FuzzRequest<Person>
+  readonly answer: FuzzAnswer
+  /** The ids of the records the step named by reference. */
+  readonly referenced: ReadonlyArray<string>
+}
+
+/**
+ * One application's session: a browser for each person, the records its
+ * steps created, and a model of who owns each record, which the rules
+ * check each answer against.
+ */
+export interface FuzzSession<Person extends string = string> {
+  /**
+   * Send a step through its person's browser, which keeps the cookies its
+   * answers set, with each reference replaced by the record it names, and
+   * update the model when it succeeded: below 400, and not sent to sign in.
+   * A reference to a record no step has created yet stays as it is, and
+   * names none. Nothing when `fetch` refuses to make the request.
+   */
+  send(step: FuzzRequest<Person>): Promise<FuzzStep<Person> | undefined>
+  /**
+   * Send a request as its person's last step went, with the cookies their
+   * browser held before it, keeping none the answer sets: a request beside
+   * the session, such as the same step naming a missing record.
+   */
+  probe(sent: FuzzRequest<Person>): Promise<FuzzAnswer | undefined>
+  /**
+   * Who owns a record, by the model: the person `owners` gives, or for one
+   * a step created, the owner of the record its path names last, such as
+   * the project a note was posted to, else the person who sent it.
+   */
+  ownerOf(id: string): Person | null | undefined
+  /** Whether the record is in the model and no step that succeeded deleted it: a DELETE to a path that names it last. */
+  exists(id: string): boolean
+  /**
+   * The canaries `leaks` checks a step's answer against: the texts
+   * `seeded` gives each person, and the ids of the records each owns that
+   * steps created and `viewer` has never sent, as no one but their owner
+   * learns them unless the application shows them.
+   */
+  canaries(
+    viewer: Person | null,
+    seeded: Readonly<Partial<Record<Person, string | ReadonlyArray<string>>>>
+  ): Readonly<Record<string, ReadonlyArray<string>>>
+  /** A line for each step sent: who sent what, the answer's status, and the records it created. */
+  readonly history: ReadonlyArray<string>
+}
+
+/** A record of a session's model. */
+interface ModelRecord<Person extends string> {
+  readonly owner: Person | null
+  deleted: boolean
+}
+
+/** A declared path's segments, each a placeholder's name or the text it must be. */
+type Template = ReadonlyArray<{ readonly name: string } | { readonly text: string }>
+
+const PLACEHOLDER_SEGMENT = /^\{([^}:]+)(?::[^}]+)?\}$/
+
+/** A segment as the router reads it, or as it is when it is not percent-encoding. */
+function decodedSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
+/** The values the first declared path `path` matches gives its placeholders, in order, or none. */
+function recordsNamed(path: string, templates: ReadonlyArray<Template>): string[] {
+  const segments = path.split('/').filter((segment) => segment !== '').map(decodedSegment)
+  const template = templates.find((each) => each.length === segments.length && each.every((part, index) => 'name' in part || part.text === segments[index]))
+
+  return template === undefined ? [] : template.flatMap((part, index) => ('name' in part ? [segments[index]] : []))
+}
+
+/** The request's method and target, and its body's fields, on one line. */
+function described(sent: FuzzRequest): string {
+  const body = sent.body.as === 'none' ? '' : sent.body.as === 'text' ? ` text ${show(sent.body.text)}` : ` ${sent.body.as} ${sent.body.fields.join('&')}`
+
+  return `${sent.method} ${sent.path}${sent.query === '' ? '' : `?${sent.query}`}${body}`
+}
+
+/**
+ * Start a session of `fuzzSession`'s steps against one application, its
+ * database as the test seeded it: `owners` says who owns each seeded
+ * record, and `created` reads each record a step creates. The model gives
+ * a created record to the owner of the record its path names last, such as
+ * the project a note was posted to, or else to its sender, and marks a
+ * record deleted when a DELETE naming it succeeds.
+ */
+export function startFuzzSession<Person extends string>(app: TestApp, options: StartFuzzSessionOptions<Person>): FuzzSession<Person> {
+  const origin = options.origin ?? 'http://localhost'
+  const signInPath = options.signInPath ?? '/login'
+  // Each declared path, the ones with more fixed segments first, as a router prefers them.
+  const templates: ReadonlyArray<Template> = Object.values(options.paths)
+    .map((path): Template => path.split('/').filter((segment) => segment !== '').map((segment) => {
+      const name = PLACEHOLDER_SEGMENT.exec(segment)?.[1]
+
+      return name === undefined ? { text: segment } : { name }
+    }))
+    .sort((first, second) => second.filter((part) => 'text' in part).length - first.filter((part) => 'text' in part).length)
+  const records = new Map<string, ModelRecord<Person>>(Object.entries(options.owners).map(([id, owner]) => [id, { owner, deleted: false }]))
+  // The ids of the records steps created, by placeholder, oldest first.
+  const created = new Map<string, string[]>()
+  // The created records each person has sent in a request, and so knows.
+  const known = new Map<Person | null, Set<string>>()
+  const browsers = new Map<Person | null, TestBrowser>()
+  const cookiesBefore = new Map<Person | null, ReadonlyMap<string, string>>()
+  const history: string[] = []
+
+  const browserOf = (person: Person | null): TestBrowser => {
+    const browser = browsers.get(person) ?? testBrowser(app, options.env(person))
+
+    browsers.set(person, browser)
+
+    return browser
+  }
+
+  const resolve = (step: FuzzRequest<Person>): { readonly sent: FuzzRequest<Person>; readonly referenced: ReadonlyArray<string> } => {
+    const referenced = new Set<string>()
+    const replaced = (text: string) => text.replace(REFERENCE, (reference, tilde: string, name: string, back: string) => {
+      const ids = created.get(name) ?? []
+      const id = ids[ids.length - 1 - (Number(back) % Math.max(1, ids.length))]
+
+      if (id === undefined) return reference
+
+      referenced.add(id)
+
+      return tilde === '~' ? encodeURIComponent(id) : encodedFirst(encodeURIComponent(id))
+    })
+    const body: FuzzBody = step.body.as === 'none'
+      ? step.body
+      : step.body.as === 'text' ? { as: 'text', text: replaced(step.body.text) } : { as: step.body.as, fields: step.body.fields.map(replaced) }
+    const headers = Object.fromEntries(Object.entries(step.headers).map(([name, value]) => [name, replaced(value)]))
+    // A browser names its page's origin on every request that may change
+    // something, as the person's does, so the rules read the Origin it sent.
+    const writes = !['GET', 'HEAD'].includes(step.method.toUpperCase())
+    const sent: FuzzRequest<Person> = {
+      ...step,
+      path: replaced(step.path),
+      query: replaced(step.query),
+      headers: writes && (headers.origin ?? '') === '' ? { ...headers, origin } : headers,
+      body,
+    }
+
+    return { sent, referenced: [...referenced] }
+  }
+
+  /** Send through a browser, as `sendFuzzRequest` sends through the application. */
+  const through = async (browser: TestBrowser, sent: FuzzRequest<Person>): Promise<FuzzAnswer | undefined> => {
+    if (requestOf(sent, origin) === undefined) return undefined
+
+    const { url, init } = partsOf(sent, origin)
+    const response = await browser.request(url, init)
+
+    return { response, text: await response.text() }
+  }
+
+  const succeeded = (answer: FuzzAnswer): boolean => {
+    const { status, headers } = answer.response
+    const location = headers.get('location') ?? ''
+
+    return status < 300 || (status < 400 && !(URL.canParse(location, origin) && new URL(location, origin).pathname === signInPath))
+  }
+
+  return {
+    async send(step) {
+      const { sent, referenced } = resolve(step)
+      const browser = browserOf(sent.person)
+
+      cookiesBefore.set(sent.person, new Map(browser.cookies))
+
+      const answer = await through(browser, sent)
+
+      if (answer === undefined) {
+        history.push(`${sent.person ?? 'a visitor'} ${described(sent)}: fetch refuses to make it`)
+
+        return undefined
+      }
+
+      const text = [described(sent), ...Object.values(sent.headers)].join('\n')
+      const knows = known.get(sent.person) ?? new Set()
+
+      // An id the step sent, as a reference spells it, is one its sender knows.
+      for (const id of [...created.values()].flat()) {
+        if ([encodeURIComponent(id), encodedFirst(encodeURIComponent(id))].some((spelling) => text.includes(spelling))) knows.add(id)
+      }
+
+      known.set(sent.person, knows)
+
+      const made = succeeded(answer) ? Object.entries(options.created(sent, answer) ?? {}) : []
+      const named = recordsNamed(sent.path, templates).at(-1)
+      const parent = named === undefined ? undefined : records.get(named)
+
+      for (const [name, id] of made) {
+        const ids = created.get(name) ?? []
+
+        // A record keeps the owner the model first gave it, whichever placeholders name it.
+        if (!records.has(id)) records.set(id, { owner: parent === undefined ? sent.person : parent.owner, deleted: false })
+        if (!ids.includes(id)) created.set(name, [...ids, id])
+      }
+
+      if (parent !== undefined && sent.method.toUpperCase() === 'DELETE' && succeeded(answer)) parent.deleted = true
+
+      history.push(`${sent.person ?? 'a visitor'} ${described(sent)}: ${answer.response.status}${made.length === 0 ? '' : `, created ${made.map(([name, id]) => `${name} ${id}`).join(', ')}`}`)
+
+      return { sent, answer, referenced }
+    },
+    async probe(sent) {
+      const browser = testBrowser(app, options.env(sent.person))
+
+      for (const [name, value] of cookiesBefore.get(sent.person) ?? new Map<string, string>()) browser.setCookie(name, value)
+
+      return through(browser, resolve(sent).sent)
+    },
+    ownerOf: (id) => records.get(id)?.owner,
+    exists: (id) => records.get(id)?.deleted === false,
+    canaries(viewer, seeded) {
+      const knows = known.get(viewer) ?? new Set()
+      const texts = new Map<string, Set<string>>()
+      const given: ReadonlyArray<readonly [string, string | ReadonlyArray<string> | undefined]> = Object.entries(seeded)
+
+      for (const [owner, each = []] of given) texts.set(owner, new Set(Predicate.isString(each) ? [each] : each))
+
+      for (const id of [...created.values()].flat()) {
+        const owner = records.get(id)?.owner
+
+        if (owner === undefined || owner === null || knows.has(id)) continue
+
+        texts.set(owner, (texts.get(owner) ?? new Set()).add(id))
+      }
+
+      return Object.fromEntries([...texts].map(([owner, each]) => [owner, [...each]]))
+    },
+    history,
+  }
 }
