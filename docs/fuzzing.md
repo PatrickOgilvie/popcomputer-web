@@ -49,11 +49,11 @@ whose cases are slow. Run many more from a random seed now and then:
 FUZZ_RUNS=20000 FUZZ_SEED=random bun test
 ```
 
-A failure prints the smallest case Effect's shrinking found, the reason the
-property gave, and a replay token: `FUZZ_REPLAY='<token>' bun test -t
-'<name>'` runs that case again. Once the bug is fixed, keep the case as a
-plain test beside the property. As every test must (rule 12 of `AGENTS.md`),
-a new property fails first on code with its bug planted.
+A failure prints the smallest case shrinking found, the reason the property
+gave, and a replay token: `FUZZ_REPLAY='<token>' bun test -t '<name>'` runs
+that case again; one that holds when run again failed on what earlier cases
+left, and says so. Keep a fixed bug's case as a plain test beside the
+property; a new one must first fail on its bug planted (rule 12 of `AGENTS.md`).
 
 ## Requests to the application
 

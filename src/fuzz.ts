@@ -79,7 +79,10 @@ export async function fuzz<A>(
 
   if (result._tag === 'Passed') return
 
-  const refusal = result._tag === 'Falsified' ? await reasonFor(result.shrunkInput) : undefined
+  // A case that holds when run again failed on what the cases before it left, or by chance.
+  const refusal = result._tag === 'Falsified'
+    ? (await reasonFor(result.shrunkInput)) ?? 'nothing when run again, so the case fails only after the cases before it or by chance, and FUZZ_REPLAY will not reproduce it: start each case from fresh state'
+    : undefined
 
   throw new Error([Arbitrary.formatCheckFailure(result), refusal && `Refused: ${refusal}`].filter(Boolean).join('\n'))
 }
