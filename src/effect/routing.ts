@@ -28,12 +28,12 @@ import {
   UnauthorizedError,
 } from './errors.js'
 import { openWebContext } from '../request-context.js'
-import { sessionCookies } from '../session-cookies.js'
+import { isDevelopment } from '../development.js'
 import type { CookieService } from './cookies.js'
 import type { Endpoint } from '../endpoint.js'
 import type { EndpointAction } from './endpoint-action.js'
 import type { ResponseHeaders } from './response-headers.js'
-import { allowDefaultPageCache, defaultCacheControl, keepPageOutOfCache, observedRequestContext } from '../page-cache.js'
+import { allowDefaultPageCache, defaultCacheControl, isPersonalRequest, keepPageOutOfCache, observedRequestContext } from '../page-cache.js'
 import {
   applyCachePolicy,
   decideCachePolicy,
@@ -433,29 +433,12 @@ type BindingLoadOutcome =
   | { readonly failure: RouteConfigurationError }
 
 /**
- * Whether the app is running in development. Used to gate developer warnings.
- * Mirrors the explicit-signal policy used elsewhere (no CF_PAGES_BRANCH).
+ * Whether a route's response depends on what no shared cache's key holds:
+ * it is someone's own, or producing it read a header, a cookie or request
+ * state, such as an API key a route's own layer reads.
  */
-function isDevEnv<E extends Env>(c: HonoContext<E>): boolean {
-  const env = c.env ?? {}
-
-  return (
-    Object.getOwnPropertyDescriptor(env, 'ENVIRONMENT')?.value === 'development' ||
-    Object.getOwnPropertyDescriptor(env, 'NODE_ENV')?.value === 'development'
-  )
-}
-
 function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
-  const requestCtx = openWebContext(c)
-
-  return (
-    requestCtx.authUser !== undefined ||
-    // A header, cookie or request state the response depends on, such as an
-    // API key a route's own layer reads, is no part of a shared cache's key.
-    requestCtx.readRequestState === true ||
-    c.req.header('Authorization') !== undefined ||
-    sessionCookies(requestCtx.sessionCookies).sentIn(c.req.header('Cookie'))
-  )
+  return isPersonalRequest(c) || openWebContext(c).readRequestState === true
 }
 
 /** Headers that hand the recipient something of their own, as a cookie does. */
@@ -1466,7 +1449,7 @@ export class EffectRouteBuilder<
         Predicate.isTagged(decision, 'skip') &&
         decision.warning &&
         !warnedIneffectiveCache &&
-        isDevEnv(c)
+        isDevelopment(c, openWebContext(c).errorBoundary)
       ) {
         warnedIneffectiveCache = true
         // oxlint-disable-next-line effecttsgo/global-console -- This outer Hono adapter emits a once-per-route development configuration warning after the request runtime has been disposed.

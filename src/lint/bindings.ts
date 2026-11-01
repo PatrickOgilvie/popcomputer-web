@@ -20,9 +20,10 @@ import {
   type Property,
   type VariableDeclarator,
 } from './ast.js'
+import { BINDING_ACCESS_OPTIONS, BINDING_SCOPE_OPTION } from '../binding-access.js'
 
 /** The options that say who may load a binding's record, and `scope`, under which its parent's say. */
-const ACCESS = new Set(['ownedBy', 'public', 'publicWhen', 'guarded', 'scope'])
+const ACCESS: ReadonlySet<string> = new Set([...BINDING_ACCESS_OPTIONS, BINDING_SCOPE_OPTION])
 
 const isProperty = (node: AstNode): node is Property => node.type === 'Property'
 

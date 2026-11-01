@@ -146,6 +146,12 @@ tests passed.
 `page-cache.ts:449` and `routing.ts:439`. Behaviour change (Fixed):
 development warnings follow `envKey`.
 
+Done. `src/development.ts` holds `isDevelopment` and `declaresEnvironment`.
+The error page keeps `showDevErrors` and testEnv's default on top. The page
+cache runs before setupWeb copies `errors` onto the request, so setupWeb
+passes `errors` to it as an `@internal` `development` option; step 2's
+`WebSetup` replaces that.
+
 **1c. Cookie header parsing.** `page-cache.ts:503`, `response-cache.ts:406`
 and `middleware.ts:435` use Hono's parser: `getCookie(c)` from
 `hono/cookie`, as `flash.ts` does, or `parse` from `hono/utils/cookie`
@@ -153,11 +159,27 @@ where only the header is at hand.
 `getSetCookie` is always present on Workers and Bun, so drop the fallbacks at
 `handler.ts:315` and `auth.ts:1163`.
 
+Done, differently: 1a moved every privacy check onto `src/session-cookies.ts`'s
+name reader, for the reason given there, so Hono's parser serves only where a
+value is read and checked, as `flash.ts` does. Both `getSetCookie` fallbacks
+are gone.
+
 **1d. "Is this request personal?"** Audit `page-cache.ts:216`,
 `page-cache.ts:459`, `routing.ts:448` (`hasPrivateRequestState`) and
 `middleware.ts:194`. Where they ask the same question, use one predicate in
 `page-cache.ts`. Where they differ on purpose, the predicate takes the
 difference as a named argument. No behaviour change.
+
+Done. `page-cache.ts` holds `carriesCredentials(c, registered?)` (an
+`Authorization` header or a session cookie) and `isPersonalRequest(c)` (that,
+or a visitor signed in by the session lookup or a layer).
+`defaultCacheControl` is `isPersonalRequest`. The page cache asks
+`carriesCredentials` with its own session-cookie names, since it runs before
+the session lookup. The route cache asks `isPersonalRequest` or
+`readRequestState`. `middleware.ts:194` asks a different question, whether
+the page goes to a signed-in visitor, which encrypts its history, so it
+stays apart. The route cache now also counts a render's `signedIn`, which
+that render had already passed on as `readRequestState`.
 
 **1e. Route-model access validation.** One
 `bindingAccess(name, definition, table)` returns the compiled access or a
@@ -166,6 +188,13 @@ walk finds which bindings are restricted. `assertBindingsConfig`,
 `compileBindingPlan` and `assertRouteAccess` call them. The option list lives
 in one constant that `lint/bindings.ts` imports, through a module with no
 `effect` import so the lint plugin stays light. This was review finding 7.
+
+Done. `bindingAccess(name, definition, table?)` returns the compiled access
+or the error; setup throws it with its hint, `compileBindingPlan` as it is.
+`compileBindingPlan` runs the registration's `routeAccess` walk instead of
+its own, since a stack composed by hand can reach it unchecked.
+`src/binding-access.ts` holds the option names for `binding.ts` and
+`lint/bindings.ts`. `hasColumn`, a copy of `isColumnProperty`, is gone.
 
 Done when the measures for 1a–1e hit their targets and the step 0 matrix
 shows only the intended changes.

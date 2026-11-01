@@ -1185,32 +1185,7 @@ export function betterAuthLogoutAction<const Path extends string = '/'>(
 }
 
 function appendSetCookies(target: Headers, source: Headers): void {
-  // SAFETY: The Better Auth boundary validated this representation before exposing the narrower adapter contract.
-  const sourceWithSetCookie = source as Headers & { getSetCookie?: () => string[] }
-
-  if (sourceWithSetCookie.getSetCookie instanceof Function) {
-    for (const cookie of sourceWithSetCookie.getSetCookie()) {
-      target.append('set-cookie', cookie)
-    }
-
-    return
-  }
-
-  const setCookie = source.get('set-cookie')
-
-  if (!setCookie) {
-    return
-  }
-
-  // Split on cookie boundaries without breaking Expires attributes.
-  const parts = setCookie
-    .split(/,(?=[^;]+?=)/g)
-    .map((part) => part.trim())
-    .filter(Boolean)
-
-  for (const cookie of parts) {
-    target.append('set-cookie', cookie)
-  }
+  for (const cookie of source.getSetCookie()) target.append('set-cookie', cookie)
 }
 
 function appendExpiredCookie(

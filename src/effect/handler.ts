@@ -15,6 +15,7 @@ import {
   disposeRequestRuntime,
 } from './bridge.js'
 import { readTestLayer } from './test-env.js'
+import { declaresEnvironment, isDevelopment } from '../development.js'
 import {
   ValidationError,
   UnauthorizedError,
@@ -102,39 +103,20 @@ function createFormatDetectionContext<E extends Env>(c: HonoContext<E>) {
 }
 
 /**
- * Determine if we're in development mode.
- *
- * Development must be explicitly signalled via ENVIRONMENT or NODE_ENV.
- * We deliberately do NOT treat the presence of Cloudflare's CF_PAGES_BRANCH
- * as development: that variable is set on every Pages deployment including
- * production, so keying off it would expose stack traces, source locations,
- * and raw error messages to clients on production Pages sites. Pages preview
- * environments that want verbose errors should set ENVIRONMENT=development.
+ * Whether the error page shows development's details: in development, as
+ * isDevelopment decides, unless `showDevErrors` is false.
  */
-function isDevelopment<E extends Env>(
+function showsDevelopmentErrors<E extends Env>(
   c: HonoContext<E>,
   config: ErrorBoundaryConfig = {}
 ): boolean {
-  const {
-    showDevErrors = true,
-    envKey = 'ENVIRONMENT',
-    devValue = 'development',
-  } = config
-
-  const env = c.env ?? {}
-  const configuredEnvironment = Object.getOwnPropertyDescriptor(env, envKey)?.value
-  const nodeEnvironment = Object.getOwnPropertyDescriptor(env, 'NODE_ENV')?.value
+  if (config.showDevErrors === false) return false
 
   // A test request (testEnv) that declares no environment shows development
   // errors, so a failing test explains itself.
-  if (configuredEnvironment === undefined && nodeEnvironment === undefined) {
-    return showDevErrors && readTestLayer(env) !== undefined
-  }
+  if (!declaresEnvironment(c, config)) return readTestLayer(c.env) !== undefined
 
-  return showDevErrors && (
-    configuredEnvironment === devValue ||
-    (envKey === 'ENVIRONMENT' && nodeEnvironment === devValue)
-  )
+  return isDevelopment(c, config)
 }
 
 /** Configuration shared by Effect and Hono error entrypoints. */
@@ -165,7 +147,7 @@ export async function renderErrorResponse<E extends Env>(
   }
 
   const context = captureErrorContext(c)
-  const isDev = isDevelopment(c, config)
+  const isDev = showsDevelopmentErrors(c, config)
 
   const format = openWebContext(c).jsonApi === true || answersErrorAsJson(createFormatDetectionContext(c)) ? 'json' : 'page'
 
@@ -299,7 +281,7 @@ function appendVerifiedErrorHeaders(
   response.headers.forEach((value, name) => {
     if (name.toLowerCase() !== 'set-cookie') headers.set(name, value)
   })
-  const responseCookies = readResponseSetCookies(response.headers)
+  const responseCookies = response.headers.getSetCookie()
 
   for (const cookie of responseCookies) {
     headers.append('set-cookie', cookie)
@@ -310,21 +292,6 @@ function appendVerifiedErrorHeaders(
     statusText: response.statusText,
     headers,
   })
-}
-
-function readResponseSetCookies(headers: Headers): readonly string[] {
-  // SAFETY: Bun's Headers implements the standard getSetCookie extension; the optional contract also supports runtimes without it.
-  const headersWithCookies = headers as Headers & {
-    getSetCookie?: () => string[]
-  }
-
-  if (headersWithCookies.getSetCookie instanceof Function) {
-    return headersWithCookies.getSetCookie()
-  }
-
-  const combined = headers.get('set-cookie')
-
-  return combined ? [combined] : []
 }
 
 /**

@@ -602,6 +602,7 @@ function createSetupMiddleware<
           pageCache<E>({
             version: config.version ?? '',
             sessionCookie: config.auth?.sessionCookie,
+            development: config.errors,
           }),
         ]),
     setupServices,

@@ -36,6 +36,7 @@ import { openWebContext } from './request-context.js'
 import { HEADERS } from './types.js'
 import { isCurrentVersion } from './page-version.js'
 import { cookieNames, sessionCookies } from './session-cookies.js'
+import { isDevelopment, type DevelopmentSignal } from './development.js'
 
 /** Response header reporting what the page cache did: HIT, MISS, DYNAMIC or BYPASS. */
 export const PAGE_CACHE_HEADER = 'X-Popweb-Cache'
@@ -113,6 +114,13 @@ export interface PageCacheOptions {
   readonly sessionCookie?: string
   /** The cache to use. Defaults to `caches.default` when the runtime has one. */
   readonly store?: PageCacheStore
+  /**
+   * setupWeb's `errors.envKey` and `errors.devValue`, which say when the
+   * application runs in development, where nothing is cached.
+   *
+   * @internal
+   */
+  readonly development?: DevelopmentSignal
 }
 
 /**
@@ -208,19 +216,35 @@ export function allowDefaultPageCache<E extends Env>(c: Context<E>): void {
 }
 
 /**
+ * Whether the request carries credentials: an `Authorization` header, or a
+ * session cookie of `registered`'s application. The page cache asks before
+ * the session lookup has run, so it gives the names itself.
+ */
+export function carriesCredentials<E extends Env>(
+  c: Context<E>,
+  registered: readonly string[] = openWebContext(c).sessionCookies ?? []
+): boolean {
+  return c.req.header('Authorization') !== undefined || sessionCookies(registered).sentIn(c.req.header('Cookie'))
+}
+
+/**
+ * Whether the response is someone's own, which no shared cache may keep: the
+ * request carries credentials, or its visitor is signed in, by the session
+ * lookup or by a layer that gives the action its user, as an API key's does.
+ */
+export function isPersonalRequest<E extends Env>(c: Context<E>): boolean {
+  const context = openWebContext(c)
+
+  return context.authUser !== undefined || context.signedIn === true || carriesCredentials(c)
+}
+
+/**
  * The Cache-Control for a response that states none: `no-store` when it is
- * someone's own (signed in, sent with credentials or a session cookie) or sets
- * a cookie, such as a new session, and DEFAULT_CACHE_CONTROL otherwise.
+ * someone's own or sets a cookie, such as a new session, and
+ * DEFAULT_CACHE_CONTROL otherwise.
  */
 export function defaultCacheControl<E extends Env>(c: Context<E>, setsCookie: boolean): string {
-  const context = openWebContext(c)
-  const personal =
-    context.authUser !== undefined ||
-    context.signedIn === true ||
-    c.req.header('Authorization') !== undefined ||
-    sessionCookies(context.sessionCookies).sentIn(c.req.header('Cookie'))
-
-  return personal || setsCookie ? PRIVATE_CACHE_CONTROL : DEFAULT_CACHE_CONTROL
+  return isPersonalRequest(c) || setsCookie ? PRIVATE_CACHE_CONTROL : DEFAULT_CACHE_CONTROL
 }
 
 /**
@@ -266,7 +290,7 @@ export function privateByDefault<E extends Env>(): MiddlewareHandler<E> {
 export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and the Cache API use native next()/Response promises.
   return createMiddleware<E>(async (c, next) => {
-    if (hasPrivateRequest(c, options.sessionCookie)) {
+    if (carriesCredentials(c, options.sessionCookie === undefined ? [] : [options.sessionCookie])) {
       await next()
       markPrivate(c)
       markResponse(c, 'BYPASS')
@@ -276,7 +300,7 @@ export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareH
 
     const store = options.store ?? defaultPageCacheStore()
 
-    if (!store || isDevelopment(c) || c.req.method !== 'GET') {
+    if (!store || isDevelopment(c, options.development) || c.req.method !== 'GET') {
       await next()
 
       // A request signed in without a session cookie, as testEnv's signedIn
@@ -446,22 +470,6 @@ function isPageCacheStore(value: unknown): value is PageCacheStore {
   )
 }
 
-function isDevelopment<E extends Env>(c: Context<E>): boolean {
-  const env: object = c.env ?? {}
-
-  return (
-    Object.getOwnPropertyDescriptor(env, 'ENVIRONMENT')?.value === 'development' ||
-    Object.getOwnPropertyDescriptor(env, 'NODE_ENV')?.value === 'development'
-  )
-}
-
-/** A request that carries a session or credentials: its response is someone's own. */
-function hasPrivateRequest<E extends Env>(c: Context<E>, sessionCookie: string | undefined): boolean {
-  return (
-    c.req.header('Authorization') !== undefined ||
-    sessionCookies(sessionCookie === undefined ? [] : [sessionCookie]).sentIn(c.req.header('Cookie'))
-  )
-}
 
 /**
  * The variant web() answers this request with: the Inertia page object only

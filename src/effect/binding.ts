@@ -17,6 +17,7 @@ import { ConfigurationError, NotFoundError, RouteConfigurationError, Unauthorize
 import { ErrorCodes } from './error-catalog.js'
 import type { Registered } from './register.js'
 import { schemaExport, tableOfSchema, tableSchema } from './table-schema.js'
+import { BINDING_ACCESS_OPTIONS, BINDING_SCOPE_OPTION } from '../binding-access.js'
 
 /**
  * Drizzle column interface for type inference.
@@ -148,7 +149,7 @@ function undefinedPublicWhen(definition: RouteBindingAccess<string, AnyRow>): st
 }
 
 /** The options that say who may load a binding's record, and `scope`, under which its parent's say. */
-const NAMED_ACCESS = ['ownedBy', 'public', 'publicWhen', 'guarded', 'scope'] as const
+const NAMED_ACCESS = [...BINDING_ACCESS_OPTIONS, BINDING_SCOPE_OPTION] as const
 
 /**
  * The access option a binding names with a value that says nothing, such as
@@ -174,7 +175,46 @@ function unsaidAccessOption(definition: RouteBindingDefinition): { readonly opti
 
 /** The access options a binding gives, by name: a valid binding gives at most one. */
 function accessOptionsOf(definition: RouteBindingAccess<string, AnyRow>): readonly string[] {
-  return (['ownedBy', 'public', 'publicWhen', 'guarded'] as const).filter((key) => definition[key] !== undefined)
+  return BINDING_ACCESS_OPTIONS.filter((key) => definition[key] !== undefined)
+}
+
+/**
+ * Who may load a binding's record, compiled from its options, or the
+ * configuration error they hold: an option whose value says nothing, more
+ * than one option, a `publicWhen` with no column or an undefined value, or a
+ * column `table` lacks. A binding that names a row schema, not a table,
+ * gives no `table`, and its columns go unchecked.
+ */
+function bindingAccess(
+  name: string,
+  definition: RouteBindingDefinition,
+  table: { readonly columns: object; readonly name: string } | undefined
+): { readonly access: CompiledRouteBindingAccess | undefined } | RouteConfigurationError {
+  const unsaid = unsaidAccessOption(definition)
+
+  if (unsaid !== undefined) return RouteConfigurationError.bindingAccessUnsaid(name, unsaid.option, unsaid.value)
+
+  const options = accessOptionsOf(definition)
+
+  if (options.length > 1) return RouteConfigurationError.bindingAccessConflict(name, options)
+
+  const { ownedBy, publicWhen } = definition
+
+  if (publicWhen !== undefined && Object.keys(publicWhen).length === 0) return RouteConfigurationError.bindingPublicWhenEmpty(name)
+
+  const unset = undefinedPublicWhen(definition)
+
+  if (unset !== undefined) return RouteConfigurationError.bindingPublicWhenUndefined(name, unset)
+
+  const missing = table === undefined
+    ? undefined
+    : [ownedBy, ...Object.keys(publicWhen ?? {})].find((column) => column !== undefined && !isColumnProperty(table.columns, column))
+
+  if (table !== undefined && missing !== undefined) return RouteConfigurationError.bindingColumnNotFound(name, table.name, missing)
+
+  return {
+    access: ownedBy !== undefined ? { ownedBy } : publicWhen !== undefined ? { publicWhen: { ...publicWhen } } : undefined,
+  }
 }
 
 /**
@@ -213,13 +253,6 @@ export function routeBinding<A>(
   options: RouteBindingOptions<string, AnyRow> = {}
 ): RouteBindingDefinition<A> {
   return { schema, ...options }
-}
-
-/** Whether a Drizzle table has a column under this property key. */
-function hasColumn(table: RouteBindingTable, key: string): boolean {
-  const column: unknown = Object.getOwnPropertyDescriptor(table, key)?.value
-
-  return column instanceof Object && 'columnType' in column
 }
 
 /** A column's inline foreign keys, from `.references(() => ...)`, as Drizzle keeps them. */
@@ -286,26 +319,9 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: obj
     }
 
     const source = bindingTableOf(config) ?? config.schema
-    const unsaid = unsaidAccessOption(config)
+    const checked = bindingAccess(name, config, isBindingTable(source) ? { columns: source, name: tableNameOf(source) } : undefined)
 
-    if (unsaid !== undefined) throw RouteConfigurationError.bindingAccessUnsaid(name, unsaid.option, unsaid.value).atStartup()
-
-    const access = accessOptionsOf(config)
-
-    if (access.length > 1) throw RouteConfigurationError.bindingAccessConflict(name, access).atStartup()
-    if (config.publicWhen !== undefined && Object.keys(config.publicWhen).length === 0) {
-      throw RouteConfigurationError.bindingPublicWhenEmpty(name).atStartup()
-    }
-
-    const unset = undefinedPublicWhen(config)
-
-    if (unset !== undefined) throw RouteConfigurationError.bindingPublicWhenUndefined(name, unset).atStartup()
-
-    for (const key of [config.ownedBy, ...Object.keys(config.publicWhen ?? {})]) {
-      if (key !== undefined && isBindingTable(source) && !hasColumn(source, key)) {
-        throw RouteConfigurationError.bindingColumnNotFound(name, tableNameOf(source), key)
-      }
-    }
+    if (checked instanceof RouteConfigurationError) throw checked.atStartup()
 
     if (config.ownedBy !== undefined && isBindingTable(source) && isBindingTable(users)) {
       const referenced = referencedTable(source, config.ownedBy)
@@ -329,7 +345,7 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: obj
 
       if (isBindingTable(source)) {
         for (const key of normalizeStringList(scope.foreignKey)) {
-          if (!hasColumn(source, key)) throw RouteConfigurationError.bindingColumnNotFound(name, tableNameOf(source), key)
+          if (!isColumnProperty(source, key)) throw RouteConfigurationError.bindingColumnNotFound(name, tableNameOf(source), key)
         }
       }
 
@@ -337,7 +353,7 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: obj
 
       if (isBindingTable(parentSource)) {
         for (const key of normalizeStringList(scope.references ?? 'id')) {
-          if (!hasColumn(parentSource, key)) {
+          if (!isColumnProperty(parentSource, key)) {
             throw RouteConfigurationError.bindingColumnNotFound(parent, tableNameOf(parentSource), key)
           }
         }
@@ -604,9 +620,12 @@ export async function compileBindingPlan<Schema extends object>(
   configured: RouteBindingsConfig
 ): Promise<readonly CompiledRouteBinding[]> {
   const plan: CompiledRouteBinding[] = []
-  // The bindings on this route that say who may load their record, or load
-  // under one that does.
-  const restricted = new Set<string>()
+
+  // A path names its records under parents that say who may load them; a
+  // stack composed by hand may reach here without registration's check.
+  const access = routeAccess(bindings, configured)
+
+  if (access instanceof RouteConfigurationError) throw access
 
   for (const binding of bindings) {
     const config = configured[binding.param]
@@ -619,10 +638,6 @@ export async function compileBindingPlan<Schema extends object>(
       ? config
       : { schema: config }
     const source = bindingSource(config)
-    const unsaid = unsaidAccessOption(definition)
-
-    if (unsaid !== undefined) throw RouteConfigurationError.bindingAccessUnsaid(binding.param, unsaid.option, unsaid.value)
-
     const tableName = bindingTableName(binding, configured, schema)
     const sourceTable = bindingTableOf(config)
     const table: unknown = sourceTable !== undefined
@@ -632,6 +647,10 @@ export async function compileBindingPlan<Schema extends object>(
     if (!(table instanceof Object)) {
       throw RouteConfigurationError.tableNotFound(tableName)
     }
+
+    const checked = bindingAccess(binding.param, definition, { columns: table, name: tableName })
+
+    if (checked instanceof RouteConfigurationError) throw checked
 
     const lookupColumn = lookupColumnOf(table, binding)
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
@@ -693,45 +712,6 @@ export async function compileBindingPlan<Schema extends object>(
       parent = { param: parentPlan.param, relation }
     }
 
-    const accessOptions = accessOptionsOf(definition)
-
-    if (accessOptions.length > 1) throw RouteConfigurationError.bindingAccessConflict(binding.param, accessOptions)
-
-    if (definition.publicWhen !== undefined && Object.keys(definition.publicWhen).length === 0) {
-      throw RouteConfigurationError.bindingPublicWhenEmpty(binding.param)
-    }
-
-    const unset = undefinedPublicWhen(definition)
-
-    if (unset !== undefined) throw RouteConfigurationError.bindingPublicWhenUndefined(binding.param, unset)
-
-    for (const column of [definition.ownedBy, ...Object.keys(definition.publicWhen ?? {})]) {
-      if (column !== undefined && !isColumnProperty(table, column)) {
-        throw RouteConfigurationError.bindingColumnNotFound(binding.param, tableName, column)
-      }
-    }
-
-    const access: CompiledRouteBindingAccess | undefined = definition.ownedBy !== undefined
-      ? { ownedBy: definition.ownedBy }
-      : definition.publicWhen !== undefined
-        ? { publicWhen: { ...definition.publicWhen } }
-        : undefined
-
-    // A child that says anyone may load it, under a parent that says who may,
-    // is loaded only by the parent's visitors here, and by anyone on a path
-    // without the parent: its scope says what it means.
-    if (definition.public === true && parent !== undefined && restricted.has(parent.param)) {
-      throw RouteConfigurationError.publicUnderRestrictedParent(
-        binding.param,
-        parent.param,
-        parent.relation.columnPairs.map((pair) => pair.foreignKey)
-      )
-    }
-
-    if (access !== undefined || definition.guarded === true || (parent !== undefined && restricted.has(parent.param))) {
-      restricted.add(binding.param)
-    }
-
     // SAFETY: The route builder established the matching Drizzle and Effect contracts; this adapter only restores generic information their public types erase.
     plan.push({
       param: binding.param,
@@ -742,7 +722,7 @@ export async function compileBindingPlan<Schema extends object>(
       paramSchema: columnTypeToSchema(column.columnType),
       rowSchema: isBindingTable(source) ? tableSchema(source) : source,
       parent,
-      access,
+      access: checked.access,
     })
   }
 
@@ -826,6 +806,18 @@ export function assertRouteAccess(
   bindings: readonly ParsedBinding[],
   configured: RouteBindingsConfig | undefined
 ): ReadonlySet<string> {
+  const checked = routeAccess(bindings, configured)
+
+  if (checked instanceof RouteConfigurationError) throw checked.atStartup()
+
+  return checked
+}
+
+/** What assertRouteAccess checks, with the error it finds rather than thrown. */
+function routeAccess(
+  bindings: readonly ParsedBinding[],
+  configured: RouteBindingsConfig | undefined
+): ReadonlySet<string> | RouteConfigurationError {
   const earlier: string[] = []
   // Bindings that say who may load their record, or load under one that does.
   const restricted = new Set<string>()
@@ -838,7 +830,7 @@ export function assertRouteAccess(
     const named = Object.keys(definition?.scope ?? {})[0]
 
     if (named !== undefined && !earlier.includes(named)) {
-      throw RouteConfigurationError.scopeNotInRoute(binding.param, named, earlier).atStartup()
+      return RouteConfigurationError.scopeNotInRoute(binding.param, named, earlier)
     }
 
     const parent = named ?? earlier[earlier.length - 1]
@@ -850,11 +842,11 @@ export function assertRouteAccess(
         ? []
         : Object.keys(child).filter((key) => inlineReferences(child, key).some((reference) => reference.table === parentTable))
 
-      throw RouteConfigurationError.publicUnderRestrictedParent(
+      return RouteConfigurationError.publicUnderRestrictedParent(
         binding.param,
         parent,
         foreignKeys.length > 0 ? foreignKeys : [`${parent}Id`]
-      ).atStartup()
+      )
     }
 
     const says = definition !== undefined &&
