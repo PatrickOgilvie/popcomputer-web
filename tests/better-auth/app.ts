@@ -13,8 +13,10 @@ import { RequireAuthLayer, RequireGuestLayer } from '../../src/effect/auth.js'
 import { authorize } from '../../src/effect/services.js'
 import { bound } from '../../src/effect/binding.js'
 import { dbMutation, dbQuery } from '../../src/effect/database.js'
-import { json, notFound, redirect, render } from '../../src/effect/responses.js'
+import { json, notFound, prefersJson, redirect, render } from '../../src/effect/responses.js'
+import type { ValidationError } from '../../src/effect/errors.js'
 import { validateRequest } from '../../src/effect/validation.js'
+import { href } from '../../src/paths.js'
 import { betterAuthCall, betterAuthHandler, betterAuthLogoutAction, betterAuthRedirect, betterAuthSession } from '../../src/auth.js'
 import { currentPassword, email, password, requiredString, tableSchema } from '../../src/schema.js'
 import { createAuth, loadedOnFirstUse, schema, type CreateAuthOptions, type Outbox, type TestDatabase } from './fixture.js'
@@ -101,20 +103,23 @@ const signUp = action(Effect.gen(function* () {
 }))
 
 const VerifyLink = S.Struct({ token: requiredString })
+// A page visit is sent to sign in, which says the link expired; a JSON client gets the failure, as every one does.
+const expired = (error: ValidationError) =>
+  Effect.flatMap(prefersJson, (json) => (json ? Effect.fail(error) : redirect(href(paths.signIn, {}, { error: 'link_expired' }))))
 
 /** The emailed link's page, whose button posts the token back: a fetch of the link proves nothing. */
 const showVerifyEmail = action(Effect.gen(function* () {
   const input = yield* validateRequest(VerifyLink)
 
   return yield* render('Auth/VerifyEmail', input)
-}).pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired'))))
+}).pipe(Effect.catchTag('ValidationError', expired)))
 
 /** Proves the address and signs nobody in: the member signs in with their password next. */
 const verifyEmail = action(Effect.gen(function* () {
   const input = yield* validateRequest(VerifyLink)
 
   return yield* betterAuthRedirect('verifyEmail', { query: input }, { redirectTo: paths.signIn })
-}).pipe(Effect.catchTag('ValidationError', () => render('Auth/LinkExpired'))))
+}).pipe(Effect.catchTag('ValidationError', expired)))
 
 const signIn = action(Effect.gen(function* () {
   const input = yield* validateRequest(SignIn)

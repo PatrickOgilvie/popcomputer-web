@@ -19,8 +19,7 @@ user, so a dependency response is never trusted because it looks
 session-shaped. `betterAuthSession(tableSchema(schema.user))` takes the user
 from the `user` table, so a field the application adds, such as a `role`, is
 declared in the table, and `authorize()`, `currentUser` and `signedIn`
-follow. A plugin
-that adds session fields, such as the organization plugin's
+follow. A plugin that adds session fields, such as the organization plugin's
 `activeOrganizationId`, adds their columns to the `session` table: give
 `betterAuthSession` that table too,
 `betterAuthSession(tableSchema(schema.user), tableSchema(schema.session))`,
@@ -145,14 +144,15 @@ signs in with a password next:
 ```ts
 // src/actions/verify-email.ts
 import { Effect, Schema as S } from 'effect'
-import { action, redirect, render, validateRequest } from '@popcomputer/web/effect'
+import { action, prefersJson, redirect, render, validateRequest, type ValidationError } from '@popcomputer/web/effect'
 import { betterAuthRedirect } from '@popcomputer/web/auth'
 import { href } from '@popcomputer/web/paths'
 import { requiredString } from '@popcomputer/web/schema'
 import { paths } from '../paths'
 
 const Link = S.Struct({ token: requiredString })
-const expired = () => redirect(href(paths.login, {}, { error: 'link_expired' }))
+const expired = (error: ValidationError) =>
+  Effect.flatMap(prefersJson, (json) => (json ? Effect.fail(error) : redirect(href(paths.login, {}, { error: 'link_expired' }))))
 
 export const showVerifyEmail = action(
   Effect.gen(function* () {
@@ -173,13 +173,13 @@ export const verifyEmail = action(
 
 Register both for everyone, `routes.get(paths.verifyEmail, showVerifyEmail)`
 and `.post(paths.verifyEmail, verifyEmail)`, beside the page
-`'Auth/VerifyEmail': S.Struct({ token: S.String })`; a link that expired,
-after an hour, lands on the sign-in page with `?error=`. Email this page's
-link, not Better Auth's own `url`, which proves the address on any fetch. A
-link Better Auth's `user.changeEmail` sends to a new address completes only
-signed in to the account that asked to move there: Better Auth would sign
-anyone else who follows it in to that account, so the framework sends them
-to sign in.
+`'Auth/VerifyEmail': S.Struct({ token: S.String })`; a link that expired, after
+an hour, lands on the sign-in page with `?error=`, and a [JSON client](json.md)
+gets the 422, never a redirect to sign in. Email this page's link, not Better
+Auth's own `url`, which proves the address on any fetch. A link Better Auth's
+`user.changeEmail` sends to a new address completes only signed in to the
+account that asked to move there: Better Auth would sign anyone else who
+follows it in to that account, so the framework sends them to sign in.
 
 Without `requireEmailVerification`, someone who registers another person's
 address first is signed in, and keeps what the owner's magic-link or provider

@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+What an application may need to change: one that copied `docs/auth.md`'s verify-email actions answers a JSON client as the new `expired` does, with the validation failure, and a page visit as before.
+
+### Fixed
+
+- `docs/auth.md`'s verify-email actions answer a JSON client that fetches the link's page without its token, or posts one that expired, with the validation failure, a 422 in the JSON envelope, where they sent it to sign in, breaking the rule `brokenPromises` checks that a JSON client is never sent to sign in. A page visit still lands on sign-in with `?error=link_expired`. fieldops copied the pattern and its sweep of every page found it. The template in `tests/better-auth/app.ts` now answers an expired verification link as the docs do, and its seam tests check both answers and send each of its sign-in, sign-up and emailed-link pages and forms, from a visitor and a member, as a page load, an Inertia visit and a JSON client, through `brokenPromises`.
+
 ## [1.10.0] - 2026-11-01
 
 This release adds `stepsOf` to `@popcomputer/web/fuzz`, the sequences of steps a property over a lifecycle runs, of every length up to its `maxLength`, and builds `textOf` on it. Effect's `Arbitrary.array`, which `docs/fuzzing.md` used, kept sequences to two or three steps, and an application whose type check runs the Effect language service couldn't use it at all.

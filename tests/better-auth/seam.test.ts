@@ -14,6 +14,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { getSchema } from 'better-auth/db'
 import { eq, sql } from 'drizzle-orm'
 import { Redacted, Schema as S } from 'effect'
+import { brokenPromises, sendFuzzRequest, type FuzzRequest } from '../../src/fuzz.js'
 import { testBrowser, testEnv } from '../../src/testing.js'
 import { betterAuthSession } from '../../src/auth.js'
 import { isLimitedPath } from '../../src/effect/sign-in-limits.js'
@@ -586,6 +587,87 @@ describe('emailed links', () => {
 
     expect(res.status).toBe(303)
     expect(outbox.magicLinks.map((sent) => new URL(sent.url).origin)).toEqual(['http://localhost'])
+  })
+})
+
+describe('a verification link without its token, or with one that expired', () => {
+  const asJson = { Accept: 'application/json' }
+
+  test('sends a page visit to sign in, which says the link expired', async () => {
+    const { browser } = setup()
+
+    const fetched = await browser().request('/verify-email')
+    const pressed = await browser().request('/verify-email', form({ token: 'expired' }))
+
+    expect([fetched.status, pressed.status]).toEqual([303, 303])
+    expect([fetched.headers.get('Location'), pressed.headers.get('Location')]).toEqual(['/sign-in?error=link_expired', '/sign-in?error=link_expired'])
+  })
+
+  test('answers a JSON client with the failure, never sending it to sign in', async () => {
+    const { browser } = setup()
+
+    const fetched = await browser().request('/verify-email', { headers: asJson })
+    const pressed = await browser().request('/verify-email', {
+      method: 'POST',
+      headers: { ...asJson, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'expired' }),
+    })
+
+    expect([fetched.status, pressed.status]).toEqual([422, 422])
+    expect(await fetched.json()).toMatchObject({ tag: 'ValidationError', httpStatus: 422, errors: { token: expect.any(String) } })
+    expect(await pressed.json()).toMatchObject({ tag: 'ValidationError', httpStatus: 422 })
+  })
+})
+
+describe("the framework's promises", () => {
+  // Each page and form of the template's sign-in, sign-up and emailed links, as
+  // fuzzRequest would send it, with no input, with input that fails, and with
+  // a token that expired.
+  const sends: ReadonlyArray<readonly [method: string, path: string, query: string, body: FuzzRequest['body']]> = [
+    ['GET', '/', '', { as: 'none' }],
+    ['GET', '/sign-in', '', { as: 'none' }],
+    ['GET', '/check-email', '', { as: 'none' }],
+    ['GET', '/verify-email', '', { as: 'none' }],
+    ['GET', '/verify-email', 'token=expired', { as: 'none' }],
+    ['GET', '/magic-link/verify', '', { as: 'none' }],
+    ['GET', '/magic-link/verify', 'token=expired', { as: 'none' }],
+    ['GET', '/dashboard', '', { as: 'none' }],
+    ['GET', '/me', '', { as: 'none' }],
+    ['POST', '/sign-up', '', { as: 'none' }],
+    ['POST', '/sign-up', '', { as: 'form', fields: ['name=Ada', 'email=not-an-address', 'password=short', 'timeZone=Europe%2FLondon'] }],
+    ['POST', '/sign-in', '', { as: 'none' }],
+    ['POST', '/sign-in', '', { as: 'form', fields: ['email=nobody%40example.com', 'password=wrong'] }],
+    ['POST', '/verify-email', '', { as: 'none' }],
+    ['POST', '/verify-email', '', { as: 'form', fields: ['token=expired'] }],
+    ['POST', '/magic-link', '', { as: 'none' }],
+    ['POST', '/magic-link/verify', '', { as: 'none' }],
+    ['POST', '/magic-link/verify', '', { as: 'form', fields: ['token=expired'] }],
+    ['POST', '/two-factor', '', { as: 'form', fields: ['code=000000'] }],
+    ['POST', '/sign-out', '', { as: 'none' }],
+  ]
+  // A plain page load, an Inertia visit and a JSON client.
+  const clients: ReadonlyArray<Readonly<Record<string, string>>> = [{}, { 'x-inertia': 'true', 'x-inertia-version': '1' }, { accept: 'application/json' }]
+
+  test('every auth page and form keeps them, for a visitor and a member, from each kind of client', async () => {
+    const { browser, env, join } = setup()
+    const member = browser()
+    await join(member, 'ada@example.com')
+    const people = { visitor: null, ada: `${SESSION}=${member.cookies.get(SESSION) ?? ''}` }
+    const broken: string[] = []
+
+    for (const [person, cookie] of Object.entries(people)) {
+      for (const [method, path, query, body] of sends) {
+        for (const headers of clients) {
+          const sent: FuzzRequest = { person: cookie === null ? null : person, method, path, query, headers: { ...headers, cookie: cookie ?? '' }, body }
+          const answer = await sendFuzzRequest(app, sent, env)
+          const kept = answer === undefined ? [] : brokenPromises(sent, answer, { signInPath: '/sign-in' })
+
+          broken.push(...kept.map((rule) => `${person} ${method} ${path}${query === '' ? '' : `?${query}`} ${JSON.stringify(headers)} (${answer?.response.status}): ${rule}`))
+        }
+      }
+    }
+
+    expect(broken).toEqual([])
   })
 })
 
