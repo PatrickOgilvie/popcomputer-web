@@ -211,14 +211,14 @@ cheapest first:
   "ratelimits": [{ "name": "SIGN_IN_LIMITER", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } }]
   ```
 
-- `table`, Better Auth's `rateLimit` table, counts each account's sign-ins
-  before their passwords are checked, so guesses sent together count against
-  each other. Past `failures.max`, 10, a sign-in is refused unhashed for
-  `failures.cooldown`, a minute, doubled by each further one up to
-  `failures.window`, 15 minutes, which the count lasts past its cooldown's
-  end. A cooldown, not a lock: someone who knows an address can slow its
-  owner down, never shut them out. A success deletes the row, whose key is a
-  hash of the account, not its address.
+- `table`, Better Auth's `rateLimit` table in Postgres or SQLite, counts each
+  account's sign-ins before their passwords are checked, so guesses sent
+  together count against each other. Past `failures.max`, 10, a sign-in is
+  refused unhashed for `failures.cooldown`, a minute, doubled by each further
+  one up to `failures.window`, 15 minutes, which the count lasts past its
+  cooldown's end. A cooldown, not a lock: someone who knows an address can
+  slow its owner down, never shut them out. A success deletes the row, whose
+  key is a hash of the account, not its address.
 
 An account is what its sign-in's endpoint finds it by, whatever else the body
 sends: the email `/sign-in/email` reads, the phone-number plugin's

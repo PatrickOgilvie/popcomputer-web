@@ -156,7 +156,21 @@ export function assertSignInLimitsConfig(config: SignInLimitsConfig): void {
         'Give a whole number of bits from 1 to 128, such as 64, or leave it out.'
     )
   }
+
+  // Drizzle names each column's type after its dialect: PgText, SQLiteText, MySqlVarChar.
+  const columnType = config.table.key.columnType
+
+  if (!COUNTING_DIALECTS.some((dialect) => columnType.startsWith(dialect))) {
+    throw new Error(
+      `Invalid setupWeb configuration: auth.signInLimits.table's key is a ${columnType} column, and the limits count each sign-in in one ` +
+        'INSERT ... ON CONFLICT DO UPDATE ... RETURNING statement, which only Postgres and SQLite (D1, libsql) have, not MySQL. ' +
+        "Keep Better Auth's rateLimit table in a Postgres or SQLite database, or leave signInLimits out."
+    )
+  }
 }
+
+/** The dialects, as Drizzle's column types begin, that have the one statement a sign-in is counted with. */
+const COUNTING_DIALECTS: ReadonlyArray<string> = ['Pg', 'SQLite']
 
 /** The limits `setupWeb`'s configuration gives a request, reading its bindings. */
 export function activeSignInLimits(config: SignInLimitsConfig, bindings: object): ActiveSignInLimits {
@@ -432,8 +446,8 @@ const counts = Effect.flatMap(Effect.serviceOption(DatabaseService), (db) =>
   Option.isNone(db)
     ? Effect.die(new Error('auth.signInLimits counts failed sign-ins in Better Auth\'s rateLimit table, but setupWeb has no database.'))
     // SAFETY: the database is the application's Drizzle client, and the
-    // table one of its tables; the counts use the builder calls every SQL
-    // dialect Drizzle supports for D1 and Postgres shares.
+    // table one of its tables; the counts use the builder calls Drizzle's
+    // Postgres and SQLite dialects share, and setupWeb refuses another's table.
     : Effect.succeed(db.value as unknown as CountsClient)
 )
 

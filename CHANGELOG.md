@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-What an application may need to change: one that copied `docs/auth.md`'s verify-email actions answers a JSON client as the new `expired` does, with the validation failure, and a page visit as before.
+What an application may need to change: one that copied `docs/auth.md`'s verify-email actions answers a JSON client as the new `expired` does, with the validation failure, and a page visit as before. One that gives `auth.signInLimits` a MySQL table now fails at startup, where every password sign-in answered 500: keep Better Auth's `rateLimit` table in Postgres or SQLite, or leave the limits out.
 
 ### Security
 
@@ -15,6 +15,7 @@ What an application may need to change: one that copied `docs/auth.md`'s verify-
 
 ### Fixed
 
+- `setupWeb` refuses `auth.signInLimits` with a MySQL table, naming Postgres and SQLite: each sign-in is counted in one `INSERT ... ON CONFLICT DO UPDATE ... RETURNING`, which Drizzle's MySQL builder lacks, so every password sign-in failed with a 500.
 - `docs/auth.md`'s verify-email actions answer a JSON client that fetches the link's page without its token, or posts one that expired, with the validation failure, a 422 in the JSON envelope, where they sent it to sign in, breaking the rule `brokenPromises` checks that a JSON client is never sent to sign in. A page visit still lands on sign-in with `?error=link_expired`. fieldops copied the pattern and its sweep of every page found it. The template in `tests/better-auth/app.ts` now answers an expired verification link as the docs do, and its seam tests check both answers and send each of its sign-in, sign-up and emailed-link pages and forms, from a visitor and a member, as a page load, an Inertia visit and a JSON client, through `brokenPromises`.
 
 ## [1.10.0] - 2026-11-01

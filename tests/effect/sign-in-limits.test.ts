@@ -13,6 +13,7 @@ import { memoryAdapter } from 'better-auth/adapters/memory'
 import { phoneNumber, username } from 'better-auth/plugins'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { drizzle as drizzlePostgres } from 'drizzle-orm/pglite'
+import { bigint as mysqlBigint, int, mysqlTable, varchar } from 'drizzle-orm/mysql-core'
 import { bigint, integer as pgInteger, pgTable, text as pgText } from 'drizzle-orm/pg-core'
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { Effect, Exit, Schema as S } from 'effect'
@@ -184,6 +185,25 @@ describe('sign-in limits', () => {
     for (const ipv6Prefix of [0, 129, 56.5, Number.NaN]) {
       expect({ ipv6Prefix, setup: () => setupWeb(new Hono(), config(ipv6Prefix)) }.setup).toThrow('auth.signInLimits.ipv6Prefix')
     }
+  })
+
+  // MySQL's inserts have no ON CONFLICT ... RETURNING, so every sign-in would
+  // otherwise fail with a 500 when it is counted.
+  test('setupWeb refuses a MySQL table, in which no statement counts a sign-in as it is refused', () => {
+    const counts = mysqlTable('rate_limit', {
+      id: varchar('id', { length: 36 }).primaryKey(),
+      key: varchar('key', { length: 255 }).notNull().unique(),
+      count: int('count').notNull(),
+      lastRequest: mysqlBigint('last_request', { mode: 'number' }).notNull(),
+    })
+    const setup = (table: typeof counts | typeof rateLimit) => () => setupWeb(new Hono(), {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      auth: { client: () => createAuth(), signInLimits: { limiter: 'SIGN_IN_LIMITER', table } },
+    })
+
+    expect(setup(counts)).toThrow("auth.signInLimits.table's key is a MySqlVarChar column")
+    expect(setup(rateLimit)).not.toThrow()
   })
 
   test("an account's failures from many addresses cool it down, before its password is checked", async () => {
