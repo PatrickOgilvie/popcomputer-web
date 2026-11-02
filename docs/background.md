@@ -29,6 +29,9 @@ services, as an action does: the database, the layers given to
 `background()`, and the layers a builder was given with `provide`, which
 stay open until the background work the job started has settled. It runs
 through no middleware, the application's included: a job has no request.
+So one that validates input, renders a page, answers JSON or sets a cookie
+is a type error naming `requestOnlyServices`: pass what it needs as its
+input, from the route that sends it, and return a value.
 `routes.scheduled(job)` and `routes.queue(Schema, handle)` return the Worker's
 `scheduled` and `queue` handlers, and type-check the job as a registration
 does, so one that needs a service the routes do not provide is a

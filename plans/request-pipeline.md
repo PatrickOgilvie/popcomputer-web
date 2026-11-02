@@ -525,6 +525,14 @@ Done in part. Two items are done, two are not:
    `scheduled` and `queue` breaks compilation only of jobs that already fail
    at run time. Recommendation: ship it in 1.x as a fix, with an UPGRADING
    note.
+
+   Taken on 2026-11-02: in 1.x. `RunCheck` refuses `RequestService`,
+   `RequestStateService`, `PageService`, `ResponseFactoryService`,
+   `CookieService` and `ResponseHeaders` with `requestOnlyServices` and a
+   fix. `tests/worker-types.ts` pins it for `validateRequest`, `render`,
+   `json` and a cookie's `set`; on the types before, those jobs compiled.
+   The CHANGELOG's paragraph on what an application may need to change says
+   so.
 2. **Malformed route parameters answer `NotFoundError`** (step 5) instead of
    Hono's bare 404. Recommendation: yes, as a fix; it matches every other 404.
 3. **Hand-composed `routes.run`.** Keep the request path for builders without

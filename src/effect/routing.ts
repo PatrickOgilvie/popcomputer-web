@@ -192,13 +192,34 @@ export type PathsUnder<Path extends string, Prefix extends string> = string exte
   ? string
   : Extract<Path, Prefix | `${Prefix}/${string}`>
 
-/** An Effect `routes.run` can run: one whose services the routes provide. */
+/**
+ * The services only a request has: its input, its state, the page and the
+ * response it answers with. A job, from `run`, `scheduled` or `queue`, has
+ * none of them.
+ */
+type RequestOnlyServices =
+  | RequestService
+  | RequestStateService
+  | PageService
+  | ResponseFactoryService
+  | CookieService
+  | ResponseHeaders
+
+/**
+ * An Effect `routes.run`, `scheduled` and `queue` can run: one whose services
+ * the routes provide, but for those only a request has.
+ */
 export type RunCheck<R, Services> = [ModelName<Exclude<R, Services>>] extends [never]
-  ? [Exclude<R, Services>] extends [never]
-    ? unknown
+  ? [Extract<R, RequestOnlyServices>] extends [never]
+    ? [Exclude<R, Services>] extends [never]
+      ? unknown
+      : {
+          readonly missingServices: ServiceKey<Exclude<R, Services>>
+          readonly fix: 'Configure the service: the database and auth in setupWeb, your own services with web.services({ app, request }), whose routes then accept it; or add it with routes.provide(layer).'
+        }
     : {
-        readonly missingServices: ServiceKey<Exclude<R, Services>>
-        readonly fix: 'Configure the service: the database and auth in setupWeb, your own services with web.services({ app, request }), whose routes then accept it; or add it with routes.provide(layer).'
+        readonly requestOnlyServices: ServiceKey<Extract<R, RequestOnlyServices>>
+        readonly fix: 'A job has no request: no input to validate, no cookies or headers, and no page or response to answer with. Pass what it needs as its input, from the route that sends it, and return a value.'
       }
   : {
       readonly missingRouteModels: ModelName<Exclude<R, Services>>

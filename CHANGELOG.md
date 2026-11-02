@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-What an application may need to change: one that copied `docs/auth.md`'s verify-email actions answers a JSON client as the new `expired` does, with the validation failure, and a page visit as before. One that gives `auth.signInLimits` a MySQL table now fails at startup, where every password sign-in answered 500: keep Better Auth's `rateLimit` table in Postgres or SQLite, or leave the limits out.
+What an application may need to change: one that copied `docs/auth.md`'s verify-email actions answers a JSON client as the new `expired` does, with the validation failure, and a page visit as before. One that gives `auth.signInLimits` a MySQL table now fails at startup, where every password sign-in answered 500: keep Better Auth's `rateLimit` table in Postgres or SQLite, or leave the limits out. A job, given to `routes.run`, `routes.scheduled` or `routes.queue`, that calls `validateRequest`, `render`, `json` or a cookie's `set` no longer compiles: it read a request no job has, and failed when it ran. Pass what it needs as its input, from the route that sends it, and return a value.
 
 ### Security
 
@@ -17,6 +17,7 @@ What an application may need to change: one that copied `docs/auth.md`'s verify-
 
 ### Changed
 
+- `routes.run`, `routes.scheduled` and `routes.queue` refuse, at the call, a job that needs a request: the request's input, state or cookies, a page, or a response to answer with. Such a job type-checked and ran against a stand-in request, so `validateRequest` found nothing and `render` and `json` built a response no one received. The type error names `requestOnlyServices` and says to pass the value in.
 - The sign-in limits' statements on Better Auth's `rateLimit` table go through `dbQuery` and `dbMutation`: a statement that fails reaches the error observer as a `DatabaseError` with its span, and still fails the sign-in.
 - A route's record lookups, the ones `bound()` reads, go through `dbQuery`: a lookup that fails reaches the error observer as a `DatabaseError` with its span, as an action's query does, rather than as the driver's error. It still answers 500.
 - A job, from `routes.run`, `routes.scheduled` or `routes.queue`, runs with setupWeb's services directly, not as a request to a hidden route. It passes through none of the HTTP middleware, the application's `middleware` included: no page cache, origin check or session lookup, which had nothing to answer, and an application middleware that refused requests without a header no longer refuses its jobs. A job's own failures, a refused env or a failed purge among them, reject as before. A stack composed by hand, without setupWeb, still sends its jobs through a request.
