@@ -8,7 +8,7 @@
  */
 
 import { afterEach, describe, expect, spyOn, test } from 'bun:test'
-import { createServer, createServerModuleRunner, type ViteDevServer } from 'vite'
+import { createServer, createServerModuleRunner, resolveConfig, type ViteDevServer } from 'vite'
 import type { ModuleRunner } from 'vite/module-runner'
 import { reloadWorkerModules } from '../src/vite.js'
 
@@ -21,10 +21,11 @@ const src = `${import.meta.dir}/../src`
 /** Inside the repository, so the application's imports find its node_modules. Each test writes it afresh. */
 const directory = `${import.meta.dir}/.generated/vite`
 
+// The routes import their actions before the app, as the template's do.
 const routesWith = (...registrations: ReadonlyArray<string>) => `
 import { Effect } from 'effect'
-import { routes } from './app'
 import { greeting } from './greeting'
+import { routes } from './app'
 
 globalThis.viteFixtureLoads.push('routes')
 routes${registrations.map((registration) => `\n  ${registration}`).join('')}
@@ -50,11 +51,13 @@ import './routes'
 
 export default { fetch: app.fetch }
 `,
-  // The Cloudflare plugin's Worker entry, which accepts the hot updates.
+  // The Cloudflare plugin's Worker entry, which imports the Worker's main
+  // module twice, for its default and its other exports, and accepts the hot updates.
   'entry.ts': `
-import worker from './worker'
+import * as worker from './worker'
+export * from './worker'
 
-export default worker
+export default worker.default
 
 if (import.meta.hot) import.meta.hot.accept(() => globalThis.viteFixtureLoads.push('hot update'))
 `,
@@ -66,24 +69,60 @@ let server: ViteDevServer | undefined
 
 afterEach(() => server?.close())
 
-/** Starts the dev server on a fresh copy of the application, and loads its Worker. */
-async function devServer(options: { readonly reload: boolean }) {
-  await Promise.all(Object.entries(application).map(([file, source]) => Bun.write(`${directory}/${file}`, source)))
+/** The package's entries, as an application's node_modules holds them, each made from this repository's source. */
+const entries = {
+  '.': 'index', './effect': 'effect/index', './schema': 'schema', './auth': 'auth', './paths': 'paths',
+  './endpoint': 'endpoint', './drizzle': 'drizzle', './cache': 'cache', './env': 'env',
+} satisfies Readonly<Record<string, string>>
+
+/** The package in the application's node_modules, which Vite pre-bundles as it does an installed dependency. */
+const installedPackage = async () => {
+  const at = `${directory}/node_modules/@popcomputer/web`
+  const exports = Object.fromEntries(Object.entries(entries).map(([entry, file]) => [entry, `./${file}.js`]))
+
+  // The application's own, so `@popcomputer/web` no longer names the repository the application is in.
+  await Bun.write(`${directory}/package.json`, JSON.stringify({ name: 'application', type: 'module' }))
+  await Bun.write(`${at}/package.json`, JSON.stringify({ name: '@popcomputer/web', type: 'module', exports }))
+  await Promise.all(Object.values(entries).map((file) => Bun.write(`${at}/${file}.js`, `export * from '${src}/${file}.ts'\n`)))
+}
+
+/**
+ * Starts the dev server on a fresh copy of the application, and loads its
+ * Worker. `optimize` sets the Worker's environment up as the Cloudflare
+ * plugin does, pre-bundling the dependencies it finds as it goes, and has the
+ * application import this package from its node_modules.
+ */
+async function devServer(options: { readonly reload: boolean; readonly optimize?: boolean }) {
+  const source = options.optimize === true
+    ? { ...application, 'app.ts': application['app.ts'].replace(`${src}/index.ts`, '@popcomputer/web') }
+    : application
+  await Bun.$`rm -rf ${directory}`
+  await Promise.all(Object.entries(source).map(([file, text]) => Bun.write(`${directory}/${file}`, text)))
+  if (options.optimize === true) await installedPackage()
   globalThis.viteFixtureLoads = []
 
   const vite = await createServer({
     root: directory,
+    // Each test's own, as each application has its node_modules/.vite.
+    cacheDir: `${directory}/.vite`,
     configFile: false,
     logLevel: 'silent',
     appType: 'custom',
     plugins: options.reload ? [reloadWorkerModules()] : [],
     server: { middlewareMode: true, ws: false, watch: null },
+    environments: options.optimize === true
+      ? { ssr: { resolve: { noExternal: true }, optimizeDeps: { noDiscovery: false, entries: ['entry.ts'] } } }
+      : {},
   })
   server = vite
-  const runner = createServerModuleRunner(vite.environments.ssr, { hmr: { logger: false } })
+  // What the module runner reports, as the dev server's terminal shows it.
+  const logged: Array<string> = []
+  const runner = createServerModuleRunner(vite.environments.ssr, {
+    hmr: { logger: { debug: () => undefined, error: (message) => void logged.push(String(message)) } },
+  })
   await runner.import('/entry.ts')
 
-  return { vite, edit: editIn(vite), request: requestTo(runner) }
+  return { vite, edit: editIn(vite), request: requestTo(runner), logged }
 }
 
 /** Changes a file of the application, as an editor saves it, and waits for Vite to send the updates it makes. */
@@ -173,6 +212,40 @@ describe('reloadWorkerModules', () => {
     expect(worker).not.toHaveBeenCalled()
   })
 
+  test('a first import of another of the package’s entries loads the Worker once, without Vite re-optimising', async () => {
+    const { vite, edit, request, logged } = await devServer({ reload: true, optimize: true })
+    const sent = spyOn(vite.environments.ssr.hot, 'send')
+
+    await edit('greeting.ts', `import { kvCache } from '@popcomputer/web/cache'\n\nexport const greeting = typeof kvCache\n`)
+
+    expect(await eventually(() => request('/hello'), '200 function')).toBe('200 function')
+    // Re-optimising invalidated every module the reload was loading, which ran
+    // the routes a second time on the app already loaded, and then reloaded.
+    expect(logged).toEqual([])
+    const reloads = sent.mock.calls.map((call) => JSON.stringify(call)).filter((call) => call.includes('"full-reload"'))
+    expect(reloads).toEqual([JSON.stringify([{ type: 'full-reload' }])])
+  })
+
+  test('pre-bundles each of the package’s entries a Worker imports, only where the Worker’s dependencies are pre-bundled', async () => {
+    const { exports } = await Bun.file(`${import.meta.dir}/../package.json`).json()
+    // A Worker's environment as the Cloudflare plugin declares it, beside Vite's own two.
+    const { environments } = await resolveConfig({
+      root: directory,
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [reloadWorkerModules()],
+      environments: { worker: { optimizeDeps: { noDiscovery: false } } },
+    }, 'serve')
+    // Entries a Worker never imports, which do not bundle for one.
+    const elsewhere = ['./react', './lint', './fence', './testing', './fuzz', './vite']
+
+    expect(environments.worker.optimizeDeps.include).toEqual(
+      Object.keys(exports).filter((entry) => !elsewhere.includes(entry)).map((entry) => `@popcomputer/web${entry.slice(1)}`)
+    )
+    expect(environments.client.optimizeDeps.include).toEqual([])
+    expect(environments.ssr.optimizeDeps.include).toEqual([])
+  })
+
   test('without it, an edit to the routes registers every route a second time, and the error names it', async () => {
     const { edit, request } = await devServer({ reload: false })
 
@@ -181,6 +254,10 @@ describe('reloadWorkerModules', () => {
     const failure = await eventually(() => request('/bye'), 'registered twice')
 
     expect(failure).toContain('GET /hello is registered twice')
-    expect(failure).toContain('add reloadWorkerModules() from @popcomputer/web/vite')
+    expect(failure).toContain("Without reloadWorkerModules() from @popcomputer/web/vite in vite.config.ts's plugins, add it.")
+    // And says what to do when vite.config.ts has the plugin already, as when
+    // Vite re-optimises a dependency the plugin does not pre-bundle.
+    expect(failure).toContain('With it, this follows Vite\'s "optimized dependencies changed. reloading"')
+    expect(failure).toContain('restart the dev server if they are not')
   })
 })

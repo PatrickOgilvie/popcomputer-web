@@ -186,6 +186,24 @@ function streamed(bytes: Uint8Array, chunk = 64 * 1024) {
   return { body, pulled: () => pulled }
 }
 
+/** A body that never ends, counting the bytes the server pulls and whether it cancelled the rest. */
+function endless(chunk = 64 * 1024) {
+  const bytes = new Uint8Array(chunk)
+  let pulled = 0
+  let cancelled = false
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled += chunk
+      controller.enqueue(bytes)
+    },
+    cancel() {
+      cancelled = true
+    },
+  }, { highWaterMark: 0 })
+
+  return { body, pulled: () => pulled, cancelled: () => cancelled }
+}
+
 /** A multipart form of one PNG of `size` bytes, and its Content-Type. */
 async function multipart(field: string, size: number) {
   const png = new Uint8Array(size)
@@ -204,8 +222,12 @@ const send = (app: Hono, path: string, init: RequestInit) => {
   return app.request(new Request(`http://localhost${path}`, streaming), undefined, testEnv({ ENVIRONMENT: 'production' }))
 }
 
+// A refused body is still read to its end, and dropped, before the answer: a
+// client or proxy still sending when the answer comes loses the connection.
+// Behind portless, Vite's dev server answered such an upload with portless's
+// 502 page, or never finished it.
 describe('a body over the limit', () => {
-  test('streamed without a length, is refused with 413 before more than the limit is read', async () => {
+  test('streamed without a length, is refused with 413, and read to its end before the answer', async () => {
     const { type, bytes } = await multipart('cover', 8 * MiB)
     const { body, pulled } = streamed(bytes)
     const res = await send(createUploadsApp(), '/covers', { headers: { Accept: 'application/json', 'Content-Type': type }, body })
@@ -215,10 +237,10 @@ describe('a body over the limit', () => {
       code: 'WEB_VAL_007_BODY_TOO_LARGE',
       errors: { form: 'This request is too large: send at most 1 MB.' },
     })
-    expect(pulled()).toBeLessThan(MiB + 256 * 1024)
+    expect(pulled()).toBe(bytes.byteLength)
   })
 
-  test('with a declared Content-Length over the limit, is refused before a byte is read', async () => {
+  test('with a declared Content-Length over the limit, is refused unparsed, and read to its end before the answer', async () => {
     const bytes = new TextEncoder().encode(JSON.stringify({ text: 'x'.repeat(2 * MiB) }))
 
     for (const type of ['application/json', 'text/plain', 'application/x-www-form-urlencoded']) {
@@ -228,19 +250,56 @@ describe('a body over the limit', () => {
         body,
       })
 
-      expect({ type, status: res.status, pulled: pulled() }).toEqual({ type, status: 413, pulled: 0 })
+      expect({ type, status: res.status, pulled: pulled() }).toEqual({ type, status: 413, pulled: bytes.byteLength })
     }
   })
 
-  test('sent as JSON or text without a length is refused too', async () => {
+  test('sent as JSON or text without a length is refused too, and read to its end', async () => {
     const bytes = new TextEncoder().encode(JSON.stringify({ text: 'x'.repeat(2 * MiB) }))
 
     for (const type of ['application/json', 'text/plain']) {
       const { body, pulled } = streamed(bytes)
       const res = await send(createUploadsApp(), '/notes', { headers: { Accept: 'application/json', 'Content-Type': type }, body })
 
-      expect({ type, status: res.status, withinLimit: pulled() < MiB + 256 * 1024 }).toEqual({ type, status: 413, withinLimit: true })
+      expect({ type, status: res.status, pulled: pulled() }).toEqual({ type, status: 413, pulled: bytes.byteLength })
     }
+  })
+
+  test('that fails part way while it is read to its end is still refused with 413', async () => {
+    let pulled = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled >= 2 * MiB) return controller.error(new Error('The connection was reset.'))
+
+        pulled += 64 * 1024
+        controller.enqueue(new Uint8Array(64 * 1024))
+      },
+    }, { highWaterMark: 0 })
+    const res = await send(createUploadsApp(), '/notes', { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body })
+
+    expect(res.status).toBe(413)
+  })
+
+  test('is cut off past 100 MiB instead of read to its end', async () => {
+    const limit = 100 * MiB
+
+    for (const type of ['application/json', 'text/plain']) {
+      const { body, pulled, cancelled } = endless()
+      const res = await send(createUploadsApp(), '/notes', { headers: { Accept: 'application/json', 'Content-Type': type }, body })
+
+      expect({ type, status: res.status, cancelled: cancelled() }).toEqual({ type, status: 413, cancelled: true })
+      expect(pulled()).toBeGreaterThan(limit)
+      expect(pulled()).toBeLessThanOrEqual(limit + 128 * 1024)
+    }
+
+    // One that declares as much is refused before a byte is read.
+    const { body, pulled } = endless()
+    const res = await send(createUploadsApp(), '/notes', {
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Content-Length': String(limit + 1) },
+      body,
+    })
+
+    expect({ status: res.status, pulled: pulled() }).toEqual({ status: 413, pulled: 0 })
   })
 
   test("from a page's form goes back to the form, as a body that does not parse does", async () => {
@@ -273,6 +332,27 @@ describe('the body limit', () => {
 
     expect(res.status).toBe(413)
     expect((await res.json()).errors.form).toBe('This request is too large: send at most 1 KB.')
+  })
+
+  test("is named in the decimal units of an upload's maxBytes", async () => {
+    // A photo journal's form: photos of at most 10 MB, and room for the rest of the form.
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+    const Entry = S.Struct({ photo: upload({ types: ['image/png'], maxBytes: 10_000_000 }) })
+    routes.post('/journal', action(Effect.gen(function* () {
+      yield* validateRequest(Entry, { bodyLimit: 10_100_000 })
+
+      return yield* json(Ok, { ok: true })
+    })))
+    const post = async (size: number) => {
+      const { type, bytes } = await multipart('photo', size)
+      const res = await send(app, '/journal', { headers: { Accept: 'application/json', 'Content-Type': type }, body: streamed(bytes).body })
+
+      return (await res.json()).errors
+    }
+
+    expect(await post(12_000_000)).toEqual({ form: 'This request is too large: send at most 10.1 MB.' })
+    expect(await post(10_050_000)).toEqual({ photo: 'The file must be at most 10 MB' })
   })
 
   test('that is not a number of bytes is a defect, not a client error', async () => {

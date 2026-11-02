@@ -14,6 +14,7 @@ import {
 } from 'effect'
 import type { Filter, ParseOptions } from 'effect/SchemaAST'
 import { webUrl } from '../locations.js'
+import { formatBytes } from './body-limit.js'
 
 // =============================================================================
 // String Types
@@ -1250,12 +1251,6 @@ const acceptsType = (types: ReadonlyArray<string>, type: string): boolean => {
       : sent === expected
   })
 }
-
-/** A size as people read it: decimal units, so `maxBytes: 10_000_000` reads `10 MB`. */
-const formatBytes = (bytes: number): string =>
-  bytes >= 1_000_000 ? `${Math.round(bytes / 100_000) / 10} MB`
-  : bytes >= 1000 ? `${Math.round(bytes / 100) / 10} KB`
-  : `${bytes} bytes`
 
 /** The bytes a file of a type starts with, at an offset, as `[offset, bytes]` pairs any of which may match. */
 const SIGNATURES: Readonly<Record<string, { readonly label: string; readonly starts: ReadonlyArray<readonly [number, string]> }>> = {
