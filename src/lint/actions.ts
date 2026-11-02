@@ -425,7 +425,7 @@ export const preferCheckedConfig: LintRule = {
     docs: { description: "An application reads its bindings with config, which checks each name against the Worker's bindings." },
     messages: {
       config:
-        "Use config.{{member}}('{{name}}') from @popcomputer/web/effect: it reads the same binding as Config.{{constructor}}, and checks its name against the Worker's bindings, so a misspelled name is a type error rather than a ConfigError in production.",
+        "Use env.config.{{name}} from src/env.ts, decoded by the schema defineEnv declares for it, or config.{{member}}('{{name}}') from @popcomputer/web/effect for a binding the declaration does not hold: both read the same binding as Config.{{constructor}}, and check its name against the Worker's bindings, so a misspelled name is a type error rather than a ConfigError in production.",
     },
   },
   create(context) {

@@ -4,8 +4,8 @@ A webhook's signature covers the exact bytes sent, so read the raw body with
 `RequestService`'s `raw()` rather than `validateRequest` (read
 `raw().clone().text()` when `validateRequest` reads the body afterwards),
 verify it with Web Crypto (`crypto.subtle.verify` compares in constant time), and only then decode
-it. Read the secret with `config.redacted`, which reads the Worker's binding
-and keeps it out of logs. Providers retry, so record each event id under a
+it. Read the secret through `env.config`, which reads it as `Redacted` and
+keeps it out of logs. Providers retry, so record each event id under a
 unique key and treat a duplicate as already handled. On D1, insert the event
 id in the same `dbBatch` as the writes it causes, so a replay's unique
 violation undoes the whole batch:
@@ -13,6 +13,7 @@ violation undoes the whole batch:
 ```ts
 import { eq } from 'drizzle-orm'
 import { DateTime, Redacted } from 'effect'
+import { env } from '../env'
 import { orders, webhookEvents } from '../schema'
 
 const PaymentEvent = S.Struct({ id: S.String, orderId: S.String })
@@ -32,7 +33,7 @@ async function verifySignature(secret: string, body: string, signature: string) 
 
 export const paymentWebhook = action(Effect.gen(function* () {
   const request = yield* RequestService
-  const secret = yield* config.redacted('PAYMENT_WEBHOOK_SECRET')
+  const secret = yield* env.config.PAYMENT_WEBHOOK_SECRET
   const body = yield* Effect.promise(() => request.raw().text())
   const signature = request.header('X-Signature') ?? ''
 

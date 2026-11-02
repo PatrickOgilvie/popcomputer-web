@@ -8,7 +8,7 @@
  * Worker, such as a deploy, read the same declaration.
  */
 
-import { Cause, Exit, Result, Schema as S, SchemaIssue } from 'effect'
+import { Cause, Config, Effect, Exit, Option, Redacted, Result, Schema as S, SchemaIssue } from 'effect'
 import { createStructuredError, ErrorCodes } from './effect/error-catalog.js'
 import type { ErrorContext, StructuredError } from './effect/error-types.js'
 
@@ -104,10 +104,49 @@ export function variable(schema?: EnvSchema, options: VariableOptions<boolean> =
   return { kind: 'variable', schema: schema ?? S.String, optional: options.optional ?? false }
 }
 
+/** What one var or secret reads as: its schema's type, a secret's kept Redacted. */
+type EnvRead<Entry extends EnvEntry> = Entry extends EnvSecret<infer Schema> ? Redacted.Redacted<Schema['Type']> : Entry['schema']['Type']
+
+/** What reading one var or secret through its `Config` gives: an optional one's as an Option. */
+export type EnvValue<Entry extends EnvEntry> = Entry['optional'] extends true ? Option.Option<EnvRead<Entry>> : EnvRead<Entry>
+
+/** Each var and secret as an Effect `Config`, decoded by its own schema. */
+export type EnvConfig<Entries extends Readonly<Record<string, EnvEntry>>> = {
+  readonly [Name in keyof Entries]: Config.Config<EnvValue<Entries[Name]>>
+}
+
+/** A declaration, with each of its vars and secrets to read through `config`. */
+export type DefinedEnv<Entries extends Readonly<Record<string, EnvEntry>>> = EnvDeclaration<Entries> & {
+  readonly config: EnvConfig<Entries>
+}
+
+/** A secret its schema refuses, without its value, which the schema's own issue holds. */
+function invalidSecret(name: string): Config.ConfigError {
+  return new Config.ConfigError(new S.SchemaError(new SchemaIssue.Pointer([name], new SchemaIssue.InvalidValue({ message: 'Expected a value its schema accepts; a secret is not shown' }))))
+}
+
+/**
+ * One var or secret as an Effect `Config`: decoded by its schema, a secret
+ * kept Redacted and refused without its value, an optional one read as an
+ * Option. An empty value reads as missing, as Effect's provider reads one.
+ */
+function entryConfig(name: string, entry: EnvEntry): Config.Config<unknown> {
+  const read: Config.Config<unknown> = entry.kind === 'secret'
+    ? Config.schema(S.String, name).pipe(Config.mapEffect((raw) =>
+        S.decodeUnknownEffect(entry.schema)(raw).pipe(Effect.map(Redacted.make), Effect.mapError(() => invalidSecret(name)))
+      ))
+    : Config.schema(entry.schema, name)
+
+  return entry.optional ? Config.option(read) : read
+}
+
 /**
  * Declares the Worker's vars and secrets once. Pass the result to
  * `setupWeb`'s `env`, which checks each isolate's bindings against it, and
- * type the bindings with {@link EnvBindings}.
+ * type the bindings with {@link EnvBindings}. Read each one in an action, a
+ * service or a job through `config`, as its schema decodes it:
+ * `yield* env.config.PORT` is a number for `variable(S.FiniteFromString)`, a
+ * secret is Redacted, and an optional one is an Option.
  *
  * @example
  * export const env = defineEnv({
@@ -116,9 +155,14 @@ export function variable(schema?: EnvSchema, options: VariableOptions<boolean> =
  * })
  *
  * export type Bindings = EnvBindings<typeof env> & { DB: D1Database }
+ *
+ * const environment = yield* env.config.ENVIRONMENT
  */
-export function defineEnv<const Entries extends Readonly<Record<string, EnvEntry>>>(entries: Entries): EnvDeclaration<Entries> {
-  return { entries }
+export function defineEnv<const Entries extends Readonly<Record<string, EnvEntry>>>(entries: Entries): DefinedEnv<Entries> {
+  const config = Object.fromEntries(Object.entries(entries).map(([name, entry]) => [name, entryConfig(name, entry)]))
+
+  // SAFETY: entryConfig builds each entry's Config from the schema, kind and optional EnvValue reads its type from.
+  return { entries, config: config as EnvConfig<Entries> }
 }
 
 type Simplify<T> = { [Key in keyof T]: T[Key] } & {}

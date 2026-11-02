@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, spyOn, test } from 'bun:test'
-import { Effect, Schema as S } from 'effect'
+import { Config, Effect, Option, Redacted, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
@@ -216,3 +216,81 @@ describe("setupWeb's env", () => {
     expect(batch.retried()).toEqual([{ orderId: 'order-1' }])
   })
 })
+
+describe('env.config', () => {
+  const declared = defineEnv({
+    PORT: variable(S.FiniteFromString),
+    ENVIRONMENT: variable(S.Literals(['development', 'production', 'test'])),
+    // A check whose own message repeats the value, as a hand-written one may.
+    MAIL_KEY: secret(S.String.check(S.makeFilter((key) => key.startsWith('re_') || `${key} is not a Resend key`))),
+    TIME_ZONE: variable(S.String, { optional: true }),
+    SENTRY_DSN: secret(S.String, { optional: true }),
+  })
+
+  type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false
+
+  // Each reads as its schema decodes it: a secret Redacted, an optional one an Option.
+  const typed: [
+    Equals<typeof declared.config.PORT, Config.Config<number>>,
+    Equals<typeof declared.config.ENVIRONMENT, Config.Config<'development' | 'production' | 'test'>>,
+    Equals<typeof declared.config.MAIL_KEY, Config.Config<Redacted.Redacted<string>>>,
+    Equals<typeof declared.config.TIME_ZONE, Config.Config<Option.Option<string>>>,
+    Equals<typeof declared.config.SENTRY_DSN, Config.Config<Option.Option<Redacted.Redacted<string>>>>,
+  ] = [true, true, true, true, true]
+
+  const Read = S.Struct({ port: S.Number, environment: S.String, mailKey: S.String, timeZone: S.NullOr(S.String), sentry: S.Boolean })
+
+  const reading = Effect.gen(function* () {
+    const mailKey = yield* declared.config.MAIL_KEY
+    const timeZone = yield* declared.config.TIME_ZONE
+    const sentry = yield* declared.config.SENTRY_DSN
+
+    return {
+      port: yield* declared.config.PORT,
+      environment: yield* declared.config.ENVIRONMENT,
+      mailKey: Redacted.value(mailKey),
+      timeZone: Option.getOrNull(timeZone),
+      sentry: Option.isSome(sentry),
+    }
+  })
+
+  function createApp(checked: boolean) {
+    const app = new Hono<{ Bindings: EnvBindings<typeof declared> }>()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page), ...(checked ? { env: declared } : {}) })
+
+    routes.get('/read', action(Effect.flatMap(reading, (read) => json(Read, read))))
+
+    return { app, routes }
+  }
+
+  const bindings = { PORT: '8080', ENVIRONMENT: 'test', MAIL_KEY: 're_0123456789', TIME_ZONE: 'Europe/Oslo' } as const
+  const read = { port: 8080, environment: 'test' as const, mailKey: 're_0123456789', timeZone: 'Europe/Oslo', sentry: false }
+
+  test('reads each var and secret in an action as its schema decodes it', async () => {
+    expect(typed).toEqual([true, true, true, true, true])
+
+    const res = await createApp(true).app.request('/read', { headers: { Accept: 'application/json' } }, testEnv(bindings))
+
+    expect(await res.json()).toEqual(read)
+  })
+
+  test('reads them in a job as in an action', async () => {
+    expect(await createApp(true).routes.run(reading, testEnv(bindings))).toEqual(read)
+  })
+
+  test('reads an empty optional var as none, as a missing one', async () => {
+    expect(await createApp(true).routes.run(reading, testEnv({ ...bindings, TIME_ZONE: '' }))).toEqual({ ...read, timeZone: null })
+  })
+
+  test('refuses a secret its schema refuses without its value, even where nothing checked it first', async () => {
+    const value = 'sk_live_not_a_mail_key_0123456789'
+    // In development, whose error page names what failed.
+    const res = await createApp(false).app.request('/read', { headers: { Accept: 'application/json' } }, testEnv({ ...bindings, ENVIRONMENT: 'development', MAIL_KEY: value }))
+    const body = await res.text()
+
+    expect(res.status).toBe(500)
+    expect(body).toContain('MAIL_KEY')
+    expect(body).not.toContain(value)
+  })
+})
+

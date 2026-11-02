@@ -6,18 +6,18 @@ which accept actions that use them.
 
 ```ts
 // src/services.ts
-import { Config, Context, DateTime, Effect, Layer } from 'effect'
-import { config } from '@popcomputer/web/effect'
+import { Context, DateTime, Effect, Layer, Option } from 'effect'
+import { env } from './env'
 
 export class Clock extends Context.Service<Clock, {
   readonly today: Effect.Effect<string>
   readonly timeZone: string
 }>()('app/Clock') {}
 
-// config reads the Worker's bindings, named as src/env.ts declares them:
-// here the TIME_ZONE var.
+// env.config reads the Worker's vars and secrets as src/env.ts declares them:
+// here the optional TIME_ZONE var.
 export const ClockLive = Layer.effect(Clock, Effect.gen(function* () {
-  const timeZone = yield* config.string('TIME_ZONE').pipe(Config.withDefault('UTC'))
+  const timeZone = Option.getOrElse(yield* env.config.TIME_ZONE, () => 'UTC')
   // An unknown zone is a deployment mistake: the layer fails to build, naming it.
   const zone = yield* DateTime.zoneMakeNamedEffect(timeZone).pipe(Effect.orDie)
 
@@ -49,12 +49,12 @@ export const { app, routes } = web.services({
 
 The `app` layer is built once, on the first request an isolate serves, and
 shared by every later request: configuration, clients that open no connection
-until used, in-memory caches. `config` from `@popcomputer/web/effect` is
-Effect `Config` named by the bindings `src/env.ts` declares, so a misspelled
-name is a type error: it reads the Worker's bindings in both kinds of service
-and in actions, and `config.redacted('PAYMENT_WEBHOOK_SECRET')` reads a
-secret. A missing binding fails the request with a configuration error that
-names it in development. The `request` layer is built for each request from
+until used, in-memory caches. `env.config.NAME` is an Effect `Config` for
+each var and secret `src/env.ts` declares, decoded by its schema, so a
+misspelled name is a type error: it reads the Worker's bindings in both kinds
+of service and in actions, and `env.config.PAYMENT_WEBHOOK_SECRET` reads a
+secret as `Redacted`. A missing binding fails the request with a
+configuration error that names it in development. The `request` layer is built for each request from
 its context and bindings, when the request runs an action: a plain Hono
 route never calls `request(c)`. Anything holding a request's I/O, such as a D1, KV or
 Hyperdrive binding, belongs in `request`: Workers forbid using it from

@@ -111,7 +111,7 @@ over them, so a script checking what it will see passes both.
 Each problem is `{ name, kind, problem, expected }`: `kind` is `'secret'` or
 `'variable'`, `problem` is `'missing'` or `'invalid'`, and `expected` says
 what the schema wants. `env.entries` lists each var and secret with its
-`kind`, `optional` and `generate`, for a script that sets them.
+`kind`, `optional`, `generate` and `schema`, for a script that sets them.
 
 The demo's scripts use both, as
 [its README](https://github.com/PatrickOgilvie/popcomputer-web-demo#vars-and-secrets)
@@ -125,9 +125,33 @@ shows:
 
 ## Reading them
 
-Read a var or a secret in a service or an action with `config.string('NAME')`
-or `config.redacted('KEY')` from `@popcomputer/web/effect`, as
-[Application services](services.md) shows, and in `setupWeb`'s factories from
-`c.env`, as the Quick start's `auth.client` reads `c.env.BETTER_AUTH_SECRET`.
-Both are named by the bindings `EnvBindings` gives, so a name the
-declaration does not hold is a type error.
+Read a var or a secret in an action, a service or a job through the
+declaration, `yield* env.config.NAME`, as its own schema decodes it:
+`variable(S.FiniteFromString)` reads as a number and
+`S.Literals(['development', 'production'])` as that union, a secret reads as
+`Redacted`, and an optional one as an `Option`. Each is an Effect `Config`
+over the request's or the job's bindings, so `Config.withDefault` and the
+rest of Effect's `Config` apply, and a name the declaration does not hold is
+a type error:
+
+```ts
+// src/settings.ts
+import { Effect, Option, Redacted } from 'effect'
+import { env } from './env'
+
+export const paymentSettings = Effect.gen(function* () {
+  const secret = yield* env.config.PAYMENT_WEBHOOK_SECRET
+  const timeZone = Option.getOrElse(yield* env.config.TIME_ZONE, () => 'UTC')
+
+  return { signing: Redacted.value(secret).length, timeZone }
+})
+```
+
+A value its schema refuses fails the read with a configuration error, as
+`setupWeb`'s check would have at startup; a secret's never shows its value.
+An empty value reads as missing, as Effect reads one, though the startup
+check accepts an empty var. In `setupWeb`'s factories, read `c.env`, as the
+Quick start's `auth.client` reads `c.env.BETTER_AUTH_SECRET`.
+`config.string('NAME')` and `config.redacted('KEY')` from
+`@popcomputer/web/effect` read a binding the declaration does not hold, as a
+string.

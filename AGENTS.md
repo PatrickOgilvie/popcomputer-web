@@ -26,7 +26,9 @@ here, as the demo's does.
    optional: true }` for one the Worker runs without. Type the bindings as
    `EnvBindings<typeof env>` and the other bindings beside it, and pass it
    as `setupWeb`'s `env`, which checks each isolate's bindings before it
-   serves. Do not add framework middleware or register routes on the Hono
+   serves, and read each one as its schema decodes it with
+   `yield* env.config.NAME` (a secret `Redacted`, an optional one an
+   `Option`). Do not add framework middleware or register routes on the Hono
    app by hand.
 2. **Every handler is an action.** Wrap an `Effect.gen` in `action(...)` and
    register it on the `routes` that `setupWeb` returns, or that
@@ -204,8 +206,9 @@ here, as the demo's does.
    (configuration, in-memory caches), `request` for anything that holds the
    request's bindings (D1, KV, Hyperdrive). Define them with
    `Context.Service` and `Layer`, and read vars and secrets with
-   `config.string('NAME')` and `config.redacted('KEY')`, Effect `Config`
-   named by the Worker's bindings type, which reads the request's bindings.
+   `env.config.NAME` from `src/env.ts`, Effect `Config` decoded by each
+   one's schema, which reads the request's or the job's bindings
+   (`config.string('NAME')` reads a binding the declaration does not hold).
    A layer's type is inferred, even when it uses `dbQuery`, `config` or
    `bound`.
 10. **Run work that outlives the response with `background('name', effect)`.**
