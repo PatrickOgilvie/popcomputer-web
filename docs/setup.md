@@ -19,7 +19,7 @@ export const env = defineEnv({
   TIME_ZONE: variable(S.String, { optional: true }),
 })
 
-export type Bindings = EnvBindings<typeof env> & { KV: KVNamespace; SIGN_IN_LIMITER: RateLimit }
+export type Bindings = EnvBindings<typeof env> & { KV: KVNamespace; SIGN_IN_LIMITER: RateLimit; UPLOADS: R2Bucket }
 
 export type Env = { Bindings: Bindings }
 ```

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `docs/uploads.md` shows where an upload lives: an R2 bucket declared in `wrangler.jsonc` and typed in `src/env.ts`, as the Quick start's `Bindings` now types `UPLOADS: R2Bucket`; a service `web.services`'s `request` builds from it; actions that store a file under a key the server makes and serve it back with `file()`, the bound record deciding who may do either; and a test that gives the service a bucket in memory. No doc said where an uploaded file goes, and a blind build of a photo journal had to invent it. `docs/which-api.md`, `docs/validation.md` and `docs/responses.md` link it.
+- `docs/validation.md`'s "A form's date and time" says what a form does with a `datetime-local` input, whose `2026-11-20T19:30` has no zone and which `isoDateTime` refuses: Inertia's `transform` sends the moment it names in the visitor's zone, an edit form fills the input from a stored moment the other way, and a time that belongs to a place is built on the server with `DateTime.makeZoned(local, { timeZone, adjustForTimeZone: true })`. A blind build of a supper club had to invent it.
+
+### Fixed
+
+- `file()` takes an `ArrayBuffer`, as an R2 object's or a `File`'s `arrayBuffer()` reads it, and sends it as it is. It was `TS2345: Argument of type 'ArrayBuffer' is not assignable to parameter of type 'FileBody<never, never>'`.
+- `FormErrors` has `form`, where an error that belongs to no field goes: `invalid({ form: 'Every seat is taken.' })`, a body over the limit, more invalid fields than a failure lists, and Better Auth's refusal that the action maps to no field. Reading `errors.form` through a `FormErrors` was TS2339. `docs/forms.md` names the convention, and its page shows the error.
+- `docs/forms.md` says `FormInput` types a number field, such as a `positiveInt`, as `number | string`, so a new form starts it at `''`, an edit form at the record's number, and an input's `value` takes either without `String(...)`. A blind build took it for `unknown`; a type test now holds it to `number | string`.
+- `docs/type-errors.md` names the cause of Drizzle's `No overload matches this call` at `db.insert(table).values({ ... })`, which says `'id' does not exist in type '{ ... }[]'`: TypeScript reports the overload for an array of rows, though the row holds a value of another type than its column's, such as a `string` for an enum column, or leaves out a required column, or names one the table lacks. Writing the row as `typeof table.$inferInsert` names the field.
+
 ## [1.10.0] - 2026-11-01
 
 This release adds `stepsOf` to `@popcomputer/web/fuzz`, the sequences of steps a property over a lifecycle runs, of every length up to its `maxLength`, and builds `textOf` on it. Effect's `Arbitrary.array`, which `docs/fuzzing.md` used, kept sequences to two or three steps, and an application whose type check runs the Effect language service couldn't use it at all.

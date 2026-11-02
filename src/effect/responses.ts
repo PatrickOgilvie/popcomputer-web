@@ -249,10 +249,15 @@ export interface FileOptions {
   readonly headers?: HeadersInit
 }
 
-/** A file body: text, bytes, a web stream, or an Effect Stream of text or bytes. */
+/**
+ * A file body: text, bytes, the `ArrayBuffer` an R2 object's or a `File`'s
+ * `arrayBuffer()` reads, a web stream, such as an R2 object's `body`, or an
+ * Effect Stream of text or bytes.
+ */
 export type FileBody<E, R> =
   | string
   | Uint8Array<ArrayBuffer>
+  | ArrayBuffer
   | ReadableStream<Uint8Array>
   | Stream.Stream<string | Uint8Array<ArrayBuffer>, E, R>
 

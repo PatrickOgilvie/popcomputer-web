@@ -7,7 +7,7 @@ so no server code reaches the bundle, and types its form with `FormInput`:
 ```ts
 // src/forms.ts
 import { Schema as S } from 'effect'
-import { alphaDash, coercedDate, currentPassword, email, nullable, nullableString, requiredString } from '@popcomputer/web/schema'
+import { alphaDash, coercedDate, currentPassword, email, isoDateTime, nullable, nullableString, positiveInt, requiredString } from '@popcomputer/web/schema'
 
 export const CreateProject = S.Struct({
   name: requiredString,
@@ -26,6 +26,9 @@ export const ProjectFilters = S.Struct({
 
 // A password signs in exactly as it was chosen: currentPassword never trims it.
 export const SignIn = S.Struct({ email, password: currentPassword })
+
+// A dinner's moment, with its zone, and its seats.
+export const ScheduleDinner = S.Struct({ startsAt: isoDateTime, seats: positiveInt })
 ```
 
 A form's fields derive from the schema its action validates them with:
@@ -35,6 +38,11 @@ well as the action, and `const errors: FormErrors<typeof CreateProject> =
 props.errors` types the errors the form reads by the same fields. Keep form
 schemas in a module both sides import, `src/forms.ts`, and import them in
 React with `import type`, so no server code reaches the browser.
+A number field, such as a `positiveInt`, is `number | string`: a new form
+starts it at `''`, an edit form at the record's number, and an input's
+`value` takes either, so it needs no `String(...)`. A date is the `string`
+its input holds; [A form's date and time](validation.md#a-forms-date-and-time)
+shows a form sending a moment with its zone.
 The page below shows a form; [Pages and props](pages.md) shows the error page
 and the client's page map.
 
@@ -53,7 +61,7 @@ import { RenameProjectForm } from '../../components/RenameProjectForm'
 import type { CreateProject } from '../../forms'
 import { paths } from '../../paths'
 
-const Index: WebPage<'Projects/Index'> = ({ projects, next }) => {
+const Index: WebPage<'Projects/Index'> = ({ projects, next, errors }) => {
   const { flash } = usePage()
   const form = useForm<FormInput<typeof CreateProject>>({ name: '', slug: '', description: null })
 
@@ -97,6 +105,7 @@ const Index: WebPage<'Projects/Index'> = ({ projects, next }) => {
           />
         </label>
 
+        {errors.form && <p role="alert">{errors.form}</p>}
         <button type="submit" disabled={form.processing}>Create project</button>
       </form>
     </main>
@@ -124,6 +133,13 @@ that page without naming it; and any other goes to `/`. A
 wizard's earlier step. That page renders with all of its own props and the
 field errors as `errors`; a form that names an Inertia error bag gets them
 under its name.
+
+An error that belongs to no field, such as every seat being taken, goes on
+`form`: `invalid({ form: 'Every seat is taken.' })`. The framework puts its
+own there too: a body over the limit, more invalid fields than it lists, and
+Better Auth's refusal when the action maps it to no field. A page reads it
+as `errors.form`, from its `errors` prop or a `FormErrors`, which always has
+`form`; Inertia types `useForm().errors` by the form's own fields only.
 
 Errors and flash values travel in a short-lived `HttpOnly` cookie that the
 next page to render reads and clears. A request that only redirects, such as

@@ -169,6 +169,15 @@ describe('file', () => {
     expect(await response.text()).toBe('<rss/>')
   })
 
+  test("serves the ArrayBuffer an R2 object's or a File's arrayBuffer() reads", async () => {
+    const stored = new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47])], 'cover.png', { type: 'image/png' })
+
+    const response = await Effect.runPromise(file(await stored.arrayBuffer(), { contentType: stored.type }))
+
+    expect(response.headers.get('Content-Type')).toBe('image/png')
+    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([0x89, 0x50, 0x4e, 0x47])
+  })
+
   test('keeps the browser to the declared type', async () => {
     const response = await Effect.runPromise(file(new Uint8Array([1]), { contentType: 'application/pdf' }))
 

@@ -78,6 +78,7 @@ Building:
 - [Validating input](docs/validation.md): `validateRequest`, the validators, dates, uploads and filters
 - [Actions and routes](docs/actions.md): paths, actions, registrations, the response helpers and defects
 - [Cookies, files and headers](docs/responses.md): declared cookies, files, polling, the Origin check and security headers
+- [Storing uploads](docs/uploads.md): an R2 bucket, its binding and service, serving a file back, and a bucket in memory for tests
 - [JSON clients](docs/json.md): who gets JSON, the error envelope, JSON declared by a schema, and `call`
 - [JSON endpoints](docs/endpoints.md): contracts, their actions, `routes.endpoint` and `openApi`
 - [Route model binding](docs/route-models.md): `bindings`, `bound()`, and models scoped to their parent
@@ -190,6 +191,7 @@ Each lives in the file for its task:
 - [Roles belong to memberships, read by a guard](docs/guards.md#roles-belong-to-memberships-read-by-a-guard)
 - [Webhooks verify the raw body, then record the event once](docs/webhooks.md)
 - User input in, files out: [filters and uploads](docs/validation.md#user-input-in),
+  [storing uploads](docs/uploads.md),
   [serving an upload back](docs/responses.md#serving-an-upload-back), and
   [requests from other sites](docs/responses.md#requests-from-other-sites-and-security-headers)
 - [Lists page through with a cursor](docs/database.md#lists-page-through-with-a-cursor)
