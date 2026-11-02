@@ -47,7 +47,8 @@ app.use('/admin/*', async (c, next) => {
 `private, no-cache`, or `no-store` when it is signed in or sets a cookie, so
 Workers Cache never hands a page rendered for one visitor to the next; and
 `verifyOrigin()` refuses a state-changing request from another site with a
-JSON 403. It takes `setupWeb`'s `security` options:
+JSON 403. It also holds each answer until a request body nothing read has
+ended, as `setupWeb` does. It takes `setupWeb`'s `security` options:
 `webDefaults({ verifyOrigin: { allowedOrigins: ['myapp://'] } })`. Without
 `privateByDefault()` around it, `web()` gives what it answers the same
 `Cache-Control` itself, so a stack composed before `webDefaults()` existed

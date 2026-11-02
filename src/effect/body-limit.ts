@@ -4,7 +4,9 @@
  * Parsing a body holds it in memory several times over (its bytes, the
  * parsed form and its files), in the isolate every request shares, so the
  * framework reads one only up to a limit: setupWeb's `bodyLimit`, which an
- * action that takes uploads raises with validateRequest's.
+ * action that takes uploads raises with validateRequest's. What it does not
+ * read, the rest of a refused body or one nothing read, it drops before the
+ * answer.
  */
 
 import { Data } from 'effect'
@@ -48,8 +50,7 @@ export async function readBody(request: Request, limit: number, { copy = false }
   const declared = Number(request.headers.get('Content-Length') ?? 0)
 
   if (declared > limit) {
-    // A body past the most that is dropped would be cut off part way anyway.
-    if (declared <= DISCARD_LIMIT) await discardBody(request)
+    await discardBody(request)
 
     throw new BodyTooLarge({ limit })
   }
@@ -92,9 +93,42 @@ export async function readBody(request: Request, limit: number, { copy = false }
   return body.buffer
 }
 
-/** Read a refused request's body to its end, dropping it; one another reader holds is left to it. */
+/**
+ * Read a request's body to its end, dropping it. One another reader holds or
+ * has read is left to it, and one declaring more than DISCARD_LIMIT is not
+ * read: it would be cut off part way anyway.
+ */
 async function discardBody(request: Request): Promise<void> {
-  if (request.body !== null && !request.body.locked) await discard(request.body.getReader(), 0)
+  if (request.body === null || request.bodyUsed || request.body.locked) return
+  if (Number(request.headers.get('Content-Length') ?? 0) > DISCARD_LIMIT) return
+
+  await discard(request.body.getReader(), 0)
+}
+
+/** Response bodies that stream as they are read, and so may read their request's body as they go. */
+const streamingBodies = new WeakSet<ReadableStream<Uint8Array>>()
+
+/** Leave the request's body to a response body that streams as it is read: `discardUnreadBody` reads it no more. */
+export function streamsAsRead(body: ReadableStream<Uint8Array>): void {
+  streamingBodies.add(body)
+}
+
+/**
+ * Read a request's body nothing read to its end, and drop it, before
+ * `response` answers it, as readBody does a refused one's: an answer that
+ * never reads the body, such as a 404 or a redirect to sign in, otherwise
+ * comes while the client is still sending it.
+ *
+ * A body something read is left alone, and so is one a streamed response may
+ * still read as it goes: the request's own body sent back, or a body
+ * `file()` streams.
+ */
+export async function discardUnreadBody(request: Request, response: Response): Promise<void> {
+  const body = response.body
+
+  if (body !== null && (body === request.body || streamingBodies.has(body))) return
+
+  await discardBody(request)
 }
 
 /**

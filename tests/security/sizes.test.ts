@@ -11,13 +11,15 @@
 
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
-import { Effect, Layer, Schema as S } from 'effect'
+import { Effect, Layer, Schema as S, Stream } from 'effect'
 import { action } from '../../src/effect/action.js'
+import { RequireAuthLayer } from '../../src/effect/auth.js'
 import { EffectErrorObserverService, type EffectErrorEvent } from '../../src/effect/error-observer.js'
-import { json } from '../../src/effect/responses.js'
+import { file, json } from '../../src/effect/responses.js'
 import { coercedNumber, maxItems, minItems, upload } from '../../src/effect/schema.js'
+import { RequestService } from '../../src/effect/services.js'
 import { validateRequest } from '../../src/effect/validation.js'
-import { setupWeb } from '../../src/setup.js'
+import { setupWeb, webDefaults } from '../../src/setup.js'
 import { testEnv } from '../../src/testing.js'
 
 const Line = S.Struct({ amount: coercedNumber })
@@ -381,5 +383,125 @@ describe('the body limit', () => {
 
       expect({ type, body: await res.json() }).toEqual({ type, body: { text: 'hi hi' } })
     }
+  })
+})
+
+// A body nothing reads is read to its end, and dropped, before the answer too:
+// an answer that never touches the body, such as a 404, a redirect to sign in,
+// a refused origin or an action that reads no input, otherwise came while the
+// client was still sending. Behind portless, `bun run dev` answered 12 MB
+// posts to a 404 with portless's 502 page, or never finished.
+describe('a body nothing reads', () => {
+  function createUnreadApp() {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+    const pong = action(json(Ok, { ok: true }))
+
+    routes.post('/pings', pong)
+    routes.provide(RequireAuthLayer).post('/drafts', pong)
+    routes.post('/exports', action(file(Stream.make('id,name\n'), { contentType: 'text/csv' })))
+    // A response that streams the request's body back, from an action and
+    // from a handler registered on Hono itself.
+    routes.post('/echoes', action(Effect.gen(function* () {
+      const request = yield* RequestService
+
+      return yield* file(request.raw().body ?? '', { contentType: 'application/octet-stream' })
+    })))
+    app.post('/proxies', (c) => new Response(c.req.raw.body))
+    // An action that reads the first chunk of a body, as one telling a file's
+    // type by its first bytes does, and leaves the rest to read later.
+    routes.post('/sniffs', action(Effect.gen(function* () {
+      const request = yield* RequestService
+      const reader = request.raw().body?.getReader()
+
+      yield* Effect.promise(async () => reader?.read())
+      reader?.releaseLock()
+
+      return yield* json(Ok, { ok: true })
+    })))
+
+    return app
+  }
+
+  const bytes = new Uint8Array(8 * MiB)
+
+  test.each([
+    ['a path no route has', '/nowhere', {}, 404],
+    ['a route a signed-out visitor is sent to sign in from', '/drafts', {}, 302],
+    ['a route the request comes to from another site', '/pings', { Origin: 'http://evil.test' }, 403],
+    ['an action that reads no input', '/pings', {}, 200],
+  ] as const)('posted to %s is read to its end before the answer', async (_name, path, headers, status) => {
+    const { body, pulled } = streamed(bytes)
+    const res = await send(createUnreadApp(), path, { headers: { 'Content-Type': 'application/octet-stream', ...headers }, body })
+
+    expect({ status: res.status, pulled: pulled() }).toEqual({ status, pulled: bytes.byteLength })
+  })
+
+  test('on a stack composed with webDefaults() is read to its end before the answer too', async () => {
+    const app = new Hono()
+    app.use('*', webDefaults())
+    app.post('/pings', (c) => c.json({ ok: true }))
+
+    for (const [path, status] of [['/nowhere', 404], ['/pings', 200]] as const) {
+      const { body, pulled } = streamed(bytes)
+      const res = await send(app, path, { headers: { 'Content-Type': 'application/octet-stream' }, body })
+
+      expect({ path, status: res.status, pulled: pulled() }).toEqual({ path, status, pulled: bytes.byteLength })
+    }
+  })
+
+  test('declaring a Content-Length is read to its end too', async () => {
+    const { body, pulled } = streamed(bytes)
+    const res = await send(createUnreadApp(), '/nowhere', {
+      headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(bytes.byteLength) },
+      body,
+    })
+
+    expect({ status: res.status, pulled: pulled() }).toEqual({ status: 404, pulled: bytes.byteLength })
+  })
+
+  test('is cut off past 100 MiB instead of read to its end, and one declaring more is not read', async () => {
+    const limit = 100 * MiB
+    const { body, pulled, cancelled } = endless()
+    const res = await send(createUnreadApp(), '/nowhere', { headers: { 'Content-Type': 'application/octet-stream' }, body })
+
+    expect({ status: res.status, cancelled: cancelled() }).toEqual({ status: 404, cancelled: true })
+    expect(pulled()).toBeGreaterThan(limit)
+    expect(pulled()).toBeLessThanOrEqual(limit + 128 * 1024)
+
+    const declared = endless()
+    const refused = await send(createUnreadApp(), '/nowhere', {
+      headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(limit + 1) },
+      body: declared.body,
+    })
+
+    expect({ status: refused.status, pulled: declared.pulled() }).toEqual({ status: 404, pulled: 0 })
+  })
+
+  test('is left to a response that streams it back', async () => {
+    const sent = new Uint8Array(2 * MiB).map((_, index) => index % 251)
+
+    for (const path of ['/echoes', '/proxies']) {
+      const res = await send(createUnreadApp(), path, { headers: { 'Content-Type': 'application/octet-stream' }, body: streamed(sent).body })
+
+      expect({ path, status: res.status }).toEqual({ path, status: 200 })
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(sent)
+    }
+  })
+
+  test('is left to an action that started reading it', async () => {
+    const { body, pulled } = streamed(bytes)
+    const res = await send(createUnreadApp(), '/sniffs', { headers: { 'Content-Type': 'application/octet-stream' }, body })
+
+    expect(res.status).toBe(200)
+    expect(pulled()).toBeLessThan(bytes.byteLength)
+  })
+
+  test('is not waited for by a file the action streams, which may read it as it goes', async () => {
+    const { body, pulled } = endless()
+    const res = await send(createUnreadApp(), '/exports', { headers: { 'Content-Type': 'application/octet-stream' }, body })
+
+    expect({ status: res.status, text: await res.text() }).toEqual({ status: 200, text: 'id,name\n' })
+    expect(pulled()).toBeLessThan(MiB)
   })
 })

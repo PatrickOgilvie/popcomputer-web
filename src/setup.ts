@@ -43,6 +43,7 @@ import {
   type ErrorBoundaryConfig,
 } from './effect/handler.js'
 import { ForbiddenError, HttpError, NotFoundError } from './effect/errors.js'
+import { discardUnreadBody } from './effect/body-limit.js'
 import { assertBindingsConfig, type RouteBindingsConfig } from './effect/binding.js'
 import type { PageSchemas } from './effect/pages.js'
 
@@ -626,6 +627,9 @@ function createSetupMiddleware<
 
       return next()
     },
+    // Before the rest, so every answer, whichever member gives it, waits for
+    // the body nothing read.
+    discardUnreadBodies<E>(),
     // Outermost, so they see every response, including the page cache's own.
     ...(config.security?.headers === false ? [] : [securityHeaders<E>(config.security?.headers ?? {})]),
     privateByDefault<E>(),
@@ -747,10 +751,22 @@ function sequence<E extends Env>(
  */
 export function webDefaults<E extends Env>(options: WebSecurityOptions = {}): MiddlewareHandler<E> {
   return sequence([
+    discardUnreadBodies<E>(),
     ...(options.headers === false ? [] : [securityHeaders<E>(options.headers ?? {})]),
     privateByDefault<E>(),
     ...(options.verifyOrigin === false ? [] : [verifyOrigin<E>(options.verifyOrigin ?? {})]),
   ])
+}
+
+/**
+ * Read a request's body nothing read to its end before the answer goes, as
+ * readBody does a refused one's. A client or proxy still sending the body
+ * when the answer comes loses the connection: behind portless, Vite's dev
+ * server answered a large post to a 404 with portless's 502 page, or never
+ * finished.
+ */
+function discardUnreadBodies<E extends Env>(): MiddlewareHandler<E> {
+  return (c, next) => next().then(() => discardUnreadBody(c.req.raw, c.res))
 }
 
 /** Origin verification answered through the error boundary. */
