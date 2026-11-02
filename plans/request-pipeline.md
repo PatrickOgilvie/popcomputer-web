@@ -548,18 +548,50 @@ Done in part. Two items are done, two are not:
 
 ## Not in this plan (2.0 or separate work)
 
+The list as it stood was triaged on 2026-11-02: what breaks nothing was done
+in 1.x, two items were dropped, and what breaks stays for 2.0.
+
+Done in 1.x (Unreleased after 1.11.0):
+
+- The task/adapter split: `action(form(Schema), handler)`, the route table
+  recording each action's input (`96fcc96`).
+- One way to say where a failed form goes: `form(Schema, { page })`, checked
+  at registration (`2139c3d`), after a failure's `redirectTo` was made to
+  lead to a path or an `http(s)` URL (`2afacfe`) and JSON routes lost their
+  form page (`998c7a9`).
+- `defineEnv` schemas reaching Effect `Config`: `env.config.NAME` (`0fb0976`).
+- A typed queue producer: `queue(binding, Schema)` with `send`/`sendBatch`,
+  consumed by `routes.queue(declaration, handle)`, and `testQueue()`
+  (`b01d98b`). The sketch was `job(name, Schema, handle)`; the handler stays
+  on `routes.queue`, where the routes' services type-check it.
+- `docs/testing.md`'s claim that a page action runs directly under
+  `Effect.provide` (`9183e7e`).
+
+Dropped:
+
 - Service methods returning Effects (`PageRenderer.render`, `CookieJar.set`,
-  `RequestContext.json`).
-- Removing the hand-composition exports, and narrowing `WebRequestContext` to
-  `authUser`.
-- Making the default page cache opt-in.
-- The Action-pattern API items: naming the task/adapter split
-  (`action(form(Schema), handler)`), one way to say where a failed form goes,
-  `jsonApi()` only for endpoint contracts, a typed queue producer
-  (`job(name, Schema, handle)`), and fixing `docs/testing.md:57`'s claim that
-  a page action runs directly under `Effect.provide`.
-- `defineEnv` schemas reaching Effect `Config`.
-- Moving the fence to its own package.
+  `RequestContext.json`): applications use `render()`, `json()` and the
+  cookie declarations, so it would break them for tidiness inside.
+- Making the default page cache opt-in: a database or binding read already
+  renders per request, so the risk left is a `fetch()` or the clock, which
+  `cache: 'private'` covers; nothing has gone stale in practice to weigh
+  against the free caching. Improve what marks a page dynamic instead.
+
+For 2.0, cut when a breaking change brings applications something they feel:
+
+- Removing the hand-composition exports (`web`, `webServices`, `webContext`,
+  `effectBridge`, `effectRoutes`, ...), narrowing `WebRequestContext` to
+  `authUser`, and deleting the eleven fields marked `Removed in 2.0`.
+- `background()` on a request-scoped `FiberSet` (step 7), which the above
+  unblocks.
+- `jsonApi()` only for endpoint contracts.
+- `checkEnv` counting an empty var as missing, as `env.config` and Effect's
+  provider read one: a working application with an empty required var would
+  answer 500 after a minor upgrade.
+- `back()` reading the form's page.
+
+Separate work: moving the fence to its own package; several queues in one
+Worker, dispatched by the batch's queue name.
 
 ## Releases
 
