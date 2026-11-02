@@ -105,6 +105,15 @@ registered twice` until the dev server restarts. The plugin runs all the
 Worker's modules again instead, on a new app. The Worker's main module, such
 as `src/worker.ts`, and the browser's modules keep Vite's hot updates.
 
+The plugin also has Vite pre-bundle each of the package's entries a Worker
+imports when the dev server starts, so an application's first import of
+another, such as `@popcomputer/web/drizzle`, doesn't make Vite pre-bundle its
+dependencies again while the Worker loads. A first import of another package
+can: Vite logs "optimized dependencies changed. reloading", and the load it
+interrupted may report `GET /login is registered twice` once. Vite's reload
+then loads the Worker afresh, so later requests are answered; restart
+`bun run dev` if they are not.
+
 Coding agents should read `node_modules/@popcomputer/web/AGENTS.md`, a short
 rulebook naming the one API to use for each task, and the files in
 `node_modules/@popcomputer/web/docs/` as a task needs them:

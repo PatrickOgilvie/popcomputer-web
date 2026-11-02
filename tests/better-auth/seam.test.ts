@@ -401,27 +401,27 @@ describe("a body over setupWeb's bodyLimit sent to Better Auth's API", () => {
     // A streamed body needs `duplex`, which the DOM's RequestInit does not name.
     const init: RequestInit & { readonly duplex: 'half' } = { method: 'POST', duplex: 'half', headers, body }
 
-    return { res: app.request(new Request(`http://localhost${path}`, init), undefined, setup().env), pulled: () => pulled }
+    return { res: app.request(new Request(`http://localhost${path}`, init), undefined, setup().env), pulled: () => pulled, size: bytes.byteLength }
   }
 
-  test('to the password sign-in, streamed without a length, is refused with 413 before more than the limit is read', async () => {
-    const { res, pulled } = sendStreamed('/api/auth/sign-in/email', 8 * MiB)
+  // Refused before Better Auth reads it, and read to its end only to be dropped,
+  // so a client or proxy still sending it reads the answer.
+  test('to the password sign-in, streamed without a length, is refused with 413 and dropped', async () => {
+    const { res, pulled, size } = sendStreamed('/api/auth/sign-in/email', 8 * MiB)
 
-    expect((await res).status).toBe(413)
-    expect(pulled()).toBeLessThan(MiB + 256 * 1024)
+    expect({ status: (await res).status, pulled: pulled() }).toEqual({ status: 413, pulled: size })
   })
 
   test('to an endpoint whose body Better Auth alone reads is refused the same way', async () => {
-    const { res, pulled } = sendStreamed('/api/auth/send-verification-email', 8 * MiB)
+    const { res, pulled, size } = sendStreamed('/api/auth/send-verification-email', 8 * MiB)
 
-    expect((await res).status).toBe(413)
-    expect(pulled()).toBeLessThan(MiB + 256 * 1024)
+    expect({ status: (await res).status, pulled: pulled() }).toEqual({ status: 413, pulled: size })
   })
 
-  test('with a declared Content-Length over the limit, is refused before a byte is read', async () => {
-    const { res, pulled } = sendStreamed('/api/auth/sign-in/email', 2 * MiB, { declared: true })
+  test('with a declared Content-Length over the limit, is refused unparsed and dropped', async () => {
+    const { res, pulled, size } = sendStreamed('/api/auth/sign-in/email', 2 * MiB, { declared: true })
 
-    expect({ status: (await res).status, pulled: pulled() }).toEqual({ status: 413, pulled: 0 })
+    expect({ status: (await res).status, pulled: pulled() }).toEqual({ status: 413, pulled: size })
   })
 })
 

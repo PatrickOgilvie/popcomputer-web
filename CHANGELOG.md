@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+What an application on 1.10.0 may need to change: a test that checks a size message for a limit that is not a whole number of megabytes, such as `bodyLimit: 10_100_000`, which read "send at most 9.6 MB", now reads "send at most 10.1 MB".
+
+### Fixed
+
+- A body over the body limit is read to its end, and dropped, before its 413 or its trip back to the form. Reading stopped at the limit, so the answer came while the client was still sending, and the rest of the body met a closed connection. Behind portless, `bun run dev` answered a 12 MB upload to a form taking 10 MB with portless's "502 - Bad Gateway" page in 13 tries out of 20, and once never finished; a server that reads the whole request before answering got 20 out of 20, and with this fix the app gets 40 out of 40. At most the limit and one chunk are still held: the rest is read only to be dropped, up to 100 MiB, past which it is cut off, and a body declaring more than that is refused at once, as before. `validateRequest`, `RequestService`'s `json()` and `parseBody()`, and the Better Auth handler all read bodies this way.
+- `reloadWorkerModules()` pre-bundles each of the package's entries a Worker imports when the dev server starts, in the Worker's environment. An application's first import of another one, such as `@popcomputer/web/drizzle` for `rowOf`, made Vite pre-bundle its dependencies again while the plugin's reload was loading the Worker. That invalidated the modules already loaded, and the Cloudflare plugin's Worker entry, which imports the Worker twice, ran `src/routes.ts` a second time on the app already loaded: Vite logged "optimized dependencies changed. reloading", then `GET /login is registered twice` with a stack trace, though its next reload loaded the Worker afresh. `@popcomputer/web/drizzle` is pre-bundled only where drizzle-orm, the optional peer it imports, is installed.
+- The `registered twice` error's hint says what to do when `vite.config.ts` has `reloadWorkerModules()` already. A first import of a dependency the plugin does not pre-bundle can still make Vite re-optimise while the Worker loads, and log the error once after "optimized dependencies changed. reloading": that reload loads the Worker afresh, so later requests are answered, and restarting the dev server clears it if they are not. It told such an application to add the plugin it had.
+- The body limit's refusal names its size in the decimal units `upload`'s `maxBytes` uses. `bodyLimit: 10_100_000` read "send at most 9.6 MB", mebibytes labelled MB, beside `upload({ maxBytes: 10_000_000 })`'s "The file must be at most 10 MB". Both now count a megabyte as 1,000,000 bytes and round down to a tenth, so the size a message names is one its limit accepts: "send at most 10.1 MB". The default 1 MiB limit still reads "1 MB".
+
 ## [1.10.0] - 2026-11-01
 
 This release adds `stepsOf` to `@popcomputer/web/fuzz`, the sequences of steps a property over a lifecycle runs, of every length up to its `maxLength`, and builds `textOf` on it. Effect's `Arbitrary.array`, which `docs/fuzzing.md` used, kept sequences to two or three steps, and an application whose type check runs the Effect language service couldn't use it at all.
