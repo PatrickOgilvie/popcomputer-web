@@ -76,7 +76,8 @@ signs nobody in until the emailed link proves the address, as
 [Proving an address](auth.md#proving-an-address) shows.
 
 Signing out expires the session cookie, and the page `betterAuthLogoutAction`
-redirects to clears Inertia's history: the signed-in pages, which Inertia kept
+redirects to clears Inertia's history (a [JSON client](json.md) gets a 204
+with the expired cookies instead of the redirect): the signed-in pages, which Inertia kept
 there encrypted, cannot be shown again with Back by the next person at the
 browser ([Pages and props](pages.md)). Every page rendered to a visitor who is
 not signed in clears it, in any tab, however the session ended: in another

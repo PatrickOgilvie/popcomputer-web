@@ -33,6 +33,7 @@ import { BodyTooLarge, DEFAULT_BODY_LIMIT, formatBytes, readBody } from './body-
 import { bodyOf } from './better-auth-body.js'
 import { schemaExport, tableOfSchema } from './table-schema.js'
 import { withLayerFact } from './layer-facts.js'
+import { wantsJson } from './negotiation.js'
 import type { PagePropValue } from '../types.js'
 
 
@@ -1149,7 +1150,9 @@ export interface BetterAuthLogoutConfig<Path extends string = string> {
  * request handler, as every call does, and the session cookies it expires
  * reach the redirect; a sign-out Better Auth refuses, such as one without a
  * session, still expires them. web() sees the session end, so the page the
- * redirect renders clears Inertia's history of the signed-in pages.
+ * redirect renders clears Inertia's history of the signed-in pages. A JSON
+ * client gets a 204 with the expired cookies instead, never a redirect to a
+ * page, which is often the sign-in page.
  */
 export function betterAuthLogoutAction<const Path extends string = '/'>(
   config: BetterAuthLogoutConfig<Path> = {}
@@ -1188,6 +1191,12 @@ export function betterAuthLogoutAction<const Path extends string = '/'>(
       })
 
       appendLogoutCookies(headers, cookies.toExpireOnSignOut(request.header('Cookie'), config.cookieNames))
+    }
+
+    if (wantsJson((name) => request.header(name))) {
+      headers.delete('Location')
+
+      return new Response(null, { status: 204, headers })
     }
 
     return new Response(null, { status: 303, headers })

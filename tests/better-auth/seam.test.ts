@@ -258,6 +258,19 @@ describe('signing up, in and out', () => {
     expect((await me(visitor)).status).toBe(401)
   })
 
+  test('a JSON client signing out gets a 204 that expires the session, never a redirect', async () => {
+    const { browser, db, join } = setup()
+    const visitor = browser()
+    await join(visitor, 'ada@example.com')
+
+    const res = await visitor.request('/sign-out', { method: 'POST', headers: { Accept: 'application/json' } })
+
+    expect(res.status).toBe(204)
+    expect(res.headers.get('Location')).toBeNull()
+    expect(visitor.cookies.has(SESSION)).toBe(false)
+    expect(db.select().from(schema.session).all()).toEqual([])
+  })
+
   test('signing out at another of the app’s addresses, such as a Version URL, ends the session in the database too', async () => {
     const { browser, db, join } = setup()
     const visitor = browser()
