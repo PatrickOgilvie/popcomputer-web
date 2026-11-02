@@ -1341,7 +1341,8 @@ export class EffectRouteBuilder<
    */
   endpoint<Ep extends Endpoint, R, Err>(
     action: EndpointAction<Ep, Err, R> & RouteActionCheck<R | Needs, Err, Services | PathModels<Ep['path']>>,
-    options?: EffectRouteOptions
+    // An endpoint answers JSON, a failed form a 422: it has no form page.
+    options?: Omit<EffectRouteOptions, 'form'>
   ): this {
     const path = action.endpoint.path
 

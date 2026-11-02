@@ -32,6 +32,7 @@ const tags = sqliteTable('tags', { id: integer('id').primaryKey() })
 const ok = Effect.succeed(new Response('ok'))
 const status = endpoint.get('/api/status', { success: S.Struct({ up: S.Boolean }) })
 const me = endpoint.get('/api/me', { auth: true, success: S.Struct({ id: S.String }) })
+const report = endpoint.post('/api/status', { success: S.Struct({ up: S.Boolean }) })
 
 function createRoutes() {
   const { routes } = setupWeb(new Hono(), {
@@ -61,9 +62,10 @@ function createRoutes() {
   routes.provide(RequireGuestLayer).get('/login', ok).post('/login', ok)
   // An owner's record without the sign-in layer: its binding asks a signed-out visitor to sign in.
   routes.delete('/projects/{project}/notes/{note}', ok)
-  routes.jsonApi().get('/api/ping', ok)
+  routes.jsonApi().get('/api/ping', ok).post('/api/ping', ok)
   routes.endpoint(action(status, () => Effect.succeed({ up: true })))
   routes.endpoint(action(me, () => Effect.succeed({ id: 'ada' })))
+  routes.endpoint(action(report, () => Effect.succeed({ up: true })))
 
   return routes
 }
@@ -123,6 +125,9 @@ describe('the route table', () => {
     expect(rows.get('post /login')?.form).toBe('/login')
     expect(rows.get('put /projects/{project}')?.form).toBe('/projects/{project}')
     expect(rows.get('get /about')?.form).toBeUndefined()
+    // A JSON route answers a failed form with a 422, so it has no page, even beside a GET on its path.
+    expect(rows.get('post /api/ping')?.form).toBeUndefined()
+    expect(rows.get('post /api/status')?.form).toBeUndefined()
   })
 
   test('records whether it answers pages or JSON, and the contract an endpoint implements', () => {
@@ -153,6 +158,8 @@ describe('the route table', () => {
       'get /login': ['reaches', 'home', 'home'],
       'post /login': ['reaches', 'home', 'home'],
       'get /api/ping': ['reaches', 'reaches', 'reaches'],
+      'post /api/ping': ['reaches', 'reaches', 'reaches'],
+      'post /api/status': ['reaches', 'reaches', 'reaches'],
       'get /api/status': ['reaches', 'reaches', 'reaches'],
       // An endpoint whose contract says auth: true.
       'get /api/me': ['sign-in', 'reaches', 'reaches'],

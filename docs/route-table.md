@@ -37,7 +37,8 @@ updateProject, { purges: true })`:
 - `cache` is the route's `cache` option, and `pageCache` whether the default
   page cache may keep its pages. `purges` is `"records"` for `purges: true`.
 - `form`: where a failed form goes when the request names no page: the
-  route's `form` option, or the page at its own path.
+  route's `form` option, or the page at its own path. A JSON route, on
+  `jsonApi()` or an endpoint, answers a failed form with a 422 and has none.
 - `input`: the fields its action's `form(Schema)` decodes, and its
   `bodyLimit` when it sets one. A route whose action declares no input has
   none.
