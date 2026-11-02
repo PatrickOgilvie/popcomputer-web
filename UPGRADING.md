@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.11.0
+# Upgrading to @popcomputer/web 1.12.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.11.0.
+`honertia` package it was renamed from, to 1.12.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -17,16 +17,19 @@ the state the framework keeps between requests and adds
 components, which [From 1.7 to 1.8](#from-17-to-18) lists, and 1.8.1 changes
 nothing more. 1.9.0 counts an IPv6 client's sign-ins by its network, which
 [From 1.8 to 1.9](#from-18-to-19) lists. 1.10.0 adds `stepsOf` to
-`@popcomputer/web/fuzz`, which [From 1.9 to 1.10](#from-19-to-110) lists,
-and 1.11.0 rebuilds how a request and a job get their services and refuses
+`@popcomputer/web/fuzz`, which [From 1.9 to 1.10](#from-19-to-110) lists.
+1.11.0 rebuilds how a request and a job get their services and refuses
 a job that needs a request, which [From 1.10 to 1.11](#from-110-to-111)
+lists, and 1.12.0 keeps each route's facts as data and checks where a
+failure sends the visitor, which [From 1.11 to 1.12](#from-111-to-112)
 lists. So the path is one jump: make the 1.0.0 changes below, install
-1.11.0, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
+1.12.0, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
 shows, check the lists in [From 1.4 to 1.5](#from-14-to-15),
 [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17),
 [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19),
-[From 1.9 to 1.10](#from-19-to-110) and
-[From 1.10 to 1.11](#from-110-to-111), and you are done.
+[From 1.9 to 1.10](#from-19-to-110),
+[From 1.10 to 1.11](#from-110-to-111) and
+[From 1.11 to 1.12](#from-111-to-112), and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -56,9 +59,10 @@ you installed:
 14. [From 1.8 to 1.9](#from-18-to-19)
 15. [From 1.9 to 1.10](#from-19-to-110)
 16. [From 1.10 to 1.11](#from-110-to-111)
-17. [Tooling after the upgrade](#tooling-after-the-upgrade)
-18. [Checklist](#checklist)
-19. [A worked example](#a-worked-example)
+17. [From 1.11 to 1.12](#from-111-to-112)
+18. [Tooling after the upgrade](#tooling-after-the-upgrade)
+19. [Checklist](#checklist)
+20. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -1579,6 +1583,82 @@ Changes you may notice without acting on them:
   `errorBoundary`, `signInPath`, `homePath`, `bodyLimit`, `schema`,
   `bindings` and `sessionCookies`, and the page cache's `dynamic`, are
   deprecated: each still holds what it did, and 2.0 removes them.
+
+[CHANGELOG.md](CHANGELOG.md) has the detail of each.
+
+## From 1.11 to 1.12
+
+Install 1.12.0:
+
+```bash
+bun add @popcomputer/web@^1.12.0
+```
+
+1.12.0 keeps each route's facts as data: the route table holds every fact a
+registration states, an action can declare its input, and the fuzz harness
+and `routes.access()` read the table. It also reads vars and secrets through
+their schemas, declares a queue once for its sender and its consumer, loads
+a route's nested records in one round trip on D1, and checks where a failure
+sends the visitor. Check these against yours:
+
+- **A `redirectTo` to another scheme.** A failed form's `redirectTo`, from
+  `validateRequest(Schema, { redirectTo })`, and a guests' page's, from
+  `createGuestLayer(allow, redirectTo)`, lead to a path or an `http:` or
+  `https:` URL, as a redirect does. Any other scheme, such as `javascript:`
+  or `mailto:`, answers 500 as a defect the error observer sees, where it
+  was sent as `Location`.
+- **An endpoint given a `form` option.** `routes.endpoint(action, options)`
+  no longer takes one: an endpoint answers a failed form with a 422, so the
+  option never did anything. Remove it.
+- **A test that compares `routes.toJson()` whole.** Each row has the route
+  table's other columns now: `routePath`, `models`, `answers`, `cache`,
+  `pageCache`, `purges`, `visitors`, `guards`, `middleware`, and `form`,
+  `endpoint` and `input` where a route has them. Compare the columns the
+  test is about, or add the new ones.
+- **Code that matches every `AppError` tag.** `QueueSendError` joins
+  `AppError`, so an exhaustive `Match.valueTags` or `Effect.catchTags`
+  over it in the application's own code needs its case.
+
+Changes you may notice without acting on them:
+
+- A route whose path names nested records, such as
+  `/orgs/{organization:slug}/projects/{project}`, loads them in one round
+  trip on D1 and libsql, and sends their lookups together on other
+  databases, where they went one after another. The answers are the same,
+  in the same order.
+- `RouteRegistry.register` returns the row it registered, frozen, and
+  `routes.getRegistry().all()` gives frozen rows.
+- `no-validation-in-endpoint` no longer reports `json` or `validateRequest`
+  in the handler of `action(form(Schema), handler)`, which is no endpoint,
+  and `prefer-checked-config` names `env.config.NAME`.
+
+What to adopt, none of it required:
+
+- **An action's input as its first argument.** `action(form(UpdateProject),
+  (input) => Effect.gen(...))` in place of `validateRequest` at the top of
+  its body: the route table records the schema, and the fuzz harness
+  generates the form. The input is read after the route's layers and before
+  the handler, so a form that fails shows its errors before a `bound()` or
+  an `authorize()` in the handler runs. `form(Schema, { page })` names the
+  page the form is on, in place of the route's `form` option. Keep
+  `validateRequest` where its options depend on what the action loaded, or
+  where the action answers its failure itself.
+- **Vars and secrets through their schemas.** `yield* env.config.NAME`, from
+  `src/env.ts`, in place of `config.string('NAME')`: a number reads as a
+  number, a secret as `Redacted`, an optional one as an `Option`.
+- **A queue declared once.** `queue('REMINDERS', Schema)` in
+  `src/queues.ts`, sent through with `yield* reminders.send(message)` and
+  consumed with `routes.queue(reminders, handle)`; `testQueue()` is the
+  binding in a test.
+- **Fuzz tests from the route table.** Give `fuzzRequest` the application's
+  `routes` and drop the forms the test wrote by hand, and give
+  `strangerWrites` `ownership(routes, 'projects')`. A rule that compares a
+  refusal with the same request naming a missing record swaps the record in
+  the query and the fields too, not only the path: once validation runs
+  first, a twin whose route parameter and field disagree fails validation
+  whatever the database holds.
+- **Who reaches each route.** `routes.access()` lists, for each route, what
+  a signed-out visitor, the owner of its records and another member get.
 
 [CHANGELOG.md](CHANGELOG.md) has the detail of each.
 

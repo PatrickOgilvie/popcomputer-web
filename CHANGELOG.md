@@ -5,7 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.12.0] - 2026-11-02
+
+This release keeps each route's facts as data and builds on them. The route table holds every fact a registration states, and the framework builds each route's handler from its row; an action can declare its input as its first argument, `action(form(Schema), handler)`, with the page its form is on; `routes.access()` reads who reaches each route; and the fuzz harness makes each route's form and each table's owner keys from the table, so a new action is fuzzed as soon as it is registered. A route's nested records load in one round trip on D1. Vars and secrets read through the schemas `defineEnv` declares, `env.config.NAME`, and a queue is declared once, `queue(binding, Schema)`, for its sender and its consumer alike. A failure's `redirectTo` is now checked as a redirect is, so one built from a visitor's input cannot send a visit to `javascript:`.
+
+What an application on 1.11.0 may need to change, which `UPGRADING.md`'s "From 1.11 to 1.12" details:
+
+- A failed form's or a guests' page's `redirectTo` to a scheme other than `http:` or `https:` answers 500 as a defect, where it was sent as `Location`.
+- `routes.endpoint(action, { form })` is a type error: the option never did anything. Remove it.
+- A test that compares `routes.toJson()` whole sees each row's new columns.
+- Code of the application's own that matches every `AppError` tag needs a case for `QueueSendError`.
 
 ### Security
 

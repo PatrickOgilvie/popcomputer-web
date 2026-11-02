@@ -551,7 +551,7 @@ Done in part. Two items are done, two are not:
 The list as it stood was triaged on 2026-11-02: what breaks nothing was done
 in 1.x, two items were dropped, and what breaks stays for 2.0.
 
-Done in 1.x (Unreleased after 1.11.0):
+Done in 1.x, and released as 1.12.0:
 
 - The task/adapter split: `action(form(Schema), handler)`, the route table
   recording each action's input (`96fcc96`).
