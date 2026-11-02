@@ -75,7 +75,7 @@ Building:
 
 - [Pages and props](docs/pages.md): page schemas, React pages, shared props, the error page and the page map
 - [Forms](docs/forms.md): form schemas, form pages, flash messages, failed forms and error bags
-- [Validating input](docs/validation.md): `validateRequest`, the validators, dates, uploads and filters
+- [Validating input](docs/validation.md): `action(form(Schema), handler)`, the validators, dates, uploads and filters
 - [Actions and routes](docs/actions.md): paths, actions, registrations, the response helpers and defects
 - [Cookies, files and headers](docs/responses.md): declared cookies, files, polling, the Origin check and security headers
 - [JSON clients](docs/json.md): who gets JSON, the error envelope, JSON declared by a schema, and `call`

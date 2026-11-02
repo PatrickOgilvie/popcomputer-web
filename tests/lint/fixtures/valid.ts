@@ -14,6 +14,7 @@ import {
   dbTransaction,
   file,
   flash,
+  form,
   json,
   RequestService,
   routeBinding,
@@ -21,6 +22,14 @@ import {
 } from '@popcomputer/web/effect'
 import { endpoint } from '@popcomputer/web/endpoint'
 import { projects, tasks } from './schema'
+
+// A page action that declares its input answers JSON as any action may: it is no endpoint.
+export const renames = action(form(S.Struct({ name: S.String })), (input) => Effect.gen(function* () {
+  const project = yield* bound('project')
+  yield* dbMutation((db) => db.update(projects).set({ name: input.name }).where(eq(projects.id, project.id)))
+
+  return yield* json(S.Struct({ name: S.String }), { name: input.name })
+}))
 
 export const archive = action(Effect.gen(function* () {
   const auth = yield* authorize()

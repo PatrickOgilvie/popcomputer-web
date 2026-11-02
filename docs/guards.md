@@ -179,18 +179,17 @@ scoped by the bound row rather than by anything the request sends:
 // src/actions/organizations/change-role.ts
 import { and, eq, ne } from 'drizzle-orm'
 import { Effect, Schema as S } from 'effect'
-import { action, back, bound, dbMutation, flash, forbidden, validateRequest } from '@popcomputer/web/effect'
+import { action, back, bound, dbMutation, flash, forbidden, form } from '@popcomputer/web/effect'
 import { paths } from '../../paths'
 import { can } from '../../permissions'
 import { memberships } from '../../schema'
 
 const ChangeRole = S.Struct({ role: S.Literals(['admin', 'member']) })
 
-export const changeRole = action(Effect.gen(function* () {
+export const changeRole = action(form(ChangeRole), (input) => Effect.gen(function* () {
   yield* can('members.role')
   const organization = yield* bound('organization')
   const member = yield* bound('member')
-  const input = yield* validateRequest(ChangeRole)
 
   const [changed] = yield* dbMutation((db) =>
     db.update(memberships)

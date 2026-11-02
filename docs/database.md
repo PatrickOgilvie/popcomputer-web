@@ -75,23 +75,22 @@ row added or removed between two requests shifts every offset, and the
 database counts and skips every row before one. Order by a column that orders
 the rows and a unique one that breaks ties, read one row more than the page
 holds to learn whether another page follows, and render the cursor of the
-last row shown as the page's `next`. The query decodes through
-`validateRequest`, so a malformed cursor is a 422 rather than a database
-error, and an empty search box is `null`:
+last row shown as the page's `next`. The query decodes as the action's
+`form`, so a malformed cursor is a 422 rather than a database error, and an
+empty search box is `null`:
 
 ```ts
 // src/actions/projects/list.ts
 import { and, desc, eq, ilike, lt, or } from 'drizzle-orm'
 import { Effect } from 'effect'
-import { action, authorize, dbQuery, render, validateRequest } from '@popcomputer/web/effect'
+import { action, authorize, dbQuery, form, render } from '@popcomputer/web/effect'
 import { ProjectFilters } from '../../forms'
 import { projects } from '../../schema'
 
 const PAGE_SIZE = 25
 
-export const listProjects = action(Effect.gen(function* () {
+export const listProjects = action(form(ProjectFilters), (filters) => Effect.gen(function* () {
   const auth = yield* authorize()
-  const filters = yield* validateRequest(ProjectFilters)
   const after = filters.beforeAt !== null && filters.beforeId !== null
     ? { at: filters.beforeAt, id: filters.beforeId }
     : null

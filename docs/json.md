@@ -26,8 +26,8 @@ An API whose clients may send neither header, such as a scanner that forgot
 its key, registers its routes on `routes.jsonApi()`, with their declared
 paths, `routes.jsonApi().provide(ApiKeyAuth).get(paths.apiInvoices, listInvoices)`:
 every request to them is a JSON client. An API that rejects query parameters
-it does not declare passes `validateRequest(Query, { request: { order:
-['query'] }, parseOptions: { onExcessProperty: 'error' } })`; reading only
+it does not declare passes `form(Query, { request: { order: ['query'] },
+parseOptions: { onExcessProperty: 'error' } })`; reading only
 the query keeps the route's own parameters from counting as excess.
 
 ## JSON responses declared by a schema
@@ -119,6 +119,6 @@ test("another member's project is not found", async () => {
 
 The input is encoded through the contract's schemas without their checks, so
 a form that calls an endpoint shows the server's messages for each invalid
-field. A page's form posts stay ordinary actions with `validateRequest`; an
+field. A page's form posts stay ordinary actions with `form(Schema)`; an
 endpoint serves a client that reads JSON, such as a search box, a mobile app
 or another service.

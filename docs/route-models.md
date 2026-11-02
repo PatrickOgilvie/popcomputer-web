@@ -176,7 +176,7 @@ tenant's records from loading, or make the column unique across tenants.
 ## Plain parameters
 
 A placeholder without a binding is a plain parameter: the action reads it
-with `validateRequest`, beside the route's models. In
+in its `form(Schema)`, beside the route's models. In
 `/teams/{team}/invites/{token}`, `bound('team')` loads the team and `token`
 arrives with the request's input, to be looked up like any other input,
 scoped by the team. A page that answers when a record is missing, such as an

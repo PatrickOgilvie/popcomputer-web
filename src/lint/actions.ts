@@ -35,10 +35,10 @@ const REQUEST_INPUT = new Set(['json', 'parseBody', 'query', 'queries', 'params'
 export const noRawRequestInput: LintRule = {
   meta: {
     type: 'problem',
-    docs: { description: 'Actions read request input through validateRequest or an endpoint contract.' },
+    docs: { description: 'Actions read request input through form(Schema), validateRequest or an endpoint contract.' },
     messages: {
       input:
-        "Read request input with validateRequest(Schema), which decodes it and drops keys the schema does not declare, or declare it in the endpoint's contract. RequestService is for headers and a webhook's raw body.",
+        "Read request input by declaring it, action(form(Schema), (input) => ...), which decodes it and drops keys the schema does not declare, or in the endpoint's contract. RequestService is for headers and a webhook's raw body.",
     },
   },
   create(context) {
@@ -107,7 +107,7 @@ export const noHonoContextInAction: LintRule = {
     docs: { description: "Actions do not use Hono's context." },
     messages: {
       context:
-        "Actions do not see Hono's context: read input with validateRequest, bindings with config.string('NAME'), headers with RequestService, and answer with a response helper.",
+        "Actions do not see Hono's context: declare input with action(form(Schema), handler), read bindings with config.string('NAME') and headers with RequestService, and answer with a response helper.",
     },
   },
   create(context) {
@@ -341,9 +341,14 @@ export const noValidationInEndpoint: LintRule = {
 
         if (name === undefined || !ENDPOINT_REDUNDANT.has(name)) return
 
-        const inEndpoint = [...enclosingCalls(node)].some((call) =>
-          imports.calledName(call, WEB_EFFECT) === 'action' && call.arguments.length === 2
-        )
+        // action(endpoint, handler), not action(form(Schema), handler), whose
+        // handler answers a page as any action does.
+        const inEndpoint = [...enclosingCalls(node)].some((call) => {
+          const first = call.arguments[0]
+
+          return imports.calledName(call, WEB_EFFECT) === 'action' && call.arguments.length === 2 &&
+            !(first !== undefined && isCall(first) && imports.calledName(first, WEB_EFFECT) === 'form')
+        })
 
         if (inEndpoint) context.report({ node, messageId: name === 'validateRequest' ? 'validateRequest' : 'json' })
       },

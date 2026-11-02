@@ -12,14 +12,13 @@ cookie:
 ```ts
 // src/actions/auth.ts
 import { Effect } from 'effect'
-import { action, intendedUrl, validateRequest } from '@popcomputer/web/effect'
+import { action, form, intendedUrl } from '@popcomputer/web/effect'
 import { betterAuthRedirect } from '@popcomputer/web/auth'
 import { SignIn } from '../forms'
 import { paths } from '../paths'
 
-export const signIn = action(
+export const signIn = action(form(SignIn), (input) =>
   Effect.gen(function* () {
-    const input = yield* validateRequest(SignIn)
     const redirectTo = yield* intendedUrl(paths.projects)
 
     return yield* betterAuthRedirect('signInEmail', { body: input }, {
@@ -180,7 +179,7 @@ without the application's actions checking them. Once the registered Better Auth
 for the ones visitors may set there, `betterAuthHandler({ settable: ['timeZone'] })`,
 and the handler refuses a request setting any other with a 400; `settable: []`
 keeps every field to the application's own forms. It reads a body within
-setupWeb's `bodyLimit`, as `validateRequest` does, and answers a larger one
+setupWeb's `bodyLimit`, as an action's `form` does, and answers a larger one
 with a 413 before Better Auth reads it. A sign-in or a call that writes user
 fields is read as Better Auth will read it, so its body is JSON, typed
 `application/json` or `application/*+json`, or a form; any other is refused

@@ -7,9 +7,10 @@ and the lint rules name it where an action reaches for something else.
 
 | Task | Use | See |
 | --- | --- | --- |
-| Read form, query or JSON input | `validateRequest(Schema)` | [Validating input](validation.md) |
+| Read form, query or JSON input | `action(form(Schema), (input) => ...)` | [Validating input](validation.md) |
+| Read input whose schema or options depend on what the action did first | `validateRequest(Schema, options)` | [Validating input](validation.md) |
 | Read a header, or the raw body a webhook signs | `RequestService`'s `header(name)` and `raw()` | [Webhooks](webhooks.md) |
-| Accept a file | `upload({ types, maxBytes })` in the schema, and `validateRequest`'s `bodyLimit` past 1 MiB | [User input in](validation.md#user-input-in) |
+| Accept a file | `upload({ types, maxBytes })` in the schema, and `form(Schema, { bodyLimit })` past 1 MiB | [User input in](validation.md#user-input-in) |
 | Render a page | `render('Projects/Show', props)` | [Actions and routes](actions.md) |
 | Redirect after a write | `redirect(paths.project, { project: id })` | [Responses](actions.md#responses-and-failures) |
 | Go back to the page the request came from | `back(paths.projects)` | [Responses](actions.md#responses-and-failures) |
@@ -50,7 +51,7 @@ and the lint rules name it where an action reaches for something else.
 | --- | --- | --- |
 | Require a signed-in user | `authorize()` | [Auth](auth.md) |
 | Read the user when signing in is optional | `currentUser` | [Auth](auth.md) |
-| Sign in or sign up | `validateRequest`, then `betterAuthRedirect('signInEmail', { body }, { redirectTo, errors })` | [Signing in and out](sign-in.md) |
+| Sign in or sign up | `action(form(SignIn), ...)`, then `betterAuthRedirect('signInEmail', { body }, { redirectTo, errors })` | [Signing in and out](sign-in.md) |
 | Return to the page the visitor wanted | `intendedUrl(fallback)` | [Signing in and out](sign-in.md) |
 | Call Better Auth for a result | `betterAuthCall('enableTwoFactor', { body }, { errors })` | [Signing in and out](sign-in.md) |
 | Sign out | `betterAuthLogoutAction({ redirectTo, clear })` | [Signing in and out](sign-in.md) |

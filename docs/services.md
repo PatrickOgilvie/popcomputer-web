@@ -139,10 +139,9 @@ export const TasksLive: Layer.Layer<Tasks> = Layer.succeed(Tasks, Tasks.of({
     })),
 }))
 
-export const addTask = action(Effect.gen(function* () {
+export const addTask = action(form(S.Struct({ title: requiredString })), (input) => Effect.gen(function* () {
   // Its owner's only: the binding is ownedBy 'userId'.
   const project = yield* bound('project')
-  const input = yield* validateRequest(S.Struct({ title: requiredString }))
   const service = yield* Tasks
 
   return yield* service.add(project.id, input.title).pipe(

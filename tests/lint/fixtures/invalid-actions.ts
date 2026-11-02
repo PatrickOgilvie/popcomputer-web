@@ -1,6 +1,6 @@
 import { Config, Effect, Schema as S } from 'effect'
 import type { Context } from 'hono'
-import { action, AuthService, DatabaseService, dbMutation, dbQuery, json, RequestService, validateRequest } from '@popcomputer/web/effect'
+import { action, AuthService, DatabaseService, dbMutation, dbQuery, form, json, RequestService, validateRequest } from '@popcomputer/web/effect'
 import { audit } from './schema'
 import { endpoint } from '@popcomputer/web/endpoint'
 
@@ -38,6 +38,13 @@ const ping = endpoint.post('/ping', { body: S.Struct({ name: S.String }), succes
 export const pinged = action(ping, () => Effect.gen(function* () {
   yield* validateRequest(S.Struct({ name: S.String })) // expect: no-validation-in-endpoint
   return yield* json({ ok: true }) // expect: no-validation-in-endpoint
+}))
+
+// The handler of an action that declares its input is an action's body.
+export const declaresInput = action(form(S.Struct({ name: S.String })), (input) => Effect.gen(function* () {
+  const key = c.env // expect: no-hono-context-in-action
+  void [input, key]
+  return yield* json({ ok: true })
 }))
 
 export const signsInAround = action(Effect.gen(function* () {

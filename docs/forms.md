@@ -145,22 +145,21 @@ such as the project list's create form and the rename form on each row, every
 form would show the one that failed. An Inertia error bag keeps them apart:
 the form names a bag when it submits, the request carries it as
 `X-Inertia-Error-Bag`, and the errors come back under that name, which only
-that form reads. The action needs nothing of its own; `validateRequest` and
+that form reads. The action needs nothing of its own; its `form` and
 `invalid` put the errors in the bag the request names:
 
 ```ts
 // src/actions/projects/rename.ts
 import { eq } from 'drizzle-orm'
 import { Effect } from 'effect'
-import { action, back, bound, dbMutation, flash, validateRequest } from '@popcomputer/web/effect'
+import { action, back, bound, dbMutation, flash, form } from '@popcomputer/web/effect'
 import { RenameProject } from '../../forms'
 import { paths } from '../../paths'
 import { projects } from '../../schema'
 
-export const renameProject = action(Effect.gen(function* () {
+export const renameProject = action(form(RenameProject), (input) => Effect.gen(function* () {
   // Its owner's only: the binding is ownedBy 'userId'.
   const project = yield* bound('project')
-  const input = yield* validateRequest(RenameProject)
 
   yield* dbMutation((db) => db.update(projects).set({ name: input.name }).where(eq(projects.id, project.id)))
   yield* flash('success', 'Project renamed.')

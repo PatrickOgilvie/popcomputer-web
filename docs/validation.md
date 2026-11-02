@@ -6,17 +6,16 @@ import {
   action,
   authorize,
   dbMutation,
+  form,
   redirect,
-  validateRequest,
 } from '@popcomputer/web/effect'
 import { CreateProject } from '../forms'
 import { paths } from '../paths'
 import { projects } from '../schema'
 
-export const createProject = action(
+export const createProject = action(form(CreateProject), (input) =>
   Effect.gen(function* () {
     const auth = yield* authorize()
-    const input = yield* validateRequest(CreateProject)
 
     const [project] = yield* dbMutation((db) =>
       db.insert(projects)
@@ -29,8 +28,15 @@ export const createProject = action(
 )
 ```
 
-`validateRequest` reads route params, query and body, and returns the decoded
-input with every key the schema does not declare removed. A body sent as JSON
+An action declares its input as its first argument, `form(CreateProject)`,
+and its handler receives it decoded. The input is read after the route's
+layers, so a group's `RequireAuthLayer` or guard decides first, and before
+the handler runs: a form that fails goes back to its page with the errors,
+and the handler does not run. The route table records the schema, so
+`routes.toJson()` lists the fields each route accepts.
+
+The form reads route params, query and body, and decodes them with every key
+the schema does not declare removed. A body sent as JSON
 is read as JSON whatever its media type, as `fetch` sends a string as
 `text/plain`, and a form post's fields are nested. A key that two
 sources provide with different values fails validation, so a body field cannot
@@ -54,15 +60,21 @@ A multipart form's files reach the schema as `File` values. Check them with
 no file. [Serving an upload back](responses.md#serving-an-upload-back) shows
 serving one back.
 
-`validateRequest` reads at most 1 MiB of a body, or setupWeb's `bodyLimit`,
+A form reads at most 1 MiB of a body, or setupWeb's `bodyLimit`,
 counting its declared `Content-Length` and the bytes as they arrive, and
 refuses a larger one before parsing it: a JSON client gets a 413
 (`WEB_VAL_007_BODY_TOO_LARGE`) and a page's form goes back with a `form`
 error. An action whose form uploads files raises it past their `maxBytes`,
-`validateRequest(ReceiptForm, { bodyLimit: 6_000_000 })`, as `ReceiptForm`
+`form(ReceiptForm, { bodyLimit: 6_000_000 })`, as `ReceiptForm`
 below needs. Headers and the
 raw body, such as an `Idempotency-Key` or a webhook signature, are read from
 `RequestService`'s `header()` and `raw()`.
+
+`validateRequest(Schema, options)` reads the same input inside the handler,
+for a read whose options or schema depend on what the action did first: a
+`redirectTo` built from a record it loaded, or a second schema chosen by the
+first answers, as the wizard and survey below show. `form`'s options are
+`validateRequest`'s.
 
 ## User input in
 

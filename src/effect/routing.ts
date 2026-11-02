@@ -80,6 +80,7 @@ import {
   type RouteVisitors,
 } from './route-registry.js'
 import { layerFactOf } from './layer-facts.js'
+import { actionInputOf } from './action.js'
 
 /**
  * Type for Effect-based route handlers.
@@ -1220,6 +1221,7 @@ export class EffectRouteBuilder<
       middleware: this.middlewares.length,
       params: options?.params,
       endpoint,
+      input: actionInputOf(effect),
     })
 
     // Register with Hono - apply middlewares before the Effect handler

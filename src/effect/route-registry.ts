@@ -7,7 +7,8 @@
  * startup checks from its row.
  */
 
-import type { Schema as S } from 'effect'
+import { Predicate, type Schema as S } from 'effect'
+import type { FormInputDeclaration } from './action.js'
 import type { ParsedBinding } from './binding.js'
 import type { Endpoint } from '../endpoint.js'
 import type { RouteCacheOptions } from './response-cache.js'
@@ -98,6 +99,8 @@ export interface RouteMetadata {
   readonly params?: S.Codec<unknown, unknown, never, never>
   /** The contract it implements, when registered with `endpoint()`. */
   readonly endpoint?: Endpoint
+  /** The input its action declares with `action(form(Schema), handler)`: the schema and how it is read. */
+  readonly input?: FormInputDeclaration<unknown, unknown>
 }
 
 /** A registered route: its row of the route table, every column filled. */
@@ -128,6 +131,18 @@ export interface RouteMetadataJson {
   middleware: number
   /** Whether it implements an endpoint contract. */
   endpoint?: true
+  /** The fields its action's `form(Schema)` decodes, and the body limit it reads with when it sets one. */
+  input?: { fields: readonly string[]; bodyLimit?: number }
+}
+
+/** The field names a schema decodes: a struct's, or those of every member of a union. */
+function fieldNamesOf(schema: unknown): readonly string[] {
+  if (Predicate.hasProperty(schema, 'fields') && Predicate.isObject(schema.fields)) return Object.keys(schema.fields)
+  if (Predicate.hasProperty(schema, 'members') && Array.isArray(schema.members)) {
+    return [...new Set(schema.members.flatMap((member: unknown) => fieldNamesOf(member)))]
+  }
+
+  return []
 }
 
 /**
@@ -298,6 +313,12 @@ export class RouteRegistry {
         guards: route.guards,
         middleware: route.middleware,
         ...(route.endpoint !== undefined && { endpoint: true as const }),
+        ...(route.input !== undefined && {
+          input: {
+            fields: fieldNamesOf(route.input.schema),
+            ...(route.input.options.bodyLimit !== undefined && { bodyLimit: route.input.options.bodyLimit }),
+          },
+        }),
       }
     })
   }

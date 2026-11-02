@@ -234,7 +234,7 @@ Each file of the application declares one thing, and the rest reads it:
 | `src/db.ts`, `src/auth.ts`, `src/email.ts` | the database, Better Auth and mail clients | `setupWeb`'s `database` and `auth.client` |
 | `src/paths.ts` | every route's path | `routes`, `redirect`, `back`, `href`, endpoint contracts |
 | `src/pages.ts` | each page's props | `render`, `WebPage`, `readPage` |
-| `src/forms.ts` | each form's fields | `validateRequest` in actions, `FormInput` in React |
+| `src/forms.ts` | each form's fields | `action(form(Schema), ...)` in actions, `FormInput` in React |
 | `src/endpoints.ts` | each JSON endpoint's contract | `action(endpoint, ...)`, `routes.endpoint`, `call`, `openApi` |
 | `src/services.ts` | application services and their layers | `web.services(...)` in `src/app.ts` |
 | `src/app.ts` | `setupWeb(...)`, its registration, and `web.services(...)` | every type above, and the routes |

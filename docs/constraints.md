@@ -29,10 +29,9 @@ import { orders, products } from '../schema'
 
 const Order = S.Struct({ productId: requiredString, quantity: positiveInt })
 
-export const placeOrder = action(Effect.gen(function* () {
+export const placeOrder = action(form(Order), (input) => Effect.gen(function* () {
   const auth = yield* authorize()
   const request = yield* RequestService
-  const input = yield* validateRequest(Order)
   // The client sends one key per checkout, so a double submit repeats it.
   const idempotencyKey = request.header('Idempotency-Key') ?? crypto.randomUUID()
 

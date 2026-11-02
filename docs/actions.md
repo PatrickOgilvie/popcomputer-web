@@ -59,6 +59,29 @@ import { showProject } from './actions/projects/show'
 routes.get(paths.project, showProject, { name: 'projects.show' })
 ```
 
+An action that takes a form declares its input as its first argument, and
+its handler receives it decoded, as [Validating input](validation.md) shows:
+
+```ts
+// src/actions/projects/describe.ts
+import { eq } from 'drizzle-orm'
+import { Effect, Schema as S } from 'effect'
+import { action, bound, dbMutation, form, redirect } from '@popcomputer/web/effect'
+import { nullableString } from '@popcomputer/web/schema'
+import { paths } from '../../paths'
+import { projects } from '../../schema'
+
+export const describeProject = action(form(S.Struct({ description: nullableString })), (input) =>
+  Effect.gen(function* () {
+    const project = yield* bound('project')
+
+    yield* dbMutation((db) => db.update(projects).set({ description: input.description }).where(eq(projects.id, project.id)))
+
+    return yield* redirect(paths.project, { project: project.id })
+  })
+)
+```
+
 `redirect(paths.project, { project: project.id })` and, in React,
 `href(paths.project, { project: project.id })` from `@popcomputer/web/paths` fill
 the path's placeholders; the parameters are typed from them, so a renamed
@@ -138,6 +161,9 @@ updateProject, { purges: true })`:
   page cache may keep its pages. `purges` is `"records"` for `purges: true`.
 - `form`: where a failed form goes when the request names no page: the
   route's `form` option, or the page at its own path.
+- `input`: the fields its action's `form(Schema)` decodes, and its
+  `bodyLimit` when it sets one. A route whose action declares no input has
+  none.
 
 The framework builds each route's handler from its row, so the table says
 what the route does. `routes.getRegistry().all()` gives the rows themselves,

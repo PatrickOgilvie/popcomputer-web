@@ -17,14 +17,14 @@ a component. The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `no-external-work-in-transaction` | `fetch`, `background`, the cache, `Effect.sleep` or `Effect.promise` inside `dbTransaction` | The call before or after the transaction |
 | `no-sql-interpolation` | `sql.raw(text)` or SQL built from a string with values in it | Drizzle's builder, or `` sql`... ${value}` ``, which binds values |
 | `no-database-service-in-action` | `DatabaseService` or `$client` in an action module | `dbQuery`, `dbMutation`, `dbTransaction`, `dbBatch` |
-| `no-raw-request-input` | `RequestService`'s `json()`, `parseBody()`, `query()` or `params()` | `validateRequest(Schema)`, or the endpoint's contract |
-| `no-hono-context-in-action` | Hono's `c.req`, `c.env` or `c.json` inside an action | `validateRequest`, `config.string`, response helpers |
+| `no-raw-request-input` | `RequestService`'s `json()`, `parseBody()`, `query()` or `params()` | `action(form(Schema), handler)`, or the endpoint's contract |
+| `no-hono-context-in-action` | Hono's `c.req`, `c.env` or `c.json` inside an action | `form(Schema)`, `config.string`, response helpers |
 | `no-effect-runner-in-action` | `Effect.runPromise` and the other runners | `yield*` the Effect |
 | `no-catch-all-in-action` | `Effect.catch`, `orDie`, `ignore` and the like over the database, `authorize()`, `bound()` or `validateRequest`, called or piped | `Effect.catchTag` for the failures the action answers |
 | `no-raw-response-in-action` | `new Response(...)` | `json`, `text`, `file` (which serves uploads with `nosniff`), `noContent` |
 | `no-provision-in-action` | `Effect.provide` in an action module | `web.services(...)`, or `routes.provide(layer)` |
 | `require-background` | `waitUntil(...)` | `background('name', effect)` |
-| `no-validation-in-endpoint` | `validateRequest` or `json` in an endpoint's action | The handler's argument, and the returned value |
+| `no-validation-in-endpoint` | `validateRequest` or `json` in an endpoint's action (not in `action(form(Schema), handler)`'s) | The handler's argument, and the returned value |
 | `require-binding-access` | A binding that does not say who may load its record: a bare table, or `routeBinding` without `ownedBy`, `publicWhen`, `public`, `guarded` or `scope`; or an option, or a `publicWhen` value, written `undefined` | `routeBinding(schema.projects, { ownedBy: 'userId' })`, or the option that says who may; `publicWhen: { isPublic: true }` |
 | `prefer-checked-config` | Effect's `Config.String('NAME')` and its siblings in an application of the framework | `config.string('NAME')`, which checks the name against the Worker's bindings |
 | `no-auth-api-in-action` | `auth.api.signInEmail(...)` and Better Auth's other endpoints called from an action, which skips its rate limits | `betterAuthRedirect('signInEmail', { body }, ...)` or `betterAuthCall(...)` |

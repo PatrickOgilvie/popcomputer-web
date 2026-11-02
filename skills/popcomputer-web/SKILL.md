@@ -85,8 +85,14 @@ TypeScript example here and in `docs/` type-checks against the package.
    handler that ends differently per branch branches inside `Effect.gen`,
    whose branches TypeScript combines. Do not `throw` in an action. An
    endpoint's action (rule 13) returns its success value instead.
-5. **Read request input only through `validateRequest(Schema)`,** or, in an
-   endpoint's action, through its contract (rule 13). Build schemas
+5. **Declare an action's input as its first argument,
+   `action(form(Schema), (input) => Effect.gen(...))`,** or, in an
+   endpoint's action, in its contract (rule 13): the handler receives it
+   decoded, after the route's layers, and the route table records it. Read
+   input with `validateRequest(Schema, options)` inside the action only
+   when its schema or options depend on what the action did first (a
+   `redirectTo` built from a bound record, a second schema the first
+   answers choose) or when the action answers its failure itself. Build schemas
    from `@popcomputer/web/schema` validators (`requiredString`,
    `nullableString`, `coercedNumber`, `checkbox`, `email`, `uuid`, `isoDate`
    and `isoDateTime` for a day or a moment with its zone, ...), which
@@ -95,7 +101,7 @@ TypeScript example here and in `docs/` type-checks against the package.
    onExcessProperty: 'error' }`), `nullable(...)` for a filter a GET form
    may send empty, and `upload({ types: [...] })` for files, served back with
    `file(...)`; a body over 1 MiB is refused, so an action taking larger
-   files raises `validateRequest(Schema, { bodyLimit })`. A form that
+   files raises `form(Schema, { bodyLimit })`. A form that
    fails validation goes back to the page it came from (its Referer; without
    one, the page its route names, `routes.post(path, action, { form:
    paths.page })`, or its own path's page), which receives the
@@ -122,7 +128,7 @@ TypeScript example here and in `docs/` type-checks against the package.
    and never read a record's id
    from the path to query for it yourself (a plain parameter, such as an
    invitation token, or the id of a record served from the data cache, is
-   read with `validateRequest` and looked up like any input);
+   read in the action's `form(Schema)` and looked up like any input);
    to lock a bound record inside `dbTransaction`, read it again by its id with
    `.for('update')`. When the action needs the signed-in user, call
    `authorize()` before `bound()`: models load on the first `bound()` call,
@@ -299,7 +305,7 @@ answers keep, in tests.
 // src/actions/projects/update.ts
 import { eq } from 'drizzle-orm'
 import { Effect, Schema as S } from 'effect'
-import { action, bound, dbMutation, flash, redirect, validateRequest } from '@popcomputer/web/effect'
+import { action, bound, dbMutation, flash, form, redirect } from '@popcomputer/web/effect'
 import { nullableString, requiredString } from '@popcomputer/web/schema'
 import { paths } from '../../paths'
 import { projects } from '../../schema'
@@ -309,11 +315,10 @@ const UpdateProject = S.Struct({
   description: nullableString,
 })
 
-export const updateProject = action(
+export const updateProject = action(form(UpdateProject), (input) =>
   Effect.gen(function* () {
     // Its owner's only: the binding is ownedBy 'userId'.
     const project = yield* bound('project')
-    const input = yield* validateRequest(UpdateProject)
 
     yield* dbMutation((db) =>
       db.update(projects).set(input).where(eq(projects.id, project.id))
