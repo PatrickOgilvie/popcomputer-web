@@ -336,6 +336,18 @@ expectType<Equals<FlashData['success'], string | undefined>>()
 testEnv(signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' }), { REGION: 'weur' })
 // @ts-expect-error REGIO is not a binding
 testEnv(signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' }), { REGIO: 'weur' })
+// @ts-expect-error REGIO is not a binding, beside one that is
+testEnv({ REGION: 'weur', REGIO: 'weur' })
+// @ts-expect-error REGION is a string
+testEnv({ REGION: 1 })
+// The env it returns has each binding passed to it, and may have the others.
+const regional = testEnv(signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' }), { REGION: 'weur' })
+expectType<Equals<typeof regional.REGION, string>>()
+expectType<Equals<typeof regional.MAX_LINKS, string | undefined>>()
+const limited = testEnv({ MAX_LINKS: '5' })
+expectType<Equals<typeof limited.MAX_LINKS, string>>()
+const unbound = testEnv(Layer.empty)
+expectType<Equals<typeof unbound.REGION, string | undefined>>()
 
 // A test reads flashed values with their declared types.
 export const flashed = async (response: Response) => {

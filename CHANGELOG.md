@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `testEnv` returns each binding passed to it with the type it was given, so a test reads rows no page shows, such as the ones a cascade delete removes, from the database it passed, `env.DB`. The env was typed with every binding optional, and a test reading `env.DB` failed with TS18048 until it wrote `env.DB?.`. Bindings it was not given stay optional, and one the application does not declare is still a type error, which names the declared bindings when it sits beside one that is. `docs/testing.md` and `docs/test-database.md` say how a test reads the database.
+
+### Fixed
+
+- A `routeBinding` option of the wrong type is reported where it is written: `publicWhen: { published: 'yes' }` on a boolean column says `Type 'string' is not assignable to type 'boolean | undefined'` at `published`. With one overload for a table and another for an Effect Schema, TypeScript reported the last, `No overload matches this call` naming `Codec`, the table's mismatch with the schema overload. One signature now serves both, so a schema's options are reported the same way, and `docs/type-errors.md`'s row says what each mistake reports.
+- `docs/validation.md` shows how to cap an optional link's length, `nullable(url.check(S.isMaxLength(2000, { message })))`, and says why `nullableUrl.check(...)` is a type error.
+
 ## [1.10.0] - 2026-11-01
 
 This release adds `stepsOf` to `@popcomputer/web/fuzz`, the sequences of steps a property over a lifecycle runs, of every length up to its `maxLength`, and builds `textOf` on it. Effect's `Arbitrary.array`, which `docs/fuzzing.md` used, kept sequences to two or three steps, and an application whose type check runs the Effect language service couldn't use it at all.

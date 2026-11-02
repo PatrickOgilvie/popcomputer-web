@@ -725,6 +725,20 @@ describe('Format Types', () => {
 
       expect(failure.errors).toEqual({ link: 'Use a link that starts with https:// or http://.' })
     })
+
+    test('caps its length as docs/validation.md does, on url before nullable', async () => {
+      const link = nullable(url.check(S.isMaxLength(2000, { message: 'Keep the link under 2,000 characters.' })))
+      const longest = `https://example.com/${'a'.repeat(1980)}`
+      const errorsFor = (value: string) =>
+        Effect.runPromise(Effect.flip(validateUnknown(S.Struct({ link }), { link: value }))).then((failure) => failure.errors)
+
+      expect(decode(link, '')).toBeNull()
+      expect(decode(link, undefined)).toBeNull()
+      // The length is the trimmed link's.
+      expect(decode(link, ` ${longest} `)).toBe(longest)
+      expect(await errorsFor(`${longest}a`)).toEqual({ link: 'Keep the link under 2,000 characters.' })
+      expect(await errorsFor('javascript:alert(1)')).toEqual({ link: 'Use a link that starts with https:// or http://.' })
+    })
   })
 
   describe('uuid', () => {
