@@ -563,6 +563,8 @@ Done in part. Two items are done, two are not:
 
 ## Releases
 
-Steps 0–3 can ship as 1.11 and steps 4–7 as 1.12. Each gets a CHANGELOG
+Steps 0–3 could ship as 1.11 and steps 4–7 as 1.12. They landed in one
+Unreleased section, with both decisions, so they ship together as 1.11.0
+(2026-11-02). Each gets a CHANGELOG
 section listing its Fixed behaviour changes, and the dogfood apps re-run
 against the packed tarball before release.

@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.10.0
+# Upgrading to @popcomputer/web 1.11.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.10.0.
+`honertia` package it was renamed from, to 1.11.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -16,14 +16,17 @@ the state the framework keeps between requests and adds
 1.8.0 adds `@popcomputer/web/vite` and widens two lint rules to a page's
 components, which [From 1.7 to 1.8](#from-17-to-18) lists, and 1.8.1 changes
 nothing more. 1.9.0 counts an IPv6 client's sign-ins by its network, which
-[From 1.8 to 1.9](#from-18-to-19) lists, and 1.10.0 adds `stepsOf` to
-`@popcomputer/web/fuzz`, which [From 1.9 to 1.10](#from-19-to-110) lists. So
-the path is one jump: make the 1.0.0 changes below, install 1.10.0, give
-each binding its option as [From 1.3 to 1.4](#from-13-to-14) shows, check
-the lists in [From 1.4 to 1.5](#from-14-to-15),
+[From 1.8 to 1.9](#from-18-to-19) lists. 1.10.0 adds `stepsOf` to
+`@popcomputer/web/fuzz`, which [From 1.9 to 1.10](#from-19-to-110) lists,
+and 1.11.0 rebuilds how a request and a job get their services and refuses
+a job that needs a request, which [From 1.10 to 1.11](#from-110-to-111)
+lists. So the path is one jump: make the 1.0.0 changes below, install
+1.11.0, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
+shows, check the lists in [From 1.4 to 1.5](#from-14-to-15),
 [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17),
-[From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19) and
-[From 1.9 to 1.10](#from-19-to-110), and you are done.
+[From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19),
+[From 1.9 to 1.10](#from-19-to-110) and
+[From 1.10 to 1.11](#from-110-to-111), and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -52,9 +55,10 @@ you installed:
 13. [From 1.7 to 1.8](#from-17-to-18)
 14. [From 1.8 to 1.9](#from-18-to-19)
 15. [From 1.9 to 1.10](#from-19-to-110)
-16. [Tooling after the upgrade](#tooling-after-the-upgrade)
-17. [Checklist](#checklist)
-18. [A worked example](#a-worked-example)
+16. [From 1.10 to 1.11](#from-110-to-111)
+17. [Tooling after the upgrade](#tooling-after-the-upgrade)
+18. [Checklist](#checklist)
+19. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -1506,6 +1510,75 @@ Changes you may notice without acting on them:
 - `textOf(pieces, maxPieces)` gives text of every number of pieces up to
   `maxPieces`, so a property using it sees other text from the same seed,
   and may find a bug it missed.
+
+[CHANGELOG.md](CHANGELOG.md) has the detail of each.
+
+## From 1.10 to 1.11
+
+Install 1.11.0:
+
+```bash
+bun add @popcomputer/web@^1.11.0
+```
+
+1.11.0 rebuilds the code that runs each request, after a review of the
+framework's design from 1.0 to 1.10: a request builds one Effect runtime, a
+job runs with setupWeb's services directly, and one place decides each of
+the application's settings, which cookies hold a session, what a response
+carries beside its body, the records a route loads, and why a response may
+not be shared. Check these against yours:
+
+- **A job that needs a request.** `routes.run`, `routes.scheduled` and
+  `routes.queue` refuse, at the call, a job that calls `validateRequest`,
+  `render`, `json` or a cookie's `set`, with a type error naming
+  `requestOnlyServices`. Such a job ran against a stand-in request:
+  `validateRequest` found nothing, and `render` and `json` built a response
+  no one received. Pass what the job needs as its input, from the route
+  that sends it, and return a value, as
+  [`docs/background.md`](docs/background.md) shows.
+- **A job that relied on middleware.** A job no longer runs as a request
+  to a hidden route, so it passes through none of the HTTP middleware,
+  setupWeb's `middleware` included. Give what a job needs from middleware
+  as a layer, with `routes.provide(layer)`, which its builder's jobs run
+  with.
+- **`auth.signInLimits` with a MySQL table.** setupWeb refuses it at
+  startup, where every password sign-in answered 500: each sign-in is
+  counted in one `INSERT ... ON CONFLICT DO UPDATE ... RETURNING`, which
+  Drizzle's MySQL builder lacks. Keep Better Auth's `rateLimit` table in
+  Postgres or SQLite, or leave the limits out.
+- **Verify-email actions copied from `docs/auth.md`.** Copy them again:
+  they answer a JSON client that fetches the link's page without its
+  token, or posts one that expired, with the validation failure, a 422,
+  where they sent it to sign in. A page visit lands on sign-in as before.
+- **Fuzz tests.** `fuzzRequest` reaches the application's actions, with
+  each page's forms and fields, and `brokenPromises` checks more rules,
+  such as a redirect to another site the request named, and reports a
+  defect no answer shows. A fuzz test may find a bug it missed.
+
+Changes you may notice without acting on them:
+
+- One rule decides which cookies hold a session: Better Auth's under any
+  `cookiePrefix`, and the name `auth.sessionCookie` gives, each also under
+  `__Secure-` and `__Host-`. A request carrying a `__Host-` session cookie,
+  or one under another `cookiePrefix`, is someone's own to every cache,
+  and its default `Cache-Control` is `no-store`. With `auth.sessionCookie`
+  set, the session lookup asks Better Auth for a request carrying Better
+  Auth's own session token too.
+- When Better Auth's sign-out expires no cookie, `betterAuthLogoutAction`
+  expires every session cookie the request sent, `auth.sessionCookie`'s
+  name, and each name's `__Host-` form.
+- The page cache and a route's developer warnings decide development by
+  `errors.envKey` and `errors.devValue`, as the error page does.
+- On a stack composed by hand, a route writes the cookies and headers its
+  action queued without `web()`, and a malformed path parameter, such as
+  `/projects/abc` for an integer id, answers the framework's 404 rather
+  than Hono's plain one.
+- A failed record lookup, or a failed statement of the sign-in limits,
+  reaches the error observer as a `DatabaseError` with its span.
+- `webContext(c)`'s `signedIn`, `readRequestState`, `runtime`,
+  `errorBoundary`, `signInPath`, `homePath`, `bodyLimit`, `schema`,
+  `bindings` and `sessionCookies`, and the page cache's `dynamic`, are
+  deprecated: each still holds what it did, and 2.0 removes them.
 
 [CHANGELOG.md](CHANGELOG.md) has the detail of each.
 

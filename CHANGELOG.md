@@ -5,9 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.11.0] - 2026-11-02
 
-What an application may need to change: one that copied `docs/auth.md`'s verify-email actions answers a JSON client as the new `expired` does, with the validation failure, and a page visit as before. One that gives `auth.signInLimits` a MySQL table now fails at startup, where every password sign-in answered 500: keep Better Auth's `rateLimit` table in Postgres or SQLite, or leave the limits out. A job, given to `routes.run`, `routes.scheduled` or `routes.queue`, that calls `validateRequest`, `render`, `json` or a cookie's `set` no longer compiles: it read a request no job has, and failed when it ran. Pass what it needs as its input, from the route that sends it, and return a value.
+This release follows a review of the framework's design from 1.0 to 1.10. The code that runs each request builds one Effect runtime where it built two, runs a Cron Trigger's or Queue consumer's job with setupWeb's services directly instead of as a request to a hidden route, and gives one owner each to the application's settings, the rule for which cookies hold a session, what a response carries beside its body, the records a route loads, and why a response may not be shared. That work fixed what it found: a job closed its scoped services before its background work ended, the page cache ignored `errors.envKey`, the cache policies took a `__Host-` session cookie or one under another `cookiePrefix` for no one's own, and sign-out missed a renamed session cookie. `fuzzRequest` now reaches an application's actions, and `brokenPromises` checks more.
+
+What an application on 1.10.0 may need to change, which `UPGRADING.md`'s "From 1.10 to 1.11" details:
+
+- A job given to `routes.run`, `routes.scheduled` or `routes.queue` that calls `validateRequest`, `render`, `json` or a cookie's `set` no longer compiles: it read a request no job has, and failed when it ran. Pass what it needs as its input, from the route that sends it, and return a value.
+- A job runs through none of the HTTP middleware, the application's `middleware` included. One that relied on middleware to set something up gets it from a layer given with `routes.provide`.
+- `auth.signInLimits` with a MySQL table fails at startup, where every password sign-in answered 500: keep Better Auth's `rateLimit` table in Postgres or SQLite, or leave the limits out.
+- An application that copied `docs/auth.md`'s verify-email actions answers a JSON client as the new `expired` does, with the validation failure, and a page visit as before.
+- A fuzz test with `fuzzRequest` and `brokenPromises` reaches the application's actions and checks more rules, so it may find a bug it missed.
 
 ### Security
 
