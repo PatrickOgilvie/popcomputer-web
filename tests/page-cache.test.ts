@@ -23,6 +23,7 @@ import { DatabaseService, RequestService, RequestStateService } from '../src/eff
 import { dbQuery } from '../src/effect/database.js'
 import { PAGE_CACHE_HEADER, pageCache, trackBindings, trackDatabase, type PageCacheStore } from '../src/page-cache.js'
 import { openWebContext, webServices } from '../src/request-context.js'
+import { keptFrom } from '../src/privacy.js'
 import { signedIn, testEnv } from '../src/testing.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
@@ -908,11 +909,11 @@ describe('trackDatabase', () => {
 
     app.get('/', (c) => {
       const marks: boolean[] = []
+      // Each use starts with nothing recorded, and keeps the page out of the page cache.
       const read = <A>(use: () => A): A => {
-        const state = { key: new Request('http://localhost/'), variant: 'html', ttl: 60, dynamic: false, routeAllowsDefault: true } as const
-        openWebContext(c).pageCache = { ...state }
+        openWebContext(c).privacy = undefined
         const value = use()
-        marks.push(openWebContext(c).pageCache?.dynamic === true)
+        marks.push(keptFrom(c, 'page'))
 
         return value
       }

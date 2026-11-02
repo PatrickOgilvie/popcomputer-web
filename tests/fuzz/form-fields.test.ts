@@ -8,12 +8,9 @@
  */
 import { describe } from 'bun:test'
 import { Arbitrary } from 'effect'
-import { nestFields } from '../../src/effect/form-fields'
+import { FIELD_LIMITS, nestFields } from '../../src/effect/form-fields'
 import { anyText, oneOf, pick, property, textOf } from './property'
 import { realmGuard } from '../../src/fuzz.js'
-
-/** How many more slots than items sent a list may hold, as nestFields allows. */
-const MAX_LIST_GAP = 20
 
 const SEGMENTS = ['a', 'b', '0', '1', '', '9999', '__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf', 'call', 'bind', 'length', 'name'] as const
 
@@ -71,7 +68,7 @@ describe('nestFields', () => {
 
     const longest = Math.max(0, ...listLengths(nested))
 
-    return longest > fields.length + MAX_LIST_GAP ? `a list of ${longest} slots from ${fields.length} fields` : undefined
+    return longest > fields.length + FIELD_LIMITS.maxListGap ? `a list of ${longest} slots from ${fields.length} fields` : undefined
   })
 
   property(

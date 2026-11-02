@@ -31,7 +31,7 @@ export interface FlashedPageData {
   readonly clearHistory: boolean
 }
 
-interface MutableFlash {
+export interface MutableFlash {
   errors: Record<string, string | Readonly<Record<string, string>>>
   flash: Record<string, unknown>
   clearHistory: boolean
@@ -47,8 +47,8 @@ export interface FlashStore {
   clearHistory(): void
   /** The data for the page this request renders. */
   take(): FlashedPageData
-  /** Whether committing a response of this status writes the flash cookie, to carry data or clear it. */
-  setsCookie(status: number): boolean
+  /** The Set-Cookie a response of this status carries, to carry data to the next request or clear it, if any. */
+  cookie(status: number): string | undefined
   /** The response with the cookie that carries data to the next request, or clears it. */
   commit(response: Response): Response
 }
@@ -111,6 +111,25 @@ export function openFlash(c: Context): FlashStore {
   const writes = (status: number): boolean =>
     prefetch ? hasData(pending) : clears || hasData(outgoing(status))
 
+  /** The Set-Cookie a response of this status carries, if any. */
+  const cookieFor = (status: number): string | undefined => {
+    if (!writes(status)) return undefined
+
+    const next = withinBudget(outgoing(status))
+
+    return hasData(next)
+      // The history's clear waits for the page that applies it, however
+      // long: until the browser closes, as the tab's key does.
+      ? serialize(name, toBase64Url(stored(next)), {
+          path: '/',
+          httpOnly: true,
+          secure,
+          sameSite: 'Lax',
+          ...(next.clearHistory ? {} : { maxAge: MAX_AGE_SECONDS }),
+        })
+      : serialize(name, '', { path: '/', httpOnly: true, secure, sameSite: 'Lax', maxAge: 0 })
+  }
+
   return {
     set(key, value) {
       pending.flash[key] = value
@@ -142,25 +161,12 @@ export function openFlash(c: Context): FlashStore {
       return data
     },
 
-    setsCookie(status) {
-      return writes(status)
-    },
+    cookie: cookieFor,
 
     commit(response) {
-      if (!writes(response.status)) return response
+      const cookie = cookieFor(response.status)
 
-      const next = withinBudget(outgoing(response.status))
-      const cookie = hasData(next)
-        // The history's clear waits for the page that applies it, however
-        // long: until the browser closes, as the tab's key does.
-        ? serialize(name, toBase64Url(stored(next)), {
-            path: '/',
-            httpOnly: true,
-            secure,
-            sameSite: 'Lax',
-            ...(next.clearHistory ? {} : { maxAge: MAX_AGE_SECONDS }),
-          })
-        : serialize(name, '', { path: '/', httpOnly: true, secure, sameSite: 'Lax', maxAge: 0 })
+      if (cookie === undefined) return response
 
       const headers = new Headers(response.headers)
       headers.append('Set-Cookie', cookie)
@@ -184,12 +190,12 @@ function stored(data: MutableFlash): string {
 }
 
 /**
- * Keep field errors before flash values when the data outgrows a cookie,
- * and clearing the history before either.
+ * Keep field errors before flash values when the data outgrows a cookie of
+ * `maxBytes`, and clearing the history before either.
  */
-function withinBudget(data: MutableFlash): MutableFlash {
+export function withinBudget(data: MutableFlash, maxBytes = MAX_COOKIE_BYTES): MutableFlash {
   const fits = (candidate: MutableFlash) =>
-    toBase64Url(stored(candidate)).length <= MAX_COOKIE_BYTES
+    toBase64Url(stored(candidate)).length <= maxBytes
 
   if (fits(data)) return data
 

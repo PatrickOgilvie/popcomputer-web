@@ -832,6 +832,14 @@ function commitSkipsHooks(options: ReadonlyArray<string>): boolean {
 }
 
 /** Each string literal of a program, and each run of literals in one argument list, as a command line. */
+/**
+ * What may sit between one string of a command a program runs and the next:
+ * commas and brackets, as `spawnSync('git', ['commit', '-n'])` writes them,
+ * or an object's `args`, `argv` or `cmd` key, as
+ * `new Deno.Command('git', { args: ['commit', '-n'] })` does.
+ */
+const ARGUMENT_SEPARATOR = /^[\s,[\]]*(?:\{\s*(?:args|argv|cmd)\s*:[\s[]*)?$/
+
 function commandsInCode(source: string): string[] {
   const literal = /'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g
   const runs: string[][] = []
@@ -839,7 +847,7 @@ function commandsInCode(source: string): string[] {
   let last = 0
 
   for (const match of source.matchAll(literal)) {
-    if (run.length > 0 && !/^[\s,[\]]*$/.test(source.slice(last, match.index))) {
+    if (run.length > 0 && !ARGUMENT_SEPARATOR.test(source.slice(last, match.index))) {
       runs.push(run)
       run = []
     }

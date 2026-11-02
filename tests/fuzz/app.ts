@@ -7,11 +7,11 @@
  * page a visitor signed in for, list the tasks no private project holds, and
  * add and edit a project's notes, which only steps create, and none is meant
  * to fail
- * with a defect. Every statement the database receives, and every failure
- * the error observer sees, is kept.
+ * with a defect, which `sendFuzzRequest` hands `brokenPromises` from the
+ * error observer. Every statement the database receives is kept.
  */
 import { Hono } from 'hono'
-import { Context, Effect, Layer, Schema as S } from 'effect'
+import { Context, Effect, Schema as S } from 'effect'
 import { Database } from 'bun:sqlite'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
@@ -20,7 +20,6 @@ import { action } from '../../src/effect/action.js'
 import { intendedUrl } from '../../src/effect/auth.js'
 import { bound, routeBinding } from '../../src/effect/binding.js'
 import { dbMutation, dbQuery } from '../../src/effect/database.js'
-import { EffectErrorObserverService, type EffectErrorEvent } from '../../src/effect/error-observer.js'
 import { guard } from '../../src/effect/guard.js'
 import { json, notFound, redirect } from '../../src/effect/responses.js'
 import { coercedNumber, currentPassword, email, nullableString, requiredString } from '../../src/effect/schema.js'
@@ -122,7 +121,6 @@ export function createApp() {
   sqlite.run("INSERT INTO memberships (organization_id, user_id) VALUES ('acme', 'ada'), ('globex', 'grace')")
 
   const statements: string[] = []
-  const observed: EffectErrorEvent[] = []
   const db = drizzle(sqlite, { schema, logger: { logQuery: (query) => statements.push(query) } })
   const app = new Hono()
   const { routes } = setupWeb(app, {
@@ -137,10 +135,6 @@ export function createApp() {
       note: routeBinding(notes, { scope: { project: { foreignKey: 'projectId' } } }),
       organization: routeBinding(organizations, { guarded: true }),
     },
-  }).services({
-    app: Layer.succeed(EffectErrorObserverService, EffectErrorObserverService.of({
-      observe: (event) => Effect.sync(() => void observed.push(event)),
-    })),
   })
 
   // SAFETY: These tests register no database type; the client is the Drizzle client above.
@@ -249,5 +243,5 @@ export function createApp() {
     UNION ALL SELECT 'note', id, project_id, body FROM notes
     ORDER BY id`).all()
 
-  return { app, statements, observed, rows, records }
+  return { app, statements, rows, records }
 }

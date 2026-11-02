@@ -27,10 +27,12 @@ import {
 } from './better-auth-boundary.js'
 import { openWebContext } from '../request-context.js'
 import { sessionCookies } from '../session-cookies.js'
+import { WebSetupService } from '../web-setup.js'
+import { queueSessionLookupCookies } from '../response-output.js'
 import { BodyTooLarge, DEFAULT_BODY_LIMIT, formatBytes, readBody } from './body-limit.js'
 import { bodyOf } from './better-auth-body.js'
 import { schemaExport, tableOfSchema } from './table-schema.js'
-import type { PagePropValue, PageProps } from '../types.js'
+import type { PagePropValue } from '../types.js'
 
 
 /**
@@ -366,9 +368,7 @@ export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): Middl
     // as the session, unless the response sets the session itself.
     const { session, cookies } = sessionLookup(looked)
 
-    if (cookies.length > 0) {
-      requestCtx.sessionLookupCookies = [...(requestCtx.sessionLookupCookies ?? []), ...cookies]
-    }
+    if (cookies.length > 0) queueSessionLookupCookies(c, cookies)
 
     if (session) {
       const exit = await Effect.runPromiseExit(S.decodeEffect(sessionSchema)(session))
@@ -1178,7 +1178,16 @@ export function betterAuthLogoutAction<const Path extends string = '/'>(
     const headers = new Headers({ Location: config.redirectTo ?? '/' })
 
     if (answered !== undefined) appendSetCookies(headers, answered.headers)
-    if (!headers.has('set-cookie')) appendLogoutCookies(headers, sessionCookies().toExpireOnSignOut(request.header('Cookie'), config.cookieNames))
+    if (!headers.has('set-cookie')) {
+      // The application's session cookie names come from setupWeb's settings,
+      // which a direct call without a route has none of.
+      const cookies = Option.match(yield* Effect.serviceOption(WebSetupService), {
+        onNone: () => sessionCookies(),
+        onSome: (setup) => setup.sessionCookies,
+      })
+
+      appendLogoutCookies(headers, cookies.toExpireOnSignOut(request.header('Cookie'), config.cookieNames))
+    }
 
     return new Response(null, { status: 303, headers })
   })

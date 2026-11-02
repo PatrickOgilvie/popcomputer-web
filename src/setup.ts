@@ -11,7 +11,7 @@ import type { WebConfig } from './types.js'
 import { defaultPublicUserFor, loadUserMiddleware, shareAuthMiddleware, usersTableOf } from './effect/auth.js'
 import { openWebContext } from './request-context.js'
 import { readTestDatabase } from './effect/test-env.js'
-import { markRouteCacheDynamic, observedRequestContext, pageCache, privateByDefault } from './page-cache.js'
+import { observedRequestContext, pageCache, privateByDefault } from './page-cache.js'
 import type {
   AuthService,
   DatabaseService,
@@ -23,16 +23,18 @@ import type {
 import type { DefaultPublicUserOf } from './effect/auth.js'
 import type { WebDeclaration, WebTypes } from './effect/register.js'
 import { checkEnv, EnvInvalid, type EnvDeclaration } from './env.js'
+import { useSetup, webSetup } from './web-setup.js'
 import {
   EffectRouteBuilder,
   declareAppBindings,
-  failRun,
+  declareAppJobs,
   type BaseServices,
+  type JobPreparation,
   type CoreServices,
 } from './effect/routing.js'
 import {
+  createEffectBridge,
   drainRequestBackground,
-  effectBridge,
   getRequestExecutionContextClient,
   type EffectBridgeConfig,
 } from './effect/bridge.js'
@@ -417,7 +419,10 @@ export function setupWeb<
   const services: ServiceSlots<E> = {}
   let servicesGiven = false
 
-  app.use('*', createSetupMiddleware(config, services))
+  const { middleware, prepareJob } = createSetupMiddleware(config, services)
+
+  app.use('*', middleware)
+  declareAppJobs(app, prepareJob)
   registerErrorHandlers(app, config.errors)
 
   declareAppBindings(app, { bindings: config.bindings, schema: config.schema })
@@ -468,6 +473,12 @@ function checkBindings(env: EnvDeclaration, bindings: unknown, logged: Set<strin
   return result ?? undefined
 }
 
+/** setupWeb's middleware, and how it readies a job's services with no request. */
+interface SetupMiddleware<E extends Env> {
+  readonly middleware: MiddlewareHandler<E>
+  readonly prepareJob: (c: Context<E>) => Promise<JobPreparation>
+}
+
 /** Where `web.services(...)` puts the application's services for the bridge to read on each request. */
 interface ServiceSlots<E extends Env> {
   app?: Layer.Layer<never, Config.ConfigError>
@@ -490,7 +501,7 @@ function createSetupMiddleware<
     E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields
   >,
   services: ServiceSlots<E>
-): MiddlewareHandler<E> {
+): SetupMiddleware<E> {
   const webConfig: WebConfig = {
     version: config.version,
     render: config.render,
@@ -499,14 +510,14 @@ function createSetupMiddleware<
   // The env failures this application has logged, so an isolate logs each once.
   const loggedEnvFailures = new Set<string>()
 
-  // Middleware to wire db and auth into the typed request context
-  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
-  const setupServices: MiddlewareHandler<E> = createMiddleware<E>(async (c, next) => {
+  /**
+   * Give a request, or a job, its database, auth and sign-in limits, or the
+   * failure that refuses every one: bindings the env declaration refuses,
+   * or a Better Auth whose rate-limit storage would delete the sign-in
+   * counts.
+   */
+  const prepareServices = (c: Context<E>): Error | undefined => {
     const requestCtx = openWebContext(c)
-    requestCtx.errorBoundary = config.errors
-    requestCtx.signInPath = config.auth?.signInPath
-    requestCtx.homePath = config.auth?.homePath
-    requestCtx.bodyLimit = config.bodyLimit
     const signInLimits = config.auth?.signInLimits
     requestCtx.signInLimits = signInLimits === undefined ? undefined : activeSignInLimits(signInLimits, c.env ?? {})
     const executionContext = getRequestExecutionContextClient(c)
@@ -515,56 +526,60 @@ function createSetupMiddleware<
       handler: executionContext.waitUntil,
     }
 
+    if (config.env !== undefined) {
+      const invalid = checkBindings(config.env, c.env, loggedEnvFailures)
+
+      if (invalid !== undefined) return invalid
+    }
+
+    // Set up database first (auth may depend on it). A test request may
+    // bring its own database (testEnv's `database`).
+    const testDatabase = readTestDatabase(c.env)
+    // SAFETY: testEnv types the database as DatabaseType, which the
+    // application's registration makes this setup's DB. A header the
+    // factory reads keeps a route's own cache option from sharing responses.
+    const db = testDatabase === undefined ? config.database?.(observedRequestContext(c, { reason: 'setup' })) : testDatabase as DB
+
+    if (db !== undefined) {
+      // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
+      requestCtx.db = db as DatabaseType
+    }
+
+    if (config.auth?.client !== undefined) {
+      // SAFETY: AuthClientServices<DB> carries `db` exactly when `database`
+      // is configured, which is when `db` is defined here; the conditional
+      // type cannot be resolved for the generic DB inside this function.
+      const createAuth = config.auth.client as (
+        c: Context<E>,
+        services: { readonly db?: DB; readonly backgroundTasks: AuthBackgroundTasks }
+      ) => Auth
+
+      const auth = createAuth(c, db === undefined ? { backgroundTasks } : { db, backgroundTasks })
+
+      // Better Auth is built per request, from the request's bindings, so
+      // this is the first point its options can be read: a rate-limit
+      // storage that would delete the sign-in counts fails every request,
+      // and every job, as a misconfigured env does.
+      if (config.auth.signInLimits !== undefined) {
+        const storageError = signInLimitsStorageError(Object.getOwnPropertyDescriptor(auth, 'options')?.value)
+
+        if (storageError !== undefined) return storageError
+      }
+
+      // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
+      requestCtx.auth = auth as AuthType
+    }
+
+    return undefined
+  }
+
+  // Middleware to wire db and auth into the typed request context
+  // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
+  const setupServices: MiddlewareHandler<E> = createMiddleware<E>(async (c, next) => {
     try {
-      if (config.env !== undefined) {
-        const invalid = checkBindings(config.env, c.env, loggedEnvFailures)
+      const failure = prepareServices(c)
 
-        if (invalid !== undefined) {
-          failRun(c.req.raw, invalid)
-          throw invalid
-        }
-      }
-
-      // Set up database first (auth may depend on it). A test request may
-      // bring its own database (testEnv's `database`).
-      const testDatabase = readTestDatabase(c.env)
-      // SAFETY: testEnv types the database as DatabaseType, which the
-      // application's registration makes this setup's DB. A header the
-      // factory reads keeps a route's own cache option from sharing responses.
-      const db = testDatabase === undefined ? config.database?.(observedRequestContext(c, { mark: markRouteCacheDynamic })) : testDatabase as DB
-
-      if (db !== undefined) {
-        // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
-        requestCtx.db = db as DatabaseType
-      }
-
-      if (config.auth?.client !== undefined) {
-        // SAFETY: AuthClientServices<DB> carries `db` exactly when `database`
-        // is configured, which is when `db` is defined here; the conditional
-        // type cannot be resolved for the generic DB inside this function.
-        const createAuth = config.auth.client as (
-          c: Context<E>,
-          services: { readonly db?: DB; readonly backgroundTasks: AuthBackgroundTasks }
-        ) => Auth
-
-        const auth = createAuth(c, db === undefined ? { backgroundTasks } : { db, backgroundTasks })
-
-        // Better Auth is built per request, from the request's bindings, so
-        // this is the first point its options can be read: a rate-limit
-        // storage that would delete the sign-in counts fails every request,
-        // and routes.run, as a misconfigured env does.
-        if (config.auth.signInLimits !== undefined) {
-          const storageError = signInLimitsStorageError(Object.getOwnPropertyDescriptor(auth, 'options')?.value)
-
-          if (storageError !== undefined) {
-            failRun(c.req.raw, storageError)
-            throw storageError
-          }
-        }
-
-        // SAFETY: Setup owns this request-scoped value and stores it under the matching private key, preserving the generic contract on retrieval.
-        requestCtx.auth = auth as AuthType
-      }
+      if (failure !== undefined) throw failure
 
       await next()
     } finally {
@@ -587,11 +602,30 @@ function createSetupMiddleware<
     flash: config.flash,
   }
 
+  const bridge = createEffectBridge<E, never>(effectConfig)
+
   // The application's own middleware runs after a cached page is served, so
   // a page it would refuse is cached only when the application says so.
   const cachesPages = config.pageCache ?? (config.middleware ?? []).length === 0
 
+  // The settings every request reads, resolved once.
+  const setup = webSetup({
+    errors: config.errors,
+    signInPath: config.auth?.signInPath,
+    homePath: config.auth?.homePath,
+    bodyLimit: config.bodyLimit,
+    sessionCookie: config.auth?.sessionCookie,
+    schema: config.schema,
+    bindings: config.bindings,
+  })
+
   const middlewares: MiddlewareHandler<E>[] = [
+    // First, so every member and the error page read the same settings.
+    (c, next) => {
+      useSetup(c, setup)
+
+      return next()
+    },
     // Outermost, so they see every response, including the page cache's own.
     ...(config.security?.headers === false ? [] : [securityHeaders<E>(config.security?.headers ?? {})]),
     privateByDefault<E>(),
@@ -601,8 +635,6 @@ function createSetupMiddleware<
       : [
           pageCache<E>({
             version: config.version ?? '',
-            sessionCookie: config.auth?.sessionCookie,
-            development: config.errors,
           }),
         ]),
     setupServices,
@@ -622,15 +654,29 @@ function createSetupMiddleware<
     shareAuthMiddleware<E>({
       schema: config.auth?.share ?? defaultPublicUserFor(config.auth?.session),
     }),
-    effectBridge<E, never>(effectConfig),
+    bridge.middleware,
     // A header the application's middleware reads keeps a route's own cache
     // option from sharing the response; `pageCache: true` still caches pages.
-    ...(config.middleware ?? []).map((middleware): MiddlewareHandler<E> => (c, next) => middleware(observedRequestContext(c, { mark: markRouteCacheDynamic }), next)),
+    ...(config.middleware ?? []).map((middleware): MiddlewareHandler<E> => (c, next) => middleware(observedRequestContext(c, { reason: 'setup' }), next)),
   ]
+
+  // A job readies the services a request's middleware gives it, on a context
+  // of its own: the settings, the database, auth, the Effect services. It
+  // runs through no HTTP middleware, the application's included: it has no
+  // request for them to answer.
+  const prepareJob = (c: Context<E>): Promise<JobPreparation> => {
+    useSetup(c, setup)
+
+    const failure = prepareServices(c)
+
+    if (failure !== undefined) return Promise.resolve({ failure })
+
+    return bridge.prepare(c).then((release) => ({ release }))
+  }
 
   // A member's error is answered where it was thrown, so the members around
   // it, the response policy among them, still see the error page.
-  return sequence(middlewares, createErrorHandlers<E>(config.errors).onError)
+  return { middleware: sequence(middlewares, createErrorHandlers<E>(config.errors).onError), prepareJob }
 }
 
 /**

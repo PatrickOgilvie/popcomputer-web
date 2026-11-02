@@ -68,6 +68,9 @@ const fields = [...contextBody.matchAll(/^ {2}(\w+)\??:/gm)].map((match) => matc
 
 const readers = files.filter((file) => file.path !== 'src/request-context.ts' && /\b(?:open)?[wW]ebContext\(/.test(file.text))
 const read = new Set<string>()
+// Read outside web-setup.ts, whose setupOf reads the copied settings only for
+// a stack composed by hand.
+const readElsewhere = new Set<string>()
 const written = new Set<string>()
 
 for (const file of readers) {
@@ -78,14 +81,21 @@ for (const file of readers) {
     const access = new RegExp(`(?:${receivers.join('|')})\\??\\.${field}\\b(\\s*(?:\\?\\?|\\|\\||&&)?=(?!=))?`, 'g')
 
     for (const match of file.text.matchAll(access)) {
-      if (match[1] === undefined) read.add(field)
-      else written.add(field)
+      if (match[1] === undefined) {
+        read.add(field)
+        if (file.path !== 'src/web-setup.ts') readElsewhere.add(field)
+      } else {
+        written.add(field)
+      }
     }
   }
 
   for (const match of file.text.matchAll(/const\s*\{([^}]+)\}\s*=\s*(?:open)?[wW]ebContext\(/g)) {
     for (const name of match[1].split(',').map((part) => part.trim().split(/[:\s]/)[0])) {
-      if (fields.includes(name)) read.add(name)
+      if (fields.includes(name)) {
+        read.add(name)
+        if (file.path !== 'src/web-setup.ts') readElsewhere.add(name)
+      }
     }
   }
 }
@@ -98,6 +108,7 @@ const measures: ReadonlyArray<readonly [string, number | string]> = [
   ['web() middleware lines', blockLines(text('src/middleware.ts'), /export function web\(/)],
   ['WebRequestContext fields', fields.length],
   ['  read by src/', read.size],
+  ['  read outside web-setup.ts', readElsewhere.size],
   ['  written by src/', written.size],
   ['  read nowhere', fields.filter((field) => !read.has(field)).join(', ') || '-'],
   ['openWebContext calls', count(/\bopenWebContext\(/g, (path) => path !== 'src/request-context.ts')],

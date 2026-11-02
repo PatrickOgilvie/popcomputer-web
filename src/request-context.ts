@@ -2,7 +2,7 @@
 
 import type { ActiveSignInLimits } from './effect/sign-in-limits.js'
 import type { Context, Env, MiddlewareHandler } from 'hono'
-import type { Config, Context as EffectContext, ManagedRuntime } from 'effect'
+import type { Config, Context as EffectContext, Layer, ManagedRuntime } from 'effect'
 import type {
   AuthType,
   AuthUser,
@@ -17,6 +17,16 @@ import type {
 } from './effect/bridge.js'
 import type { ErrorBoundaryConfig } from './effect/handler.js'
 import type { RouteBindingsConfig } from './effect/binding.js'
+import type { WebSetup } from './web-setup.js'
+import type { PrivacyReason } from './privacy.js'
+
+/**
+ * A request's services, typed over any services: which ones depends on each
+ * application's bridge config, and the route that builds its runtime from
+ * them checks its actions against its own.
+ */
+// oxlint-disable-next-line no-explicit-any -- SAFETY: see doc comment above
+export type RequestServicesLayer = Layer.Layer<any, Config.ConfigError>
 
 /**
  * Framework composition state for one request.
@@ -24,6 +34,14 @@ import type { RouteBindingsConfig } from './effect/binding.js'
  * absent until their middleware has run — consumers branch on absence.
  */
 export interface WebRequestContext<E extends Env = Env> {
+  /**
+   * setupWeb() — the application's settings, the same value for every
+   * request. The framework reads them with `setupOf(c)`, which a stack
+   * composed by hand answers too.
+   *
+   * @internal
+   */
+  setup?: WebSetup
   /** webServices() / setupWeb's `database` factory. */
   db?: DatabaseType
   /** webServices() / setupWeb's `auth.client` factory. */
@@ -31,15 +49,22 @@ export interface WebRequestContext<E extends Env = Env> {
   /** loadUser() — present only when the request carries a valid session */
   authUser?: AuthUser
   /**
+   * privacy.ts — why the response may not be shared, which the page cache,
+   * a route's `cache` option and the default Cache-Control read.
+   */
+  privacy?: ReadonlySet<PrivacyReason>
+  /**
    * web()'s render — a page went to a visitor the action's AuthUserService
    * signed in, whichever layer gave it: the session lookup, a layer the
    * route provides, or web.services.
+   * @deprecated privacy.ts records it as 'signed-in'. Removed in 2.0.
    */
   signedIn?: boolean
   /**
    * Set when producing the response read a request header, a cookie or
    * request state, none of which a shared cache's key holds: a route's
    * `cache` option then stores nothing.
+   * @deprecated privacy.ts records why. Removed in 2.0.
    */
   readRequestState?: boolean
   /**
@@ -52,34 +77,58 @@ export interface WebRequestContext<E extends Env = Env> {
   /** web() middleware — flash data from the previous request and for the next. */
   flash?: FlashStore
   /**
-   * effectBridge() — per-request Effect runtime.
-   * Typed over `any` services: the concrete union depends on per-app bridge
-   * config, matching the existing getEffectRuntime() contract.
+   * effectBridge() — the request's services, which its route or job builds
+   * the request's one runtime from.
    */
-  // oxlint-disable-next-line no-explicit-any -- SAFETY: see doc comment above
-  runtime?: ManagedRuntime.ManagedRuntime<any, Config.ConfigError>
+  requestLayer?: RequestServicesLayer
+  /**
+   * effectBridge() — a runtime of the request's services, built only when
+   * read.
+   * @deprecated Routes build the request's one runtime from `requestLayer`.
+   * Removed in 2.0.
+   */
+  runtime?: ManagedRuntime.ManagedRuntime<never, Config.ConfigError>
   /** setupWeb() / effectBridge() — owns detached request work and teardown. */
   backgroundSupervisor?: BackgroundSupervisor
   /** effectBridge() — bridge config for downstream route handlers */
   bridgeConfig?: EffectBridgeConfig<E, unknown>
-  /** effectBridge() / effectRoutes() — Drizzle schema for route model binding */
+  /**
+   * effectBridge() — Drizzle schema for route model binding.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   schema?: object
-  /** effectBridge() / effectRoutes() — registered row parsers and scopes. */
+  /**
+   * effectBridge() — registered row parsers and scopes.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   bindings?: RouteBindingsConfig
-  /** setupWeb() — response policy shared by every error entrypoint. */
+  /**
+   * setupWeb() — response policy shared by every error entrypoint.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   errorBoundary?: ErrorBoundaryConfig
-  /** setupWeb() — where a signed-out visitor goes when a route needs a user. */
+  /**
+   * setupWeb() — where a signed-out visitor goes when a route needs a user.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   signInPath?: string
-  /** setupWeb() — where a signed-in visitor goes from a page for guests. */
+  /**
+   * setupWeb() — where a signed-in visitor goes from a page for guests.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   homePath?: string
-  /** setupWeb() — the most bytes the framework reads of a request body. */
+  /**
+   * setupWeb() — the most bytes the framework reads of a request body.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
+   */
   bodyLimit?: number
   /** setupWeb() — the sign-in limits, with the request's Rate Limiting binding. */
   signInLimits?: ActiveSignInLimits
   /**
-   * loadUser() — custom session cookie names registered for this request.
-   * The response-cache policy treats these (and better-auth's default
-   * cookies) as private request state.
+   * loadUser() — custom session cookie names registered for this request,
+   * which a stack composed by hand tells the cache policies and the history
+   * clear through.
+   * @deprecated The application's setupWeb configuration holds it. Removed in 2.0.
    */
   sessionCookies?: readonly string[]
   /** pageCache() — present while a request may still be served from or stored in the page cache. */
@@ -96,7 +145,13 @@ export interface WebRequestContext<E extends Env = Env> {
    * goes back to when the request names no page of this site as its Referer.
    */
   formPage?: string
-  /** Application cookies an action set, which web() writes on the response. */
+  /**
+   * response-output.ts — whether a page this request rendered cleared
+   * Inertia's history, and whether the response has been finished with what
+   * the request queued.
+   */
+  output?: { historyCleared: boolean; finished: boolean }
+  /** Application cookies an action set, which finishing the response writes. */
   responseCookies?: string[]
   /**
    * The cookies Better Auth's session lookup set, renewing the session or

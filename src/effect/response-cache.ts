@@ -23,6 +23,7 @@
 import { Predicate, Context, Data, Effect, Option, Schema as S } from 'effect'
 import { invalidateCacheTags } from '../cache.js'
 import { HEADERS } from '../types.js'
+import { setsRecipientState } from '../response-output.js'
 import { createStructuredError, ErrorCodes } from './error-catalog.js'
 import { emptyContext } from './error-context.js'
 import type { ErrorContext, StructuredError } from './error-types.js'
@@ -88,9 +89,10 @@ interface ResponseCacheHeaders {
  * characters remain unchanged; whitespace, Unicode, control characters, and
  * commas are percent-encoded so reads and purges use the same stable value.
  */
-function prepareCacheTagsWithLimits(
+export function prepareCacheTagsWithLimits(
   tags: readonly string[],
   limits: {
+    readonly maxLength: number
     readonly maxCount: number
     readonly maxAggregateLength?: number
   }
@@ -129,11 +131,11 @@ function prepareCacheTagsWithLimits(
       }
     }
 
-    if (encoded.length > MAX_CACHE_TAG_LENGTH) {
+    if (encoded.length > limits.maxLength) {
       return PreparedCacheTags.invalid({
         reason:
           `cache tag at index ${index} exceeds Cloudflare's ` +
-          `${MAX_CACHE_TAG_LENGTH}-character limit after encoding`
+          `${limits.maxLength}-character limit after encoding`
       })
     }
 
@@ -171,6 +173,7 @@ export function prepareCacheTags(
   tags: readonly string[]
 ): PreparedCacheTags {
   return prepareCacheTagsWithLimits(tags, {
+    maxLength: MAX_CACHE_TAG_LENGTH,
     maxCount: MAX_CACHE_TAG_COUNT,
     maxAggregateLength: MAX_CACHE_TAG_HEADER_LENGTH,
   })
@@ -180,6 +183,7 @@ export function prepareCachePurgeTags(
   tags: readonly string[]
 ): PreparedCacheTags {
   return prepareCacheTagsWithLimits(tags, {
+    maxLength: MAX_CACHE_TAG_LENGTH,
     maxCount: MAX_CACHE_PURGE_TAG_COUNT,
   })
 }
@@ -230,9 +234,9 @@ export interface CachePolicyInput {
   /** True when the request carries X-Inertia-Partial-* headers. */
   readonly isPartialReload: boolean
   /**
-   * True when the response sets a cookie, or web() will write one on it
-   * (an application cookie, Better Auth's, set-auth-token, the session
-   * lookup's or the flash cookie): never stored by any cache.
+   * True when the finished response sets a cookie (an application cookie,
+   * Better Auth's, the session lookup's or the flash cookie) or Better
+   * Auth's set-auth-token: never stored by any cache.
    */
   readonly setsCookie: boolean
   /**
@@ -398,6 +402,65 @@ export function isPartialReloadRequest(header: (name: string) => string | undefi
     header(HEADERS.PARTIAL_DATA) !== undefined ||
     header(HEADERS.PARTIAL_EXCEPT) !== undefined
   )
+}
+
+/** What a route's `cache` option decides from, beside its finished response. */
+export interface RouteCacheFacts {
+  readonly method: string
+  readonly isPartialReload: boolean
+  /** Whether the response depends on what no shared cache's key holds. */
+  readonly hasPrivateRequestState: () => boolean
+  /** The route's record tags, which its static option tags join. */
+  readonly derivedTags: readonly string[]
+  /** The Cache-Control a response that states none gets, given whether it sets something of the recipient's own. */
+  readonly defaultCacheControl: (setsCookie: boolean) => string
+  /** Tell the developer the option stores nothing on this route. */
+  readonly warn: (warning: string) => void
+}
+
+/**
+ * A route's finished response with its `cache` option applied, once every
+ * cookie and header it carries is on it:
+ *
+ * - `'no-store'`: no cache keeps it, unless it says otherwise itself;
+ * - `'private'`: only the visitor's browser keeps it, or nothing at all when
+ *   it is someone's own or sets a cookie, as the default policy says, which
+ *   holds in an application composed without setupWeb's privateByDefault;
+ * - an object: the shared cache keeps it for that long, as decideCachePolicy
+ *   decides, with the route's record tags;
+ * - none: the response as it is, which the default policy answers later.
+ */
+export function applyRouteCacheOption(
+  response: Response,
+  option: RouteCacheOptions | 'private' | 'no-store' | undefined,
+  facts: RouteCacheFacts
+): Response {
+  if (option === undefined) return response
+
+  if (option === 'no-store' || option === 'private') {
+    if (response.headers.has('Cache-Control')) return response
+
+    const headers = new Headers(response.headers)
+    headers.set('Cache-Control', option === 'no-store' ? 'no-store' : facts.defaultCacheControl(setsRecipientState(response)))
+
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+  }
+
+  const decision = decideCachePolicy({
+    method: facts.method,
+    status: response.status,
+    isPartialReload: facts.isPartialReload,
+    setsCookie: setsRecipientState(response),
+    hasPrivateRequestState: facts.hasPrivateRequestState(),
+    existingCacheControl: response.headers.get('Cache-Control'),
+    isPage: isPageResponse(response.headers),
+    derivedTags: facts.derivedTags,
+    options: option,
+  })
+
+  if (Predicate.isTagged(decision, 'skip') && decision.warning) facts.warn(decision.warning)
+
+  return applyCachePolicy(response, decision)
 }
 
 /**

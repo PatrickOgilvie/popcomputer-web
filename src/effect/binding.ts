@@ -13,7 +13,7 @@ import {
   SchemaTransformation,
 } from 'effect'
 import type { Table } from 'drizzle-orm'
-import { ConfigurationError, NotFoundError, RouteConfigurationError, UnauthorizedError } from './errors.js'
+import { RouteConfigurationError, type ConfigurationError, type NotFoundError, type UnauthorizedError } from './errors.js'
 import { ErrorCodes } from './error-catalog.js'
 import type { Registered } from './register.js'
 import { schemaExport, tableOfSchema, tableSchema } from './table-schema.js'
@@ -296,6 +296,14 @@ function referencesId(table: RouteBindingTable, key: string, users: RouteBinding
   return id !== undefined && inlineReferences(table, key).some((reference) => reference.table === users && reference.column === id)
 }
 
+/** The key of the column of `users` a column references, or its SQL name when no key holds it. */
+function referencedUsersColumn(table: RouteBindingTable, key: string, users: RouteBindingTable): string {
+  const column: unknown = inlineReferences(table, key).find((reference) => reference.table === users)?.column
+
+  return Object.keys(users).find((name) => Object.getOwnPropertyDescriptor(users, name)?.value === column) ??
+    String(column instanceof Object ? Reflect.get(column, 'name') : column)
+}
+
 /** A Drizzle table's SQL name. */
 function tableNameOf(table: RouteBindingTable): string {
   const name: unknown = Reflect.get(table, DRIZZLE_TABLE_NAME)
@@ -326,7 +334,17 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: obj
     if (config.ownedBy !== undefined && isBindingTable(source) && isBindingTable(users)) {
       const referenced = referencedTable(source, config.ownedBy)
 
-      if (referenced !== users || !referencesId(source, config.ownedBy, users)) {
+      if (referenced === users && !referencesId(source, config.ownedBy, users)) {
+        throw RouteConfigurationError.bindingOwnerNotUsersId(
+          name,
+          tableNameOf(source),
+          config.ownedBy,
+          tableNameOf(users),
+          referencedUsersColumn(source, config.ownedBy, users)
+        ).atStartup()
+      }
+
+      if (referenced !== users) {
         throw RouteConfigurationError.bindingOwnerNotUser(
           name,
           tableNameOf(source),
@@ -867,6 +885,16 @@ function routeAccess(
   return personal
 }
 
+/** A persisted row decoded through its binding's parser, or the configuration error a row that fails it is. */
+export function decodeBoundRow(
+  binding: CompiledRouteBinding,
+  row: object
+): Effect.Effect<unknown, RouteConfigurationError> {
+  return S.decodeUnknownEffect(binding.rowSchema)(row).pipe(
+    Effect.mapError((issue) => RouteConfigurationError.invalidBoundRow(binding.param, binding.tableName, issue.message)),
+  )
+}
+
 /**
  * The schema key of the table a binding loads its model from: its `table`
  * option, the key of the table it names, else its plural name.
@@ -894,25 +922,6 @@ export function bindingTableName(
   return key ?? (typeof sqlName === 'string' ? sqlName : pluralize(binding.param))
 }
 
-/** Decode one route parameter through its compiled column parser. */
-export function decodeBindingParam<Input>(
-  binding: CompiledRouteBinding,
-  input: Input
-): Promise<RouteBindingParam | undefined> {
-  return Effect.runPromise(S.decodeUnknownEffect(binding.paramSchema)(input).pipe(
-    Effect.orElseSucceed(() => undefined),
-  ))
-}
-
-/** Decode a persisted row through the parser registered for the binding. */
-export function decodeBoundRow<Row>(
-  binding: CompiledRouteBinding,
-  row: Row
-): Promise<S.Schema.Type<typeof S.Unknown>> {
-  return Effect.runPromise(S.decodeUnknownEffect(binding.rowSchema)(row).pipe(
-    Effect.mapError((issue) => RouteConfigurationError.invalidBoundRow(binding.param, binding.tableName, issue.message)),
-  ))
-}
 
 /**
  * Pluralize a singular word.

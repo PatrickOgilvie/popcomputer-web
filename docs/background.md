@@ -26,7 +26,9 @@ rather than a purge nothing would send.
 A Cron Trigger's and a Queue consumer's work runs with the application's
 services, as an action does: the database, the layers given to
 `web.services`, `Config` and
-`background()`, and the layers a builder was given with `provide`.
+`background()`, and the layers a builder was given with `provide`, which
+stay open until the background work the job started has settled. It runs
+through no middleware, the application's included: a job has no request.
 `routes.scheduled(job)` and `routes.queue(Schema, handle)` return the Worker's
 `scheduled` and `queue` handlers, and type-check the job as a registration
 does, so one that needs a service the routes do not provide is a

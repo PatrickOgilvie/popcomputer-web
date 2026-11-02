@@ -1,9 +1,10 @@
 ---- MODULE HistoryClear ----
 \* Inertia's history in the browser's tabs, against what the server answers:
 \* src/middleware.ts web()'s render (encryptHistory, clearHistory and
-\* version, 192-217) and its raise of the clear after an answer that ends or
-\* starts a session (298-305), which src/session-cookies.ts's endsSession and
-\* startsSession decide, the one-shot flag in src/flash.ts, the page's
+\* version, 190-215), src/response-output.ts finishResponse's raise of the
+\* clear after an answer that ends or starts a session (86-96), which
+\* src/session-cookies.ts's endsSession and startsSession decide, the
+\* one-shot flag in src/flash.ts, the page's
 \* version in src/page-version.ts, and @inertiajs/core 3.9.1's client: a page
 \* with clearHistory drops the tab's key; Back decrypts the entry and shows it
 \* only when its version is the current page's, and otherwise asks the
@@ -53,7 +54,7 @@ Init ==
   /\ leak = FALSE
   /\ steps = 0
 
-\* middleware.ts 192-211: what the server renders for the browser's session.
+\* middleware.ts 190-209: what the server renders for the browser's session.
 SignedIn == session # Guest
 Encrypts == IF Encrypt = "always" THEN TRUE ELSE SignedIn
 Clears == flag \/ (Encrypt = "signed-in" /\ ~SignedIn)
@@ -66,7 +67,7 @@ Rendered(t) ==
 
 Apply(t) ==
   /\ key' = [key EXCEPT ![t] = IF Clears THEN @ + 1 ELSE @]
-  \* A page that clears takes the one-shot flag (middleware.ts 217, flash.ts 131-143).
+  \* A page that clears takes the one-shot flag (middleware.ts 215, flash.ts 150-163).
   /\ flag' = FALSE
 
 Push(t, entry) ==

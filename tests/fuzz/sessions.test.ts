@@ -12,8 +12,9 @@
  * seeded or created, the answer keeps every rule requests.test.ts checks of
  * one request:
  *
- * - the framework's (`brokenPromises`), and no defect, no change to the
- *   realm's built-ins and no project made public;
+ * - the framework's (`brokenPromises`), a defect among them even where no
+ *   answer shows it, and no change to the realm's built-ins and no project
+ *   made public;
  * - no one but its owner sees a private record (`leaks`): the seeded
  *   canaries, and the id of a record a step created to anyone who never sent
  *   it;
@@ -98,14 +99,13 @@ const envFor = (person: Person | null) =>
 const reached = { steps: 0, accepted: 0, changedCreated: 0, namedOthers: 0 }
 
 async function run(steps: ReadonlyArray<FuzzRequest<Person>>): Promise<Refusal> {
-  const { app, statements, observed, records } = createApp()
+  const { app, statements, records } = createApp()
   const session = startFuzzSession(app, { paths, env: envFor, owners: OWNERS, created })
   const ownerOf = (row: { readonly id: string }) => session.ownerOf(row.id) ?? 'no one'
 
   for (const step of steps) {
     const before = records()
     const written = statements.length
-    const defects = observed.filter((event) => event.kind === 'defect').length
     const result = await session.send(step)
 
     if (result === undefined) continue
@@ -129,7 +129,6 @@ async function run(steps: ReadonlyArray<FuzzRequest<Person>>): Promise<Refusal> 
       ...refusedWrites(answer, { before, after }),
       ...madePublic.map((row) => `${sent.person ?? 'a visitor'} made ${row.id} public`),
       ...(status >= 400 && writes.length > 0 ? [`answered ${status} after writing: ${writes.join('; ')}`] : []),
-      ...(observed.filter((event) => event.kind === 'defect').length > defects ? ['made a defect'] : []),
       ...(await existenceShown(sent, answer, (segment) => session.exists(segment), (twin) => session.probe(twin))),
       ...[realmChanges()].filter((change) => change !== undefined),
     ]

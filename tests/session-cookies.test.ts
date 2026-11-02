@@ -38,8 +38,6 @@ interface Decisions {
   readonly expiredOnSignOut: boolean
 }
 
-// Sign-out expires a registered name only when given it as `cookieNames`,
-// since the action cannot yet read `auth.sessionCookie`.
 const decisions: ReadonlyArray<readonly [name: string, decisions: Decisions]> = [
   ['better-auth.session_token', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: true }],
   ['__Secure-better-auth.session_token', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: true }],
@@ -48,9 +46,9 @@ const decisions: ReadonlyArray<readonly [name: string, decisions: Decisions]> = 
   ['myapp.session_token', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: true }],
   ['__Host-myapp.session_data', { personal: true, lookedUp: false, clearsHistory: false, expiredOnSignOut: true }],
   ['better-auth.session_data', { personal: true, lookedUp: false, clearsHistory: false, expiredOnSignOut: true }],
-  ['sid', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: false }],
-  ['__Secure-sid', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: false }],
-  ['__Host-sid', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: false }],
+  ['sid', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: true }],
+  ['__Secure-sid', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: true }],
+  ['__Host-sid', { personal: true, lookedUp: true, clearsHistory: true, expiredOnSignOut: true }],
   // Another cookie whose name ends in the session cookie's.
   ['notsid', { personal: false, lookedUp: false, clearsHistory: false, expiredOnSignOut: false }],
   ['theme', { personal: false, lookedUp: false, clearsHistory: false, expiredOnSignOut: false }],

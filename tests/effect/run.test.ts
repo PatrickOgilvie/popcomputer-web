@@ -127,12 +127,9 @@ describe('routes.run', () => {
     expect(built).toEqual({ app: 1, request: 2 })
   })
 
-  // A route keeps the scoped services it is provided until its background
-  // work settles; `run` releases them when the job's Effect ends, so work it
-  // handed the Worker reads a released service. Step 3 of
-  // plans/request-pipeline.md fixes it, and this test then passes: drop
-  // `.failing`.
-  test.failing('resolves before background work the Effect hands the Worker, and keeps the services its builder provides until that work settles', async () => {
+  // As a route does. Until 1.11, `run` released them when the job's Effect
+  // ended, so work it handed the Worker read a released service.
+  test('resolves before background work the Effect hands the Worker, and keeps the services its builder provides until that work settles', async () => {
     const { routes } = createApp()
     let released = false
     let sawReleased: boolean | undefined
@@ -315,7 +312,7 @@ describe('a job whose cache purge fails', () => {
     expect(batch.retried()).toEqual([{ project: 'p2' }])
   })
 
-  test('rejects when its route answers anything but 204 after the job succeeds', async () => {
+  test('on a stack composed by hand, rejects when its route answers anything but 204 after the job succeeds', async () => {
     const app = new Hono()
     // Stands in for a failure after the job that does not end its run itself.
     app.use('*', async (c, next) => {
@@ -323,9 +320,25 @@ describe('a job whose cache purge fails', () => {
       // oxlint-disable-next-line no-param-reassign -- Hono replaces a middleware's response by assigning c.res.
       c.res = new Response(null, { status: 503 })
     })
-    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+    app.use('*', effectBridge())
 
-    await expect(routes.run(Effect.succeed('p2'), {})).rejects.toThrow('its route answered 503')
+    await expect(effectRoutes(app).run(Effect.succeed('p2'), {})).rejects.toThrow('its route answered 503')
+  })
+
+  test("runs through none of the application's middleware: a job has no request", async () => {
+    const app = new Hono()
+    const seen: string[] = []
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      middleware: [async (c, next) => {
+        seen.push(c.req.path)
+        await next()
+      }],
+    })
+
+    expect(await routes.run(Effect.succeed('p2'), {})).toBe('p2')
+    expect(seen).toEqual([])
   })
 
   test('resolves and acknowledges when the purge is accepted', async () => {

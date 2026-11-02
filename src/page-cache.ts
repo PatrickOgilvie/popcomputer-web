@@ -35,8 +35,10 @@ import { copyTestState } from './effect/test-env.js'
 import { openWebContext } from './request-context.js'
 import { HEADERS } from './types.js'
 import { isCurrentVersion } from './page-version.js'
-import { cookieNames, sessionCookies } from './session-cookies.js'
-import { isDevelopment, type DevelopmentSignal } from './development.js'
+import { cookieNames, sessionCookies, type SessionCookies } from './session-cookies.js'
+import { isDevelopment } from './development.js'
+import { setupOf } from './web-setup.js'
+import { keptFrom, recordPrivacy, renderedSignedIn, type PrivacyReason } from './privacy.js'
 
 /** Response header reporting what the page cache did: HIT, MISS, DYNAMIC or BYPASS. */
 export const PAGE_CACHE_HEADER = 'X-Popweb-Cache'
@@ -101,8 +103,11 @@ export interface PageCacheState {
   /** The variant the key names, which a response must be to be stored under it. */
   readonly variant: PageVariant
   readonly ttl: number
-  /** Set when producing the page read a binding, a header or request state. */
-  dynamic: boolean
+  /**
+   * Whether producing the page read a binding, a header or request state.
+   * @deprecated privacy.ts records why, which the page cache reads. Removed in 2.0.
+   */
+  readonly dynamic: boolean
   /** Set by the route handler when the route allows default caching. */
   routeAllowsDefault: boolean
 }
@@ -114,62 +119,41 @@ export interface PageCacheOptions {
   readonly sessionCookie?: string
   /** The cache to use. Defaults to `caches.default` when the runtime has one. */
   readonly store?: PageCacheStore
-  /**
-   * setupWeb's `errors.envKey` and `errors.devValue`, which say when the
-   * application runs in development, where nothing is cached.
-   *
-   * @internal
-   */
-  readonly development?: DevelopmentSignal
 }
 
 /**
- * Record that the current page read request-specific data, so it must not be
- * cached. A no-op outside the page cache.
+ * Record that the current page read request-specific data, so no cache may
+ * keep it: neither the default page cache nor a route's `cache` option.
  */
 export function markPageDynamic<E extends Env>(c: Context<E>): void {
-  const context = openWebContext(c)
-
-  context.readRequestState = true
-
-  if (context.pageCache) {
-    context.pageCache.dynamic = true
-  }
+  recordPrivacy(c, 'request')
 }
 
 /** Reads of a request that no cache key holds: its headers, and the raw request, which carries them and Cloudflare's `cf` data. */
 export const HEADER_READS: ReadonlySet<PropertyKey> = new Set(['header', 'raw'])
 
 /**
- * Record that the response read what no cache key holds, for a route's own
- * `cache` option only: the default page cache, which an application turns on
- * behind its own middleware with `pageCache: true`, keeps its pages.
- */
-export function markRouteCacheDynamic<E extends Env>(c: Context<E>): void {
-  openWebContext(c).readRequestState = true
-}
-
-/**
- * Hono's context, with each read of `reads` on its request reported to
- * `mark`: the context the framework hands application code that runs while
- * a response is produced, such as route middleware, so a header that code
- * decides from keeps the response out of every cache that answers before it
- * runs, as a header read through RequestService does.
+ * Hono's context, with each read of `reads` on its request recorded as
+ * `reason`: the context the framework hands application code that runs
+ * while a response is produced, such as route middleware, so a header that
+ * code decides from keeps the response out of every cache that answers
+ * before it runs, as a header read through RequestService does.
  */
 export function observedRequestContext<E extends Env>(
   c: Context<E>,
   observe: {
     readonly reads?: ReadonlySet<PropertyKey>
-    readonly mark?: (c: Context<E>) => void
+    readonly reason?: PrivacyReason
   } = {}
 ): Context<E> {
   const reads = observe.reads ?? HEADER_READS
-  const mark = observe.mark ?? markPageDynamic
+  const reason = observe.reason ?? 'request'
+  const mark = () => recordPrivacy(c, reason)
   // Hono's Context and HonoRequest keep private fields, so every member is
   // read, called and written with the original as its receiver.
   const req = new Proxy(c.req, {
     get(target, key) {
-      if (reads.has(key)) mark(c)
+      if (reads.has(key)) mark()
 
       const value: unknown = Reflect.get(target, key, target)
 
@@ -190,19 +174,6 @@ export function observedRequestContext<E extends Env>(
 }
 
 /**
- * Keep this request's page out of the default page cache: an access check
- * ran, such as a guard or prefix middleware, that a cached page, served
- * before it runs, would skip. A route's own `cache` option is unaffected.
- */
-export function keepPageOutOfCache<E extends Env>(c: Context<E>): void {
-  const state = openWebContext(c).pageCache
-
-  if (state) {
-    state.dynamic = true
-  }
-}
-
-/**
  * Record that the route handling this request allows default page caching.
  * Effect routes call this; plain Hono handlers never do, so they are never
  * cached by default.
@@ -216,15 +187,11 @@ export function allowDefaultPageCache<E extends Env>(c: Context<E>): void {
 }
 
 /**
- * Whether the request carries credentials: an `Authorization` header, or a
- * session cookie of `registered`'s application. The page cache asks before
- * the session lookup has run, so it gives the names itself.
+ * Whether the request carries credentials: an `Authorization` header, or one
+ * of the application's session cookies.
  */
-export function carriesCredentials<E extends Env>(
-  c: Context<E>,
-  registered: readonly string[] = openWebContext(c).sessionCookies ?? []
-): boolean {
-  return c.req.header('Authorization') !== undefined || sessionCookies(registered).sentIn(c.req.header('Cookie'))
+export function carriesCredentials<E extends Env>(c: Context<E>, cookies: SessionCookies = setupOf(c).sessionCookies): boolean {
+  return c.req.header('Authorization') !== undefined || cookies.sentIn(c.req.header('Cookie'))
 }
 
 /**
@@ -233,9 +200,7 @@ export function carriesCredentials<E extends Env>(
  * lookup or by a layer that gives the action its user, as an API key's does.
  */
 export function isPersonalRequest<E extends Env>(c: Context<E>): boolean {
-  const context = openWebContext(c)
-
-  return context.authUser !== undefined || context.signedIn === true || carriesCredentials(c)
+  return openWebContext(c).authUser !== undefined || renderedSignedIn(c) || carriesCredentials(c)
 }
 
 /**
@@ -290,7 +255,9 @@ export function privateByDefault<E extends Env>(): MiddlewareHandler<E> {
 export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareHandler<E> {
   // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and the Cache API use native next()/Response promises.
   return createMiddleware<E>(async (c, next) => {
-    if (carriesCredentials(c, options.sessionCookie === undefined ? [] : [options.sessionCookie])) {
+    // setupWeb's settings name the session cookie; a stack composed by hand
+    // gives it here, since the page cache runs before the session lookup.
+    if (carriesCredentials(c, options.sessionCookie === undefined ? setupOf(c).sessionCookies : sessionCookies([options.sessionCookie]))) {
       await next()
       markPrivate(c)
       markResponse(c, 'BYPASS')
@@ -300,7 +267,7 @@ export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareH
 
     const store = options.store ?? defaultPageCacheStore()
 
-    if (!store || isDevelopment(c, options.development) || c.req.method !== 'GET') {
+    if (!store || isDevelopment(c, setupOf(c).errors) || c.req.method !== 'GET') {
       await next()
 
       // A request signed in without a session cookie, as testEnv's signedIn
@@ -328,7 +295,9 @@ export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareH
       key: cacheKey(c, deploy.id, variant),
       variant,
       ttl: deploy.ttl,
-      dynamic: false,
+      get dynamic() {
+        return keptFrom(c, 'page')
+      },
       routeAllowsDefault: false,
     }
 
@@ -342,9 +311,7 @@ export function pageCache<E extends Env>(options: PageCacheOptions): MiddlewareH
     // Downstream code sees bindings that report reads, so a page that queries
     // D1 or KV, or calls a Durable Object or service, renders dynamically.
     // oxlint-disable-next-line no-param-reassign -- The page cache swaps in an observed env for the rest of this request.
-    c.env = trackBindings(c.env, () => {
-      state.dynamic = true
-    })
+    c.env = trackBindings(c.env, () => recordPrivacy(c, 'data'))
 
     await next()
 
@@ -550,7 +517,7 @@ function shouldStore<E extends Env>(c: Context<E>, state: PageCacheState): boole
 
   return (
     state.routeAllowsDefault &&
-    !state.dynamic &&
+    !keptFrom(c, 'page') &&
     openWebContext(c).authUser === undefined &&
     response.status === 200 &&
     isPageResponse(response.headers) &&
@@ -691,13 +658,7 @@ export function trackDatabase<E extends Env, T>(c: Context<E>, db: T): T {
     return db
   }
 
-  return trackBinding(db, () => {
-    const state = openWebContext(c).pageCache
-
-    if (state) {
-      state.dynamic = true
-    }
-  })
+  return trackBinding(db, () => recordPrivacy(c, 'data'))
 }
 
 function trackBinding<T extends object>(binding: T, onRead: () => void): T {

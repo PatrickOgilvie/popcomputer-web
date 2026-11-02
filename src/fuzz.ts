@@ -29,6 +29,8 @@
  */
 import { Arbitrary, Effect, Predicate, Schema as S, type SchemaAST } from 'effect'
 import type { PathParamName } from './paths.js'
+import type { EffectErrorEvent } from './effect/error-observer.js'
+import { observingEnv } from './effect/test-env.js'
 import { testBrowser, type TestApp, type TestBindings, type TestBrowser } from './testing.js'
 
 const configuredRuns = process.env.FUZZ_RUNS === undefined ? undefined : Number(process.env.FUZZ_RUNS)
@@ -80,7 +82,10 @@ export async function fuzz<A>(
 
   if (result._tag === 'Passed') return
 
-  const refusal = result._tag === 'Falsified' ? await reasonFor(result.shrunkInput) : undefined
+  // A case that holds when run again failed on what the cases before it left, or by chance.
+  const refusal = result._tag === 'Falsified'
+    ? (await reasonFor(result.shrunkInput)) ?? 'nothing when run again, so the case fails only after the cases before it or by chance, and FUZZ_REPLAY will not reproduce it: start each case from fresh state'
+    : undefined
 
   throw new Error([Arbitrary.formatCheckFailure(result), refusal && `Refused: ${refusal}`].filter(Boolean).join('\n'))
 }
@@ -579,16 +584,21 @@ export function requestOf(sent: FuzzRequest, origin = 'http://localhost'): Reque
   }
 }
 
-/** An answer to a generated request: its response, and the body read once. */
+/** An answer to a generated request: its response, the body read once, and what the error observer saw. */
 export interface FuzzAnswer {
   readonly response: Response
   readonly text: string
+  /** Each failure and defect the error observer saw while the request ran, its background work's among them. */
+  readonly observed: ReadonlyArray<EffectErrorEvent>
 }
 
 /**
  * Send `sent` through the application with `env`, the bindings for its
  * person: `testEnv(signedIn(row), bindings)` for a member, `testEnv(bindings)`
- * for a visitor. Nothing when `fetch` refuses to make the request.
+ * for a visitor. Nothing when `fetch` refuses to make the request. The answer
+ * holds what the error observer saw, which goes there in place of the
+ * application's own observer, so `brokenPromises` sees a defect no answer
+ * shows, such as one in background work after the action succeeded.
  */
 export async function sendFuzzRequest(
   app: TestApp,
@@ -599,9 +609,19 @@ export async function sendFuzzRequest(
   if (requestOf(sent, origin) === undefined) return undefined
 
   const { url, init } = partsOf(sent, origin)
-  const response = await app.request(url, init, env)
+  const { env: observing, observed } = observingEnv(env)
+  const response = await app.request(url, init, observing)
 
-  return { response, text: await response.text() }
+  return { response, text: await response.text(), observed }
+}
+
+/** An error as the reason a rule broke names it: its message, or the fields a tagged error without one carries. */
+function described(error: unknown): string {
+  if (!(error instanceof Error)) return show(error)
+
+  const fields = Object.fromEntries(Object.entries(error).filter(([key]) => key !== '_tag'))
+
+  return error.message === '' ? `${error.name} ${show(fields)}` : `${error.name}: ${error.message}`
 }
 
 export interface PromisesOptions {
@@ -688,7 +708,10 @@ function namedHosts(sent: FuzzRequest, siteHost: string): Set<string> {
  *   envelope, and is never sent to sign in;
  * - an Inertia visit that changes something is redirected with a 303;
  * - no answer sends the visitor to another site the request named, such as
- *   `?redirect=//evil.test`, by its Location or its X-Inertia-Location.
+ *   `?redirect=//evil.test`, by its Location or its X-Inertia-Location;
+ * - no request makes a defect, in its action, a layer, shared props or its
+ *   background work, and no background work fails: `sendFuzzRequest`
+ *   records what the error observer sees, which no answer may show.
  */
 export function brokenPromises(sent: FuzzRequest, answer: FuzzAnswer, options: PromisesOptions = {}): string[] {
   const broken: string[] = []
@@ -740,6 +763,14 @@ export function brokenPromises(sent: FuzzRequest, answer: FuzzAnswer, options: P
     const target = location !== null && URL.canParse(location, origin) ? new URL(location, origin) : undefined
 
     if (target !== undefined && named.has(target.host)) broken.push(`sent the visitor to ${target.host}, a site the request named, by ${show(location)}`)
+  }
+
+  for (const event of answer.observed) {
+    const operation = event.metadata?.operation
+
+    if (event.kind === 'defect') broken.push(`made a defect${Predicate.isString(operation) ? ` in ${operation}` : ''}: ${described(event.error)}`)
+    // Background work names its operation; an action's failure the error page answered names none.
+    else if (event.handling === 'unhandled' && Predicate.isString(operation)) broken.push(`its background work ${operation} failed: ${described(event.error)}`)
   }
 
   return broken
@@ -933,6 +964,12 @@ interface ModelRecord<Person extends string> {
   deleted: boolean
 }
 
+/** A person's browser, and what the error observer saw of its requests. */
+interface ObservedBrowser {
+  readonly browser: TestBrowser
+  readonly observed: ReadonlyArray<EffectErrorEvent>
+}
+
 /** A declared path's segments, each a placeholder's name or the text it must be. */
 type Template = ReadonlyArray<{ readonly name: string } | { readonly text: string }>
 
@@ -956,7 +993,7 @@ function recordsNamed(path: string, templates: ReadonlyArray<Template>): string[
 }
 
 /** The request's method and target, and its body's fields, on one line. */
-function described(sent: FuzzRequest): string {
+function requestLine(sent: FuzzRequest): string {
   const body = sent.body.as === 'none' ? '' : sent.body.as === 'text' ? ` text ${show(sent.body.text)}` : ` ${sent.body.as} ${sent.body.fields.join('&')}`
 
   return `${sent.method} ${sent.path}${sent.query === '' ? '' : `?${sent.query}`}${body}`
@@ -986,12 +1023,18 @@ export function startFuzzSession<Person extends string>(app: TestApp, options: S
   const created = new Map<string, string[]>()
   // The created records each person has sent in a request, and so knows.
   const known = new Map<Person | null, Set<string>>()
-  const browsers = new Map<Person | null, TestBrowser>()
+  const browsers = new Map<Person | null, ObservedBrowser>()
   const cookiesBefore = new Map<Person | null, ReadonlyMap<string, string>>()
   const history: string[] = []
 
-  const browserOf = (person: Person | null): TestBrowser => {
-    const browser = browsers.get(person) ?? testBrowser(app, options.env(person))
+  // A browser whose requests give what the error observer sees to its list, as sendFuzzRequest's do.
+  const observedBrowser = (person: Person | null): ObservedBrowser => {
+    const { env, observed } = observingEnv(options.env(person))
+
+    return { browser: testBrowser(app, env), observed }
+  }
+  const browserOf = (person: Person | null): ObservedBrowser => {
+    const browser = browsers.get(person) ?? observedBrowser(person)
 
     browsers.set(person, browser)
 
@@ -1028,14 +1071,15 @@ export function startFuzzSession<Person extends string>(app: TestApp, options: S
     return { sent, referenced: [...referenced] }
   }
 
-  /** Send through a browser, as `sendFuzzRequest` sends through the application. */
-  const through = async (browser: TestBrowser, sent: FuzzRequest<Person>): Promise<FuzzAnswer | undefined> => {
+  /** Send through a browser, as `sendFuzzRequest` sends through the application, with what the observer saw meanwhile. */
+  const through = async ({ browser, observed }: ObservedBrowser, sent: FuzzRequest<Person>): Promise<FuzzAnswer | undefined> => {
     if (requestOf(sent, origin) === undefined) return undefined
 
     const { url, init } = partsOf(sent, origin)
+    const seen = observed.length
     const response = await browser.request(url, init)
 
-    return { response, text: await response.text() }
+    return { response, text: await response.text(), observed: observed.slice(seen) }
   }
 
   const succeeded = (answer: FuzzAnswer): boolean => {
@@ -1050,17 +1094,17 @@ export function startFuzzSession<Person extends string>(app: TestApp, options: S
       const { sent, referenced } = resolve(step)
       const browser = browserOf(sent.person)
 
-      cookiesBefore.set(sent.person, new Map(browser.cookies))
+      cookiesBefore.set(sent.person, new Map(browser.browser.cookies))
 
       const answer = await through(browser, sent)
 
       if (answer === undefined) {
-        history.push(`${sent.person ?? 'a visitor'} ${described(sent)}: fetch refuses to make it`)
+        history.push(`${sent.person ?? 'a visitor'} ${requestLine(sent)}: fetch refuses to make it`)
 
         return undefined
       }
 
-      const text = [described(sent), ...Object.values(sent.headers)].join('\n')
+      const text = [requestLine(sent), ...Object.values(sent.headers)].join('\n')
       const knows = known.get(sent.person) ?? new Set()
 
       // An id the step sent, as a reference spells it, is one its sender knows.
@@ -1084,16 +1128,16 @@ export function startFuzzSession<Person extends string>(app: TestApp, options: S
 
       if (parent !== undefined && sent.method.toUpperCase() === 'DELETE' && succeeded(answer)) parent.deleted = true
 
-      history.push(`${sent.person ?? 'a visitor'} ${described(sent)}: ${answer.response.status}${made.length === 0 ? '' : `, created ${made.map(([name, id]) => `${name} ${id}`).join(', ')}`}`)
+      history.push(`${sent.person ?? 'a visitor'} ${requestLine(sent)}: ${answer.response.status}${made.length === 0 ? '' : `, created ${made.map(([name, id]) => `${name} ${id}`).join(', ')}`}`)
 
       return { sent, answer, referenced }
     },
     async probe(sent) {
-      const browser = testBrowser(app, options.env(sent.person))
+      const aside = observedBrowser(sent.person)
 
-      for (const [name, value] of cookiesBefore.get(sent.person) ?? new Map<string, string>()) browser.setCookie(name, value)
+      for (const [name, value] of cookiesBefore.get(sent.person) ?? new Map<string, string>()) aside.browser.setCookie(name, value)
 
-      return through(browser, resolve(sent).sent)
+      return through(aside, resolve(sent).sent)
     },
     ownerOf: (id) => records.get(id)?.owner,
     exists: (id) => records.get(id)?.deleted === false,

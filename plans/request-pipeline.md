@@ -225,6 +225,30 @@ Done when no file in `src/` reads those fields, and the per-route values that
 depend only on setup (model bindings, the params schema, guarded bindings,
 purge tables) are computed at registration instead of on every request.
 
+Done, with one departure. `src/web-setup.ts` holds `WebSetup`, its
+`webSetup(options)` constructor with every default, `setupOf(c)` and the
+`WebSetupService`. setupWeb builds one and its first middleware hands each
+request the same value, before the page cache. A stack composed by hand
+passes its settings between middleware through the request:
+`loadUser({ sessionCookie })` tells `web()` and the page cache, and
+`effectBridge({ schema, bindings })` tells the routes. So in 1.x the request
+carries one reference to the immutable setup, not closures; `setupOf` builds
+a hand-composed stack's value from what its middleware registered. Closing
+over it everywhere waits for 2.0, when the hand-composition exports go.
+- The error boundary, the bridge's body limit, the routes, `web()`'s
+  history clear and the page cache read `setupOf(c)`. The copied fields are
+  still written, marked `@deprecated`, and read only by `setupOf`'s
+  hand-composed fallback.
+- `pageCache`'s `@internal` `development` option from 1b is gone.
+- `betterAuthLogoutAction` reads `WebSetupService`, so sign-out's fallback
+  expires `auth.sessionCookie`'s name.
+- `getEffectSchema` and `getEffectBindings` are gone.
+  `setEffectBridgeConfig` stays until step 3 rewrites the bridge.
+- A route works out its model bindings, params schema and guarded bindings
+  on its first request, not on every one. Registration can't do it: a
+  hand-composed stack gives effectBridge its bindings, which only a request
+  carries.
+
 ## Step 3 — One services factory; jobs stop faking requests
 
 New internal module `src/effect/services-layer.ts`:
@@ -276,6 +300,42 @@ tests must pass, with the scoped-service lifetime test's `.failing` dropped:
 a job's runtime owns its builder's layers until its background work settles,
 as a route's does.
 
+Done, in a different shape than the plan above:
+- **No `services-layer.ts`.** The bridge's `requestServicesFactory` builds
+  each request's layer: app runtime context, request services, Config. The
+  app runtime is still built once per isolate, and a failed build is still
+  not kept. `createEffectBridge(config)` gives `{ middleware, prepare }`,
+  and `effectBridge` is its middleware.
+  - `prepare(c)` records the layer as `requestLayer` and builds testEnv's
+    services once, in a scope of the request's own. It returns what
+    releases them once background work settles (`disposeAfterBackground`).
+  - `ctx.runtime` became a getter that builds a runtime only when read, and
+    is deprecated.
+- **Database and auth stay in setupWeb.** The session lookup is middleware
+  and needs auth before the route runs, so they could not move into a
+  Layer. `prepareServices(c)` builds them and returns the env or storage
+  failure instead of throwing. The middleware throws it; a job rejects
+  with it.
+- **One runtime per routed request.** The route builds it from
+  `requestLayer`, then its own layers, then testEnv's services.
+- **Jobs.** setupWeb declares `prepareJob` with `declareAppJobs`. `run`
+  builds a Hono `Context`, readies the services through `prepareJob`, and
+  builds one runtime from them and the builder's layers. It runs the job
+  and its purges, and releases everything after background work settles.
+  The lifetime test passes without `.failing`.
+  - A job runs through no HTTP middleware, the application's included. A
+    test pins it, and the CHANGELOG says so.
+- **Hand-composed stacks keep `runThroughRequest`**, the old route, the
+  `runJobs` WeakMap and `failRun` (decision 3). So `failRun` has one call
+  left, in the route's purge, not none.
+- **Decision 1 is not taken yet**: jobs still type-check against the
+  request-only services.
+
+Measures: `ManagedRuntime.make` sites 3 -> 4, but per request 2 -> 1 and per
+job 2 plus a fake request -> 1. The four sites are the app runtime (once per
+isolate), the route, the job and the deprecated getter. `failRun` calls 3 ->
+1. Disable directives stay at 80.
+
 ## Step 4 — One owner for response output
 
 New `src/effect/response-output.ts`: a per-request `ResponseOutput` holding
@@ -301,6 +361,28 @@ Done when `withDeferredOutput` and `setsCookie` are gone, and the step 0
 cache-option tests and the flash, middleware, render-options and security
 tests pass.
 
+Done. `src/response-output.ts` owns what a response carries beside its
+body:
+- `queueCookie`, `queueSessionLookupCookies` and `queueHeader` are the only
+  writers, called by the cookie jar, the session lookup and
+  `ResponseHeaders`.
+- `finishResponse(c, response)` finishes a response once, in order: an
+  Inertia visit's followable redirect (302 to 303, another site to 409,
+  each keeping the response's cookies), the history clear, then the flash
+  cookie, the app's cookies, the lookup's cookies the response doesn't set,
+  and the queued headers, copying the headers at most once.
+- The route finishes its response before its cache option reads it, and
+  `web()` finishes only what no route did. A test plants the bug of
+  finishing twice.
+- `withDeferredOutput`, `PER_RECIPIENT_HEADERS` and `flash.setsCookie` are
+  gone. Flash gives `cookie(status)`, and `commit` is a wrapper over it.
+  `web()`'s own copies of the redirect and cookie helpers are gone.
+
+One departure: the three queue fields stay as the module's storage, not
+deprecated mirrors of a new object. Only `historyCleared` and `finished`
+are new, as `ctx.output`. `HistoryClear` and `Flash` were re-run and give
+what the skill requires.
+
 ## Step 5 — Route models become an Effect owned by `binding.ts`
 
 - `routeModels(plan)` in `binding.ts` returns the Layer providing
@@ -325,6 +407,26 @@ Done when `resolveBindings` and `loadModels` are gone from `routing.ts`,
 `createHandler` is about 250 lines or fewer, and the binding, guard,
 route-model, security and fuzz (`leaks`, `strangerWrites`) tests pass.
 
+Done, in `src/effect/route-models.ts` beside `binding.ts`, not inside it:
+`binding.ts` already holds 1,200 lines of configuration and compilation.
+- The module holds `RouteRecords`, `routeModelsOnce` (now also the
+  compiled plan, memoised, as an Effect) and `routeModelsLayer(request)`.
+  That layer gives `BoundModels`, `RouteRecords` and `GuardVerdicts`, with
+  the `decided` set, the loading lock and the positions it needs.
+- `loadRecords` is the old `resolveBindings` as an `Effect.gen`. It decodes
+  the param with `S.decodeUnknownOption`, adds the access SQL to the same
+  query, reads through `dbQuery` (a failure is a `DatabaseError` defect),
+  and decodes the row with `decodeBoundRow`, now an Effect. 404, 401 and
+  configuration failures are yielded, not thrown and caught again.
+- `routing.ts` imports three names from it and none of `binding.ts`'s
+  loader internals. `decodeBindingParam` is gone.
+- Planting the access filter's removal fails 12 security, binding, guard
+  and fuzz tests.
+
+Decision 2 is not taken: `ensureParams` still answers a malformed
+parameter with Hono's 404, its params schema now worked out once per
+route.
+
 ## Step 6 — Cache policy has one recorder and one finisher
 
 - `finishRouteResponse(response, option, facts)` in `response-cache.ts`
@@ -347,6 +449,37 @@ Done when `WebRequestContext` keeps one cache field, `page-cache.ts` exports
 are back near 1.0's 11 (plus the kept wrappers), and every step 0 test still
 passes.
 
+Done:
+- **One recorder.** `src/privacy.ts` holds `recordPrivacy(c, reason)`,
+  `keptFrom(c, 'page' | 'route')` and `renderedSignedIn(c)`, with one table
+  of what each reason keeps out:
+  - `request` (a header, the raw request, request state, `markPageDynamic`):
+    the page and route caches;
+  - `setup` (setupWeb's database factory, the app's middleware): the route
+    cache only;
+  - `guard` and `data`: the page cache only;
+  - `signed-in`: both, and the default `Cache-Control` says `no-store`.
+  That is exactly what the five flags did.
+- **What it replaced.** `markRouteCacheDynamic` and `keepPageOutOfCache`
+  are gone, and `observedRequestContext` takes a reason. `markPageDynamic`
+  stays exported, as `request`. `signedIn`, `readRequestState` and the page
+  cache's `dynamic` are deprecated mirrors that the framework reads nowhere.
+- **`cacheControlByDefault` stays.** It says whether `privateByDefault` is
+  installed, which is not a reason a response is private.
+- **One finisher.** `applyRouteCacheOption(response, option, facts)` in
+  `response-cache.ts` applies `no-store`, `private` and the object form.
+  `recordingTags`, `routePurgesOf` and `purgingOnSuccess` took the purge and
+  record-tag composition out of `createHandler`, which is now 175 lines.
+- **Plants.** Taking any reason out of the table fails a test: request 9,
+  setup 1, guard 2, data 4. `signed-in` failed none until
+  `tests/privacy.test.ts` pinned it. A page rendered to a visitor signed in
+  by a route's own layer, as an API key's would be, must stay out of the
+  page cache. That test passes on HEAD's code too, so it pins existing
+  behaviour.
+- **Checks.** The fuzz suite ran at 20,000 runs with a random seed, and
+  HistoryClear's four configs gave what the skill requires. The page
+  version check is untouched.
+
 ## Step 7 — Effect-way cleanups
 
 Independent and small. Any order after step 3.
@@ -361,6 +494,30 @@ Independent and small. Any order after step 3.
 - The sign-in limits' statements go through `dbQuery` / `dbMutation`.
 - `expiresTheCookie` takes `now` from the request's Effect `Clock`, so
   `testClock()` moves it.
+
+Done in part. Two items are done, two are not:
+- **Error boundary: done.** `handler.ts` holds an `ANSWERS` table keyed by
+  every `AppError` tag (auth redirect, form, sign in, retry after, its own
+  body, redirect, error page), and the boundary dispatches on it. Taking
+  one entry out of the table fails `tsc`. The `structuredErrorsByCause`
+  WeakMap and `getStructuredFromThrown` are gone: `renderErrorResponse`
+  takes the structured error as an argument.
+- **Sign-in limits: done.** The four statements run through `dbQuery` and
+  `dbMutation` (`readCounts`, `writeCounts`), each still one statement.
+  SignInLimits' configs gave what the skill requires, and its line
+  references are current again; they had drifted before this step.
+- **Cookie expiry: not changed, on purpose.** Better Auth writes `Expires`
+  from the real clock and the browser judges it by its own. Reading
+  Effect's `Clock` would make a test that moves `testClock()` see live
+  sessions end and raise a false history clear. The reason is recorded at
+  the function.
+- **Background `FiberSet`: not done.** `FiberSet.make` needs a `Scope`, but
+  the supervisor is built outside Effect, before any runtime, because
+  Better Auth's `waitUntil` hook needs it. It also tracks raw promises,
+  which a FiberSet cannot hold. The change would add `runSync` scaffolding
+  and keep the promise tracker, which is no simpler than the tested
+  supervisor. Worth revisiting in 2.0, if the hand-composition exports go
+  and the supervisor can live in the request's runtime.
 
 ## Decisions for the owner
 

@@ -81,11 +81,11 @@ OwnerSignedIn ==
 
 \* ---------------- "code": count, then call ----------------
 
-\* rowStates (sign-in-limits.ts 297-311): spent a window after its cooldown ends.
+\* rowStates (sign-in-limits.ts 400-414): spent a window after its cooldown ends.
 Spent == ~row.present \/ now >= row.last + CooldownAfter(row.count) + Window
 Cooling == ~Spent /\ row.count >= Max /\ now < row.last + CooldownAfter(row.count)
 
-\* withinSignInLimits 433-448: one upsert counts the sign-in unless the
+\* withinSignInLimits 551-568: one upsert, through dbMutation, counts the sign-in unless the
 \* account is cooling, when it returns no row and the sign-in is refused.
 CheckCode(p) ==
   /\ pc[p] = "idle"
@@ -113,7 +113,7 @@ AnswerCode(p) ==
             /\ OwnerSignedIn
   /\ UNCHANGED <<now, seenAt, seenRow, started, coolEnd, resetEarly>>
 
-\* sweepSignInFailures 463-477 deletes spent rows.
+\* sweepSignInFailures 583-597 deletes spent rows.
 SweepCode ==
   /\ row.present
   /\ Spent

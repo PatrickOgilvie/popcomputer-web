@@ -11,13 +11,14 @@ import type {
   RenderOptions,
 } from './types.js'
 import { HEADERS } from './types.js'
-import { openWebContext, type WebRequestContext } from './request-context.js'
+import { openWebContext } from './request-context.js'
 import { openFlash } from './flash.js'
-import { applyDefaultCacheControl, markPageDynamic, observedRequestContext } from './page-cache.js'
+import { applyDefaultCacheControl, observedRequestContext } from './page-cache.js'
+import { recordPrivacy } from './privacy.js'
 import { ConfigurationError } from './effect/errors.js'
-import { webUrl } from './locations.js'
 import { isCurrentVersion, pageVersion, userIdOf } from './page-version.js'
-import { sessionCookies, setCookieName } from './session-cookies.js'
+import { setupOf } from './web-setup.js'
+import { finishResponse, pageClearedHistory, sessionLookupCookies } from './response-output.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
@@ -86,8 +87,6 @@ export function web(config: WebConfig): MiddlewareHandler {
     // An Inertia prefetch, which the client keeps and shows only if that URL
     // is visited.
     const prefetch = c.req.header('Purpose') === 'prefetch'
-    // Whether a page this request rendered, and the client shows, cleared its history.
-    let historyCleared = false
 
     const getVersion = () =>
       config.version instanceof Function ? config.version() : config.version ?? ''
@@ -195,7 +194,7 @@ export function web(config: WebConfig): MiddlewareHandler {
         const signedIn = options.signedIn === true || context.authUser !== undefined
         // A session the lookup found ended, or one ended or started since the
         // last page, leaves history the previous session's pages wrote.
-        const sessionChanged = flashed.clearHistory || sessionCookies(context.sessionCookies).endsSession(context.sessionLookupCookies ?? [])
+        const sessionChanged = flashed.clearHistory || setupOf(c).sessionCookies.endsSession(sessionLookupCookies(c))
         // While signed-in pages are the encrypted ones, every page rendered to
         // a visitor who is not signed in clears the history, however the
         // session ended: in another tab, by the cookie's expiry, or where a
@@ -214,12 +213,11 @@ export function web(config: WebConfig): MiddlewareHandler {
           flash: flashed.flash,
         }
 
-        historyCleared ||= page.clearHistory === true && !prefetch
+        if (page.clearHistory === true && !prefetch) pageClearedHistory(c)
 
         if (signedIn) {
           // The page is the visitor's own, which no cache may keep.
-          context.signedIn = true
-          markPageDynamic(c)
+          recordPrivacy(c, 'signed-in')
         }
 
         const status = options.status ?? 200
@@ -254,72 +252,22 @@ export function web(config: WebConfig): MiddlewareHandler {
     c.set('web', instance)
     await next()
 
-    // Convert 302 to 303 for non-GET requests
-    // Guard against c.res being undefined (no handler matched)
-    if (
-      isInertia &&
-      c.res &&
-      c.res.status === 302 &&
-      ['POST', 'PUT', 'PATCH', 'DELETE'].includes(c.req.method)
-    ) {
-      const location = c.res.headers.get('Location')
+    // A route finishes its own response, before its cache policy reads it;
+    // any other, such as a plain Hono handler's or Better Auth's, is finished
+    // here with what the request queued.
+    const finished = c.res ? finishResponse(c, c.res) : undefined
 
-      if (location) {
-        // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
-        c.res = new Response(null, {
-          status: 303,
-          headers: { 'Location': location, 'Vary': HEADERS.INERTIA },
-        })
-      }
-    }
-
-    // An Inertia visit follows a redirect inside its request, which cannot
-    // reach another site, such as an OAuth provider or a payment page:
-    // Inertia asks for those with 409 and X-Inertia-Location, and loads the
-    // site as a full page. The redirect's cookies, such as an OAuth state,
-    // stay on the response.
-    const elsewhere = isInertia && c.res ? otherSiteLocation(c.res, c.req.url) : undefined
-
-    if (elsewhere !== undefined && c.res) {
-      const headers = new Headers({ [HEADERS.LOCATION]: elsewhere, Vary: HEADERS.INERTIA })
-      for (const cookie of c.res.headers.getSetCookie()) headers.append('Set-Cookie', cookie)
-
-      // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
-      c.res = undefined
-      // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
-      c.res = new Response(null, { status: 409, headers })
-    }
-
-    const context = openWebContext(c)
-
-    // A response that ends the session, as signing out does, or starts
-    // another, as signing in does, has the next page clear the history the
-    // previous session's pages wrote.
-    if (c.res && !historyCleared) {
-      const answered = answeredCookies(c.res, context)
-      const session = sessionCookies(context.sessionCookies)
-
-      if (session.endsSession(answered) || session.startsSession(answered, c.req.header('Cookie'))) {
-        flash.clearHistory()
-      }
-    }
-
-    const committed = c.res
-      ? withResponseHeaders(
-          withSessionLookupCookies(withResponseCookies(flash.commit(c.res), context.responseCookies), context.sessionLookupCookies),
-          context.responseHeaders
-        )
-      : undefined
-
-    if (committed !== undefined && committed !== c.res) {
+    if (finished !== undefined && finished !== c.res) {
       // Assigning c.res copies the previous response's Set-Cookie headers over
-      // the new one's, which would drop the flash cookie; the committed
+      // the new one's, which would drop the flash cookie; the finished
       // response already carries every cookie.
       // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
       c.res = undefined
       // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
-      c.res = committed
+      c.res = finished
     }
+
+    const context = openWebContext(c)
 
     // Without privateByDefault around it, as an application composed by hand
     // may be, web() says itself who may keep what it answers.
@@ -332,72 +280,3 @@ export function web(config: WebConfig): MiddlewareHandler {
 
 export { HEADERS }
 
-/** The response with the application cookies an action set. */
-function withResponseCookies(response: Response, cookies: readonly string[] | undefined): Response {
-  if (cookies === undefined || cookies.length === 0) return response
-
-  const headers = new Headers(response.headers)
-
-  for (const cookie of cookies) headers.append('Set-Cookie', cookie)
-
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
-}
-
-/**
- * The response with the cookies the session lookup set, but for those the
- * response sets itself: a sign-in's new session outlives the old session's
- * renewal, or the expiry of one revoked elsewhere, which a browser applies
- * after it when written later.
- */
-function withSessionLookupCookies(response: Response, cookies: readonly string[] | undefined): Response {
-  if (cookies === undefined || cookies.length === 0) return response
-
-  const set = new Set(response.headers.getSetCookie().map(setCookieName))
-  const kept = cookies.filter((cookie) => !set.has(setCookieName(cookie)))
-
-  return withResponseCookies(response, kept)
-}
-
-/**
- * The cookies the response sets once web() writes those the request queued,
- * in the order a browser applies them: its own, the application's, the
- * session lookup's it does not set itself, and those added with responseHeader.
- */
-function answeredCookies(response: Response, context: WebRequestContext): string[] {
-  const own = [...response.headers.getSetCookie(), ...(context.responseCookies ?? [])]
-  const set = new Set(own.map(setCookieName))
-
-  return [
-    ...own,
-    ...(context.sessionLookupCookies ?? []).filter((cookie) => !set.has(setCookieName(cookie))),
-    ...(context.responseHeaders ?? []).filter(([name]) => name.toLowerCase() === 'set-cookie').map(([, value]) => value),
-  ]
-}
-
-/** The response with the headers an action or layer added with responseHeader. */
-function withResponseHeaders(response: Response, added: ReadonlyArray<readonly [string, string]> | undefined): Response {
-  if (added === undefined || added.length === 0) return response
-
-  const headers = new Headers(response.headers)
-
-  for (const [name, value] of added) headers.append(name, value)
-
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
-}
-
-/**
- * The redirect's location when it leads to another site than the request's,
- * which an Inertia visit cannot follow. Only a web page qualifies: Inertia
- * assigns the location to `window.location.href`, which would run a
- * `javascript:` URL on the application's page, though no browser follows one
- * from a redirect.
- */
-function otherSiteLocation(response: Response, requestUrl: string): string | undefined {
-  const location = response.status >= 300 && response.status < 400 ? response.headers.get('Location') : null
-
-  if (location === null) return undefined
-
-  const target = webUrl(location, requestUrl)
-
-  return target !== undefined && target.origin !== webUrl(requestUrl)?.origin ? target.href : undefined
-}

@@ -825,6 +825,20 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
   }
 
   /**
+   * Create an error for an ownedBy column that references the users table,
+   * but another of its columns than `id`.
+   */
+  static bindingOwnerNotUsersId(binding: string, table: string, column: string, users: string, referencedColumn: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" is ownedBy "${column}", which references "${users}".${referencedColumn}, not "${users}".id: compared with the signed-in user's id, it would match no record.`,
+      hint: `Point the reference at the user's id, ${column}: text(...).references(() => ${users}.id), and generate a migration; or make ownedBy a column that holds the user's id.`,
+      binding,
+      table,
+      code: ErrorCodes.RTE_607_BINDING_OWNER_NOT_USER,
+    })
+  }
+
+  /**
    * Create an error for a binding that says anyone may load it, nested under
    * a parent that says who may.
    */

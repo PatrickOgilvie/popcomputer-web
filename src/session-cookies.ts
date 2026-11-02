@@ -56,8 +56,8 @@ export interface SessionCookies {
   readonly startsSession: (setCookies: readonly string[], cookieHeader: string | undefined) => boolean
   /**
    * The cookies sign-out expires when Better Auth's answer expires none: the
-   * names given, or Better Auth's default ones, and every session cookie the
-   * request sent, each without its browser prefix.
+   * names given, or Better Auth's default ones and the registered names, and
+   * every session cookie the request sent, each without its browser prefix.
    */
   readonly toExpireOnSignOut: (cookieHeader: string | undefined, names?: readonly string[]) => readonly string[]
 }
@@ -116,7 +116,7 @@ export function sessionCookies(registered: readonly string[] = []): SessionCooki
       return [...tokenStates(setCookies)].some(([name, state]) => !state.expired && sent.get(name) !== state.value)
     },
     toExpireOnSignOut: (cookieHeader, given) => [...new Set([
-      ...(given !== undefined && given.length > 0 ? given : DEFAULT_SIGN_OUT_COOKIES),
+      ...(given !== undefined && given.length > 0 ? given : [...DEFAULT_SIGN_OUT_COOKIES, ...names]),
       ...cookieNames(cookieHeader).filter(isSession).map(withoutBrowserPrefix),
     ])],
   }
@@ -141,7 +141,12 @@ function withoutBrowserPrefix(name: string): string {
   return name.replace(BROWSER_PREFIX, '')
 }
 
-/** Whether a Set-Cookie attribute expires the cookie: a Max-Age of 0 or less, or an Expires already past. */
+/**
+ * Whether a Set-Cookie attribute expires the cookie: a Max-Age of 0 or less,
+ * or an Expires already past. Past by the real clock, not Effect's: Better
+ * Auth writes Expires from the real clock and the browser judges it by its
+ * own, so a test that moves testClock would otherwise see live sessions end.
+ */
 function expiresTheCookie(attribute: string): boolean {
   if (/^\s*max-age\s*=\s*(?:0|-\d+)\s*$/i.test(attribute)) return true
 
