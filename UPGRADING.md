@@ -111,19 +111,22 @@ you installed:
 
 | You are on | Do these sections |
 | --- | --- |
-| `honertia` 0.1.x | [From Effect 3](#from-effect-3), [From `honertia`](#from-honertia), then [0.7 to 1.0](#from-07-to-10) |
-| 0.1.x to 0.3.x | [From Effect 3](#from-effect-3), then [0.7 to 1.0](#from-07-to-10) |
-| 0.4.x | [0.4 to 0.5](#04-to-05), [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
-| 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
-| 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10) |
-| 0.7.x | [0.7 to 1.0](#from-07-to-10) |
-| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
-| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
-| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
-| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
-| 1.6.x | [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
-| 1.7.x | [1.7 to 1.8](#from-17-to-18), then [1.8 to 1.9](#from-18-to-19) |
-| 1.8.x | [1.8 to 1.9](#from-18-to-19) only |
+| `honertia` 0.1.x | [From Effect 3](#from-effect-3), [From `honertia`](#from-honertia), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
+| 0.1.x to 0.3.x | [From Effect 3](#from-effect-3), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
+| 0.4.x | [0.4 to 0.5](#04-to-05), [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
+| 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
+| 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
+| 0.7.x | [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
+| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
+| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
+| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
+| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
+| 1.6.x | [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
+| 1.7.x | [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
+| 1.8.x | [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
+| 1.9.x | [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
+| 1.10.x | [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
+| 1.11.x | [1.11 to 1.12](#from-111-to-112) only |
 
 `honertia` and `@popcomputer/web` share one version line, so `honertia` 0.1.45
 is "0.1.x". The 0.4 to 0.7 sections hardly apply to an application coming from
@@ -1727,8 +1730,8 @@ What to adopt, none of it required:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.9.0`.
-- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18) and [From 1.8 to 1.9](#from-18-to-19) that applies to your application is done.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.12.1`.
+- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19), [From 1.9 to 1.10](#from-19-to-110), [From 1.10 to 1.11](#from-110-to-111) and [From 1.11 to 1.12](#from-111-to-112) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
