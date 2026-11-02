@@ -32,6 +32,7 @@ import { queueSessionLookupCookies } from '../response-output.js'
 import { BodyTooLarge, DEFAULT_BODY_LIMIT, formatBytes, readBody } from './body-limit.js'
 import { bodyOf } from './better-auth-body.js'
 import { schemaExport, tableOfSchema } from './table-schema.js'
+import { withLayerFact } from './layer-facts.js'
 import type { PagePropValue } from '../types.js'
 
 
@@ -42,7 +43,7 @@ import type { PagePropValue } from '../types.js'
  * @example
  * routes.provide(RequireAuthLayer).get(paths.dashboard, showDashboard)
  */
-export const RequireAuthLayer = Layer.effect(
+export const RequireAuthLayer = withLayerFact(Layer.effect(
   AuthUserService,
   Effect.gen(function* () {
     // Try to get existing AuthUserService
@@ -54,7 +55,7 @@ export const RequireAuthLayer = Layer.effect(
 
     return maybeUser.value
   })
-)
+), 'signed-in')
 
 /**
  * Layer for pages only guests see, such as signing in: a signed-in visitor
@@ -68,7 +69,7 @@ export const RequireAuthLayer = Layer.effect(
  *   .get(paths.login, action(render('Auth/Login')))
  *   .post(paths.login, signIn)
  */
-export const RequireGuestLayer = Layer.effectDiscard(
+export const RequireGuestLayer = withLayerFact(Layer.effectDiscard(
   Effect.gen(function* () {
     const maybeUser = yield* Effect.serviceOption(AuthUserService)
 
@@ -78,7 +79,7 @@ export const RequireGuestLayer = Layer.effectDiscard(
 
     // Guest confirmed - no user present, succeed silently
   })
-)
+), 'guests')
 
 /**
  * Create a custom guest layer with a predicate to allow certain authenticated users.
@@ -104,7 +105,7 @@ export function createGuestLayer<const Path extends string = string>(
   allowUser: (authUser: AuthUser) => boolean,
   redirectTo?: Path & PathTarget<Path>
 ): Layer.Layer<never, UnauthorizedError, never> {
-  return Layer.effectDiscard(
+  return withLayerFact(Layer.effectDiscard(
     Effect.gen(function* () {
       const maybeUser = yield* Effect.serviceOption(AuthUserService)
 
@@ -124,7 +125,7 @@ export function createGuestLayer<const Path extends string = string>(
 
       // No user or allowed user - succeed silently
     })
-  )
+  ), 'guests')
 }
 
 /**

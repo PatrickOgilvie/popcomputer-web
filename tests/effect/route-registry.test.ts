@@ -153,6 +153,7 @@ describe('RouteRegistry', () => {
         name: 'projects.show',
       })
 
+      // A column the registration leaves out holds what a route without that option has.
       const json = registry.toJson()
       expect(json).toEqual([
         {
@@ -161,6 +162,15 @@ describe('RouteRegistry', () => {
           fullPath: '/projects/:project',
           bindings: [{ param: 'project', column: 'id' }],
           name: 'projects.show',
+          routePath: '/projects/{project}',
+          models: [],
+          answers: 'page',
+          cache: 'default',
+          pageCache: false,
+          purges: [],
+          visitors: 'anyone',
+          guards: 0,
+          middleware: 0,
         },
       ])
     })

@@ -6,6 +6,7 @@
  */
 
 import { Context, Effect, Layer, Option, type Scope } from 'effect'
+import { layerFactOf, withLayerFact } from './layer-facts.js'
 
 /**
  * Present while a guard decides: the guarded records its decision has read.
@@ -88,9 +89,6 @@ export function guard(
   return guardLayer(Layer.effectDiscard(first as Effect.Effect<unknown, unknown, unknown>))
 }
 
-/** The layers `guard` made. */
-const guards = new WeakSet<Layer.Layer<never, unknown, unknown>>()
-
 function guardLayer<ROut, E, RIn>(decide: Layer.Layer<ROut, E, RIn>): Layer.Layer<ROut, E, Exclude<RIn, GuardDecision>> {
   // Each request builds the layer anew, inside whatever layer it was composed
   // into, so the route sees every guard decide, however it was provided.
@@ -108,9 +106,7 @@ function guardLayer<ROut, E, RIn>(decide: Layer.Layer<ROut, E, RIn>): Layer.Laye
     )
   }))
 
-  guards.add(layer)
-
-  return layer
+  return withLayerFact(layer, 'guard')
 }
 
 /**
@@ -120,7 +116,7 @@ function guardLayer<ROut, E, RIn>(decide: Layer.Layer<ROut, E, RIn>): Layer.Laye
  * or country. A guard composed into another layer is found when it decides,
  * through GuardVerdicts.
  */
-export const isGuard = (layer: Layer.Layer<never, unknown, unknown>): boolean => guards.has(layer)
+export const isGuard = (layer: Layer.Layer<never, unknown, unknown>): boolean => layerFactOf(layer) === 'guard'
 
 /** The decision of the guard the running Effect is part of, if it is a guard deciding. */
 export const currentDecision: Effect.Effect<Option.Option<GuardDecision['Service']>> = Effect.serviceOption(GuardDecision)

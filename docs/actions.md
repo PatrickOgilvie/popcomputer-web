@@ -98,6 +98,51 @@ groups an organization's routes this way.
 success, error, and requirement channels, while documenting that the program is
 an HTTP action.
 
+## The route table
+
+Each registration adds a row to the application's route table, holding every
+fact it states. `routes.toJson()` lists the rows, so a test, a review or an
+agent reads who may reach a route and what it loads without reading its
+code. The row of `routes.provide(RequireAuthLayer).put(paths.project,
+updateProject, { purges: true })`:
+
+```json
+{
+  "method": "put",
+  "path": "/projects/{project}",
+  "routePath": "/projects/{project}",
+  "models": [
+    { "param": "project", "column": "id", "table": "projects", "access": { "ownedBy": "userId" }, "personal": true }
+  ],
+  "visitors": "signed-in",
+  "guards": 0,
+  "middleware": 0,
+  "answers": "page",
+  "cache": "default",
+  "pageCache": false,
+  "purges": "records",
+  "form": "/projects/{project}"
+}
+```
+
+- `models`: each record the path names, its table, who may load it
+  (`ownedBy`, `publicWhen`, `"public"`, `"guarded"`, or `"unsaid"` for a
+  binding that gives none), and whether it is someone's own.
+- `visitors`: `"signed-in"` under `RequireAuthLayer`, `"guests"` under
+  `RequireGuestLayer` or `createGuestLayer`, else `"anyone"`. `guards` and
+  `middleware` count the `guard(...)` layers and Hono middleware that decide
+  before the action.
+- `answers`: `"json"` on `routes.jsonApi()` and for `routes.endpoint(...)`,
+  whose row also has `"endpoint": true`.
+- `cache` is the route's `cache` option, and `pageCache` whether the default
+  page cache may keep its pages. `purges` is `"records"` for `purges: true`.
+- `form`: where a failed form goes when the request names no page: the
+  route's `form` option, or the page at its own path.
+
+The framework builds each route's handler from its row, so the table says
+what the route does. `routes.getRegistry().all()` gives the rows themselves,
+an endpoint's with its contract and a route's with its `params` schema.
+
 ## Responses and failures
 
 Choose the helper that matches the current action branch. These are alternative

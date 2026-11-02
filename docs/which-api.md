@@ -35,6 +35,7 @@ and the lint rules name it where an action reaches for something else.
 | Load the record a URL names | `bindings: { project: routeBinding(schema.projects, { ownedBy: 'userId' }) }`, then `bound('project')` | [Route model binding](route-models.md) |
 | Say who may load it | `ownedBy: 'userId'` for its owner, `publicWhen: { isPublic: true }`, `public: true`, or `guarded: true` when a guard decides | [Who may load a record](route-models.md#who-may-load-a-record) |
 | Guard a group of routes | `routes.provide(guard(effect))`, or `RequireAuthLayer` | [A guard guards a group of routes](guards.md#a-guard-guards-a-group-of-routes) |
+| List the routes, who may reach each and what it loads | `routes.toJson()` | [The route table](actions.md#the-route-table) |
 | Check a role or a permission | `yield* can('members.role')` in the action, after a membership `guard(CurrentMember, ...)` | [Roles belong to memberships](guards.md#roles-belong-to-memberships-read-by-a-guard) |
 | Show the same props on every page | `shared` in `setupWeb`, computed by `shareProps(effect)` | [Props every page shows](pages.md#props-every-page-shows) |
 | Declare a page's props | a schema in `src/pages.ts`, typed in React as `WebPage<'Name'>` | [Describe the pages](pages.md#describe-the-pages) |

@@ -63,9 +63,9 @@ import {
   bindingTableName,
   assertBindingColumns,
   assertRouteAccess,
+  declaredModels,
   type BoundModelError,
   type BoundModels,
-  type ParsedBinding,
   type RouteBindingsConfig,
   type RouteModel,
 } from './binding.js'
@@ -73,10 +73,13 @@ import type { PathParamName } from '../paths.js'
 import type { RouteRegistry } from './route-registry.js'
 import {
   getAppRouteRegistry,
+  routeRowOf,
   type HttpMethod,
-  type RouteMetadata,
   type RouteMetadataJson,
+  type RouteRow,
+  type RouteVisitors,
 } from './route-registry.js'
+import { layerFactOf } from './layer-facts.js'
 
 /**
  * Type for Effect-based route handlers.
@@ -472,10 +475,10 @@ function recordingTags<A, Err, R>(
  * which a write to it changes.
  */
 function routePurgesOf(
-  purges: true | readonly CacheTag[] | undefined,
+  purges: RouteRow['purges'],
   route: RouteModels
 ): Effect.Effect<readonly string[], BoundModelError, RouteRecords> {
-  if (purges !== true) return Effect.succeed(purges ?? [])
+  if (purges !== 'records') return Effect.succeed(purges)
 
   const written = route.modelBindings[route.modelBindings.length - 1]
   const writtenTable = written ? [bindingTableName(written, route.configuredBindings, route.schema)] : []
@@ -530,6 +533,15 @@ function hasPrivateRequestState<E extends Env>(c: HonoContext<E>): boolean {
 /**
  * Effect Route Builder with layer composition.
  */
+/**
+ * Who the provided layers let reach a route's action, as the framework's
+ * `RequireAuthLayer`, `RequireGuestLayer` or a `createGuestLayer` layer
+ * among them says.
+ */
+function visitorsOf(layers: ReadonlyArray<Layer.Layer<never, unknown, unknown>>): RouteVisitors {
+  return layers.map(layerFactOf).find((fact) => fact === 'signed-in' || fact === 'guests') ?? 'anyone'
+}
+
 export class EffectRouteBuilder<
   E extends Env,
   Services = BaseServices,
@@ -575,7 +587,10 @@ export class EffectRouteBuilder<
 
     const base = new EffectRouteBuilder<E, Services, Path, Needs>(this.app, [], '', this.bridgeConfig, this.registry, [])
 
-    this.app.get(RUN_PATH, base.createHandler(runner, [], { cache: 'private' }))
+    // The runner's own row, which no listing of the application's routes holds.
+    const route = routeRowOf({ method: 'get', path: RUN_PATH, honoPath: RUN_PATH, fullPath: RUN_PATH, bindings: [], prefix: '', cache: 'private', pageCache: false })
+
+    this.app.get(RUN_PATH, base.createHandler(runner, route))
   }
 
   /**
@@ -954,24 +969,24 @@ export class EffectRouteBuilder<
     return path === '/' ? this.pathPrefix : `${this.pathPrefix}${path}`
   }
 
+  /**
+   * The route's handler, derived from its row of the route table, with the
+   * layers and middleware the row counts.
+   */
   private createHandler<R>(
     effect: Effect.Effect<Response | Redirect, AppError, R>,
-    bindings: ParsedBinding[],
-    options?: EffectRouteOptions,
-    routePath?: string,
-    fullPath?: string
+    route: RouteRow
   ): MiddlewareHandler<E> {
     const layers = this.layers
     const bridgeConfig = this.bridgeConfig
     const registry = this.registry
-    // The page this route's form is on: its `form` option, else its own path
-    // when a page is registered there, which the first request looks up once
-    // every route is registered.
-    let formPage: string | null | undefined = options?.form
+    const bindings = [...route.bindings]
+    const cacheOption = route.cache === 'default' ? undefined : route.cache
+    // The page this route's form is on, which the first request looks up
+    // once every route is registered.
+    let formPage: string | null | undefined
     const formPageOf = (): string | null => {
-      formPage ??= routePath !== undefined && registry.all().some((route) => route.method === 'get' && route.fullPath === fullPath)
-        ? routePath
-        : null
+      formPage ??= registry.formPageOf(route) ?? null
 
       return formPage
     }
@@ -979,20 +994,10 @@ export class EffectRouteBuilder<
     // once per route (this handler closure), not once per request.
     let warnedIneffectiveCache = false
 
-    // A bound route reads its model from the database, and an explicit cache
-    // option owns this route's caching. A cached page is served before any
-    // guard or route middleware runs, so a route either one decides for is
-    // never cached by default: it may turn visitors away by what no cache key
-    // holds, such as their address or country.
-    const allowsDefaultPageCache =
-      options?.cache === undefined &&
-      bindings.length === 0 &&
-      this.middlewares.length === 0 &&
-      !layers.some(isGuard)
+    const allowsDefaultPageCache = route.pageCache
+    const answersJson = route.answers === 'json'
 
-    const answersJson = this.answersJson
-
-    const routeModelsOf = routeModelsOnce<E>(bindings, options?.params, bridgeConfig)
+    const routeModelsOf = routeModelsOnce<E>(bindings, route.params, bridgeConfig)
 
     // oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits request parsing and runtime completion, then maps the result to an HTTP response.
     return async (c) => {
@@ -1078,7 +1083,7 @@ export class EffectRouteBuilder<
       // write to any of them purges it.
       let recordTags: readonly string[] = []
 
-      if (typeof options?.cache === 'object' && BODYLESS_METHODS.has(c.req.method)) {
+      if (typeof route.cache === 'object' && BODYLESS_METHODS.has(c.req.method)) {
         handlerEffect = recordingTags(handlerEffect, modelBindings.length > 0, (tags) => {
           recordTags = tags
         })
@@ -1089,7 +1094,7 @@ export class EffectRouteBuilder<
       // that routes.run sent here fails its run, so the queue retries.
       handlerEffect = purgingOnSuccess(
         handlerEffect,
-        routePurgesOf(options?.purges, routeModels),
+        routePurgesOf(route.purges, routeModels),
         (error) => failRun(c.req.raw, error)
       )
 
@@ -1116,7 +1121,7 @@ export class EffectRouteBuilder<
       // cache policy below reads what the browser will receive.
       response = finishResponse(c, response)
 
-      return applyRouteCacheOption(response, options?.cache, {
+      return applyRouteCacheOption(response, cacheOption, {
         method: c.req.method,
         isPartialReload: isPartialReloadRequest((name) => c.req.header(name)),
         hasPrivateRequestState: () => hasPrivateRequestState(c),
@@ -1141,7 +1146,8 @@ export class EffectRouteBuilder<
     method: HttpMethod,
     path: string,
     effect: Effect.Effect<Response | Redirect, AppError, R>,
-    options?: EffectRouteOptions
+    options?: EffectRouteOptions,
+    endpoint?: Endpoint
   ): void {
     // The prefix's placeholders are the route's too: /orgs/{org} as a prefix
     // binds org for every route under it.
@@ -1153,7 +1159,8 @@ export class EffectRouteBuilder<
     const configured = this.bridgeConfig?.bindings
 
     const declared = declaredBindings.get(this.app)
-    assertBindingColumns(bindings, configured ?? declared?.bindings, this.bridgeConfig?.schema ?? declared?.schema)
+    const schema = this.bridgeConfig?.schema ?? declared?.schema
+    assertBindingColumns(bindings, configured ?? declared?.bindings, schema)
 
     // A record that depends on who is visiting is someone's own: a shared
     // cache, which answers before the Worker runs, would hand it to the next.
@@ -1184,8 +1191,11 @@ export class EffectRouteBuilder<
       ).atStartup()
     }
 
-    // Register route metadata
-    const metadata: RouteMetadata = {
+    const guards = this.layers.filter(isGuard).length
+
+    // The route's row: every fact its registration states, which its
+    // handler is derived from.
+    const route = this.registry.register({
       method,
       path,
       honoPath,
@@ -1193,12 +1203,27 @@ export class EffectRouteBuilder<
       bindings,
       prefix: this.pathPrefix,
       name: options?.name,
-    }
-
-    this.registry.register(metadata)
+      routePath,
+      models: declaredModels(bindings, configured ?? declared?.bindings, schema, personal),
+      answers: this.answersJson ? 'json' : 'page',
+      cache: options?.cache ?? 'default',
+      // A bound route reads its model from the database, and an explicit
+      // cache option owns this route's caching. A cached page is served
+      // before any guard or route middleware runs, so a route either one
+      // decides for is never cached by default: it may turn visitors away by
+      // what no cache key holds, such as their address or country.
+      pageCache: options?.cache === undefined && bindings.length === 0 && this.middlewares.length === 0 && guards === 0,
+      purges: options?.purges === true ? 'records' : options?.purges ?? [],
+      form: options?.form,
+      visitors: visitorsOf(this.layers),
+      guards,
+      middleware: this.middlewares.length,
+      params: options?.params,
+      endpoint,
+    })
 
     // Register with Hono - apply middlewares before the Effect handler
-    const handler = this.createHandler(effect, bindings, options, routePath, fullPath)
+    const handler = this.createHandler(effect, route)
 
     if (this.middlewares.length > 0) {
       // SAFETY: The method is selected from the finite Hono routing-method union and every supplied handler uses the builder's Env.
@@ -1325,7 +1350,7 @@ export class EffectRouteBuilder<
     const effect = action.effect as Effect.Effect<Response, AppError, R>
     const json = this.answersJson ? this : this.jsonApi()
 
-    json.registerRoute(action.endpoint.method, action.endpoint.path, effect, options)
+    json.registerRoute(action.endpoint.method, action.endpoint.path, effect, options, action.endpoint)
 
     return this
   }

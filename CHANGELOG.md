@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The route table: each route's row in `routes.toJson()` holds every fact its registration states. That is the records its path names, with each one's table, who may load it (`ownedBy`, `publicWhen`, `"public"`, `"guarded"`, or `"unsaid"` for a binding that gives none) and whether it is someone's own; who its layers let in (`visitors`: `"signed-in"` under `RequireAuthLayer`, `"guests"` under `RequireGuestLayer` or `createGuestLayer`); how many guards and middleware decide before its action; whether it answers pages or JSON; its `cache` option and whether the default page cache may keep it; what it purges; and where a failed form goes. A test, a review or an agent reads who may reach a route and what it loads without reading its code. `routes.getRegistry().all()` gives the rows themselves, frozen, an endpoint's with its contract. The framework now builds each route's handler from its row. `docs/actions.md` shows one under "The route table".
+
 ### Changed
 
 - A route's records load in one round trip on D1 and libsql, however deeply its path nests them: each lookup carries its parents' conditions as a subquery, so none waits for another's rows, and they go in one batch. `/orgs/{organization:slug}/projects/{project}/tasks/{task}` made three round trips before, one after another. Other databases receive the lookups at once. A guard's read still loads only the records up to the one it reads, and the rest load together after the guards.

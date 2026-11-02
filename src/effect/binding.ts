@@ -16,6 +16,7 @@ import type { Table } from 'drizzle-orm'
 import { RouteConfigurationError, type ConfigurationError, type NotFoundError, type UnauthorizedError } from './errors.js'
 import { ErrorCodes } from './error-catalog.js'
 import type { Registered } from './register.js'
+import type { RouteModelAccess, RouteModelMetadata } from './route-registry.js'
 import { schemaExport, tableOfSchema, tableSchema } from './table-schema.js'
 import { BINDING_ACCESS_OPTIONS, BINDING_SCOPE_OPTION } from '../binding-access.js'
 
@@ -829,6 +830,40 @@ export function assertRouteAccess(
   if (checked instanceof RouteConfigurationError) throw checked.atStartup()
 
   return checked
+}
+
+/**
+ * The records a route's path names, as its bindings declare them: each
+ * one's table, who may load it, and whether it is someone's own, which the
+ * route table records.
+ */
+export function declaredModels(
+  bindings: readonly ParsedBinding[],
+  configured: RouteBindingsConfig | undefined,
+  schema: object | undefined,
+  personal: ReadonlySet<string>
+): readonly RouteModelMetadata[] {
+  return bindings.flatMap((binding) => {
+    const config = configured?.[binding.param]
+
+    return config === undefined ? [] : [{
+      param: binding.param,
+      column: binding.column,
+      table: bindingTableName(binding, configured, schema),
+      access: declaredAccess(config),
+      personal: personal.has(binding.param),
+    }]
+  })
+}
+
+/** Who a binding says may load its record. */
+function declaredAccess(config: RouteBindingConfig): RouteModelAccess {
+  if (!isBindingDefinition(config)) return 'unsaid'
+  if (config.ownedBy !== undefined) return { ownedBy: config.ownedBy }
+  if (config.publicWhen !== undefined) return { publicWhen: { ...config.publicWhen } }
+  if (config.public === true) return 'public'
+
+  return config.guarded === true ? 'guarded' : 'unsaid'
 }
 
 /** What assertRouteAccess checks, with the error it finds rather than thrown. */
