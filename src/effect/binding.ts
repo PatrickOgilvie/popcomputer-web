@@ -468,11 +468,13 @@ export class BoundModels extends Context.Service<
   BoundModelsClient
 >()('@popcomputer/web/BoundModels') {
   /**
-   * Provide fixed models, to run an action outside a route. The layer binds
-   * the models it holds, as a route's placeholders do.
+   * Provide fixed models, to run a helper that reads them outside a route,
+   * such as one a test runs on its own. The layer binds the models it holds,
+   * as a route's placeholders do. An action is tested through its route,
+   * which also loads the records under their binding's rule.
    *
    * @example
-   * yield* showProject.pipe(Effect.provide(BoundModels.fromModels({ project })))
+   * yield* openProject.pipe(Effect.provide(BoundModels.fromModels({ project })))
    */
   static fromModels<const Models extends Readonly<Record<string, unknown>>>(
     models: Models

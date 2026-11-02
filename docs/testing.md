@@ -54,8 +54,30 @@ var and secret `src/env.ts` requires, since `setupWeb` checks them as it does
 in production. An `X-Inertia` request returns the page object as JSON, so tests
 assert on the component and props rather than HTML.
 
-An action is an Effect, so a test can also run it directly and provide the
-services it reads, for example `Effect.provide(signedIn({ id: 'user-1' }))`.
+Test an action through its route, as here: the route reads the request's
+input, loads the records its path names under their binding's rule, and
+turns a redirect or a failed form into the answer a browser gets. An action
+run on its own has none of that, and `signedIn` gives only the signed-in
+user. A helper Effect that reads no more than the signed-in user runs
+directly:
+
+```ts
+// src/authorize.test.ts
+import { expect, test } from 'bun:test'
+import { Effect } from 'effect'
+import { authorize } from '@popcomputer/web/effect'
+import { signedIn } from '@popcomputer/web/testing'
+
+test('authorize() reads the signed-in user', async () => {
+  const auth = await Effect.runPromise(authorize().pipe(Effect.provide(signedIn({ id: 'user-1' }))))
+
+  expect(auth.user.id).toBe('user-1')
+})
+```
+
+A helper that reads a bound model runs under `BoundModels.fromModels({ project })`,
+as [Reading a model outside the action](route-models.md#reading-a-model-outside-the-action)
+shows, and a scheduled or queued job under `routes.run(job, testEnv(layer, bindings))`.
 
 ## Reading a response
 

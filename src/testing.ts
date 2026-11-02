@@ -1,10 +1,11 @@
 /**
  * Test seams for applications built on @popcomputer/web.
  *
- * Route tests call the application's real routes with `app.request` and pass
+ * Tests call the application's real routes with `app.request` and pass
  * `testEnv(layer)` as the request env, so the layer's services replace or add
- * to what the request runtime provides. Action tests run the action Effect
- * directly and provide the same layers with `Effect.provide`.
+ * to what the request runtime provides. An action is tested through its
+ * route, which reads its input and loads its records; a helper Effect that
+ * reads only the signed-in user runs directly under `Effect.provide`.
  *
  * @example
  * const res = await app.request('/projects', {}, testEnv(signedIn({ id: 'user-1' })))
@@ -323,10 +324,12 @@ export type SignedInUser =
  * A layer that signs the request in as `user`.
  *
  * Unspecified user fields get fixed defaults, and the session expires an hour
- * after the current Effect clock time.
+ * after the current Effect clock time. It gives only the signed-in user: an
+ * action is tested through its route, with the layer in `testEnv`.
  *
  * @example
- * yield* showDashboard.pipe(Effect.provide(signedIn({ id: 'user-1', name: 'Ada' })))
+ * await app.request('/dashboard', {}, testEnv(signedIn({ id: 'user-1', name: 'Ada' }), testBindings))
+ * const auth = yield* authorize().pipe(Effect.provide(signedIn({ id: 'user-1' })))
  */
 export function signedIn(user: SignedInUser): Layer.Layer<AuthUserService> {
   return Layer.effect(
