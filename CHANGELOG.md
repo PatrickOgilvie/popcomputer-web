@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.12.1] - 2026-11-02
+
+Nothing an application on 1.12.0 needs to change. A JSON client signing out through `betterAuthLogoutAction` gets a 204 that expires the session cookies, where it was redirected to `redirectTo`, which with the documented `redirectTo: paths.login` sent it to the sign-in page. A browser and an Inertia visit still get the 303. A test that signs out as a JSON client sees the 204.
 
 ### Fixed
 
