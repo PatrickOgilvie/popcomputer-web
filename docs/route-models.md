@@ -111,6 +111,11 @@ visitor a guard turns away learns nothing of the records under the one it
 decides for, even when it answers 403 or redirects. A guard that reads a
 record under a `guarded` one fails until that one's guard has decided.
 
+The records a load needs go to the database together. Each lookup carries
+its parents' conditions, so none waits for another's answer: on D1 and
+libsql they go in one batch, one round trip however deeply the path nests
+them, and other databases receive them at once.
+
 `{post}` looks the record up by the table's `id` column, or, for a table
 without one, its primary key. `{post:slug}` names the column by its property
 key in the table (`certificateToken`, not the SQL `certificate_token`), and a

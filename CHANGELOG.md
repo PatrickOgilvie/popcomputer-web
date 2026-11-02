@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- A route's records load in one round trip on D1 and libsql, however deeply its path nests them: each lookup carries its parents' conditions as a subquery, so none waits for another's rows, and they go in one batch. `/orgs/{organization:slug}/projects/{project}/tasks/{task}` made three round trips before, one after another. Other databases receive the lookups at once. A guard's read still loads only the records up to the one it reads, and the rest load together after the guards.
+
 ## [1.11.0] - 2026-11-02
 
 This release follows a review of the framework's design from 1.0 to 1.10. The code that runs each request builds one Effect runtime where it built two, runs a Cron Trigger's or Queue consumer's job with setupWeb's services directly instead of as a request to a hidden route, and gives one owner each to the application's settings, the rule for which cookies hold a session, what a response carries beside its body, the records a route loads, and why a response may not be shared. That work fixed what it found: a job closed its scoped services before its background work ended, the page cache ignored `errors.envKey`, the cache policies took a `__Host-` session cookie or one under another `cookiePrefix` for no one's own, and sign-out missed a renamed session cookie. `fuzzRequest` now reaches an application's actions, and `brokenPromises` checks more.

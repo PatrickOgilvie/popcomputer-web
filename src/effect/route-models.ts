@@ -11,6 +11,7 @@
  */
 
 import { Context, Effect, Option, Schema as S, Semaphore } from 'effect'
+import type { SQL, SQLWrapper, Table } from 'drizzle-orm'
 import type { Context as HonoContext, Env } from 'hono'
 import {
   BoundModels,
@@ -22,6 +23,7 @@ import {
   type BoundModelError,
   type CompiledRouteBinding,
   type ParsedBinding,
+  type RouteBindingParam,
   type RouteBindingsConfig,
 } from './binding.js'
 import { dbQuery } from './database.js'
@@ -250,20 +252,59 @@ function userIdOf(signedIn: Option.Option<object>): UserId | undefined {
   return typeof id === 'string' || typeof id === 'number' || typeof id === 'bigint' ? id : undefined
 }
 
-/** The query builder every Drizzle dialect gives, as far as a binding's lookup uses it. */
-interface BindingQuery {
-  select: () => { from: <TableValue>(table: TableValue) => BindingQueryBuilder }
+/** A column of a binding's table, as Drizzle's conditions take it. */
+type BindingColumn = Parameters<typeof import('drizzle-orm').eq>[0]
+
+/**
+ * A Drizzle database as far as a binding's lookups use it: every dialect's
+ * has `select`, and D1's, libsql's and Neon's over HTTP have `batch`, which
+ * sends many statements in one round trip.
+ */
+interface BindingDatabase {
+  select: (fields?: Readonly<Record<string, BindingColumn>>) => { from: (table: Table) => BindingQueryBuilder }
+  batch?: (statements: ReadonlyArray<PromiseLike<object[]>>) => PromiseLike<ReadonlyArray<object[]>>
 }
 
-interface BindingQueryBuilder {
-  where: <Condition>(condition: Condition) => BindingQueryBuilder
+interface BindingQueryBuilder extends SQLWrapper {
+  where: (condition: SQL | undefined) => BindingQueryBuilder
   limit: (n: number) => PromiseLike<object[]>
 }
 
 /** At most two rows of `table` that meet `condition`. */
-function lookUp(db: object, table: object, condition: unknown): PromiseLike<object[]> {
-  // SAFETY: every Drizzle dialect's database has this select builder.
-  return (db as BindingQuery).select().from(table).where(condition).limit(2)
+function lookUp(db: BindingDatabase, table: Table, condition: SQL | undefined): PromiseLike<object[]> {
+  return db.select().from(table).where(condition).limit(2)
+}
+
+/** The values of `table`'s `column` in the rows that meet `condition`, as a subquery. */
+function valuesOf(db: BindingDatabase, table: Table, column: BindingColumn, condition: SQL | undefined): SQLWrapper {
+  return db.select({ value: column }).from(table).where(condition)
+}
+
+/**
+ * Every lookup at once: in one round trip where the driver batches
+ * statements, and otherwise sent together, since none waits for another's
+ * rows.
+ */
+function lookUpAll(db: BindingDatabase, lookUps: ReadonlyArray<PromiseLike<object[]>>): PromiseLike<ReadonlyArray<object[]>> {
+  return lookUps.length > 1 && db.batch !== undefined ? db.batch(lookUps) : Promise.all(lookUps)
+}
+
+/** Whether a parent's row holds no value for a column its child's foreign key references. */
+function lacksReference(binding: CompiledRouteBinding, parentRow: object | undefined): boolean {
+  return binding.parent !== undefined && (
+    parentRow === undefined ||
+    binding.parent.relation.columnPairs.some((pair) => {
+      const reference: unknown = Object.getOwnPropertyDescriptor(parentRow, pair.references)?.value
+
+      return reference === undefined || reference === null
+    })
+  )
+}
+
+/** A record this load looks up, by the value its placeholder holds. */
+interface RecordLookUp {
+  readonly binding: CompiledRouteBinding
+  readonly value: RouteBindingParam
 }
 
 /**
@@ -271,6 +312,8 @@ function lookUp(db: object, table: object, condition: unknown): PromiseLike<obje
  * narrowed by who may load it, going on from those `loading` holds. The
  * first binding without a record fails with its 404, and a record only its
  * owner may load fails a signed-out visitor with a 401, before any query.
+ * Every record goes to the database at once: each statement carries its
+ * parents' conditions, so none waits for another's rows.
  */
 function loadRecords(
   plan: readonly CompiledRouteBinding[],
@@ -283,60 +326,104 @@ function loadRecords(
 
     if (pending.length === 0) return
 
-    const { eq, and, isNull } = yield* Effect.promise(loadDrizzle)
-    // SAFETY: a binding's columns are its compiled table's, which compileBindingPlan checked.
-    const columnOf = (binding: CompiledRouteBinding, key: string) => Object.getOwnPropertyDescriptor(binding.table, key)?.value as Parameters<typeof eq>[0]
+    // The records to look up, up to the first refused before any query: a
+    // placeholder its column can't hold, a record only its owner may load
+    // for a signed-out visitor, or a loaded parent without the value its
+    // child references. Those before it are looked up, and answer first.
+    const lookUps: RecordLookUp[] = []
+    let refused: RouteConfigurationError | NotFoundError | UnauthorizedError | undefined
 
     for (const binding of pending) {
       const raw = param(binding.param)
       const value = raw ? S.decodeUnknownOption(binding.paramSchema)(raw) : Option.none()
 
-      if (Option.isNone(value)) return yield* new NotFoundError({ resource: binding.param })
+      if (Option.isNone(value)) {
+        refused = new NotFoundError({ resource: binding.param })
+        break
+      }
 
       // A record only its owner may load is never looked up for anyone else.
       if (binding.access !== undefined && 'ownedBy' in binding.access && userId === undefined) {
-        return yield* new UnauthorizedError({ message: 'Authentication required' })
+        refused = new UnauthorizedError({ message: 'Authentication required' })
+        break
       }
 
-      const conditions = [eq(columnOf(binding, binding.column), value.value)]
+      const parent = binding.parent?.param
+      const loadsWithParent = parent !== undefined && lookUps.some((lookUp) => lookUp.binding.param === parent)
 
-      if (binding.parent) {
-        const parentRow = loading.rows.get(binding.parent.param)
+      if (parent !== undefined && !loadsWithParent && lacksReference(binding, loading.rows.get(parent))) {
+        refused = RouteConfigurationError.relationNotFound(parent, binding.tableName, binding.param)
+        break
+      }
 
-        if (!parentRow) return yield* RouteConfigurationError.relationNotFound(binding.parent.param, binding.tableName, binding.param)
+      lookUps.push({ binding, value: value.value })
+    }
 
-        for (const pair of binding.parent.relation.columnPairs) {
-          const reference: unknown = Object.getOwnPropertyDescriptor(parentRow, pair.references)?.value
+    const { eq, and, inArray, isNull } = yield* Effect.promise(loadDrizzle)
+    // SAFETY: a binding's columns are its compiled table's, which compileBindingPlan checked.
+    const columnOf = (binding: CompiledRouteBinding, key: string) => Object.getOwnPropertyDescriptor(binding.table, key)?.value as Parameters<typeof eq>[0]
 
-          if (reference === undefined || reference === null) {
-            return yield* RouteConfigurationError.relationNotFound(binding.parent.param, binding.tableName, binding.param)
+    // Two rows at most for each: a lookup column that is not unique within
+    // the route's scope names no single record, so it fails instead of
+    // picking one. (.limit works on every dialect; only SQLite has .get().)
+    // A query that fails is a defect for the error boundary.
+    const results = lookUps.length === 0 ? [] : yield* dbQuery((database: object) => {
+      // SAFETY: every Drizzle dialect's database has this select builder, and a batch where its driver sends one.
+      const db = database as BindingDatabase
+      // Each record's condition, which its children's statements carry.
+      const conditions = new Map<string, SQL | undefined>()
+
+      return lookUpAll(db, lookUps.map(({ binding, value }) => {
+        const where = [eq(columnOf(binding, binding.column), value)]
+
+        if (binding.parent) {
+          const parentRow = loading.rows.get(binding.parent.param)
+          const parent = lookUps.find((lookUp) => lookUp.binding.param === binding.parent?.param)?.binding
+
+          // A parent loaded before scopes the record by its row's values;
+          // one loading with it, by a subquery over the parent's own
+          // condition, so a record under another parent is missing.
+          for (const pair of binding.parent.relation.columnPairs) {
+            const foreignKey = columnOf(binding, pair.foreignKey)
+
+            where.push(parent === undefined
+              ? eq(foreignKey, Object.getOwnPropertyDescriptor(parentRow, pair.references)?.value)
+              : inArray(foreignKey, valuesOf(db, parent.table, columnOf(parent, pair.references), conditions.get(parent.param))))
           }
-
-          conditions.push(eq(columnOf(binding, pair.foreignKey), reference))
         }
+
+        // Who may load the record narrows the same query, so another user's
+        // record, or one its column keeps private, is missing like any other.
+        if (binding.access !== undefined) {
+          const required: ReadonlyArray<readonly [string, unknown]> = 'ownedBy' in binding.access
+            ? [[binding.access.ownedBy, userId]]
+            : Object.entries(binding.access.publicWhen)
+
+          for (const [key, wanted] of required) {
+            where.push(wanted === null ? isNull(columnOf(binding, key)) : eq(columnOf(binding, key), wanted))
+          }
+        }
+
+        const condition = and(...where)
+
+        conditions.set(binding.param, condition)
+
+        return lookUp(db, binding.table, condition)
+      }))
+    }).pipe(Effect.orDie)
+
+    for (const [index, { binding }] of lookUps.entries()) {
+      const rows = results[index] ?? []
+
+      // A parent that loaded with this record holds the value it references.
+      if (binding.parent && lacksReference(binding, loading.rows.get(binding.parent.param))) {
+        return yield* RouteConfigurationError.relationNotFound(binding.parent.param, binding.tableName, binding.param)
       }
 
-      // Who may load the record narrows the same query, so another user's
-      // record, or one its column keeps private, is missing like any other.
-      if (binding.access !== undefined) {
-        const required: ReadonlyArray<readonly [string, unknown]> = 'ownedBy' in binding.access
-          ? [[binding.access.ownedBy, userId]]
-          : Object.entries(binding.access.publicWhen)
-
-        for (const [key, wanted] of required) {
-          conditions.push(wanted === null ? isNull(columnOf(binding, key)) : eq(columnOf(binding, key), wanted))
-        }
-      }
-
-      // Two rows at most: a lookup column that is not unique within the
-      // route's scope names no single record, so it fails instead of picking
-      // one. (.limit works on every dialect; only SQLite has .get().) A query
-      // that fails is a defect for the error boundary.
-      const results = yield* dbQuery((db: object) => lookUp(db, binding.table, and(...conditions))).pipe(Effect.orDie)
-      const [result] = results
+      const [result] = rows
 
       if (!result) return yield* new NotFoundError({ resource: binding.param })
-      if (results.length > 1) return yield* RouteConfigurationError.ambiguousBinding(binding.param, binding.tableName, binding.column)
+      if (rows.length > 1) return yield* RouteConfigurationError.ambiguousBinding(binding.param, binding.tableName, binding.column)
 
       const model = yield* decodeBoundRow(binding, result)
 
@@ -347,5 +434,7 @@ function loadRecords(
 
       if (key !== undefined && key !== null) loading.recordTags.push(formatRecordTag(binding.tableName, key))
     }
+
+    if (refused !== undefined) return yield* Effect.fail(refused)
   })
 }
