@@ -81,6 +81,7 @@ Building:
 - [JSON clients](docs/json.md): who gets JSON, the error envelope, JSON declared by a schema, and `call`
 - [JSON endpoints](docs/endpoints.md): contracts, their actions, `routes.endpoint` and `openApi`
 - [Route model binding](docs/route-models.md): `bindings`, `bound()`, and models scoped to their parent
+- [The route table](docs/route-table.md): every route's facts in `routes.toJson()`, and who reaches each in `routes.access()`
 - [Application services](docs/services.md): `web.services`, `config`, and rules in services
 - [The database](docs/database.md): `dbQuery`, `dbMutation`, `dbTransaction`, `dbBatch`, migrations and cursors
 - [Constraints](docs/constraints.md): invariants concurrent requests would break, D1 batches and `rowOf`

@@ -14,7 +14,7 @@ import { Database } from 'bun:sqlite'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { and, eq } from 'drizzle-orm'
-import { action } from '../../src/effect/action.js'
+import { action, form } from '../../src/effect/action.js'
 import { intendedUrl } from '../../src/effect/auth.js'
 import { bound, routeBinding } from '../../src/effect/binding.js'
 import { dbMutation, dbQuery } from '../../src/effect/database.js'
@@ -22,7 +22,6 @@ import { guard } from '../../src/effect/guard.js'
 import { json, notFound, redirect } from '../../src/effect/responses.js'
 import { coercedNumber, currentPassword, email, nullableString, requiredString } from '../../src/effect/schema.js'
 import { authorize } from '../../src/effect/services.js'
-import { validateRequest } from '../../src/effect/validation.js'
 import { setupWeb } from '../../src/setup.js'
 
 export const user = sqliteTable('user', { id: text('id').primaryKey() })
@@ -132,17 +131,15 @@ export function createApp() {
 
   routes
     .get(paths.project, action(Effect.flatMap(bound('project'), (project) => json(project))))
-    .put(paths.project, action(Effect.gen(function* () {
+    .put(paths.project, action(form(ProjectForm), (input) => Effect.gen(function* () {
       const project = S.decodeUnknownSync(Id)(yield* bound('project'))
-      const input = yield* validateRequest(ProjectForm)
 
       yield* dbMutation((given) => client(given).update(projects).set({ name: input.name }).where(eq(projects.id, project.id)))
 
       return yield* redirect(paths.project, { project: project.id })
     })))
-    .patch(paths.project, action(Effect.gen(function* () {
+    .patch(paths.project, action(form(ProjectForm), (input) => Effect.gen(function* () {
       const project = S.decodeUnknownSync(Id)(yield* bound('project'))
-      const input = yield* validateRequest(ProjectForm)
 
       yield* dbMutation((given) => client(given).update(projects).set({ name: input.name }).where(eq(projects.id, project.id)))
 
@@ -156,9 +153,8 @@ export function createApp() {
 
       return yield* redirect(paths.projects)
     })))
-    .post(paths.projects, action(Effect.gen(function* () {
+    .post(paths.projects, action(form(ProjectForm), (input) => Effect.gen(function* () {
       const auth = yield* authorize()
-      const input = yield* validateRequest(ProjectForm)
       const id = `p-${crypto.randomUUID()}`
 
       yield* dbMutation((given) => client(given).insert(projects).values({ ...input, id, userId: auth.user.id, visibility: 'private' }))
@@ -167,9 +163,9 @@ export function createApp() {
     })))
     .get(paths.task, action(Effect.flatMap(bound('task'), (task) => json(task))))
     .get(paths.showcase, action(Effect.flatMap(bound('showcase'), (project) => json(project))), { cache: { maxAge: 60 } })
-    .post(paths.signIn, action(Effect.flatMap(validateRequest(SignInForm), (input) => json({ email: input.email }))))
-    .get(paths.search, action(Effect.flatMap(validateRequest(Search), (input) => json(input))))
-    .post(paths.orders, action(Effect.flatMap(validateRequest(Order), (input) => json(input))))
+    .post(paths.signIn, action(form(SignInForm), (input) => json({ email: input.email })))
+    .get(paths.search, action(form(Search), (input) => json(input)))
+    .post(paths.orders, action(form(Order), (input) => json(input)))
     .get(paths.afterSignIn, action(Effect.flatMap(intendedUrl('/home'), (url) => json({ url }))))
 
   routes.prefix(paths.organization).provide(RequireMember)
@@ -177,5 +173,5 @@ export function createApp() {
 
   const rows = () => sqlite.query<ProjectRow, []>('SELECT id, user_id, name, visibility FROM projects ORDER BY id').all()
 
-  return { app, statements, rows }
+  return { app, statements, rows, routes }
 }

@@ -26,8 +26,9 @@
  * }), fuzzTimeout)
  * ```
  */
-import { Arbitrary, Effect, Predicate, Schema as S, type SchemaAST } from 'effect'
+import { Arbitrary, Effect, Option, Predicate, Schema as S, type SchemaAST } from 'effect'
 import type { PathParamName } from './paths.js'
+import type { RouteModelMetadata, RouteRegistry, RouteRow } from './effect/route-registry.js'
 import type { EffectErrorEvent } from './effect/error-observer.js'
 import { observingEnv } from './effect/test-env.js'
 import type { TestApp, TestBindings } from './testing.js'
@@ -262,9 +263,23 @@ export interface FuzzForm<Path extends string = string> {
   readonly fields: ReadonlyArray<string>
 }
 
+/** The application's routes, as the `routes` setupWeb returns hold their table. */
+export interface FuzzRoutes {
+  readonly getRegistry: () => RouteRegistry
+}
+
 export interface FuzzRequestOptions<Paths extends Readonly<Record<string, string>>, Person extends string> {
   /** The application's declared paths, the object `src/paths.ts` exports. */
   readonly paths: Paths
+  /**
+   * The application's routes, the `routes` setupWeb returns: each route
+   * that writes becomes a form, its method and path with fields generated to
+   * pass the schema its action declares with `form(Schema)`, so a new
+   * action is fuzzed with no line here. `forms` adds what it cannot
+   * generate, such as a file, or the fields of an action that reads its
+   * input with `validateRequest`.
+   */
+  readonly routes?: FuzzRoutes
   /**
    * The values to try in each placeholder: each person's records, a public
    * one and a missing one, so requests reach records their sender may and
@@ -285,6 +300,132 @@ export interface FuzzRequestOptions<Paths extends Readonly<Record<string, string
   readonly query?: ReadonlyArray<string>
   /** The site's origin. Default `http://localhost`, the origin `app.request` gives a path. */
   readonly origin?: string
+}
+
+/** A form to send: its method, its path, and the fields its action accepts. */
+interface FormTarget {
+  readonly method: string
+  readonly path: string
+  readonly fields: Arbitrary.Arbitrary<ReadonlyArray<string>>
+}
+
+const WRITE_METHODS = new Set(['post', 'put', 'patch', 'delete'])
+
+/**
+ * Values a form field's validator is tried against when Effect cannot
+ * generate one that passes it, such as an email's or a date's, whose checks
+ * it meets only by trial.
+ */
+const FIELD_SAMPLES = [
+  'Apollo', 'ada@example.com', '2030-05-01', '2030-05-01T09:00:00Z', '1', '12', 'on', 'true', 'a-b',
+  '6f9619ff-8b86-4d11-b42d-00c04fc964ff', 'correct horse battery',
+] as const
+
+/** A form value URL-encoded, with a lone surrogate, which no URL can carry, read as the replacement character. */
+function formEncoded(value: string): string {
+  try {
+    return encodeURIComponent(value)
+  } catch {
+    return encodeURIComponent(value.replace(/[\uD800-\uDFFF]/g, '\uFFFD'))
+  }
+}
+
+/** A field's encoded value as the `name=value` pieces a form posts, nested by brackets as browsers name them. */
+function pairsOf(name: string, value: unknown): string[] {
+  if (value === undefined) return []
+  if (value === null) return [`${name}=`]
+  if (Array.isArray(value)) return value.flatMap((item: unknown, index) => pairsOf(`${name}[${index}]`, item))
+  if (value instanceof Date) return [`${name}=${formEncoded(value.toISOString())}`]
+  if (Predicate.isObject(value)) return Object.entries(value).flatMap(([key, item]) => pairsOf(`${name}[${key}]`, item))
+
+  return [`${name}=${formEncoded(String(value))}`]
+}
+
+/** A form field's validator, which decodes without services, as the framework's validators do. */
+type FieldSchema = S.Codec<unknown, unknown, never, never>
+
+/** A struct schema's fields, each a schema, as a form nests them. */
+function structFields(schema: unknown): ReadonlyArray<readonly [string, FieldSchema]> | undefined {
+  if (!Predicate.hasProperty(schema, 'fields') || !Predicate.isObject(schema.fields)) return undefined
+
+  // SAFETY: a form's fields decode without services, which validateRequest gives none.
+  return Object.entries(schema.fields).flatMap(([name, field]: [string, unknown]) => (S.isSchema(field) ? [[name, field as FieldSchema] as const] : []))
+}
+
+/** A list schema's item, as a form numbers its entries. */
+function listItem(schema: FieldSchema): FieldSchema | undefined {
+  // SAFETY: a list of a form's fields decodes its items without services too.
+  return schema.ast._tag === 'Arrays' && Predicate.hasProperty(schema, 'value') && S.isSchema(schema.value) ? schema.value as FieldSchema : undefined
+}
+
+/**
+ * Encoded values that pass a form field's validator, as the form sends
+ * them: a struct's field by field, a list's one to three items, and any
+ * other generated from its schema where Effect can and checked as the
+ * string a form sends, else one of the samples it accepts, else none,
+ * which leaves the field out.
+ */
+function fieldValues(field: FieldSchema): Arbitrary.Arbitrary<unknown> {
+  const fields = structFields(field)
+
+  if (fields !== undefined) return Arbitrary.all(Object.fromEntries(fields.map(([name, each]) => [name, fieldValues(each)])))
+
+  const item = listItem(field)
+
+  if (item !== undefined) {
+    return Arbitrary.map(Arbitrary.all({ first: fieldValues(item), rest: stepsOf(fieldValues(item), { maxLength: 2 }) }), ({ first, rest }) => [first, ...rest])
+  }
+
+  const samples = FIELD_SAMPLES.filter((sample) => Option.isSome(S.decodeUnknownOption(field)(sample)))
+  const [firstSample, ...otherSamples] = samples.map((sample) => Arbitrary.Constant<unknown>(sample))
+  const sampled = firstSample === undefined ? Arbitrary.Constant<unknown>(undefined) : oneOf(firstSample, ...otherSamples)
+
+  try {
+    const generated = Arbitrary.schema(S.toType(field))
+
+    // A check Effect meets only by trial may exhaust its tries mid-run: try it first.
+    Effect.runSync(Arbitrary.sampleEffect(generated, { count: 20, seed: 'popweb' }))
+
+    return Arbitrary.map(generated, (value) => {
+      const encoded = Option.getOrUndefined(S.encodeUnknownOption(field)(value))
+      const sent = encoded === null || Predicate.isObject(encoded) ? encoded : String(encoded)
+
+      return encoded === undefined || (sent !== null && Option.isNone(S.decodeUnknownOption(field)(sent))) ? samples[0] : encoded
+    })
+  } catch {
+    return sampled
+  }
+}
+
+/** Fields that pass a form's schema: a struct's, generated field by field, or one member's of a union. */
+function fieldsOf(schema: unknown): Arbitrary.Arbitrary<ReadonlyArray<string>> {
+  const fields = structFields(schema)
+
+  if (fields !== undefined) {
+    return Arbitrary.map(
+      Arbitrary.all(Object.fromEntries(fields.map(([name, field]) => [name, fieldValues(field)]))),
+      (values: Readonly<Record<string, unknown>>) => Object.entries(values).flatMap(([name, value]) => pairsOf(name, value))
+    )
+  }
+
+  if (Predicate.hasProperty(schema, 'members') && Array.isArray(schema.members)) {
+    const [first, ...others] = schema.members.map((member: unknown) => fieldsOf(member))
+
+    if (first !== undefined) return oneOf(first, ...others)
+  }
+
+  return Arbitrary.Constant<ReadonlyArray<string>>([])
+}
+
+/** A form for each route that writes, but an endpoint's, whose body its contract declares as JSON. */
+function formsOfRoutes(routes: ReadonlyArray<RouteRow>): FormTarget[] {
+  return routes
+    .filter((route) => WRITE_METHODS.has(route.method) && route.endpoint === undefined)
+    .map((route) => ({
+      method: route.method.toUpperCase(),
+      path: route.routePath,
+      fields: route.input === undefined ? Arbitrary.Constant<ReadonlyArray<string>>([]) : fieldsOf(route.input.schema),
+    }))
 }
 
 /** Methods by how often a client sends them, with spellings a router may read apart. */
@@ -410,11 +551,14 @@ export function fuzzRequest<const Paths extends Readonly<Record<string, string>>
   )
   const crafted = Arbitrary.map(Arbitrary.all({ method: weighted(...METHODS), path: craftedPath }), (target): Target => ({ ...target, form: [] }))
 
-  const [firstForm, ...otherForms] = options.forms ?? []
+  const [firstForm, ...otherForms]: ReadonlyArray<FormTarget> = [
+    ...(options.forms ?? []).map((form) => ({ method: form.method, path: form.path, fields: Arbitrary.Constant(form.fields) })),
+    ...(options.routes === undefined ? [] : formsOfRoutes(options.routes.getRegistry().all())),
+  ]
   const forms = firstForm === undefined
     ? undefined
     : Arbitrary.flatMap(oneOf(Arbitrary.Constant(firstForm), ...otherForms.map((form) => Arbitrary.Constant(form))), (form) =>
-        Arbitrary.map(filled(form.path), (path): Target => ({ method: form.method, path, form: form.fields }))
+        Arbitrary.map(Arbitrary.all({ path: filled(form.path), fields: form.fields }), (target): Target => ({ method: form.method, path: target.path, form: target.fields }))
       )
   const target = forms === undefined ? oneOf(declared, declared, declared, crafted) : oneOf(declared, forms, forms, declared, crafted)
 
@@ -813,6 +957,43 @@ export function strangerWrites<Row>(
 }
 
 /** The change a refused request (4xx) made to the rows, which should be none. */
+/** A row's identity and owner, as strangerWrites reads them. */
+export interface RowKeys<Row> {
+  readonly id: (row: Row) => string
+  readonly owner: (row: Row) => string
+}
+
+/** A model whose binding says only its owner may load it. */
+const ownedModel = (model: RouteModelMetadata): model is RouteModelMetadata & { readonly access: { readonly ownedBy: string } } =>
+  Predicate.hasProperty(model.access, 'ownedBy')
+
+/** A row's value for a column, by its property key or, as a raw query returns it, its snake_case name. */
+function columnOf(row: object, key: string): string {
+  const value: unknown = Object.getOwnPropertyDescriptor(row, key)?.value ??
+    Object.getOwnPropertyDescriptor(row, key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`))?.value
+
+  return String(value)
+}
+
+/**
+ * The keys `strangerWrites` reads a table's rows by, from the route table: a
+ * row's primary key, and the column its binding's `ownedBy` names. A row is
+ * read by the column's property key or its snake_case name, so rows a
+ * Drizzle select or a raw query returns both work.
+ *
+ * @example
+ * strangerWrites(sent, change, ownership(routes, 'projects'))
+ */
+export function ownership<Row extends object>(routes: FuzzRoutes, table: string): RowKeys<Row> {
+  const model = routes.getRegistry().all().flatMap((route) => route.models).find((each) => each.table === table && ownedModel(each))
+
+  if (model === undefined || !ownedModel(model)) {
+    throw new Error(`No binding of ${table} says who owns its rows: give one ownedBy, or pass strangerWrites the row's { id, owner } yourself.`)
+  }
+
+  return { id: (row) => columnOf(row, model.primaryKey), owner: (row) => columnOf(row, model.access.ownedBy) }
+}
+
 export function refusedWrites<Row>(answer: FuzzAnswer, rows: RowsChange<Row>): string[] {
   const status = answer.response.status
 

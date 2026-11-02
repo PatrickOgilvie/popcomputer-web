@@ -177,6 +177,8 @@ export {
   RouteRegistry,
   getAppRouteRegistry,
   type HttpMethod,
+  type AccessAnswer,
+  type RouteAccess,
   type RouteMetadata,
   type RouteMetadataJson,
   type FindRouteOptions,

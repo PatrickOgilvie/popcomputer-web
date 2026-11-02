@@ -36,7 +36,8 @@ and the lint rules name it where an action reaches for something else.
 | Load the record a URL names | `bindings: { project: routeBinding(schema.projects, { ownedBy: 'userId' }) }`, then `bound('project')` | [Route model binding](route-models.md) |
 | Say who may load it | `ownedBy: 'userId'` for its owner, `publicWhen: { isPublic: true }`, `public: true`, or `guarded: true` when a guard decides | [Who may load a record](route-models.md#who-may-load-a-record) |
 | Guard a group of routes | `routes.provide(guard(effect))`, or `RequireAuthLayer` | [A guard guards a group of routes](guards.md#a-guard-guards-a-group-of-routes) |
-| List the routes, who may reach each and what it loads | `routes.toJson()` | [The route table](actions.md#the-route-table) |
+| List the routes, who may reach each and what it loads | `routes.toJson()` | [The route table](route-table.md) |
+| See who reaches each route: signed out, the owner, another member | `routes.access()` | [Who reaches each route](route-table.md#who-reaches-each-route) |
 | Check a role or a permission | `yield* can('members.role')` in the action, after a membership `guard(CurrentMember, ...)` | [Roles belong to memberships](guards.md#roles-belong-to-memberships-read-by-a-guard) |
 | Show the same props on every page | `shared` in `setupWeb`, computed by `shareProps(effect)` | [Props every page shows](pages.md#props-every-page-shows) |
 | Declare a page's props | a schema in `src/pages.ts`, typed in React as `WebPage<'Name'>` | [Describe the pages](pages.md#describe-the-pages) |
@@ -102,7 +103,7 @@ and the lint rules name it where an action reaches for something else.
 | Move time | `testClock()` | [Time](testing.md#time) |
 | Use the production database family | PGlite, migrated with `applyMigrations`, or a D1 database of each test's own from `testD1` | [A database for tests](test-database.md) |
 | Check a rule on generated inputs | `fuzz(arbitrary, holds)` from `@popcomputer/web/fuzz` | [Fuzzing](fuzzing.md) |
-| Fuzz the application's routes | `fuzzRequest({ paths, params, people, forms })`, `sendFuzzRequest`, and `brokenPromises`, `leaks`, `strangerWrites`, `refusedWrites` | [Requests to the application](fuzzing.md#requests-to-the-application) |
+| Fuzz the application's routes | `fuzzRequest({ paths, routes, params, people })`, `sendFuzzRequest`, and `brokenPromises`, `leaks`, `strangerWrites` with `ownership(routes, table)`, `refusedWrites` | [Requests to the application](fuzzing.md#requests-to-the-application) |
 | Fuzz a lifecycle over sequences of its steps | `stepsOf(step, { maxLength })`, checked with `fuzz` | [Steps over lasting state](fuzzing.md#steps-over-lasting-state) |
 | Fuzz a limit at its edge | the limit as a parameter the test sets from the input, `pick([0, -1, 1])` from what it needs | [Fuzzing at the limits](fuzz-limits.md) |
 | Sign in through an OAuth provider in a test | `testOAuthProvider({ ... })`, then `signIn(browser, path, person)` | [Signing in with an OAuth provider](auth-plugins.md#signing-in-with-an-oauth-provider) |

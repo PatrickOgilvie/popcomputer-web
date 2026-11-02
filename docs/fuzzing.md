@@ -11,7 +11,8 @@ the application's own records and rules.
 | --- | --- |
 | `fuzz(arbitrary, holds, { runs })` | runs a property: resolves when every case holds, rejects with the shrunk case, why it was refused and a replay token |
 | `pick`, `oneOf`, `weighted`, `textOf`, `stepsOf`, `anyText`, `show` | generators that shrink toward their first choice, sequences of a lifecycle's steps of every length up to `maxLength`, and a value shown with its invisible characters escaped |
-| `fuzzRequest({ paths, params, people, forms })` | requests to the application's declared paths, from each person and a signed-out visitor |
+| `fuzzRequest({ paths, routes, params, people })` | requests to the application's declared paths, and a form for each route that writes, from each person and a signed-out visitor |
+| `ownership(routes, table)` | the keys `strangerWrites` reads a table's rows by: its primary key and the column its binding's `ownedBy` names |
 | `sendFuzzRequest(app, sent, env)` | sends one through the application, as `app.request` does |
 | `brokenPromises`, `leaks`, `strangerWrites`, `refusedWrites` | how an answer broke a rule, as a list empty when it kept them |
 | `realmGuard()` | what a call wrote onto the realm's built-ins, such as `Object.prototype` |
@@ -68,18 +69,9 @@ reach their actions; the rest send every part any way.
 ```ts
 // src/requests.test.ts
 import { test } from 'bun:test'
-import {
-  brokenPromises,
-  fuzz,
-  fuzzRequest,
-  fuzzTimeout,
-  leaks,
-  refusedWrites,
-  sendFuzzRequest,
-  strangerWrites,
-} from '@popcomputer/web/fuzz'
+import { brokenPromises, fuzz, fuzzRequest, fuzzTimeout, leaks, ownership, refusedWrites, sendFuzzRequest, strangerWrites } from '@popcomputer/web/fuzz'
 import { signedIn, testEnv } from '@popcomputer/web/testing'
-import app from './app'
+import app, { routes } from './app'
 import { paths } from './paths'
 import './routes'
 import { projects, user } from './schema'
@@ -91,6 +83,8 @@ const canaries = { ada: 'canary-ada-7f3a', grace: 'canary-grace-91c2' }
 
 const requests = fuzzRequest({
   paths,
+  // A form for each route that writes, with fields that pass its action's form(Schema).
+  routes,
   // Every placeholder in src/paths.ts, with each person's records, a public one and a missing one.
   params: {
     project: ['p-ada', 'p-grace', 'p-public', 'missing'],
@@ -101,12 +95,6 @@ const requests = fuzzRequest({
     provider: ['acme'],
   },
   people: ['ada', 'grace'],
-  // A request each action accepts.
-  forms: [
-    { method: 'POST', path: paths.projects, fields: ['name=Apollo'] },
-    { method: 'PUT', path: paths.project, fields: ['name=Renamed'] },
-    { method: 'DELETE', path: paths.project, fields: [] },
-  ],
 })
 
 test('any request keeps the rules', () => fuzz(requests, async (sent) => {
@@ -138,7 +126,7 @@ test('any request keeps the rules', () => fuzz(requests, async (sent) => {
     return [
       ...brokenPromises(sent, answer),
       ...leaks(sent, answer, canaries),
-      ...strangerWrites(sent, change, { id: (row) => row.id, owner: (row) => row.userId }),
+      ...strangerWrites(sent, change, ownership(routes, 'projects')),
       ...refusedWrites(answer, change),
     ]
   } finally {
@@ -147,9 +135,13 @@ test('any request keeps the rules', () => fuzz(requests, async (sent) => {
 }, { runs: 200 }), fuzzTimeout)
 ```
 
-`params` is typed by the paths: a path added to `src/paths.ts` with a new
-placeholder is a type error here until the test names its values. Add a form
-beside each new action, so its writes are generated with valid fields.
+`params` is typed by the paths, so a new placeholder is a type error here
+until the test names its values. `routes` makes a form for each route that
+writes, with fields that pass its action's `form(Schema)`, so a new action
+is fuzzed once registered; `forms: [{ method, path, fields }]` adds what it
+cannot generate, a file or an action's `validateRequest` fields.
+`ownership(routes, 'projects')` reads a row's primary key and its binding's
+`ownedBy` column, by property key or snake_case name.
 
 The rules each answer keeps:
 
@@ -167,7 +159,8 @@ The rules each answer keeps:
 - `strangerWrites`: no row is changed or deleted by anyone but its owner,
   moved to another owner, or created for someone other than its sender.
 - `refusedWrites`: a 4xx answer changed no rows. Refusing everything keeps
-  every rule, so also check after `fuzz` that a share reached the actions.
+  every rule, so also check after `fuzz` that each route that writes
+  answered 2xx or wrote: a failed form's 303 back reaches nothing.
 
 ## Building on it
 

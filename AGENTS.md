@@ -244,12 +244,15 @@ here, as the demo's does.
     when the behaviour it covers is reverted: plant the bug first (undo the
     fix, or break the rule), watch the test fail, then restore the code. A
     test that passes either way checks nothing. Fuzz the application's
-    routes with `fuzzRequest({ paths, params, people, forms })` from
-    `@popcomputer/web/fuzz`, sending each request with `sendFuzzRequest`
-    and checking its answer with `brokenPromises`, `leaks`, `strangerWrites`
-    and `refusedWrites`, as `docs/fuzzing.md` shows, and add the
-    application's own rules beside them; give each new action a form there,
-    and each new placeholder its values. Check any other rule on generated
+    routes with `fuzzRequest({ paths, routes, params, people })` from
+    `@popcomputer/web/fuzz`, which makes each route's form from its
+    action's `form(Schema)`, sending each request with `sendFuzzRequest`
+    and checking its answer with `brokenPromises`, `leaks`,
+    `strangerWrites` (given `ownership(routes, table)`) and
+    `refusedWrites`, as `docs/fuzzing.md` shows, and add the application's
+    own rules beside them; give each new placeholder its values, and
+    `forms` only a request it cannot generate, such as a file's. Read who
+    reaches each route with `routes.access()`. Check any other rule on generated
     inputs with `fuzz(arbitrary, holds)`, and a lifecycle on sequences of
     its steps from `stepsOf(step, { maxLength })`, not Effect's
     `Arbitrary.array`, whose sequences hold two or three steps.

@@ -72,8 +72,10 @@ import {
 import type { PathParamName } from '../paths.js'
 import type { RouteRegistry } from './route-registry.js'
 import {
+  accessOf,
   getAppRouteRegistry,
   routeRowOf,
+  type RouteAccess,
   type HttpMethod,
   type RouteMetadataJson,
   type RouteRow,
@@ -1360,6 +1362,15 @@ export class EffectRouteBuilder<
   /** Every route registered on this builder's application, as JSON. */
   toJson(): RouteMetadataJson[] {
     return this.registry.toJson()
+  }
+
+  /**
+   * Who reaches each route: a signed-out visitor, a member who owns the
+   * records its path names, and one who does not, as its layers, endpoint
+   * contract and bindings declare it.
+   */
+  access(): RouteAccess[] {
+    return this.registry.all().map(accessOf)
   }
 
   /** The application's route registry. */

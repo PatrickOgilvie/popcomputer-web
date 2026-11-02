@@ -39,6 +39,8 @@ export interface RouteModelMetadata {
   readonly column: string
   /** The table its record is a row of: its key in the Drizzle schema, or its SQL name. */
   readonly table: string
+  /** The property key of the table's primary key, or of the lookup column when it has no single one. */
+  readonly primaryKey: string
   readonly access: RouteModelAccess
   /** Whether the record depends on who is visiting: someone's own, or under someone's own. */
   readonly personal: boolean
@@ -143,6 +145,73 @@ function fieldNamesOf(schema: unknown): readonly string[] {
   }
 
   return []
+}
+
+/**
+ * What a visitor gets from a route before its action can use the records its
+ * path names, as the route's layers, endpoint contract and bindings promise:
+ *
+ * - `'reaches'`: the action runs, with the records, and decides;
+ * - `'sign-in'`: asked to sign in, a redirect to `auth.signInPath` or a 401;
+ * - `'home'`: a signed-in visitor sent to `auth.homePath`, from a guests' page;
+ * - `'not-found'`: a 404, as a missing record answers;
+ * - `'when-public'`: records whose columns hold their binding's `publicWhen`
+ *   values, and a 404 for any other;
+ * - `'guard'`: a guard decides.
+ *
+ * The action may still refuse, with `authorize(rule)` or `forbidden`: the
+ * table holds what is declared, not what the action does.
+ */
+export type AccessAnswer = 'reaches' | 'sign-in' | 'home' | 'not-found' | 'when-public' | 'guard'
+
+/** Who reaches a route: a signed-out visitor, a member who owns the records its path names, and one who does not. */
+export interface RouteAccess {
+  readonly method: HttpMethod
+  /** Its whole path, with its placeholders. */
+  readonly path: string
+  readonly name?: string
+  readonly signedOut: AccessAnswer
+  readonly owner: AccessAnswer
+  readonly stranger: AccessAnswer
+}
+
+type Visitor = 'signedOut' | 'owner' | 'stranger'
+
+/** What one kind of visitor gets from a route, by its layers, then its guards, then each record in path order. */
+function answerFor(route: RouteRow, visitor: Visitor): AccessAnswer {
+  const signedOut = visitor === 'signedOut'
+
+  if (signedOut && (route.visitors === 'signed-in' || route.endpoint?.spec.auth === true)) return 'sign-in'
+  if (!signedOut && route.visitors === 'guests') return 'home'
+  if (route.guards > 0) return 'guard'
+
+  let whenPublic = false
+
+  for (const model of route.models) {
+    if (model.access === 'guarded') return 'guard'
+
+    if (Predicate.hasProperty(model.access, 'ownedBy')) {
+      // A signed-out visitor is asked to sign in before the database is.
+      if (signedOut) return 'sign-in'
+      if (visitor === 'stranger') return 'not-found'
+    }
+
+    if (Predicate.hasProperty(model.access, 'publicWhen')) whenPublic = true
+  }
+
+  return whenPublic ? 'when-public' : 'reaches'
+}
+
+/** Who reaches a route, as its row declares it. */
+export function accessOf(route: RouteRow): RouteAccess {
+  return {
+    method: route.method,
+    path: route.routePath,
+    ...(route.name !== undefined && { name: route.name }),
+    signedOut: answerFor(route, 'signedOut'),
+    owner: answerFor(route, 'owner'),
+    stranger: answerFor(route, 'stranger'),
+  }
 }
 
 /**

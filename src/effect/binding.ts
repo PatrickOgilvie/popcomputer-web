@@ -850,10 +850,24 @@ export function declaredModels(
       param: binding.param,
       column: binding.column,
       table: bindingTableName(binding, configured, schema),
+      primaryKey: declaredPrimaryKey(bindingTableOf(config), binding.column),
       access: declaredAccess(config),
       personal: personal.has(binding.param),
     }]
   })
+}
+
+/**
+ * The property key of a table's primary key column, or of the lookup column
+ * when it has no single-column one, as compileBindingPlan finds it, read
+ * from the columns themselves.
+ */
+function declaredPrimaryKey(table: RouteBindingTable | undefined, lookupColumn: string): string {
+  const primary = table === undefined
+    ? []
+    : Object.keys(table).filter((key) => isColumnProperty(table, key) && Object.getOwnPropertyDescriptor(table, key)?.value?.primary === true)
+
+  return primary.length === 1 ? primary[0] : lookupColumn
 }
 
 /** Who a binding says may load its record. */

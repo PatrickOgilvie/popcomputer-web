@@ -31,6 +31,7 @@ const tags = sqliteTable('tags', { id: integer('id').primaryKey() })
 
 const ok = Effect.succeed(new Response('ok'))
 const status = endpoint.get('/api/status', { success: S.Struct({ up: S.Boolean }) })
+const me = endpoint.get('/api/me', { auth: true, success: S.Struct({ id: S.String }) })
 
 function createRoutes() {
   const { routes } = setupWeb(new Hono(), {
@@ -58,8 +59,11 @@ function createRoutes() {
     .get('/clock', ok, { cache: 'private' })
     .post('/contact', ok, { form: '/about', purges: ['tags'] })
   routes.provide(RequireGuestLayer).get('/login', ok).post('/login', ok)
+  // An owner's record without the sign-in layer: its binding asks a signed-out visitor to sign in.
+  routes.delete('/projects/{project}/notes/{note}', ok)
   routes.jsonApi().get('/api/ping', ok)
   routes.endpoint(action(status, () => Effect.succeed({ up: true })))
+  routes.endpoint(action(me, () => Effect.succeed({ id: 'ada' })))
 
   return routes
 }
@@ -74,18 +78,19 @@ describe('the route table', () => {
     const rows = rowsOf(createRoutes())
 
     expect(rows.get('get /projects/{project}/notes/{note}')?.models).toEqual([
-      { param: 'project', column: 'id', table: 'projects', access: { ownedBy: 'userId' }, personal: true },
+      { param: 'project', column: 'id', table: 'projects', primaryKey: 'id', access: { ownedBy: 'userId' }, personal: true },
       // A binding that says nothing, under someone's own record.
-      { param: 'note', column: 'id', table: 'notes', access: 'unsaid', personal: true },
+      { param: 'note', column: 'id', table: 'notes', primaryKey: 'id', access: 'unsaid', personal: true },
     ])
     expect(rows.get('get /showcase/{showcase}')?.models).toEqual([
-      { param: 'showcase', column: 'id', table: 'projects', access: { publicWhen: { visibility: 'public' } }, personal: false },
+      { param: 'showcase', column: 'id', table: 'projects', primaryKey: 'id', access: { publicWhen: { visibility: 'public' } }, personal: false },
     ])
     expect(rows.get('get /orgs/{org:slug}')?.models).toEqual([
-      { param: 'org', column: 'slug', table: 'orgs', access: 'guarded', personal: true },
+      // Looked up by its slug, named by its primary key.
+      { param: 'org', column: 'slug', table: 'orgs', primaryKey: 'id', access: 'guarded', personal: true },
     ])
     expect(rows.get('get /tags/{tag}')?.models).toEqual([
-      { param: 'tag', column: 'id', table: 'tags', access: 'public', personal: false },
+      { param: 'tag', column: 'id', table: 'tags', primaryKey: 'id', access: 'public', personal: false },
     ])
   })
 
@@ -129,6 +134,29 @@ describe('the route table', () => {
     expect(rows.get('get /api/status')).toMatchObject({ answers: 'json', endpoint: true })
     expect(routes.getRegistry().findByName('projects.show')?.endpoint).toBeUndefined()
     expect(routes.getRegistry().all().find((row) => row.path === '/api/status')?.endpoint).toBe(status)
+  })
+
+  test('says who reaches each route: a signed-out visitor, the owner of its records, and another member', () => {
+    const access = new Map(createRoutes().access().map((row) => [`${row.method} ${row.path}`, [row.signedOut, row.owner, row.stranger]]))
+
+    expect(Object.fromEntries(access)).toEqual({
+      'get /projects/{project}': ['sign-in', 'reaches', 'not-found'],
+      'put /projects/{project}': ['sign-in', 'reaches', 'not-found'],
+      'get /projects/{project}/notes/{note}': ['sign-in', 'reaches', 'not-found'],
+      'delete /projects/{project}/notes/{note}': ['sign-in', 'reaches', 'not-found'],
+      'get /showcase/{showcase}': ['when-public', 'when-public', 'when-public'],
+      'get /orgs/{org:slug}': ['guard', 'guard', 'guard'],
+      'get /tags/{tag}': ['reaches', 'reaches', 'reaches'],
+      'get /about': ['reaches', 'reaches', 'reaches'],
+      'get /clock': ['reaches', 'reaches', 'reaches'],
+      'post /contact': ['reaches', 'reaches', 'reaches'],
+      'get /login': ['reaches', 'home', 'home'],
+      'post /login': ['reaches', 'home', 'home'],
+      'get /api/ping': ['reaches', 'reaches', 'reaches'],
+      'get /api/status': ['reaches', 'reaches', 'reaches'],
+      // An endpoint whose contract says auth: true.
+      'get /api/me': ['sign-in', 'reaches', 'reaches'],
+    })
   })
 
   test('is JSON as it stands, and its rows do not change once registered', () => {
