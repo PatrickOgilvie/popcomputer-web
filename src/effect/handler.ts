@@ -221,7 +221,7 @@ export async function renderErrorResponse<E extends Env>(
     if (!['GET', 'HEAD'].includes(c.req.method.toUpperCase())) {
       openWebContext(c).flash?.setErrors(error.errors, c.req.header('X-Inertia-Error-Bag') || undefined)
 
-      return finalize(c.redirect(error.redirectTo ?? previousUrl(c), 303))
+      return finalize(c.redirect(webDestination(error.redirectTo, c) ?? previousUrl(c), 303))
     }
 
     // The error page this visit renders shows which parameters were invalid.
@@ -240,7 +240,7 @@ export async function renderErrorResponse<E extends Env>(
     }
 
     return finalize(c.redirect(
-      error.redirectTo ?? (error.home === true ? setupOf(c).homePath : signInUrl(c)),
+      webDestination(error.redirectTo, c) ?? (error.home === true ? setupOf(c).homePath : signInUrl(c)),
       c.req.header('X-Inertia') === 'true' ? 303 : 302
     ))
   }
@@ -399,6 +399,14 @@ export async function errorToResponse<E extends Env>(
     return handleRedirect(error, c, runtime)
   }
 
+  // A failure that names where to send the visitor leads there as a
+  // redirect does: to a path or an http: or https: URL, else it is a defect.
+  const named = error instanceof ValidationError || error instanceof UnauthorizedError ? error.redirectTo : undefined
+
+  if (named !== undefined && webUrl(named, c.req.url) === undefined) {
+    return handleExit(Exit.die(new Error(`A failure's redirectTo leads to a path or an http: or https: URL, not ${schemeOf(named)}.`)), c, runtime)
+  }
+
   const structured = toStructuredError(error, captureErrorContext(c))
 
   await observeEffectError(
@@ -432,6 +440,15 @@ async function handleRedirect<E extends Env>(
   }
 
   return c.redirect(redirect.url, redirect.status)
+}
+
+/**
+ * A failure's `redirectTo` when it leads to a path or an http: or https:
+ * URL. errorToResponse makes any other a defect; a failure Hono's onError
+ * renders, with no runtime to report one, goes where it would without it.
+ */
+function webDestination<E extends Env>(redirectTo: string | undefined, c: HonoContext<E>): string | undefined {
+  return redirectTo !== undefined && webUrl(redirectTo, c.req.url) !== undefined ? redirectTo : undefined
 }
 
 /** A refused redirect's scheme, for its defect's message without the URL a visitor may have written. */

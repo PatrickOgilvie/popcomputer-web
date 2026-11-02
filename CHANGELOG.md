@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- A failure that names where to send the visitor leads there as a redirect does: to a path or an `http:` or `https:` URL. A failed form's `redirectTo` (`validateRequest(Schema, { redirectTo })`) and a guests' page's (`createGuestLayer(allow, redirectTo)`) went to `Location` unchecked, so one built from a visitor's input could send an Inertia visit to `javascript:`. Any other scheme is now a defect, which answers 500 and reaches the error observer, and a failure thrown where nothing can report it goes back to the form instead. `tests/security/redirect-to.test.ts` covers both, and fails on the code before.
+
 ### Added
 
 - `routes.access()` reads the route table as who reaches each route: a signed-out visitor, a member who owns the records its path names, and one who does not. Each gets `reaches`, `sign-in`, `home`, `not-found`, `when-public` or `guard`, by the route's layers, its endpoint contract's `auth` and its bindings, so a review reads who may reach what without reading the code. A route table model also names its table's `primaryKey`.

@@ -468,7 +468,9 @@ export interface ValidateOptions {
   /**
    * Where a form that fails validation goes back to, with its errors,
    * instead of the page it was posted from: a wizard's step, when the final
-   * submit carries every step's fields.
+   * submit carries every step's fields. A path or an `http:` or `https:`
+   * URL, as a redirect is; any other scheme, such as a `javascript:` URL, is
+   * a defect.
    *
    * @example
    * validateRequest(Experience, { redirectTo: href(paths.applyStep, { job: job.slug, step: 'experience' }) })
