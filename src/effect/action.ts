@@ -11,14 +11,37 @@ import { endpointAction, type EndpointAction } from './endpoint-action.js'
 import type { Redirect, UnauthorizedError, ValidationError } from './errors.js'
 import type { RequestService, ResponseFactoryService } from './services.js'
 import { validateRequest, type ValidateOptions } from './validation.js'
+import type { DeclaredPath } from '../paths.js'
+
+/**
+ * How an action's form reads its input, as `validateRequest`'s options do,
+ * and the page the form is on. A failed read always going elsewhere, a
+ * `redirectTo` built from what the action loaded, is `validateRequest`'s.
+ */
+export type FormOptions = Omit<ValidateOptions, 'redirectTo'> & {
+  /**
+   * The page this form is on: one of setupWeb's paths, its placeholders
+   * filled from the route's own. A failed form goes back to it when the
+   * request names no page of this site, as a test's post without visiting
+   * the page first does; a same-site Referer still wins. The route is
+   * checked when it is registered: the page's placeholders must be its
+   * own, it may not also give a `form` option, and it must answer a form's
+   * post, not a page visit or JSON.
+   *
+   * @example
+   * action(form(BookSlot, { page: paths.slots }), (input) => ...)
+   */
+  readonly page?: DeclaredPath
+}
 
 /**
  * The input an action declares, with how it reads it: the schema the
- * request's fields decode with, and validateRequest's options.
+ * request's fields decode with, the options it reads them with, and the
+ * page its form is on.
  */
 export interface FormInputDeclaration<A, I> {
   readonly schema: S.Codec<A, I>
-  readonly options: ValidateOptions
+  readonly options: FormOptions
 }
 
 const declarations = new WeakSet<object>()
@@ -29,8 +52,9 @@ const declarations = new WeakSet<object>()
  * parameters, query and body with the schema before the handler runs, as
  * `validateRequest` does, and the route table records the schema. A form
  * that fails goes back to its page with the field errors, and a JSON client
- * gets a 422. The options are validateRequest's: `bodyLimit` for a form that
- * uploads large files, `request` for the sources it reads.
+ * gets a 422. The options are validateRequest's, but `redirectTo`:
+ * `bodyLimit` for a form that uploads large files, `request` for the
+ * sources it reads, and `page`, the page the form is on.
  *
  * @example
  * export const updateProject = action(form(UpdateProject), (input) =>
@@ -43,7 +67,7 @@ const declarations = new WeakSet<object>()
  *   })
  * )
  */
-export function form<A, I>(schema: S.Codec<A, I>, options: ValidateOptions = {}): FormInputDeclaration<A, I> {
+export function form<A, I>(schema: S.Codec<A, I>, options: FormOptions = {}): FormInputDeclaration<A, I> {
   const declared = { schema, options }
 
   declarations.add(declared)

@@ -32,8 +32,12 @@ An action declares its input as its first argument, `form(CreateProject)`,
 and its handler receives it decoded. The input is read after the route's
 layers, so a group's `RequireAuthLayer` or guard decides first, and before
 the handler runs: a form that fails goes back to its page with the errors,
-and the handler does not run. The route table records the schema, so
-`routes.toJson()` lists the fields each route accepts.
+and the handler does not run. `form(CreateProject, { page: paths.projects })`
+names that page for a request without a Referer, as
+[Flash and failed forms](forms.md#flash-messages-and-failed-forms) shows. The
+route table records the schema, so `routes.toJson()` lists the fields each
+route accepts. The table reads both from the action `action` returns: an
+action wrapped again, such as `.pipe(Effect.withSpan(...))`, loses them.
 
 The form reads route params, query and body, and decodes them with every key
 the schema does not declare removed. A body sent as JSON
@@ -74,7 +78,7 @@ raw body, such as an `Idempotency-Key` or a webhook signature, are read from
 for a read whose options or schema depend on what the action did first: a
 `redirectTo` built from a record it loaded, or a second schema chosen by the
 first answers, as the wizard and survey below show. `form`'s options are
-`validateRequest`'s.
+`validateRequest`'s, but `redirectTo`, and `page`.
 
 ## User input in
 

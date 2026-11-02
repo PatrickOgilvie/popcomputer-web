@@ -637,6 +637,35 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     })
   }
 
+  /** Create an error for a route given its form's page twice: on its action's form and as its form option. */
+  static formPageTwice(path: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route '${path}' gives its form's page twice: as form(Schema, { page }) on its action, and as its form option.`,
+      hint: "Keep form(Schema, { page }) and remove the route's form option, which is for an action that reads its input with validateRequest.",
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
+  /** Create an error for a form's page on a route whose failed forms never go back to a page. */
+  static formPageNotPosted(method: string, path: string, answers: 'page' | 'json'): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: answers === 'json'
+        ? `Route ${method.toUpperCase()} '${path}' answers JSON, so a failed form there answers 422 and goes back to no page: the page its form(Schema, { page }) gives is never used.`
+        : `Route ${method.toUpperCase()} '${path}' is a page visit, so a failed form there renders the error page and goes back to no page: the page its form(Schema, { page }) gives is never used.`,
+      hint: 'Remove page from the form, or register the action on the route its form posts to.',
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
+  /** Create an error for a form's page with a placeholder the route's own path cannot fill. */
+  static formPagePlaceholders(path: string, page: string, missing: readonly string[]): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route '${path}' gives its form the page '${page}', whose ${missing.map((name) => `{${name}}`).join(', ')} its own path does not name, so a failed form could not fill it.`,
+      hint: "Give a page whose placeholders are among the route's, or name them in the route's path.",
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
   /**
    * Create an error for a route whose records were asked for before a guard
    * that read its guarded one had let the visitor in.

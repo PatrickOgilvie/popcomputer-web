@@ -294,13 +294,18 @@ export class RouteRegistry {
 
   /**
    * The page a failed form on this route goes back to when the request names
-   * no page of this site: its `form` option, else its own path when a page
-   * is registered there. A JSON route has none.
+   * no page of this site: its action's `form(Schema, { page })` or its
+   * `form` option, else its own path when a page is registered there. A
+   * JSON route has none.
    */
   formPageOf(route: RouteRow): string | undefined {
     // A JSON route answers a failed form with a 422, never a page.
     if (route.answers === 'json') return undefined
-    if (route.form !== undefined) return route.form
+
+    // The page its action's form declares, or its form option: registration refuses both.
+    const declared = route.input?.options.page ?? route.form
+
+    if (declared !== undefined) return declared
 
     return this.routes.some((other) => other.method === 'get' && other.fullPath === route.fullPath)
       ? route.routePath

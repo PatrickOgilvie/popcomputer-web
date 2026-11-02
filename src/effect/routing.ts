@@ -392,7 +392,10 @@ export interface EffectRouteOptions {
    * the request names no page of this site as its Referer, as a test that
    * posts without visiting the page first does. Its placeholders come from
    * this route's own. Without it, a route whose path also has a page (a
-   * GET route) goes back to that page, and any other goes home.
+   * GET route) goes back to that page, and any other goes to `/`. An action
+   * that declares its input with `form(Schema)` gives its page there,
+   * `form(Schema, { page })`; this option is for one that reads its input
+   * with `validateRequest`.
    *
    * @example
    * ```typescript
@@ -1195,6 +1198,19 @@ export class EffectRouteBuilder<
     }
 
     const guards = this.layers.filter(isGuard).length
+    const input = actionInputOf(effect)
+    const page = input?.options.page
+
+    // The page a form is on: given once, on a route its form posts to, and
+    // filled from the route's own placeholders.
+    if (page !== undefined) {
+      if (options?.form !== undefined) throw RouteConfigurationError.formPageTwice(routePath).atStartup()
+      if (method === 'get' || this.answersJson) throw RouteConfigurationError.formPageNotPosted(method, routePath, this.answersJson ? 'json' : 'page').atStartup()
+
+      const missing = parseBindings(page).map((binding) => binding.param).filter((name) => !bindings.some((binding) => binding.param === name))
+
+      if (missing.length > 0) throw RouteConfigurationError.formPagePlaceholders(routePath, page, missing).atStartup()
+    }
 
     // The route's row: every fact its registration states, which its
     // handler is derived from.
@@ -1223,7 +1239,7 @@ export class EffectRouteBuilder<
       middleware: this.middlewares.length,
       params: options?.params,
       endpoint,
-      input: actionInputOf(effect),
+      input,
     })
 
     // Register with Hono - apply middlewares before the Effect handler

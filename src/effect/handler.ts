@@ -298,8 +298,8 @@ function signInUrl<E extends Env>(c: HonoContext<E>): string {
 
 /**
  * The same-origin page the request came from, else the page its route's form
- * is on (its `form` option, or its own path when that path has a page), else
- * the home page.
+ * is on (its action's `form(Schema, { page })` or its `form` option, or its
+ * own path when that path has a page), else `/`.
  */
 function previousUrl<E extends Env>(c: HonoContext<E>): string {
   return sameOriginReferer(c.req.header('Referer'), c.req.url) ?? openWebContext(c).formPage ?? '/'

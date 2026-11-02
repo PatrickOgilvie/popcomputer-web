@@ -32,6 +32,7 @@ import {
   dbQuery,
   dbTransaction,
   flash,
+  form,
   json,
   back,
   purgeCache,
@@ -39,6 +40,7 @@ import {
   redirect,
   type DatabaseError,
   type DatabaseService,
+  type FormOptions,
   render,
   share,
   shareProps,
@@ -290,6 +292,12 @@ web.routes.run(Effect.gen(function* () { return (yield* Unprovided).value }), { 
 
 // @ts-expect-error routes.run has no route path, so it binds no models
 web.routes.run(bound('project'), { REGION: 'weur', MAX_LINKS: '5' })
+
+// A form's page is one of the declared paths, never a URL; a failed read
+// that always goes elsewhere is validateRequest's redirectTo, not form's.
+expectType<Equals<NonNullable<FormOptions['page']>, '/projects/{project}' | '/members/{member}'>>()
+expectType<Equals<'redirectTo' extends keyof FormOptions ? true : false, false>>()
+export const changeRole = action(form(S.Struct({ role: S.String }), { page: paths.member }), () => redirect(paths.member, { member: 'm1' }))
 
 // Redirects and links name declared paths; a computed URL is a string.
 export const toProject = redirect(paths.project, { project: 'p1' })

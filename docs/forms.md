@@ -112,18 +112,26 @@ export default Index
 the next page the user sees, as Inertia's page `flash` field: the page a
 redirect renders, or the page the same request renders.
 
-A form submission that fails validation, whether in `validateRequest` or as a
-`ValidationError` the action fails with, redirects back (303) to the page it
-came from: the path of its same-origin `Referer`. A request without one, as a
-test's that posts without visiting the form first, goes to the page its route
-names with `form`, its placeholders filled from the route's own,
-`routes.post(paths.bookSlot, bookSlot, { form: paths.slots })`; a route whose
-path also has a page, such as `POST /slots` beside `GET /slots`, goes back to
-that page without naming it; and any other goes to `/`. A
-`ValidationError` with `redirectTo` goes to that page instead, such as a
-wizard's earlier step. That page renders with all of its own props and the
-field errors as `errors`; a form that names an Inertia error bag gets them
-under its name.
+A form submission that fails validation, whether in its action's `form`,
+`validateRequest` or as a `ValidationError` the action fails with, redirects
+back (303) to the first of:
+
+1. the `redirectTo` a `validateRequest` was given, such as a wizard's earlier
+   step built from the record the action loaded;
+2. the path of the request's same-origin `Referer`, the page it came from;
+3. the page its form is on, `action(form(BookSlot, { page: paths.slots }), ...)`,
+   its placeholders filled from the route's own. An action that reads its
+   input with `validateRequest` names it on its route instead,
+   `routes.post(paths.bookSlot, bookSlot, { form: paths.slots })`;
+4. the route's own path, when a page is registered there, such as
+   `POST /slots` beside `GET /slots`;
+5. `/`.
+
+A request without a Referer, as a test's that posts without visiting the form
+first, reaches 3. `setupWeb` refuses a page its route's path cannot fill, one
+given twice, and one on a route no form posts to. That page renders with all
+of its own props and the field errors as `errors`; a form that names an
+Inertia error bag gets them under its name.
 
 Errors and flash values travel in a short-lived `HttpOnly` cookie that the
 next page to render reads and clears. A request that only redirects, such as
