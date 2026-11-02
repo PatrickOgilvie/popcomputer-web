@@ -65,6 +65,7 @@ export {
   InvalidAuthSession,
   RouteConfigurationError,
   ConfigurationError,
+  QueueSendError,
   Redirect,
   type AppError,
 } from './errors.js'
@@ -94,6 +95,7 @@ export { effectBridge, type EffectBridgeConfig } from './bridge.js'
 
 // Actions
 export { action, form, type FormInputDeclaration, type FormOptions } from './action.js'
+export { queue, type QueueBindingName, type QueueDeclaration, type QueueSendOptions } from './queue.js'
 export type { EndpointAction } from './endpoint-action.js'
 
 // Database operations

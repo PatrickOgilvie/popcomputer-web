@@ -83,6 +83,7 @@ import {
 } from './route-registry.js'
 import { layerFactOf } from './layer-facts.js'
 import { actionInputOf } from './action.js'
+import { isQueueDeclaration, type QueueDeclaration } from './queue.js'
 
 /**
  * Type for Effect-based route handlers.
@@ -748,19 +749,21 @@ export class EffectRouteBuilder<
   }
 
   /**
-   * The Worker's `queue` handler: decodes each message's body with `schema`
-   * and runs the Effect `handle` returns for it with the application's
-   * services, one message at a time. A message whose Effect succeeds is
-   * acknowledged; one whose body does not decode, or whose Effect fails, is
-   * logged and left for the queue to retry, and after its retries the queue
-   * drops it or moves it to its dead-letter queue.
+   * The Worker's `queue` handler: decodes each message's body with the
+   * queue's declaration, from `queue(binding, Schema)`, whose `send` encoded
+   * it as JSON, or with a schema for a queue something else sends to, and
+   * runs the Effect `handle` returns for it with the application's services,
+   * one message at a time. A message whose Effect succeeds is acknowledged;
+   * one whose body does not decode, or whose Effect fails, is logged and
+   * left for the queue to retry, and after its retries the queue drops it or
+   * moves it to its dead-letter queue.
    *
    * @example
-   * const Reminder = S.Struct({ orderId: S.String })
+   * export const reminders = queue('REMINDERS', S.Struct({ orderId: S.String }))
    *
    * export default {
    *   fetch: app.fetch,
-   *   queue: routes.queue(Reminder, (reminder) => sendReminder(reminder.orderId)),
+   *   queue: routes.queue(reminders, (reminder) => sendReminder(reminder.orderId)),
    * }
    *
    * // In a test, with testBatch from @popcomputer/web/testing:
@@ -769,10 +772,12 @@ export class EffectRouteBuilder<
    * expect(batch.acked()).toHaveLength(1)
    */
   queue<A, I, Err, R>(
-    schema: S.Codec<A, I, never, never>,
+    // One parameter rather than an overload, so a handler's missing service is named as for any job.
+    source: QueueDeclaration<A, I> | S.Codec<A, I, never, never>,
     handle: (body: A, message: QueueMessageInfo) => Effect.Effect<unknown, Err, R> & RunCheck<R | Needs, Services>
   ): (batch: QueueBatch, env: Partial<E['Bindings']>, executionCtx?: ExecutionContext) => Promise<void> {
-    const decode = S.decodeUnknownEffect(schema)
+    // A declared queue's messages left as JSON, encoded by its schema.
+    const decode = isQueueDeclaration(source) ? S.decodeUnknownEffect(S.toCodecJson(source.schema)) : S.decodeUnknownEffect(source)
 
     return async (batch, env, executionCtx) => {
       for (const message of batch.messages) {

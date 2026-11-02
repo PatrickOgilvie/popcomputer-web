@@ -225,9 +225,11 @@ TypeScript example here and in `docs/` type-checks against the package.
 10. **Run work that outlives the response with `background('name', effect)`.**
     Give the Worker's `scheduled` and `queue` handlers as
     `routes.scheduled((event) => effect)` and
-    `routes.queue(MessageSchema, (message) => effect)`, which run the work with
-    the application's services, never through a hidden route; test them with
-    `testBatch` and `testEnv`.
+    `routes.queue(reminders, (message) => effect)`, which run the work with
+    the application's services, never through a hidden route. Declare each
+    queue once, `queue('REMINDERS', MessageSchema)` in `src/queues.ts`, and
+    send through it, `yield* reminders.send(message)`, never through the
+    binding; test them with `testQueue`, `testBatch` and `testEnv`.
 11. **Give `cache: 'private'` to routes whose page reads something the framework
     cannot see,** such as an external `fetch()` or the current time, and
     `cache: 'no-store'` to one no cache may keep, such as a signed preview. Pages that

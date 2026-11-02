@@ -8,7 +8,7 @@ before serving, and scripts check it locally and before a deploy.
 
 ## Declaring them
 
-The Quick start's `src/env.ts`:
+The Quick start's `src/env.ts`, with a queue's binding beside the others:
 
 ```ts
 import { Schema as S } from 'effect'
@@ -28,6 +28,8 @@ export const env = defineEnv({
 export type Bindings = EnvBindings<typeof env> & {
   KV: KVNamespace
   SIGN_IN_LIMITER: RateLimit
+  // A Queues producer, as wrangler.jsonc's queues.producers binds it.
+  REMINDERS: Queue
 }
 
 export type Env = { Bindings: Bindings }

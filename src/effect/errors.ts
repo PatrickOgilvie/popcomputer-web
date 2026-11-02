@@ -1001,6 +1001,16 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
     })
   }
 
+  /** Create an error for a queue declared on a binding the Worker does not have. */
+  static queueBindingMissing(binding: string): ConfigurationError {
+    return new ConfigurationError({
+      message: `The queue is declared on the binding ${binding}, which the Worker does not have.`,
+      hint: `Add a producer for the queue to wrangler.jsonc's "queues", with "binding": "${binding}", or give testEnv one in a test, such as testQueue().`,
+      service: binding,
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
   /**
    * Create an error for missing auth configuration.
    */
@@ -1067,6 +1077,7 @@ export type AppError =
   | ConfigurationError
   | CacheError
   | ResponseCachePurgeError
+  | QueueSendError
   | Config.ConfigError
 
 /**
@@ -1087,6 +1098,30 @@ export class CacheError extends Schema.TaggedError<CacheError>()('CacheError', {
   toStructured(context: ErrorContext = emptyContext()): StructuredError {
     return structured(ErrorCodes.SVC_702_CACHE_UNAVAILABLE, { reason: this.reason }, context, {
       message: this.reason,
+    })
+  }
+}
+
+/**
+ * Queue Send Error - a queue refused a message `send` or `sendBatch` gave
+ * it, as when Queues is unavailable. The boundary answers it with the error
+ * page and a 503, as another service's failure, and the error observer sees
+ * it; the driver's words reach only development pages and logs.
+ */
+export class QueueSendError extends Schema.TaggedError<QueueSendError>()('QueueSendError', {
+  binding: Schema.String,
+  cause: Schema.Unknown,
+}) implements StructuredErrorCapable {
+  get httpStatus(): number {
+    return 503
+  }
+
+  toStructured(context: ErrorContext = emptyContext()): StructuredError {
+    const cause = describeCause(this.cause)
+    const message = `The queue bound as ${this.binding} did not take the message.`
+
+    return structured(ErrorCodes.SVC_704_QUEUE_SEND_FAILED, { binding: this.binding }, context, {
+      message: cause ? `${message} ${cause}` : message,
     })
   }
 }

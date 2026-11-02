@@ -93,6 +93,7 @@ export const ErrorCodes = {
   SVC_701_SERVICE_ERROR: 'WEB_SVC_701_SERVICE_ERROR',
   SVC_702_CACHE_UNAVAILABLE: 'WEB_SVC_702_CACHE_UNAVAILABLE',
   SVC_703_CACHE_PURGE_FAILED: 'WEB_SVC_703_CACHE_PURGE_FAILED',
+  SVC_704_QUEUE_SEND_FAILED: 'WEB_SVC_704_QUEUE_SEND_FAILED',
 
   // Internal Errors (INT)
   INT_800_UNEXPECTED: 'WEB_INT_800_UNEXPECTED',
@@ -515,6 +516,16 @@ export const ErrorCatalog = {
     title: 'Cache Purge Failed',
     messageTemplate: 'Workers Cache did not purge the requested entries.',
     httpStatus: 500,
+    defaultFixes: [],
+  },
+
+  [ErrorCodes.SVC_704_QUEUE_SEND_FAILED]: {
+    code: ErrorCodes.SVC_704_QUEUE_SEND_FAILED,
+    tag: 'QueueSendError',
+    category: 'service',
+    title: 'Queue Send Failed',
+    messageTemplate: 'The queue bound as {binding} did not take the message.',
+    httpStatus: 503,
     defaultFixes: [],
   },
 

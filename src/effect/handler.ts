@@ -161,6 +161,7 @@ const ANSWERS = {
   ConfigurationError: 'error-page',
   CacheError: 'error-page',
   ResponseCachePurgeError: 'error-page',
+  QueueSendError: 'error-page',
   ConfigError: 'error-page',
 } satisfies { readonly [Tag in AppError['_tag']]: Answer }
 

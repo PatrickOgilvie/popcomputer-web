@@ -85,7 +85,8 @@ and the lint rules name it where an action reaches for something else.
 | Check vars and secrets in a script, before a deploy | `checkEnv(env, values)` | [Vars and secrets](env.md#checking-them-before-a-deploy) |
 | Read a var or a secret | `yield* env.config.NAME`, decoded by its schema in `src/env.ts` | [Reading them](env.md#reading-them) |
 | Work after the response | `background('name', effect)` | [Work after the response](background.md#work-after-the-response) |
-| Run a Cron Trigger or a Queue consumer | `routes.scheduled(job)`, `routes.queue(Schema, handle)` | [Scheduled and queued work](background.md#scheduled-and-queued-work) |
+| Run a Cron Trigger or a Queue consumer | `routes.scheduled(job)`, `routes.queue(queue, handle)` | [Scheduled and queued work](background.md#scheduled-and-queued-work) |
+| Send a message to a queue | `queue('REMINDERS', Schema)` in `src/queues.ts`, then `yield* reminders.send(message)` | [Scheduled and queued work](background.md#scheduled-and-queued-work) |
 | Cache computed data | `cache(key, effect, Schema, { ttl, tags })`, with `kvCache` in `web.services` | [The data cache](data-cache.md) |
 | Cache a public page for a time | the route's `cache` option | [Workers Cache](page-cache.md#time-based-caching-with-workers-cache) |
 | Refresh cached pages and data after a write | `purges: true`, `purgeCache(recordCacheTag(table, id))` | [Workers Cache](page-cache.md#time-based-caching-with-workers-cache) |
@@ -107,7 +108,7 @@ and the lint rules name it where an action reaches for something else.
 | Fuzz a lifecycle over sequences of its steps | `stepsOf(step, { maxLength })`, checked with `fuzz` | [Steps over lasting state](fuzzing.md#steps-over-lasting-state) |
 | Fuzz a limit at its edge | the limit as a parameter the test sets from the input, `pick([0, -1, 1])` from what it needs | [Fuzzing at the limits](fuzz-limits.md) |
 | Sign in through an OAuth provider in a test | `testOAuthProvider({ ... })`, then `signIn(browser, path, person)` | [Signing in with an OAuth provider](auth-plugins.md#signing-in-with-an-oauth-provider) |
-| Run a Queue consumer | `testBatch(bodies)` | [Scheduled and queued work](background.md#scheduled-and-queued-work) |
+| Run a Queue consumer, and see what was sent | `testBatch(bodies)`, `testQueue()` | [Scheduled and queued work](background.md#scheduled-and-queued-work) |
 
 **The agent fence**
 

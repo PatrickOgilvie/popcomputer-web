@@ -15,6 +15,7 @@
  */
 import { Context, Effect, Layer, Schema as S, Struct } from 'effect'
 import { Hono } from 'hono'
+import type { Queue } from '@cloudflare/workers-types'
 import { bigint, boolean, integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 import { betterAuthLogoutAction, betterAuthSession } from '@popcomputer/web/auth'
 import { tableSchema } from '@popcomputer/web/schema'
@@ -41,11 +42,13 @@ import {
   type DatabaseError,
   type DatabaseService,
   type FormOptions,
+  queue,
+  type QueueBindingName,
   render,
   share,
   shareProps,
 } from '@popcomputer/web/effect'
-import { readPage, signedIn, testEnv } from '@popcomputer/web/testing'
+import { readPage, signedIn, testEnv, testQueue } from '@popcomputer/web/testing'
 import { href } from '@popcomputer/web/paths'
 import { call, endpoint } from '@popcomputer/web/endpoint'
 
@@ -105,6 +108,7 @@ type Env = {
     readonly REGION: string
     readonly MAX_LINKS: string
     readonly SIGN_IN_LIMITER: { limit(options: { key: string }): Promise<{ success: boolean }> }
+    readonly REMINDERS: Queue<{ readonly orderId: string }>
   }
 }
 
@@ -354,6 +358,12 @@ export const flashed = async (response: Response) => {
   expectType<Equals<typeof page.props.project.createdAt, string>>()
   return message
 }
+
+// A queue is declared on a queue binding, never on a var or another binding,
+// and a test hands the application a test queue as that binding.
+expectType<Equals<QueueBindingName, 'REMINDERS'>>()
+export const reminders = queue('REMINDERS', S.Struct({ orderId: S.String }))
+testEnv(signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' }), { REMINDERS: testQueue() })
 
 // Fields an application adds have no test default, so signedIn requires them.
 signedIn({ id: 'user-1', role: 'owner', teamId: 'team-1' })

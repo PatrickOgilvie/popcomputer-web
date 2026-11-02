@@ -15,3 +15,13 @@ interface KVNamespace {
 interface RateLimit {
   limit(options: { key: string }): Promise<{ success: boolean }>
 }
+
+// Cloudflare's Queues producer binding, as `queues.producers` in wrangler.jsonc declares it.
+interface Queue<Body = unknown> {
+  metrics(): Promise<{ backlogCount: number; backlogBytes: number; oldestMessageTimestamp?: Date }>
+  send(message: Body, options?: { contentType?: 'text' | 'bytes' | 'json' | 'v8'; delaySeconds?: number }): Promise<unknown>
+  sendBatch(
+    messages: Iterable<{ body: Body; contentType?: 'text' | 'bytes' | 'json' | 'v8'; delaySeconds?: number }>,
+    options?: { delaySeconds?: number }
+  ): Promise<unknown>
+}

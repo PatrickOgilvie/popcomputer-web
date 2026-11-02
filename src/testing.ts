@@ -898,3 +898,76 @@ export function testRateLimiter(options: { readonly limit?: number; readonly per
     },
   }
 }
+
+/** A message a test queue was sent: its body, as a consumer receives it, and how long it is held back. */
+export interface SentQueueMessage {
+  readonly body: unknown
+  readonly delaySeconds: number | undefined
+}
+
+/** What a send answers, as Cloudflare's binding does: the queue's backlog, which a test queue keeps none of. */
+const SENT = { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } }
+
+/**
+ * A Cloudflare Queues producer binding for tests: it keeps each message it
+ * is sent, its body through JSON as a JSON message travels, for `testBatch`
+ * to hand the Worker's `queue` handler. Give it in the test's bindings under
+ * the binding's name; `fail()` makes the sends after it reject, as a queue
+ * that is unavailable does.
+ *
+ * @example
+ * const queue = testQueue()
+ * await app.request('/orders', post, testEnv(signedIn(ada), { ...testBindings, REMINDERS: queue }))
+ * await worker.queue(testBatch(queue.sent()), testEnv(fakeMailer, testBindings))
+ */
+export class TestQueue {
+  readonly #messages: SentQueueMessage[] = []
+  #failure: unknown = undefined
+
+  async send(body: unknown, options: { readonly contentType?: string; readonly delaySeconds?: number } = {}): Promise<typeof SENT> {
+    this.#keep([{ body, delaySeconds: options.delaySeconds }])
+
+    return SENT
+  }
+
+  async sendBatch(
+    messages: Iterable<{ readonly body: unknown; readonly contentType?: string; readonly delaySeconds?: number }>,
+    options: { readonly delaySeconds?: number } = {}
+  ): Promise<typeof SENT> {
+    this.#keep([...messages].map((message) => ({ body: message.body, delaySeconds: message.delaySeconds ?? options.delaySeconds })))
+
+    return SENT
+  }
+
+  async metrics(): Promise<{ readonly backlogCount: number; readonly backlogBytes: number }> {
+    return { backlogCount: this.#messages.length, backlogBytes: 0 }
+  }
+
+  /** The bodies it was sent, in order, as `testBatch` takes them. */
+  sent(): unknown[] {
+    return this.#messages.map((message) => message.body)
+  }
+
+  /** The messages it was sent, with how long each is held back. */
+  messages(): ReadonlyArray<SentQueueMessage> {
+    return [...this.#messages]
+  }
+
+  /** Reject every later send with `error`, as a queue that is unavailable does. */
+  fail(error: unknown = new Error('The queue is unavailable.')): void {
+    this.#failure = error
+  }
+
+  #keep(messages: ReadonlyArray<SentQueueMessage>): void {
+    if (this.#failure !== undefined) throw this.#failure
+
+    for (const message of messages) {
+      this.#messages.push({ body: JSON.parse(JSON.stringify(message.body)) as unknown, delaySeconds: message.delaySeconds })
+    }
+  }
+}
+
+/** A Cloudflare Queues producer binding for tests: see {@link TestQueue}. */
+export function testQueue(): TestQueue {
+  return new TestQueue()
+}
