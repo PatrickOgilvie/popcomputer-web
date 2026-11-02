@@ -535,6 +535,14 @@ Done in part. Two items are done, two are not:
    so.
 2. **Malformed route parameters answer `NotFoundError`** (step 5) instead of
    Hono's bare 404. Recommendation: yes, as a fix; it matches every other 404.
+
+   Taken on 2026-11-02: shipped. The route checks the params before it
+   builds its runtime, as before, so no guard or action sees a malformed
+   one. It answers through `renderErrorResponse` and `finishResponse`
+   rather than `c.notFound()`, decoding with `S.decodeUnknownExit` instead
+   of a runtime. setupWeb's applications already got that page from their
+   not-found handler. A stack composed by hand got Hono's plain text and
+   now gets the framework's 404; `tests/malformed-params.test.ts` pins both.
 3. **Hand-composed `routes.run`.** Keep the request path for builders without
    a setup until 2.0 (recommended), or drop it in 1.x.
 

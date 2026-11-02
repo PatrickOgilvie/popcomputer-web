@@ -28,6 +28,7 @@ What an application may need to change: one that copied `docs/auth.md`'s verify-
 
 ### Fixed
 
+- A path parameter its binding's column cannot hold, such as `/projects/abc` for an integer id, answers the framework's 404, the error page or the JSON envelope, on a stack composed without setupWeb's error handlers too, where Hono's plain `404 Not Found` answered it. It is still answered before any guard or the action runs, and setupWeb's applications see the same 404 page as before.
 - A route writes the cookies and headers its action queued, with `cookie(...)` or `responseHeader`, on a stack composed without `web()`, where only `web()` wrote them and they were lost. On every stack a route now finishes its response before its `cache` option reads it, so the policy sees each cookie the response carries rather than a prediction of what `web()` would add.
 - `routes.run`, `routes.scheduled` and `routes.queue` keep the scoped services a builder was given with `provide` open until the background work the job started has settled, as a route does. They closed them when the job's Effect ended, so work the job handed the Worker with `background()` read a closed service, such as a released connection.
 - `betterAuthLogoutAction` expires the name `auth.sessionCookie` gives, and its `__Secure-` and `__Host-` forms, when Better Auth's sign-out expires no cookie. It reached only Better Auth's default names unless it was given `cookieNames`, so an application that renamed its session cookie kept the browser signed in when Better Auth could not be reached.

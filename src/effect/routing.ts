@@ -7,7 +7,7 @@
 import { Cause, Effect, Exit, Layer, ManagedRuntime, Schema as S } from 'effect'
 import { Context as HonoRequestContext } from 'hono'
 import type { Context as HonoContext, ExecutionContext, Hono, MiddlewareHandler, Env } from 'hono'
-import { runEffectWithRuntime } from './handler.js'
+import { renderErrorResponse, runEffectWithRuntime } from './handler.js'
 import {
   bindingsConfiguration,
   buildContextLayer,
@@ -507,6 +507,15 @@ function purgingOnSuccess<Err, R>(
   )
 }
 
+/** Whether the request's path parameters decode with the route's params schema, when it has one. */
+function paramsMatch<E extends Env>(c: HonoContext<E>, schema: S.Codec<unknown, unknown, never, never> | undefined): boolean {
+  if (schema === undefined) return true
+
+  const params = c.req.param()
+
+  return Exit.isSuccess(S.decodeUnknownExit(schema)(S.is(S.String)(params) ? {} : params))
+}
+
 /**
  * Whether a route's response depends on what no shared cache's key holds:
  * it is someone's own, or producing it read a header, a cookie or request
@@ -945,31 +954,6 @@ export class EffectRouteBuilder<
     return path === '/' ? this.pathPrefix : `${this.pathPrefix}${path}`
   }
 
-  /**
-   * Validate route params against a schema.
-   */
-  // oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits request parsing and runtime completion, then maps the result to an HTTP response.
-  private async ensureParams(
-    c: HonoContext<E>,
-    schema?: S.Codec<unknown, unknown, never, never>
-  ): Promise<Response | null> {
-    if (!schema) return null
-
-    const rawParams = c.req.param()
-
-    const params: Record<string, string> =
-      S.is(S.String)(rawParams) ? {} : rawParams
-
-    const decode = S.decodeUnknownEffect(schema)
-    const exit = await Effect.runPromiseExit(decode(params))
-
-    if (Exit.isFailure(exit)) {
-      return c.notFound()
-    }
-
-    return null
-  }
-
   private createHandler<R>(
     effect: Effect.Effect<Response | Redirect, AppError, R>,
     bindings: ParsedBinding[],
@@ -1025,9 +1009,12 @@ export class EffectRouteBuilder<
 
       const routeModels = routeModelsOf(c)
       const { modelBindings } = routeModels
-      const validation = await this.ensureParams(c, routeModels.paramsSchema)
-
-      if (validation) return validation
+      // A parameter its column cannot hold names no record: the framework's
+      // 404 answers it, as the page or the JSON envelope, before any guard
+      // or the action runs.
+      if (!paramsMatch(c, routeModels.paramsSchema)) {
+        return finishResponse(c, await renderErrorResponse(new NotFoundError({ resource: 'page' }), c, { ...setupOf(c).errors, log: false }))
+      }
 
       // The request's services, which effectBridge readied. A request
       // service that fails to build, such as one reading a missing binding
