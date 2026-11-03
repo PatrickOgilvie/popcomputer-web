@@ -14,6 +14,7 @@ the application's own records and rules.
 | `fuzzRequest({ paths, routes, params, people })` | requests to the application's declared paths, and a form for each route that writes, from each person and a signed-out visitor |
 | `ownership(routes, table)` | the keys `strangerWrites` reads a table's rows by: its primary key and the column its binding's `ownedBy` names |
 | `sendFuzzRequest(app, sent, env)` | sends one through the application, as `app.request` does |
+| `fuzzSession({ ...requestOptions, creates })`, `startFuzzSession(app, { paths, env, owners, created })` | sequences of those requests to one database, where a step names records earlier steps created, and a model of who owns each |
 | `brokenPromises`, `leaks`, `strangerWrites`, `refusedWrites` | how an answer broke a rule, as a list empty when it kept them |
 | `realmGuard()` | what a call wrote onto the realm's built-ins, such as `Object.prototype` |
 
@@ -161,6 +162,10 @@ The rules each answer keeps:
 - `refusedWrites`: a 4xx answer changed no rows. Refusing everything keeps
   every rule, so also check after `fuzz` that each route that writes
   answered 2xx or wrote: a failed form's 303 back reaches nothing.
+
+Each request starts from the database the test seeded. To send sequences of
+them, each naming the records earlier ones created, see
+[Fuzzing sessions](fuzz-sessions.md).
 
 ## Building on it
 

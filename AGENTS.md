@@ -257,7 +257,10 @@ here, as the demo's does.
     `refusedWrites`, as `docs/fuzzing.md` shows, and add the application's
     own rules beside them; give each new placeholder its values, and
     `forms` only a request it cannot generate, such as a file's. Read who
-    reaches each route with `routes.access()`. Check any other rule on generated
+    reaches each route with `routes.access()`. Send sequences of them to one
+    database with `fuzzSession` and `startFuzzSession`, as
+    `docs/fuzz-sessions.md` shows, naming in `creates` each placeholder
+    whose records an action creates. Check any other rule on generated
     inputs with `fuzz(arbitrary, holds)`, and a lifecycle on sequences of
     its steps from `stepsOf(step, { maxLength })`, not Effect's
     `Arbitrary.array`, whose sequences hold two or three steps.

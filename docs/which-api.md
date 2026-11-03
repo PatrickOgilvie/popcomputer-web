@@ -105,6 +105,7 @@ and the lint rules name it where an action reaches for something else.
 | Use the production database family | PGlite, migrated with `applyMigrations`, or a D1 database of each test's own from `testD1` | [A database for tests](test-database.md) |
 | Check a rule on generated inputs | `fuzz(arbitrary, holds)` from `@popcomputer/web/fuzz` | [Fuzzing](fuzzing.md) |
 | Fuzz the application's routes | `fuzzRequest({ paths, routes, params, people })`, `sendFuzzRequest`, and `brokenPromises`, `leaks`, `strangerWrites` with `ownership(routes, table)`, `refusedWrites` | [Requests to the application](fuzzing.md#requests-to-the-application) |
+| Fuzz sequences of requests against one database, each naming records earlier ones created | `fuzzSession({ ...requestOptions, creates })`, `startFuzzSession(app, { paths, env, owners, created })` | [Fuzzing sessions](fuzz-sessions.md) |
 | Fuzz a lifecycle over sequences of its steps | `stepsOf(step, { maxLength })`, checked with `fuzz` | [Steps over lasting state](fuzzing.md#steps-over-lasting-state) |
 | Fuzz a limit at its edge | the limit as a parameter the test sets from the input, `pick([0, -1, 1])` from what it needs | [Fuzzing at the limits](fuzz-limits.md) |
 | Sign in through an OAuth provider in a test | `testOAuthProvider({ ... })`, then `signIn(browser, path, person)` | [Signing in with an OAuth provider](auth-plugins.md#signing-in-with-an-oauth-provider) |

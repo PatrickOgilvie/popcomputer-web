@@ -36,6 +36,7 @@ const request = fuzzRequest({
     task: ['t1', 't2'],
     showcase: ['p2', 'p1', 'g1'],
     organization: ['acme', 'globex'],
+    note: ['missing'],
   },
   people: ['ada', 'grace'],
 })
@@ -51,8 +52,12 @@ const writes = routes.getRegistry().all()
 
 const WRITE_STATEMENT = /^\s*(insert|update|delete)\b/i
 
-/** How many times each route that writes reached its action: answered 2xx, or wrote. */
-const reached = new Map(writes.map((write) => [write.route, 0]))
+/**
+ * How many times each route that writes reached its action: answered 2xx,
+ * or wrote. Editing a note is left out: its form names the note in its body,
+ * and only a session's step makes one, which sessions.test.ts sends.
+ */
+const reached = new Map(writes.filter((write) => write.route !== 'PUT /projects/{project}/notes').map((write) => [write.route, 0]))
 let cases = 0
 
 const envFor = (person: Person | null) =>
@@ -73,7 +78,7 @@ async function send(sent: FuzzRequest<Person>): Promise<Refusal> {
   const status = answer.response.status
   const wrote = statements.some((statement) => WRITE_STATEMENT.test(statement))
 
-  if (write !== undefined && ((status >= 200 && status < 300) || wrote)) reached.set(write.route, (reached.get(write.route) ?? 0) + 1)
+  if (write !== undefined && reached.has(write.route) && ((status >= 200 && status < 300) || wrote)) reached.set(write.route, (reached.get(write.route) ?? 0) + 1)
 
   return [
     ...brokenPromises(sent, answer),
@@ -95,8 +100,10 @@ describe('requests made from the route table', () => {
       'PATCH /projects/{project}',
       'POST /orders',
       'POST /projects',
+      'POST /projects/{project}/notes',
       'POST /sign-in',
       'PUT /projects/{project}',
+      'PUT /projects/{project}/notes',
     ])
   }, fuzzTimeout)
 })
