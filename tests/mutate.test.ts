@@ -1,11 +1,12 @@
 import { expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { changedLines, findMutants, formatReport, mutate, type Result, score } from '../scripts/mutate.js'
 
 const fixture = join(import.meta.dir, 'fixtures', 'mutate', 'tiny.ts')
+const effectFixture = join(import.meta.dir, 'fixtures', 'mutate', 'effect.ts')
 const script = join(import.meta.dir, '..', 'scripts', 'mutate.ts')
 
 // The fixture's tests, which leave some of its mutants alive on purpose: no
@@ -51,6 +52,22 @@ test('positive', () => {
 })
 `,
 }
+
+// The Effect fixture's tests, which make take fail only as Missing, and
+// takeTwice never.
+const SHOP_TESTS = `import { expect, test } from 'bun:test'
+import { Effect } from 'effect'
+import { take, takeTwice } from '../src/shop'
+
+test('take', async () => {
+  expect(await Effect.runPromise(take('tea'))).toBe(1)
+  expect((await Effect.runPromise(Effect.flip(take('scone'))))._tag).toBe('Missing')
+})
+
+test('takeTwice', async () => {
+  expect(await Effect.runPromise(takeTwice('tea'))).toBe(1)
+})
+`
 
 /** A repository of the given files, by default the fixture as src/tiny.ts and its tests. */
 function tinyRepo(files: Record<string, string> = {}, tiny = true): string {
@@ -133,6 +150,44 @@ test('mutate runs each mutant against the tests that reach it and reports the on
 
     // The working tree is never edited.
     expect(readFileSync(join(root, 'src', 'tiny.ts'), 'utf8')).toBe(readFileSync(fixture, 'utf8'))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 60_000)
+
+test('findMutants makes each function that returns an Effect recover from each tagged error it declares', async () => {
+  const mutants = await findMutants(join(import.meta.dir, '..'), ['tests/fixtures/mutate/effect.ts'])
+  const recovered = mutants.filter((mutant) => mutant.operator === 'swallow-tag')
+
+  // takeTwice's callback has none of its own: its failures flow out through
+  // takeTwice's. count declares no error.
+  expect(recovered.map((mutant) => `${mutant.line} ${mutant.description}`)).toEqual([
+    '9 Missing recovered as success',
+    '9 SoldOut recovered as success',
+    '16 Missing recovered as success',
+    '16 SoldOut recovered as success',
+  ])
+  expect(recovered[2].replacement).toBe(
+    '(take(item).pipe(Effect.flatMap(() => take(item)))).pipe(Effect.catchTag("Missing", () => Effect.succeed(undefined)))'
+  )
+  expect(recovered[0].replacement).toStartWith('{ return (() => {\n  const count = stock.get(item)')
+})
+
+test('mutate reports an error a function recovers from where no test makes it fail that way', async () => {
+  const root = tinyRepo({ 'src/shop.ts': readFileSync(effectFixture, 'utf8'), 'tests/shop.test.ts': SHOP_TESTS, '.gitignore': 'node_modules\n' }, false)
+  symlinkSync(join(import.meta.dir, '..', 'node_modules'), join(root, 'node_modules'))
+
+  try {
+    const run = await mutate({ root, files: ['src/shop.ts'], workers: 2 })
+    const recovered = run.results.filter((result) => result.operator === 'swallow-tag')
+
+    expect(recovered.map((result) => `${result.line} ${result.description}: ${result.status}`)).toEqual([
+      '9 Missing recovered as success: killed',
+      '9 SoldOut recovered as success: survived',
+      '16 Missing recovered as success: survived',
+      '16 SoldOut recovered as success: survived',
+    ])
+    expect(formatReport(run)).toContain('  src/shop.ts:9  swallow-tag  SoldOut recovered as success\n      export function take(')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

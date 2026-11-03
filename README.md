@@ -254,6 +254,9 @@ After changing `AGENTS.md`, regenerate the skill with
 bugs (mutants) in the `src/` lines changed since `HEAD`, or `--base <ref>`,
 or in every line of the `src/` files it is given, runs each against the test
 files whose coverage reaches its line, and lists the ones no test catches.
+Besides syntax bugs, such as a flipped comparison or a dropped guard, it makes
+each function that returns an Effect recover from each tagged error its type
+declares, which survives where no test makes the function fail that way.
 `--fail-under <percent>` makes it exit non-zero below that score.
 
 The repository verifies runtime behavior, strict TypeScript and module

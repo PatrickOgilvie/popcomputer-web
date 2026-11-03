@@ -4,7 +4,10 @@
  * AGENTS.md rule 12 says a new test must fail when the behaviour it covers is
  * reverted. This checks it mechanically: it plants one small bug (a mutant) at
  * a time in src/ files, runs the test files whose coverage reaches the
- * mutant's line, and reports every mutant the tests let through.
+ * mutant's line, and reports every mutant the tests let through. Besides
+ * small syntax bugs, such as a flipped comparison or a dropped guard, it
+ * makes each function that returns an Effect recover from each tagged error
+ * its type declares, which survives when no test makes it fail that way.
  *
  * Run: bun run mutate [files...] [--base <ref>] [--fail-under <percent>]
  *                     [--workers <n>] [--timeout <seconds>]
@@ -33,14 +36,19 @@ import { availableParallelism, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import {
+  isArrowFunction,
   isBinaryExpression,
   isBlock,
   isBreakStatement,
   isCallExpression,
   isContinueStatement,
+  isFunctionDeclaration,
+  isFunctionExpression,
   isIdentifier,
   isIfStatement,
   isInterfaceDeclaration,
+  isMethodDeclaration,
+  isParenthesizedExpression,
   isPrefixUnaryExpression,
   isPropertyAccessExpression,
   isReturnStatement,
@@ -54,10 +62,18 @@ import {
   SyntaxKind,
 } from 'typescript/unstable/ast'
 // The repo's typescript is tsgo, whose compiler runs in Go; this API asks it
-// for the syntax tree.
-import { API } from 'typescript/unstable/async'
+// for the syntax tree, and its checker for the errors an Effect declares.
+import { API, type Checker } from 'typescript/unstable/async'
 
-export type Operator = 'negate-eq' | 'boundary' | 'logic' | 'drop-not' | 'bool' | 'skip-guard' | 'some-every'
+export type Operator =
+  | 'negate-eq'
+  | 'boundary'
+  | 'logic'
+  | 'drop-not'
+  | 'bool'
+  | 'skip-guard'
+  | 'some-every'
+  | 'swallow-tag'
 
 /** One planted bug: the text from `start` to `end` replaced. */
 export interface Mutant {
@@ -72,6 +88,8 @@ export interface Mutant {
   readonly operator: Operator
   /** Its line of source, trimmed. */
   readonly source: string
+  /** What it does, where the text it replaces is too long to show. */
+  readonly description?: string
 }
 
 export type Status = 'killed' | 'survived' | 'timed out'
@@ -125,9 +143,8 @@ function exits(statement: Statement): boolean {
     isBreakStatement(statement)
 }
 
-/** Every mutant of one parsed file. */
-export function mutantsOf(file: string, sourceFile: SourceFile): Mutant[] {
-  const text = sourceFile.text
+/** Where each line of a text starts, and the line a position is on. */
+function lineIndex(text: string) {
   const lineStarts = [0]
   for (let index = text.indexOf('\n'); index !== -1; index = text.indexOf('\n', index + 1)) lineStarts.push(index + 1)
 
@@ -141,6 +158,14 @@ export function mutantsOf(file: string, sourceFile: SourceFile): Mutant[] {
     }
     return low + 1
   }
+
+  return { lineStarts, lineOf }
+}
+
+/** Every mutant of one parsed file. */
+export function mutantsOf(file: string, sourceFile: SourceFile): Mutant[] {
+  const text = sourceFile.text
+  const { lineStarts, lineOf } = lineIndex(text)
 
   const mutants: Mutant[] = []
   const add = (start: number, end: number, replacement: string, operator: Operator) => {
@@ -189,6 +214,112 @@ export function mutantsOf(file: string, sourceFile: SourceFile): Mutant[] {
   return mutants
 }
 
+/** A function with a body of its own. */
+const isFunction = (node: Node): node is Node & { readonly body: Node } =>
+  (isArrowFunction(node) || isFunctionDeclaration(node) || isFunctionExpression(node) || isMethodDeclaration(node)) &&
+  node.body !== undefined
+
+/** Whether a file imports Effect as a value, which the error-channel mutants call. */
+const importsEffect = (text: string) => /import\s*\{[^}]*(?<!type\s)\bEffect\b[^}]*\}\s*from\s*'effect'/.test(text)
+
+/** The `_tag` of each error in the `E` of the `Effect<A, E, R>` a function declares it returns. */
+async function failureTags(checker: Checker, declaration: Node): Promise<string[]> {
+  const signature = await checker.getSignatureFromDeclaration(declaration)
+  const returned = signature === undefined ? undefined : await checker.getReturnTypeOfSignature(signature)
+  if (returned === undefined || !returned.isTypeReference() || (await returned.getSymbol())?.name !== 'Effect') return []
+
+  const failure = (await checker.getTypeArguments(returned))[1]
+  if (failure === undefined) return []
+
+  const tags: string[] = []
+  for (const member of failure.isUnionType() ? await failure.getTypes() : [failure]) {
+    const tag = await checker.getPropertyOfType(member, '_tag')
+    const type = tag === undefined ? undefined : await checker.getTypeOfSymbol(tag)
+    if (type?.isStringLiteralType()) tags.push(type.value)
+  }
+
+  return tags
+}
+
+/**
+ * The function a callback's Effect is returned from through calls alone, as
+ * `(item) => take(item).pipe(Effect.flatMap(() => take(item)))` returns its
+ * callback's: its own failures flow out through that function's.
+ */
+function carrierOf(callback: Node): Node | undefined {
+  let node = callback
+  for (let parent = node.parent; parent !== undefined; node = parent, parent = parent.parent) {
+    if (isFunction(parent)) return parent.body === node ? parent : undefined
+    if (
+      !isCallExpression(parent) && !isPropertyAccessExpression(parent) && !isParenthesizedExpression(parent) &&
+      !isReturnStatement(parent) && !isBlock(parent)
+    ) return undefined
+  }
+  return undefined
+}
+
+/**
+ * The error-channel mutants of one file: for each function that returns an
+ * Effect, and each tagged error it declares, the function recovers from that
+ * error and succeeds. It survives when no test makes the function fail with
+ * it. A callback whose failures flow out through the function it is returned
+ * from, with errors that function declares, gets none of its own. Turning the
+ * error into a defect is no mutant here: the error boundary answers a defect
+ * that is a tagged error as it answers the failure.
+ */
+export async function effectMutantsOf(file: string, sourceFile: SourceFile, checker: Checker): Promise<Mutant[]> {
+  const text = sourceFile.text
+  if (!importsEffect(text)) return []
+
+  const { lineStarts, lineOf } = lineIndex(text)
+  const tagsOf = new Map<Node, readonly string[]>()
+  const visit = async (node: Node): Promise<void> => {
+    if (isFunction(node)) {
+      const tags = await failureTags(checker, node)
+      if (tags.length > 0) tagsOf.set(node, tags)
+    }
+    const children: Node[] = []
+    node.forEachChild((child) => {
+      children.push(child)
+    })
+    for (const child of children) await visit(child)
+  }
+  await visit(sourceFile)
+
+  const mutants: Mutant[] = []
+  for (const [declaration, tags] of tagsOf) {
+    const carrier = carrierOf(declaration)
+    const carried = carrier === undefined ? undefined : tagsOf.get(carrier)
+    if (carried !== undefined && tags.every((tag) => carried.includes(tag))) continue
+
+    // SAFETY: tagsOf holds only the functions isFunction kept, each with a body.
+    const body = (declaration as Node & { readonly body: Node }).body
+    const start = body.getStart(sourceFile)
+    const original = text.slice(start, body.end)
+    const line = lineOf(declaration.getStart(sourceFile))
+    const source = text.slice(lineStarts[line - 1], lineStarts[line] ?? text.length).trim()
+
+    for (const tag of tags) {
+      const recover = `Effect.catchTag(${JSON.stringify(tag)}, () => Effect.succeed(undefined))`
+      mutants.push({
+        file,
+        line,
+        lastLine: lineOf(body.end),
+        start,
+        end: body.end,
+        original,
+        // A block runs in an arrow, which keeps its `this` and `arguments`.
+        replacement: isBlock(body) ? `{ return (() => ${original})().pipe(${recover}) }` : `(${original}).pipe(${recover})`,
+        operator: 'swallow-tag',
+        source,
+        description: `${tag} recovered as success`,
+      })
+    }
+  }
+
+  return mutants
+}
+
 /** The mutants of the given files, parsed by the TypeScript the repository compiles with. */
 export async function findMutants(root: string, files: readonly string[]): Promise<Mutant[]> {
   if (files.length === 0) return []
@@ -205,6 +336,7 @@ export async function findMutants(root: string, files: readonly string[]): Promi
       const sourceFile = await project?.program.getSourceFile(paths[index])
       if (sourceFile === undefined) throw new Error(`TypeScript could not parse ${file}.`)
       mutants.push(...mutantsOf(file, sourceFile))
+      if (project !== undefined) mutants.push(...(await effectMutantsOf(file, sourceFile, project.checker)))
     }
 
     return mutants
@@ -525,7 +657,7 @@ const shorten = (text: string, length = 60) => {
   return flat.length > length ? `${flat.slice(0, length - 1)}…` : flat
 }
 
-const edit = (mutant: Mutant) => `${shorten(mutant.original)} → ${shorten(mutant.replacement)}`
+const edit = (mutant: Mutant) => mutant.description ?? `${shorten(mutant.original)} → ${shorten(mutant.replacement)}`
 
 function table(results: readonly Result[], key: (result: Result) => string): string[] {
   const groups = new Map<string, Result[]>()
