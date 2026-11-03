@@ -110,9 +110,11 @@ export type FormInput<Schema extends { readonly Type: unknown }> = FormValue<Sch
  * validates, and by the paths under them for lists and groups
  * (`items.2.amount`), so a renamed field is a type error where the form
  * reads its error: `const errors: FormErrors<typeof CreateLease> = props.errors`.
+ * `form` holds an error that belongs to no field: `invalid({ form: message })`,
+ * a body over the limit, or Better Auth's refusal.
  */
 export type FormErrors<Schema extends { readonly Type: unknown }> = {
-  readonly [Field in Extract<keyof Schema['Type'], string> | `${Extract<keyof Schema['Type'], string>}.${string}`]?: string
+  readonly [Field in 'form' | Extract<keyof Schema['Type'], string> | `${Extract<keyof Schema['Type'], string>}.${string}`]?: string
 }
 
 export type PageResolver = (name: string) =>

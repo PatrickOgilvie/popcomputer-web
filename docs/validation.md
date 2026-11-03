@@ -52,17 +52,20 @@ written `YYYY-MM-DD` and keeps it as that string, since a day has no time
 zone, and `isoDateTime` accepts a moment with its zone,
 `2030-05-01T09:00:00Z`, as a `Date`. Each refuses a day the calendar lacks,
 and `isoDateTime` a time without a zone, which `coercedDate` would read in the
-server's zone. The form validators coerce, since a form sends every value as
-a string: `coercedNumber` accepts `"12"`. A JSON endpoint's contract, whose
-clients send JSON's own types, declares numbers with Effect's schemas,
+server's zone; [a form's date and time](#a-forms-date-and-time) shows a
+form sending one with its zone. The form validators coerce, since a form
+sends every value as a string: `coercedNumber` accepts `"12"`. A JSON
+endpoint's contract, whose clients send JSON's own types, declares numbers
+with Effect's schemas,
 `S.Int.check(S.isGreaterThan(0))`, so a string is refused and the published
 description says what the endpoint accepts.
 
 A multipart form's files reach the schema as `File` values. Check them with
 `upload({ types: ['image/png', 'image/jpeg'], maxBytes: 5_000_000 })`, or
 `nullableUpload(...)` when the file is optional; a file input left empty is
-no file. [Serving an upload back](responses.md#serving-an-upload-back) shows
-serving one back.
+no file. [Storing uploads](uploads.md) keeps one in an R2 bucket, and
+[Serving an upload back](responses.md#serving-an-upload-back) says how `file()`
+serves it.
 
 A form reads at most 1 MiB of a body, or setupWeb's `bodyLimit`,
 counting its declared `Content-Length` and the bytes as they arrive, and
@@ -83,6 +86,64 @@ for a read whose options or schema depend on what the action did first: a
 `redirectTo` built from a record it loaded, or a second schema chosen by the
 first answers, as the wizard and survey below show. `form`'s options are
 `validateRequest`'s, but `redirectTo`, and `page`.
+
+## A form's date and time
+
+A `datetime-local` input holds a time with no zone, `2026-11-20T19:30`, which
+`isoDateTime` refuses. Its zone is the visitor's, which only the browser
+knows, so the form sends the moment it names: Inertia's `transform` turns the
+input's value into one with its zone as the form posts, and a refusal still
+comes back on `startsAt`. An edit form fills the input from the stored
+moment, which a page's props hold as an ISO string, the other way:
+
+```tsx
+// src/components/ScheduleDinnerForm.tsx
+import { useForm } from '@inertiajs/react'
+import type { FormEvent } from 'react'
+import type { FormInput } from '@popcomputer/web/react'
+import type { ScheduleDinner } from '../forms'
+import { paths } from '../paths'
+
+// The input's time in the visitor's zone: `2026-11-20T19:30` in Paris is `2026-11-20T18:30:00.000Z`.
+const moment = (local: string) => {
+  const date = new Date(local)
+
+  // A blank or invalid value goes as it is, for the server to refuse.
+  return Number.isNaN(date.getTime()) ? local : date.toISOString()
+}
+
+// A stored moment as the input shows it, in the visitor's zone.
+export const localInput = (iso: string) => {
+  const date = new Date(iso)
+
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+export function ScheduleDinnerForm() {
+  const form = useForm<FormInput<typeof ScheduleDinner>>({ startsAt: '', seats: '' })
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    form.transform((data) => ({ ...data, startsAt: moment(data.startsAt) }))
+    form.post(paths.dinners)
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <input type="datetime-local" value={form.data.startsAt} onChange={(event) => form.setData('startsAt', event.target.value)} />
+      {form.errors.startsAt && <p role="alert">{form.errors.startsAt}</p>}
+      <input type="number" min={1} value={form.data.seats} onChange={(event) => form.setData('seats', event.target.value)} />
+      {form.errors.seats && <p role="alert">{form.errors.seats}</p>}
+      <button type="submit" disabled={form.processing}>Schedule</button>
+    </form>
+  )
+}
+```
+
+When the time belongs to a place rather than to whoever fills in the form,
+such as a venue's dinner a host abroad schedules, send the place's zone with
+it, and build the moment on the server from the time as the place's clock
+reads it, `DateTime.makeZoned(local, { timeZone, adjustForTimeZone: true })`.
 
 ## User input in
 

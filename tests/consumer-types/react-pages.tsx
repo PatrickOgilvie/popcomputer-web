@@ -59,5 +59,23 @@ export function startDateError(errors: Readonly<Record<string, string>>) {
   // @ts-expect-error the field is startDate
   void typed.start
 
-  return [typed.startDate, typed['tenantEmails.0']]
+  // An error that belongs to no field, such as an over-long body's, is the form's.
+  return [typed.startDate, typed['tenantEmails.0'], typed.form]
+}
+
+// A number field holds what its input sends or the record's number, never unknown.
+import { positiveInt } from '@popcomputer/web/schema'
+import { useForm } from '@inertiajs/react'
+
+const CreateEvent = FormSchema.Struct({
+  seats: positiveInt.check(FormSchema.isLessThanOrEqualTo(500)),
+})
+
+type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false
+export const seatsIsStringOrNumber: Equals<FormInput<typeof CreateEvent>['seats'], string | number> = true
+
+export function SeatsField({ seats }: { readonly seats: number }) {
+  const form = useForm<FormInput<typeof CreateEvent>>({ seats })
+
+  return <input type="number" value={form.data.seats} onChange={(event) => form.setData('seats', event.target.value)} />
 }

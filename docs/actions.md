@@ -24,6 +24,8 @@ export const paths = {
   projects: '/projects',
   project: '/projects/{project}',
   projectName: '/projects/{project}/name',
+  projectCover: '/projects/{project}/cover',
+  dinners: '/dinners',
   projectBySlug: '/p/{showcase:slug}',
   organizationMembers: '/orgs/{organization:slug}/members',
   organizationMember: '/orgs/{organization:slug}/members/{member:userId}',

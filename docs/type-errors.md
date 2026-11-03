@@ -23,6 +23,7 @@ TypeScript give up on the types that later errors are about.
 | A database result, `This result's type is any` | The driver's types name Cloudflare's global types, which the program cannot find | Add `@cloudflare/workers-types`, or the file `wrangler types` writes, to `compilerOptions.types` |
 | `dbTransaction(...)`, `Use dbBatch for atomic writes, or a driver with transactions.` | The database has no interactive transactions: Cloudflare D1, or a synchronous driver such as `bun:sqlite` | Write the statements as one `dbBatch` |
 | A `dbBatch` on D1, `Drizzle cannot run db.run(sql) with parameters in a Cloudflare D1 batch` | Drizzle's D1 batch fails at runtime on a raw statement | Write the statement with the query builder |
+| `db.insert(table).values({ ... })`, `No overload matches this call`, `'id' does not exist in type '{ ... }[]'` | TypeScript reports the last overload, the one for an array of rows, though the row is what's wrong: a value of another type than its column's, such as a `string` for an enum column (`text(name, { enum })` or `pgEnum`), a required column left out, or one the table lacks | Write the row as `const row: typeof table.$inferInsert = { ... }`, which names the field, then fix it: read an enum's value with a validator of its values, `S.Literals(['private', 'public'])`, rather than `requiredString` |
 
 What types cannot see, such as an update without a `where` or a network call
 inside a transaction, the [lint rules](lint-rules.md) report.

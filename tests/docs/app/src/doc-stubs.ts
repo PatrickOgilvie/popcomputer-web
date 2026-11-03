@@ -50,6 +50,8 @@ export { showProject } from './actions/projects/show'
 export { showDashboard } from './actions/dashboard'
 export { updateProject } from './actions/projects/update'
 export { ClockLive, auditLogFor } from './services'
+export { Uploads, uploadsFor } from './uploads'
+export { showCover, uploadCover } from './actions/projects/cover'
 export const showProjectBySlug = json({ page: 'Projects/Show' })
 export const showTask = json({ page: 'Tasks/Show' })
 export const showPricing = json({ page: 'Pricing' })

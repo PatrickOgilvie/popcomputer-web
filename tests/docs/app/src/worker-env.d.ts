@@ -25,3 +25,25 @@ interface Queue<Body = unknown> {
     options?: { delaySeconds?: number }
   ): Promise<unknown>
 }
+// The subset of Cloudflare's R2Bucket docs/uploads.md calls, with its signatures.
+interface R2HTTPMetadata {
+  contentType?: string
+}
+interface R2Object {
+  readonly key: string
+  readonly size: number
+  readonly httpMetadata?: R2HTTPMetadata
+}
+interface R2ObjectBody extends R2Object {
+  get body(): ReadableStream
+  arrayBuffer(): Promise<ArrayBuffer>
+}
+interface R2Bucket {
+  get(key: string): Promise<R2ObjectBody | null>
+  put(
+    key: string,
+    value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
+    options?: { httpMetadata?: R2HTTPMetadata | Headers }
+  ): Promise<R2Object>
+  delete(keys: string | string[]): Promise<void>
+}

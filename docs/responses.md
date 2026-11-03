@@ -82,6 +82,8 @@ type, is sent as `application/octet-stream`; `upload()` refuses such a file,
 and keeps only its media type, so store `file.type` as it decodes. Name the
 stored object with a key the server makes, never the upload's file name, and
 check who may read the file before serving it, as for any record.
+[Storing uploads](uploads.md) keeps the file in an R2 bucket and serves it
+back this way.
 
 ## Requests from other sites, and security headers
 

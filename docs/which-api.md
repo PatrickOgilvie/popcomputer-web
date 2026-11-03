@@ -22,6 +22,7 @@ and the lint rules name it where an action reaches for something else.
 | Answer a failure with a body a client reads | `httpError(status, message, Schema, body)` | [Failures a client reads](json.md#failures-a-client-reads) |
 | Hide a record the visitor may not see | Its binding's `ownedBy` or `publicWhen`, or `notFound('Project')` in a guard | [Who may load a record](route-models.md#who-may-load-a-record) |
 | Refuse a visitor who can see the record | `authorize((auth) => rule)`, or `forbidden(message)` | [Auth](auth.md) |
+| Store an upload | an R2 bucket a request service wraps, `web.services({ request: (c) => uploadsFor(c.env.UPLOADS) })` | [Storing uploads](uploads.md) |
 | Serve a file or a download | `file(body, { contentType, filename })` | [Serving an upload back](responses.md#serving-an-upload-back) |
 | Answer a poll that has nothing new | `ifChanged(etag, response)` | [Files, headers and polling](responses.md#files-headers-and-polling) |
 | Add a header to every response of some routes | `responseHeader(name, value)` in a guard layer | [Files, headers and polling](responses.md#files-headers-and-polling) |
@@ -101,6 +102,7 @@ and the lint rules name it where an action reaches for something else.
 | Read a page, JSON, a failure or a cookie | `readPage`, `readJson`, `readError`, `readErrorPage`, `readCookie` | [Reading a response](testing.md#reading-a-response) |
 | Make several requests as one visitor, or follow a redirect | `testBrowser(app, env)` and its `follow(res)` | [One visitor](testing.md#one-visitor-across-requests) |
 | Replace a service that reaches another system | `Layer.succeed(Service, fake)` in `testEnv`'s layer | [Fakes](testing.md#fakes-for-other-systems) |
+| Store uploads in a test | the uploads service over a `Map`, in `testEnv`'s layer | [Testing with a bucket in memory](uploads.md#testing-with-a-bucket-in-memory) |
 | Move time | `testClock()` | [Time](testing.md#time) |
 | Use the production database family | PGlite, migrated with `applyMigrations`, or a D1 database of each test's own from `testD1` | [A database for tests](test-database.md) |
 | Check a rule on generated inputs | `fuzz(arbitrary, holds)` from `@popcomputer/web/fuzz` | [Fuzzing](fuzzing.md) |
