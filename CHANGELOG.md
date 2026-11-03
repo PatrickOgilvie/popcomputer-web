@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.13.0] - 2026-11-03
+
+This release gives an application's tests and its coding agent more to check with. `fuzzSession` and `startFuzzSession` fuzz sessions of requests against one database, where a step names the records earlier steps created; `popweb-mutate` plants small bugs, a flipped comparison or an Effect that swallows one of its own errors, in the lines a change touches and lists the ones no test catches; and `fuzz` and `stepsOf` shrink a failure to the steps it needs. The agent's command hook no longer refuses the template's own scripts.
+
+What an application on 1.12 may need to change, which `UPGRADING.md`'s "From 1.12 to 1.13" details:
+
+- A fuzz test over `stepsOf` sequences sees other sequences from its fixed seed, and may find a failure it missed.
+- A field of a form given to `fuzzRequest`'s `forms` that holds `{name}` takes that placeholder's values.
 
 ### Added
 

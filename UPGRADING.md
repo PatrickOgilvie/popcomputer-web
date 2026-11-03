@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.12.1
+# Upgrading to @popcomputer/web 1.13.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.12.1.
+`honertia` package it was renamed from, to 1.13.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -22,15 +22,18 @@ nothing more. 1.9.0 counts an IPv6 client's sign-ins by its network, which
 a job that needs a request, which [From 1.10 to 1.11](#from-110-to-111)
 lists, 1.12.0 keeps each route's facts as data and checks where a
 failure sends the visitor, which [From 1.11 to 1.12](#from-111-to-112)
-lists, and 1.12.1 answers a JSON client's sign-out with a 204, which the
-same section notes. So the path is one jump: make the 1.0.0 changes below,
-install 1.12.1, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
+lists, 1.12.1 answers a JSON client's sign-out with a 204, which the
+same section notes, and 1.13.0 adds fuzzing over sessions and
+`popweb-mutate`, which [From 1.12 to 1.13](#from-112-to-113) lists. So the
+path is one jump: make the 1.0.0 changes below,
+install 1.13.0, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
 shows, check the lists in [From 1.4 to 1.5](#from-14-to-15),
 [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17),
 [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19),
 [From 1.9 to 1.10](#from-19-to-110),
-[From 1.10 to 1.11](#from-110-to-111) and
-[From 1.11 to 1.12](#from-111-to-112), and you are done.
+[From 1.10 to 1.11](#from-110-to-111),
+[From 1.11 to 1.12](#from-111-to-112) and
+[From 1.12 to 1.13](#from-112-to-113), and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -77,7 +80,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.12.1 needs:
+- **Check the peer dependencies.** 1.13.0 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -93,12 +96,12 @@ you installed:
   Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
-- **Install 1.12.1** with the peers your application uses, removing `honertia`
+- **Install 1.13.0** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.12.1 effect@^4.0.0
+  bun add @popcomputer/web@^1.13.0 effect@^4.0.0
   bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
@@ -112,22 +115,23 @@ you installed:
 
 | You are on | Do these sections |
 | --- | --- |
-| `honertia` 0.1.x | [From Effect 3](#from-effect-3), [From `honertia`](#from-honertia), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
-| 0.1.x to 0.3.x | [From Effect 3](#from-effect-3), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
-| 0.4.x | [0.4 to 0.5](#04-to-05), [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
-| 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
-| 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
-| 0.7.x | [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.11 to 1.12](#from-111-to-112) |
-| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
-| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
-| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
-| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
-| 1.6.x | [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
-| 1.7.x | [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
-| 1.8.x | [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
-| 1.9.x | [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
-| 1.10.x | [1.10 to 1.11](#from-110-to-111), then [1.11 to 1.12](#from-111-to-112) |
-| 1.11.x | [1.11 to 1.12](#from-111-to-112) only |
+| `honertia` 0.1.x | [From Effect 3](#from-effect-3), [From `honertia`](#from-honertia), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.12 to 1.13](#from-112-to-113) |
+| 0.1.x to 0.3.x | [From Effect 3](#from-effect-3), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.12 to 1.13](#from-112-to-113) |
+| 0.4.x | [0.4 to 0.5](#04-to-05), [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.12 to 1.13](#from-112-to-113) |
+| 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.12 to 1.13](#from-112-to-113) |
+| 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.12 to 1.13](#from-112-to-113) |
+| 0.7.x | [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.12 to 1.13](#from-112-to-113) |
+| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), then [1.12 to 1.13](#from-112-to-113) |
+| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), then [1.12 to 1.13](#from-112-to-113) |
+| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), then [1.12 to 1.13](#from-112-to-113) |
+| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), then [1.12 to 1.13](#from-112-to-113) |
+| 1.6.x | [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), then [1.12 to 1.13](#from-112-to-113) |
+| 1.7.x | [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), then [1.12 to 1.13](#from-112-to-113) |
+| 1.8.x | [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), then [1.12 to 1.13](#from-112-to-113) |
+| 1.9.x | [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), then [1.12 to 1.13](#from-112-to-113) |
+| 1.10.x | [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), then [1.12 to 1.13](#from-112-to-113) |
+| 1.11.x | [1.11 to 1.12](#from-111-to-112), then [1.12 to 1.13](#from-112-to-113) |
+| 1.12.x | [1.12 to 1.13](#from-112-to-113) only |
 
 `honertia` and `@popcomputer/web` share one version line, so `honertia` 0.1.45
 is "0.1.x". The 0.4 to 0.7 sections hardly apply to an application coming from
@@ -1591,6 +1595,53 @@ Changes you may notice without acting on them:
 
 [CHANGELOG.md](CHANGELOG.md) has the detail of each.
 
+## From 1.12 to 1.13
+
+Install 1.13.0:
+
+```bash
+bun add @popcomputer/web@^1.13.0
+```
+
+1.13.0 adds to what an application's tests and its coding agent check with:
+sessions of fuzzed requests against one database, and `popweb-mutate`,
+which plants small bugs in the lines a change touches. It changes nothing in
+an application's own code. Check these against your tests:
+
+- **A fuzz test over sequences, from its fixed seed.** `stepsOf` holds a
+  sequence's steps in the opposite order to 1.12's, so a lifecycle test sees
+  other sequences from the same seed, and may find a failure it missed.
+  `fuzz` shrinks a failure through up to 1,000 candidates, where it stopped
+  at 100, and stops with a quarter of `fuzzTimeout` left, saying so.
+- **A form in `fuzzRequest`'s `forms` with a field that holds `{name}`.** The
+  braces name a placeholder now, as in the path: `note={note}` takes the
+  values `params` gives `note`.
+
+Changes you may notice without acting on them:
+
+- The agent's command hook, `popweb-fence hook`, reads each script once on
+  the way to a command, and reads a placeholder in a program's string as
+  `git`, `commit` or `-n` only where the string names one of them or
+  `core.hooksPath`. It refused scripts whose messages start with a
+  placeholder, as the template's `bun run db:execute` does, and took
+  minutes over one whose messages name its own command.
+- `leaks` takes canaries for some of the people.
+
+What to adopt, none of it required:
+
+- **`popweb-mutate`.** `bunx popweb-mutate` plants small bugs in the `src/`
+  lines changed since `HEAD`, a flipped comparison or an Effect that
+  recovers from one of its own errors, and lists each one no test catches.
+  It needs TypeScript 7, the new optional peer `typescript >=7.0.0 <8.0.0`,
+  as [Mutation testing](docs/mutation.md) explains.
+- **`fuzzSession` and `startFuzzSession`.** They send sequences of
+  generated requests to one database, each step naming records earlier
+  steps created, as [Fuzzing sessions](docs/fuzz-sessions.md) shows.
+- **The fence.** The template now commits its commit gate, which
+  `bun install` installs, the agent's hooks, `lint-debt.json` and the
+  Effect language service in the type check; [The agent
+  fence](docs/agent-fence.md) sets each up in an application of your own.
+
 ## From 1.11 to 1.12
 
 Install 1.12.0:
@@ -1731,8 +1782,8 @@ What to adopt, none of it required:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.12.1`.
-- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19), [From 1.9 to 1.10](#from-19-to-110), [From 1.10 to 1.11](#from-110-to-111) and [From 1.11 to 1.12](#from-111-to-112) that applies to your application is done.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.13.0`.
+- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19), [From 1.9 to 1.10](#from-19-to-110), [From 1.10 to 1.11](#from-110-to-111), [From 1.11 to 1.12](#from-111-to-112) and [From 1.12 to 1.13](#from-112-to-113) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
