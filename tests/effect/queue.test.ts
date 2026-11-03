@@ -101,25 +101,28 @@ describe('a declared queue', () => {
     expect(reminderQueue.sent()).toEqual([{ orderId: 'order-9', dueAt: '2030-01-01T09:00:00.000Z', amountCents: '9' }])
   })
 
-  test('answers 503 when the queue refuses a message, and the error observer sees why', async () => {
-    const observed: EffectErrorEvent[] = []
-    const { app } = createApp(observed)
-    const reminderQueue = testQueue()
+  // send and sendBatch, each from its own route.
+  for (const [path, body] of [['/remind', 'orderId=order-1'], ['/remind-all', '']] as const) {
+    test(`answers 503 when the queue refuses what ${path} sends, and the error observer sees why`, async () => {
+      const observed: EffectErrorEvent[] = []
+      const { app } = createApp(observed)
+      const reminderQueue = testQueue()
 
-    reminderQueue.fail(new Error('Queues is unavailable'))
+      reminderQueue.fail(new Error('Queues is unavailable'))
 
-    const res = await app.request(...posted('/remind'), testEnv({ ENVIRONMENT: 'production', REMINDERS: reminderQueue }))
+      const res = await app.request(...posted(path, body), testEnv({ ENVIRONMENT: 'production', REMINDERS: reminderQueue }))
 
-    expect(res.status).toBe(503)
-    expect(await res.json()).toMatchObject({ code: 'WEB_SVC_704_QUEUE_SEND_FAILED' })
-    expect(observed.map((event) => event.error)).toEqual([expect.any(QueueSendError)])
-  })
+      expect(res.status).toBe(503)
+      expect(await res.json()).toMatchObject({ code: 'WEB_SVC_704_QUEUE_SEND_FAILED' })
+      expect(observed.map((event) => event.error)).toEqual([expect.any(QueueSendError)])
+    })
 
-  test('is a configuration error on a Worker without its binding', async () => {
-    const { app } = createApp()
-    const res = await app.request(...posted('/remind'), testEnv({}))
+    test(`is a configuration error at ${path} on a Worker without its binding`, async () => {
+      const { app } = createApp()
+      const res = await app.request(...posted(path, body), testEnv({}))
 
-    expect(res.status).toBe(500)
-    expect(await res.json()).toMatchObject({ code: 'WEB_CFG_305_INVALID_CONFIG', message: expect.stringContaining('REMINDERS') })
-  })
+      expect(res.status).toBe(500)
+      expect(await res.json()).toMatchObject({ code: 'WEB_CFG_305_INVALID_CONFIG', message: expect.stringContaining('REMINDERS') })
+    })
+  }
 })

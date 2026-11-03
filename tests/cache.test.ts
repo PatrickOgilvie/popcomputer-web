@@ -639,6 +639,33 @@ describe('cache', () => {
       }
     })
 
+    it('cacheGet fails with CacheError when the store fails to read one of the entry\'s tags', async () => {
+      const { storeLayer, store } = makeTestCache()
+
+      await cacheSet('flags', 1, S.Number, { ttl: Duration.hours(1), tags: ['flags'] }).pipe(Effect.provide(storeLayer), Effect.runPromise)
+
+      // The entry reads, its tag's generation does not.
+      const tagsFail: CacheClient = {
+        ...failingClient,
+        get: (key) => key.startsWith('popweb:tag:') ? failingClient.get(key) : Effect.succeed(store.get(key)?.value ?? null),
+      }
+      const result = await cacheGet('flags', S.Number).pipe(Effect.provide(Layer.succeed(CacheService, tagsFail)), Effect.result, Effect.runPromise)
+
+      expect(result._tag).toBe('Failure')
+      if (Predicate.isTagged(result, 'Failure')) expect(result.failure).toBeInstanceOf(CacheError)
+    })
+
+    it('explicit writes fail with CacheError when the store fails', async () => {
+      const result = await cacheSet('key', { id: '1', name: 'Ada', email: 'ada@example.com' }, UserSchema, { ttl: Duration.hours(1) }).pipe(
+        Effect.provide(Layer.succeed(CacheService, failingClient)),
+        Effect.result,
+        Effect.runPromise
+      )
+
+      expect(result._tag).toBe('Failure')
+      if (Predicate.isTagged(result, 'Failure')) expect(result.failure).toBeInstanceOf(CacheError)
+    })
+
     it('cache() computes the value when the store fails, and reports the failure', async () => {
       const observed: string[] = []
 
@@ -671,15 +698,20 @@ describe('cache', () => {
         }),
       })
 
+      // Its keys list, so the prefix's invalidation meets the failing delete.
+      const listing: CacheClient = { ...failingClient, list: () => Effect.succeed({ keys: [{ name: 'user:1' }], list_complete: true }) }
+
       await Effect.gen(function* () {
         yield* cacheInvalidate('user:1')
         yield* cacheInvalidatePrefix('user:')
+        yield* invalidateCacheTags(['users'])
       }).pipe(
         Effect.provide(Layer.mergeAll(Layer.succeed(CacheService, failingClient), observer)),
         Effect.runPromise
       )
+      await cacheInvalidatePrefix('user:').pipe(Effect.provide(Layer.mergeAll(Layer.succeed(CacheService, listing), observer)), Effect.runPromise)
 
-      expect(observed).toEqual(['invalidate', 'invalidatePrefix'])
+      expect(observed).toEqual(['invalidate', 'invalidatePrefix', 'cache.invalidateTags', 'invalidatePrefix'])
     })
   })
 
@@ -1376,6 +1408,27 @@ describe('cache tags', () => {
 })
 
 describe('kvCache', () => {
+  it('fails each operation KV rejects with a CacheError that says what it could not do', async () => {
+    const unavailable = new Error('KV is unavailable')
+    const reject = async (): Promise<never> => {
+      throw unavailable
+    }
+    const kv = { get: reject, put: reject, delete: reject, list: reject }
+
+    const failures = await Effect.gen(function* () {
+      const client = yield* CacheService
+
+      return yield* Effect.all([client.get('k'), client.put('k', 'v'), client.delete('k'), client.list()].map((operation) => Effect.flip(operation)))
+    }).pipe(Effect.provide(kvCache(kv)), Effect.runPromise)
+
+    expect(failures.map((error) => [error.reason, error.cause])).toEqual([
+      ['Could not read from the cache.', unavailable],
+      ['Could not write to the cache.', unavailable],
+      ['Could not delete from the cache.', unavailable],
+      ['Could not list cache keys.', unavailable],
+    ])
+  })
+
   it('keeps an entry KV\'s minimum 60 seconds, and cache() still treats it as fresh only for its ttl', async () => {
     const expirations: Array<number | undefined> = []
     const values = new Map<string, string>()

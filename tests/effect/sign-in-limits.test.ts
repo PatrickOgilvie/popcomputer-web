@@ -186,6 +186,7 @@ describe('sign-in limits', () => {
       // No address: counted as the text it is.
       ['2001:db8::1.2.3.999', 64, '2001:db8::1.2.3.999'],
       ['1::2::3', 64, '1::2::3'],
+      ['1:2:3:4:5:6:7:8::9::a', 64, '1:2:3:4:5:6:7:8::9::a'],
       ['203.0.113.7', 64, '203.0.113.7'],
       ['unknown', 64, 'unknown'],
     ]
@@ -205,6 +206,9 @@ describe('sign-in limits', () => {
     expect(activeSignInLimits({ limiter: 'SIGN_IN_LIMITER', table: rateLimit }, {}).ipv6Prefix).toBe(64)
     for (const ipv6Prefix of [0, 129, 56.5, Number.NaN]) {
       expect({ ipv6Prefix, setup: () => setupWeb(new Hono(), config(ipv6Prefix)) }.setup).toThrow('auth.signInLimits.ipv6Prefix')
+    }
+    for (const ipv6Prefix of [1, 128]) {
+      expect({ ipv6Prefix, setup: () => setupWeb(new Hono(), config(ipv6Prefix)) }.setup).not.toThrow()
     }
   })
 
@@ -245,7 +249,8 @@ describe('sign-in limits', () => {
     const cooling = await attempt(testBrowser(app, env), 'correct horse')
 
     expect(cooling.status).toBe(429)
-    expect(Number(cooling.headers.get('Retry-After'))).toBeGreaterThan(0)
+    // The max-th failure earns the first cooldown, a minute, none of which has passed.
+    expect(cooling.headers.get('Retry-After')).toBe('60')
     expect(rows()).toHaveLength(1)
     expect(rows()[0]?.key).toStartWith('sign-in:')
     expect(rows()[0]?.key).not.toContain('ada')
@@ -414,6 +419,12 @@ describe('sign-in limits', () => {
     expect(rows()).toEqual([])
   })
 
+  test('a sweep without auth.signInLimits fails, naming the setting', async () => {
+    const { routes } = setupWeb(new Hono(), { version: '1', render: (page) => JSON.stringify(page) })
+
+    await expect(routes.run(sweepSignInFailures, testEnv({}))).rejects.toThrow("auth.signInLimits, which is not configured")
+  })
+
   test.each([
     { max: Number.NaN },
     { max: 0 },
@@ -472,6 +483,14 @@ describe('each password sign-in counts against the account its endpoint checks',
 
     expect(accountOf('/sign-in/username', { username: 'xxada' }, { plugins: [plugin] })).toBe('ada')
     expect(accountOf('/sign-in/username', { username: 'xxada' }, { plugins: [username({ usernameNormalization: (name) => name.replace(/^x/, '') })] })).toBe('xada')
+  })
+
+  test('without the username plugin, a username is lowercased, as no endpoint then finds it', () => {
+    expect(accountOf('/sign-in/username', { username: 'Ada' })).toBe('ada')
+  })
+
+  test('a body that is not an object names no account', () => {
+    for (const body of [null, 'ada@example.com', 42]) expect(accountOf('/sign-in/email', body)).toBeUndefined()
   })
 
   test('an email that is not text, or blank, does not take a username sign-in out of its count', async () => {
@@ -605,6 +624,17 @@ describe("Better Auth's own limits beside the sign-in limits", () => {
     expect(await res.text()).toContain("storage: 'memory'")
     // A job run through the app fails too, so a queue retries and a cron run is recorded as failed.
     await expect(routes.run(Effect.succeed('done'), env)).rejects.toThrow("storage: 'memory'")
+  })
+
+  test('a call within the limits made outside setupWeb refuses the database storage too', async () => {
+    const limits = activeSignInLimits({ limiter: 'SIGN_IN_LIMITER', table: rateLimit }, { SIGN_IN_LIMITER: testRateLimiter({ limit: 100 }) })
+    const exit = await Effect.runPromiseExit(
+      withinSignInLimits({ path: '/sign-in/email', address: '192.0.2.1', account: 'ada@example.com' }, Effect.succeed(new Response()), {
+        rateLimit: { enabled: true, storage: 'database' },
+      }).pipe(Effect.provideService(SignInLimits, limits))
+    )
+
+    expect(Exit.isFailure(exit) && String(exit.cause)).toContain("storage: 'memory'")
   })
 
   test('its memory storage, or none, leaves the counts alone and signs in', async () => {
