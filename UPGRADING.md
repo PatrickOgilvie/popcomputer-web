@@ -1720,7 +1720,9 @@ Changes you may notice without acting on them:
 - From 1.13.1, `testEnv` returns each binding it was given with its type, so
   a test reads `env.DB` where it read `env.DB?.`, and `secret()` and
   `variable()` without a schema read as a string through `env.config`,
-  where they read as `unknown`.
+  where they read as `unknown`. A test helper whose parameter defaults to
+  one `testEnv(...)`, `env = production`, takes that env's narrower type and
+  refuses the others: type it `env: TestBindings = production`.
 - From 1.13.1, `sendFuzzRequest` sends each request from a client address
   of its own, so a per-client limit no longer carries from one case to the
   next; and `file()` takes an `ArrayBuffer`, and `FormErrors` has `form`.
