@@ -5,9 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.13.1] - 2026-11-03
 
-What an application on 1.13.0 may need to change: a test that checks a size message for a limit that is not a whole number of megabytes, such as `bodyLimit: 10_100_000`, which read "send at most 9.6 MB", now reads "send at most 10.1 MB".
+This release fixes what upgrading the five example applications to 1.13.0 found, and merges three fixes made on 1.11 that had not reached a release. Every answer now waits for the request's body to end, so an upload behind a proxy such as portless no longer meets a closed connection; `reloadWorkerModules()` pre-bundles the package's Worker entries; `testEnv` returns the bindings it was given with their types, and `secret()` and `variable()` without a schema read as strings; `sendFuzzRequest` sends each request from a client address of its own; `file()` takes an `ArrayBuffer`, and `FormErrors` has `form`. `docs/uploads.md` says where an upload lives, and the upgrade guide, `AGENTS.md` and the fuzzing docs answer what the examples' upgrades asked.
+
+What an application on 1.13.0 may need to change, which `UPGRADING.md`'s "From 1.12 to 1.13" notes: a test that checks a size message for a limit that is not a whole number of megabytes, such as `bodyLimit: 10_100_000`, which read "send at most 9.6 MB", now reads "send at most 10.1 MB".
 
 ### Added
 
