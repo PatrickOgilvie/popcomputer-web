@@ -68,7 +68,11 @@ A form reads at most 1 MiB of a body, or setupWeb's `bodyLimit`,
 counting its declared `Content-Length` and the bytes as they arrive, and
 refuses a larger one before parsing it: a JSON client gets a 413
 (`WEB_VAL_007_BODY_TOO_LARGE`) and a page's form goes back with a `form`
-error. An action whose form uploads files raises it past their `maxBytes`,
+error. The rest of a refused body is read and dropped before the answer, up
+to 100 MiB, so a browser or a proxy still sending it reads the answer
+instead of a closed connection; so is a body nothing reads, such as one posted
+to a missing page, unless a response `file()` streams may read it. An action
+whose form uploads files raises it past their `maxBytes`,
 `form(ReceiptForm, { bodyLimit: 6_000_000 })`, as `ReceiptForm`
 below needs. Headers and the
 raw body, such as an `Idempotency-Key` or a webhook signature, are read from

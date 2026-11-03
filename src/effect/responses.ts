@@ -8,6 +8,7 @@ import { isInertContentType, singleMediaType } from './schema.js'
 import { wantsJson } from './negotiation.js'
 import { Cause, Context, Effect, Layer, Option, Schema as S, Stream } from 'effect'
 import { observeOrLog } from './error-observer.js'
+import { streamsAsRead } from './body-limit.js'
 import { href, type PathArguments, type PathTarget } from '../paths.js'
 import {
   AuthUserService,
@@ -297,6 +298,9 @@ export function file<E = never, R = never>(
     const content = Stream.isStream(body)
       ? yield* Stream.toReadableStreamEffect(body.pipe(Stream.map(toBytes)))
       : body
+
+    // A stream may read the request's body as it is sent, so that is left to it.
+    if (content instanceof ReadableStream) streamsAsRead(content)
 
     return new Response(content, { status: options.status ?? 200, headers })
   })

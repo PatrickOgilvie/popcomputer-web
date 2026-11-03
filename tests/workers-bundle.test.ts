@@ -12,6 +12,7 @@
 
 import { describe, test, expect } from 'bun:test'
 import { build } from 'esbuild'
+import { resolveConfig } from 'vite'
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- These integration tests lay out a real node_modules tree for the bundler to resolve.
 import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- These integration tests lay out a real node_modules tree for the bundler to resolve.
@@ -130,6 +131,35 @@ describe('Workers bundles', () => {
         expect(code).toContain(drizzleMarker)
       }))
   }
+})
+
+describe("The Vite plugin's pre-bundled entries", () => {
+  /** What the plugin, as the app installs it, has Vite pre-bundle in a Worker's environment. */
+  const included = async (entry: string): Promise<ReadonlyArray<string>> => {
+    const { reloadWorkerModules } = await import(join(dirname(entry), 'node_modules/@popcomputer/web/dist/vite.js'))
+    const { environments } = await resolveConfig({
+      root: dirname(entry),
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [reloadWorkerModules()],
+      environments: { worker: { optimizeDeps: { noDiscovery: false } } },
+    }, 'serve')
+
+    return environments.worker.optimizeDeps.include ?? []
+  }
+
+  test('leave out @popcomputer/web/drizzle, which imports drizzle-orm, without it installed', () =>
+    withApp({ drizzle: false }, async (entry) => {
+      const include = await included(entry)
+
+      expect(include).toContain('@popcomputer/web/effect')
+      expect(include).not.toContain('@popcomputer/web/drizzle')
+    }))
+
+  test('include it with drizzle-orm installed', () =>
+    withApp({ drizzle: true }, async (entry) => {
+      expect(await included(entry)).toContain('@popcomputer/web/drizzle')
+    }))
 })
 
 describe('Route binding without drizzle-orm', () => {
