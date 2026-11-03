@@ -64,9 +64,10 @@ you installed:
 15. [From 1.9 to 1.10](#from-19-to-110)
 16. [From 1.10 to 1.11](#from-110-to-111)
 17. [From 1.11 to 1.12](#from-111-to-112)
-18. [Tooling after the upgrade](#tooling-after-the-upgrade)
-19. [Checklist](#checklist)
-20. [A worked example](#a-worked-example)
+18. [From 1.12 to 1.13](#from-112-to-113)
+19. [Tooling after the upgrade](#tooling-after-the-upgrade)
+20. [Checklist](#checklist)
+21. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -1595,53 +1596,6 @@ Changes you may notice without acting on them:
 
 [CHANGELOG.md](CHANGELOG.md) has the detail of each.
 
-## From 1.12 to 1.13
-
-Install 1.13.0:
-
-```bash
-bun add @popcomputer/web@^1.13.0
-```
-
-1.13.0 adds to what an application's tests and its coding agent check with:
-sessions of fuzzed requests against one database, and `popweb-mutate`,
-which plants small bugs in the lines a change touches. It changes nothing in
-an application's own code. Check these against your tests:
-
-- **A fuzz test over sequences, from its fixed seed.** `stepsOf` holds a
-  sequence's steps in the opposite order to 1.12's, so a lifecycle test sees
-  other sequences from the same seed, and may find a failure it missed.
-  `fuzz` shrinks a failure through up to 1,000 candidates, where it stopped
-  at 100, and stops with a quarter of `fuzzTimeout` left, saying so.
-- **A form in `fuzzRequest`'s `forms` with a field that holds `{name}`.** The
-  braces name a placeholder now, as in the path: `note={note}` takes the
-  values `params` gives `note`.
-
-Changes you may notice without acting on them:
-
-- The agent's command hook, `popweb-fence hook`, reads each script once on
-  the way to a command, and reads a placeholder in a program's string as
-  `git`, `commit` or `-n` only where the string names one of them or
-  `core.hooksPath`. It refused scripts whose messages start with a
-  placeholder, as the template's `bun run db:execute` does, and took
-  minutes over one whose messages name its own command.
-- `leaks` takes canaries for some of the people.
-
-What to adopt, none of it required:
-
-- **`popweb-mutate`.** `bunx popweb-mutate` plants small bugs in the `src/`
-  lines changed since `HEAD`, a flipped comparison or an Effect that
-  recovers from one of its own errors, and lists each one no test catches.
-  It needs TypeScript 7, the new optional peer `typescript >=7.0.0 <8.0.0`,
-  as [Mutation testing](docs/mutation.md) explains.
-- **`fuzzSession` and `startFuzzSession`.** They send sequences of
-  generated requests to one database, each step naming records earlier
-  steps created, as [Fuzzing sessions](docs/fuzz-sessions.md) shows.
-- **The fence.** The template now commits its commit gate, which
-  `bun install` installs, the agent's hooks, `lint-debt.json` and the
-  Effect language service in the type check; [The agent
-  fence](docs/agent-fence.md) sets each up in an application of your own.
-
 ## From 1.11 to 1.12
 
 Install 1.12.0:
@@ -1709,7 +1663,13 @@ What to adopt, none of it required:
 - **A queue declared once.** `queue('REMINDERS', Schema)` in
   `src/queues.ts`, sent through with `yield* reminders.send(message)` and
   consumed with `routes.queue(reminders, handle)`; `testQueue()` is the
-  binding in a test.
+  binding in a test. Moving a send that went through the binding by hand
+  changes three things: a send the queue refuses fails with
+  `QueueSendError`, which answers 503 unless the action catches it, where
+  the application's own handling answered before; the binding's type no
+  longer needs the message's, so a plain `Queue` will do; and
+  `testQueue().sent()` gives the JSON bodies as `unknown`, which a test
+  decodes with the declaration's `schema` when it reads their fields.
 - **Fuzz tests from the route table.** Give `fuzzRequest` the application's
   `routes` and drop the forms the test wrote by hand, and give
   `strangerWrites` `ownership(routes, 'projects')`. A rule that compares a
@@ -1721,6 +1681,53 @@ What to adopt, none of it required:
   a signed-out visitor, the owner of its records and another member get.
 
 [CHANGELOG.md](CHANGELOG.md) has the detail of each.
+
+## From 1.12 to 1.13
+
+Install 1.13.0:
+
+```bash
+bun add @popcomputer/web@^1.13.0
+```
+
+1.13.0 adds to what an application's tests and its coding agent check with:
+sessions of fuzzed requests against one database, and `popweb-mutate`,
+which plants small bugs in the lines a change touches. It changes nothing in
+an application's own code. Check these against your tests:
+
+- **A fuzz test over sequences, from its fixed seed.** `stepsOf` holds a
+  sequence's steps in the opposite order to 1.12's, so a lifecycle test sees
+  other sequences from the same seed, and may find a failure it missed.
+  `fuzz` shrinks a failure through up to 1,000 candidates, where it stopped
+  at 100, and stops with a quarter of `fuzzTimeout` left, saying so.
+- **A form in `fuzzRequest`'s `forms` with a field that holds `{name}`.** The
+  braces name a placeholder now, as in the path: `note={note}` takes the
+  values `params` gives `note`.
+
+Changes you may notice without acting on them:
+
+- The agent's command hook, `popweb-fence hook`, reads each script once on
+  the way to a command, and reads a placeholder in a program's string as
+  `git`, `commit` or `-n` only where the string names one of them or
+  `core.hooksPath`. It refused scripts whose messages start with a
+  placeholder, as the template's `bun run db:execute` does, and took
+  minutes over one whose messages name its own command.
+- `leaks` takes canaries for some of the people.
+
+What to adopt, none of it required:
+
+- **`popweb-mutate`.** `bunx popweb-mutate` plants small bugs in the `src/`
+  lines changed since `HEAD`, a flipped comparison or an Effect that
+  recovers from one of its own errors, and lists each one no test catches.
+  It needs TypeScript 7, the new optional peer `typescript >=7.0.0 <8.0.0`,
+  as [Mutation testing](docs/mutation.md) explains.
+- **`fuzzSession` and `startFuzzSession`.** They send sequences of
+  generated requests to one database, each step naming records earlier
+  steps created, as [Fuzzing sessions](docs/fuzz-sessions.md) shows.
+- **The fence.** The template now commits its commit gate, which
+  `bun install` installs, the agent's hooks, `lint-debt.json` and the
+  Effect language service in the type check; [The agent
+  fence](docs/agent-fence.md) sets each up in an application of your own.
 
 ## Tooling after the upgrade
 
@@ -1761,13 +1768,24 @@ What to adopt, none of it required:
   Give `package.json` `"type": "module"`, or Node warns
   `MODULE_TYPELESS_PACKAGE_JSON` on every lint run.
 
-- **One check command** replaces `popweb check`:
+- **One check command** replaces `popweb check`, with the debt check the
+  fence's ledger keeps:
 
   ```json
   "scripts": {
-    "check": "tsc --noEmit && oxlint && bun test"
+    "check": "tsc --noEmit && oxlint && bun test && popweb-fence debt --check"
   }
   ```
+
+- **The Effect language service in the type check.** `bun add -d
+  @effect/tsgo`, name `@effect/language-service` in `tsconfig.json`'s
+  `plugins`, and patch `tsc` on every install with `"prepare": "effect-tsgo
+  patch"`, so an Effect neither yielded nor assigned fails `tsc --noEmit`, as
+  [`docs/lint-rules.md`](docs/lint-rules.md) shows.
+
+- **`popweb-mutate`** plants small bugs in the lines a change touches and
+  lists each one no test catches; give it a script, `"mutate":
+  "popweb-mutate"`, as [`docs/mutation.md`](docs/mutation.md) shows.
 
 - **The agent fence.** [`docs/agent-fence.md`](docs/agent-fence.md) sets up
   a commit gate that runs the type check, the lint rules and the tests, a

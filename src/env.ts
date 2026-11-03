@@ -67,12 +67,16 @@ export interface VariableOptions<Optional extends boolean> {
  * RESEND_API_KEY: secret(S.String.check(S.isStartingWith('re_'))),
  * SENTRY_DSN: secret(S.String, { optional: true }),
  */
-export function secret<Schema extends EnvSchema = typeof S.NonEmptyString>(
-  schema?: Schema,
-  options?: SecretOptions<false>
-): EnvSecret<Schema, false>
-export function secret<Schema extends EnvSchema = typeof S.NonEmptyString>(
-  schema: Schema | undefined,
+// Without a schema, an overload of its own: inside defineEnv, a type
+// parameter's default would lose to the parameter's own type, EnvSchema.
+export function secret(schema?: undefined, options?: SecretOptions<false>): EnvSecret<typeof S.NonEmptyString, false>
+export function secret(
+  schema: undefined,
+  options: SecretOptions<true> & { readonly optional: true }
+): EnvSecret<typeof S.NonEmptyString, true>
+export function secret<Schema extends EnvSchema>(schema: Schema, options?: SecretOptions<false>): EnvSecret<Schema, false>
+export function secret<Schema extends EnvSchema>(
+  schema: Schema,
   options: SecretOptions<true> & { readonly optional: true }
 ): EnvSecret<Schema, true>
 export function secret(schema?: EnvSchema, options: SecretOptions<boolean> = {}): EnvSecret {
@@ -92,12 +96,15 @@ export function secret(schema?: EnvSchema, options: SecretOptions<boolean> = {})
  * ENVIRONMENT: variable(S.Literals(['development', 'production', 'test'])),
  * TIME_ZONE: variable(S.String, { optional: true }),
  */
-export function variable<Schema extends EnvSchema = typeof S.String>(
-  schema?: Schema,
-  options?: VariableOptions<false>
-): EnvVariable<Schema, false>
-export function variable<Schema extends EnvSchema = typeof S.String>(
-  schema: Schema | undefined,
+// Without a schema, an overload of its own, as secret's.
+export function variable(schema?: undefined, options?: VariableOptions<false>): EnvVariable<typeof S.String, false>
+export function variable(
+  schema: undefined,
+  options: VariableOptions<true> & { readonly optional: true }
+): EnvVariable<typeof S.String, true>
+export function variable<Schema extends EnvSchema>(schema: Schema, options?: VariableOptions<false>): EnvVariable<Schema, false>
+export function variable<Schema extends EnvSchema>(
+  schema: Schema,
   options: VariableOptions<true> & { readonly optional: true }
 ): EnvVariable<Schema, true>
 export function variable(schema?: EnvSchema, options: VariableOptions<boolean> = {}): EnvVariable {

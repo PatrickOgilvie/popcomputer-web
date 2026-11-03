@@ -1,10 +1,12 @@
 /**
  * UPGRADING.md takes a reader from any release to the package's own version,
  * so each release must bring along the places that name where the path ends:
- * the title and the opening path, the peer table and install steps of
- * "Before you start", every row of "Find your starting point", and the
- * checklist. They fell behind for three releases before this test, because
- * each release updated the opening paragraph alone.
+ * the title and the opening path, the contents, the peer table and install
+ * steps of "Before you start", every row of "Find your starting point", and
+ * the checklist, with each "From A to B" section after the one before it.
+ * They fell behind for three releases before this test, because each release
+ * updated the opening paragraph alone, and 1.13.0 put its section before
+ * 1.12's and left it out of the contents.
  */
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
@@ -52,6 +54,7 @@ function stalePlaces(markdown: string, version: string, peers: Readonly<Record<s
   }
 
   const opening = flat(markdown.slice(0, markdown.indexOf('\n## ')))
+  const contents = section(markdown, 'Contents')
   const before = section(markdown, 'Before you start')
   const starts = section(markdown, 'Find your starting point')
   const checklist = section(markdown, 'Checklist')
@@ -63,6 +66,15 @@ function stalePlaces(markdown: string, version: string, peers: Readonly<Record<s
   if (!opening.includes(`renamed from, to ${version}.`)) stale.push(`The opening names another version than ${version} as the one it takes a reader to.`)
   if (!opening.includes(`install ${version},`)) stale.push(`The opening path installs another version than ${version}.`)
   if (!opening.includes(link)) stale.push(`The opening path ends before "From ${newest.from} to ${newest.to}".`)
+  if (!contents.includes(link)) stale.push(`The contents stop before "From ${newest.from} to ${newest.to}".`)
+
+  // In the file's order, each section takes a reader on from where the one before it ended.
+  for (const [index, each] of sections.entries()) {
+    const before = sections[index - 1]
+    if (before !== undefined && order(each.from) < order(before.to)) {
+      stale.push(`"From ${each.from} to ${each.to}" comes after "From ${before.from} to ${before.to}": keep the sections oldest first.`)
+    }
+  }
   if (!before.includes(`**Check the peer dependencies.** ${version} needs:`)) stale.push(`"Before you start" names another version than ${version} for the peer dependencies.`)
   if (!before.includes(`**Install ${version}**`) || !before.includes(`bun add @popcomputer/web@^${version} `)) {
     stale.push(`"Before you start" installs another version than ${version}.`)
@@ -129,6 +141,20 @@ describe('UPGRADING.md', () => {
         expect.stringContaining('The title'),
         expect.stringContaining('installs another version'),
         expect.stringContaining('The checklist asks for another version'),
+      ])
+    })
+
+    test('a newest section before the one it follows, and left out of the contents', () => {
+      // The last two sections, swapped, and the last one's line of the contents dropped.
+      const blocks = [...guide.matchAll(/\n## From (\d+)\.(\d+) to (\d+)\.(\d+)\n[\s\S]*?(?=\n## )/g)]
+      const [previous, last] = blocks.slice(-2)
+      const link = last === undefined ? '' : `(#from-${last[1]}${last[2]}-to-${last[3]}${last[4]})`
+      const swapped = guide.replace(`${previous?.[0]}${last?.[0]}`, `${last?.[0]}${previous?.[0]}`)
+      const unlisted = swapped.split('\n').filter((line) => !(/^\d+\. /.test(line) && line.endsWith(link))).join('\n')
+
+      expect(stalePlaces(unlisted, pkg.version, pkg.peerDependencies)).toEqual([
+        expect.stringContaining('The contents stop before'),
+        expect.stringContaining('keep the sections oldest first'),
       ])
     })
 

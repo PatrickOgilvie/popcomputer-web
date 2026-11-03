@@ -106,9 +106,9 @@ TypeScript example here and in `docs/` type-checks against the package.
    files raises `form(Schema, { bodyLimit })`. A form that
    fails validation goes back to the page it came from (its Referer; without
    one, the page its form is on, `form(Schema, { page: paths.page })`, or
-   its own path's page), which receives the field errors as `errors`; a
-   JSON client gets a `422`. A key that route
-   params, query and body provide with different values fails validation.
+   its own path's page, else `/`), which receives the field errors as
+   `errors`; a JSON client gets a `422`. A key that route params, query and
+   body provide with different values fails validation.
    Read headers and a raw body (a webhook signature) with `RequestService`.
 6. **Load route models with `{param}` placeholders and `bound('param')`, and
    say in each binding who may load its record.** Name each model's Drizzle

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `secret()` and `variable()` without a schema read as `unknown` through `env.config` inside `defineEnv`, where they are any non-empty string and any string: TypeScript took the schema's type from `defineEnv`'s parameter rather than the default, so `Redacted.value(yield* env.config.TURNSTILE_SECRET)` failed the type check where a string was needed. Each now has an overload of its own without a schema. The landing example's upgrade to 1.13.0 found it.
+- `UPGRADING.md` puts "From 1.12 to 1.13" after "From 1.11 to 1.12" and in its contents, where 1.13.0 put it before and left it out; a test now checks both. "From 1.11 to 1.12" says what moving a queue's sends to `queue()` changes: a refused send answers 503 with `QueueSendError`, the binding needs no message type, and a test decodes `testQueue().sent()` with the declaration's schema. "Tooling after the upgrade" gives `check` the debt check, and adds the Effect language service and `popweb-mutate`. `AGENTS.md` names `/` as the last page a failed form goes back to.
+
 ## [1.13.0] - 2026-11-03
 
 This release gives an application's tests and its coding agent more to check with. `fuzzSession` and `startFuzzSession` fuzz sessions of requests against one database, where a step names the records earlier steps created; `popweb-mutate` plants small bugs, a flipped comparison or an Effect that swallows one of its own errors, in the lines a change touches and lists the ones no test catches; and `fuzz` and `stepsOf` shrink a failure to the steps it needs. The agent's command hook no longer refuses the template's own scripts.

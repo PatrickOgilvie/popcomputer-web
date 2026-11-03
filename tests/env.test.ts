@@ -238,6 +238,16 @@ describe('env.config', () => {
     Equals<typeof declared.config.SENTRY_DSN, Config.Config<Option.Option<Redacted.Redacted<string>>>>,
   ] = [true, true, true, true, true]
 
+  // Without a schema, a secret is any non-empty string and a var any string,
+  // inside defineEnv as outside it.
+  const plain = defineEnv({ KEY: secret(), NAME: variable(), DSN: secret(undefined, { optional: true }), ZONE: variable(undefined, { optional: true }) })
+  const plainTyped: [
+    Equals<typeof plain.config.KEY, Config.Config<Redacted.Redacted<string>>>,
+    Equals<typeof plain.config.NAME, Config.Config<string>>,
+    Equals<typeof plain.config.DSN, Config.Config<Option.Option<Redacted.Redacted<string>>>>,
+    Equals<typeof plain.config.ZONE, Config.Config<Option.Option<string>>>,
+  ] = [true, true, true, true]
+
   const Read = S.Struct({ port: S.Number, environment: S.String, mailKey: S.String, timeZone: S.NullOr(S.String), sentry: S.Boolean })
 
   const reading = Effect.gen(function* () {
@@ -268,6 +278,7 @@ describe('env.config', () => {
 
   test('reads each var and secret in an action as its schema decodes it', async () => {
     expect(typed).toEqual([true, true, true, true, true])
+    expect(plainTyped).toEqual([true, true, true, true])
 
     const res = await createApp(true).app.request('/read', { headers: { Accept: 'application/json' } }, testEnv(bindings))
 
