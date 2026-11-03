@@ -83,8 +83,10 @@ TypeScript example here and in `docs/` type-checks against the package.
    the failure to the error observer; never over `authorize()`, `bound()`,
    `validateRequest` or the database, whose failures are answers. Give a page
    that reports a failure its status, `render('Signing/LinkInvalid', {},
-   { status: 404 })`. A
-   handler that ends differently per branch branches inside `Effect.gen`,
+   { status: 404 })`, and a JSON client the failure itself, `notFound(...)`
+   when `yield* prefersJson` says it is one, since a JSON client gets every
+   failure in the JSON envelope. A handler that ends differently per branch
+   branches inside `Effect.gen`,
    whose branches TypeScript combines. Do not `throw` in an action. An
    endpoint's action (rule 13) returns its success value instead.
 5. **Declare an action's input as its first argument,

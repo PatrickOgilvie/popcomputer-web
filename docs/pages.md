@@ -40,7 +40,9 @@ export const pages = {
 `render('Projects/Show', props)` accepts only a registered page and props
 matching its schema, and encodes the props as JSON through it, so `createdAt`
 reaches the browser as an ISO string. A page answers 200, or the status its
-third argument gives: `render('Projects/Missing', {}, { status: 404 })`. An
+third argument gives: `render('Projects/Missing', {}, { status: 404 })`;
+answer a JSON client, as `yield* prefersJson` tells it apart, with the
+failure itself, `notFound('Project')`, which it reads in the JSON envelope. An
 application without `pages` passes props of any declared shape, interfaces
 included, whose values JSON carries.
 

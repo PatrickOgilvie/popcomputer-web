@@ -726,15 +726,35 @@ export function formatReport(run: Run): string {
 }
 
 if (import.meta.main) {
-  const { values, positionals } = parseArgs({
-    allowPositionals: true,
-    options: {
-      base: { type: 'string' },
-      'fail-under': { type: 'string' },
-      workers: { type: 'string' },
-      timeout: { type: 'string' },
-    },
-  })
+  const usage = [
+    'Usage: popweb-mutate [files...] [--base <ref>] [--fail-under <percent>] [--workers <n>] [--timeout <seconds>]',
+    '',
+    'Plants small bugs in the src/ lines changed since --base (HEAD by default), or in every line',
+    'of the src/ files given, and lists each one no test catches. docs/mutation.md explains it.',
+  ].join('\n')
+  const parse = () =>
+    parseArgs({
+      allowPositionals: true,
+      options: {
+        base: { type: 'string' },
+        'fail-under': { type: 'string' },
+        workers: { type: 'string' },
+        timeout: { type: 'string' },
+        help: { type: 'boolean', short: 'h' },
+      },
+    })
+  let parsed: ReturnType<typeof parse>
+  try {
+    parsed = parse()
+  } catch (error) {
+    console.error(`${error instanceof Error ? error.message : String(error)}\n\n${usage}`)
+    process.exit(2)
+  }
+  if (parsed.values.help === true) {
+    console.log(usage)
+    process.exit(0)
+  }
+  const { values, positionals } = parsed
 
   const number = (name: string, value: string | undefined) => {
     if (value === undefined) return undefined

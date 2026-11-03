@@ -2,10 +2,9 @@
 
 `@popcomputer/web/fuzz` checks rules on inputs it generates, rather than on
 the few a test writes by hand: any text a validator is given, any request a
-browser or an attacker sends to the application's routes, any order of the
-steps a lifecycle takes. Its pieces stand alone, on Effect's generators
-(`effect/Arbitrary`), so an application's fuzz tests start from them and add
-the application's own records and rules.
+browser or an attacker sends to the application's routes, any order of a
+lifecycle's steps. Its pieces stand alone, on Effect's generators
+(`effect/Arbitrary`), so a fuzz test adds the application's own rules.
 
 | Piece | What it gives |
 | --- | --- |
@@ -142,7 +141,9 @@ writes, with fields that pass its action's `form(Schema)`, so a new action
 is fuzzed once registered; `forms: [{ method, path, fields }]` adds what it
 cannot generate, a file or an action's `validateRequest` fields.
 `ownership(routes, 'projects')` reads a row's primary key and its binding's
-`ownedBy` column, by property key or snake_case name.
+`ownedBy` column, by property key or snake_case name; give `{ id, owner }`
+for a table no binding owns, and check a visitor's new account with a rule
+of your own. Each request comes from its own client address.
 
 The rules each answer keeps:
 
@@ -161,7 +162,8 @@ The rules each answer keeps:
   moved to another owner, or created for someone other than its sender.
 - `refusedWrites`: a 4xx answer changed no rows. Refusing everything keeps
   every rule, so also check after `fuzz` that each route that writes
-  answered 2xx or wrote: a failed form's 303 back reaches nothing.
+  answered 2xx or wrote; a failed form's 303 back reaches nothing, and an
+  app of thirty routes needs more than 200 cases to reach each.
 
 Each request starts from the database the test seeded. To send sequences of
 them, each naming the records earlier ones created, see

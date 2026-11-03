@@ -27,7 +27,10 @@ and constraint errors behave the same:
   `[test] preload` names: a Miniflare left running keeps its `workerd`
   process alive after `bun test` exits, and Bun shares modules between test
   files, so an `afterAll` in the module that creates the databases stops them
-  while other files still use them. Miniflare's `getKVNamespace` and
+  while other files still use them. A test that runs past its timeout takes
+  its Miniflare down with it, so every later test on those databases fails
+  with `ECONNREFUSED`: look for the first timeout, not the refusals.
+  Miniflare's `getKVNamespace` and
   `getR2Bucket` give the other bindings; their types differ slightly from
   `@cloudflare/workers-types`', so provide a KV store to the data cache as
   `kvCache(kv)` in the test layer rather than as a binding, and type a binding

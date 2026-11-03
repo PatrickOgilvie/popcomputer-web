@@ -248,6 +248,15 @@ test('popweb-mutate prints the report, and fails only when the score is under --
     const wrong = cli('test/b.test.ts')
     expect(wrong.status).toBe(2)
     expect(wrong.stderr).toContain('test/b.test.ts is not a TypeScript file in src/.')
+
+    const help = cli('--help')
+    expect(help.status).toBe(0)
+    expect(help.stdout).toStartWith('Usage: popweb-mutate [files...]')
+
+    const unknown = cli('--nope')
+    expect(unknown.status).toBe(2)
+    expect(unknown.stderr).toContain("Unknown option '--nope'")
+    expect(unknown.stderr).toContain('Usage: popweb-mutate')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

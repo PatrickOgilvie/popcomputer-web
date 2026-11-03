@@ -39,7 +39,11 @@ chmod +x .githooks/pre-commit && git config core.hooksPath .githooks
 ```
 
 The command hook refuses an agent's `git config core.hooksPath`, so the
-owner installs the gate, and every worktree of the repository shares it. A
+owner installs the gate, and every worktree of the repository shares it.
+The template does it on `bun install`: its `prepare` script runs
+`.githooks/install.ts`, which sets `core.hooksPath` to `.githooks` in a git
+repository where nothing else set it, so an install the agent runs only
+switches the gate on. A
 team on [Lefthook](https://lefthook.dev) commits the same checks as
 `lefthook.yml` instead, and runs `bunx lefthook install`:
 
@@ -205,6 +209,10 @@ git tracks or would track. A reason follows ` -- `, as
 
 `popweb-fence debt --update` writes the ledger, `lint-debt.json`: each
 directive without its line, so moving code changes nothing. Commit it.
+Before the first `--update`, give each warning the application means a
+reasoned disable comment, as `explain-security-loosening` on a binding
+public by design: the first ledger records them, and each later one is the
+owner's to allow.
 `popweb-fence debt --check`, the gate's last step, then fails:
 
 - when the code holds more directives than the ledger, naming the new

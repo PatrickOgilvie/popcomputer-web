@@ -1654,7 +1654,11 @@ What to adopt, none of it required:
   generates the form. The input is read after the route's layers and before
   the handler, so a form that fails shows its errors before a `bound()` or
   an `authorize()` in the handler runs. `form(Schema, { page })` names the
-  page the form is on, in place of the route's `form` option. Keep
+  page the form is on, in place of the route's `form` option. On an action
+  that reads no input the option stays where it answers `invalid()`, whose
+  errors go back to that page, and does nothing where it never fails a form.
+  A member without the role an action's `can(...)` asks now sees a bad
+  form's field errors before the 403. Keep
   `validateRequest` where its options depend on what the action loaded, or
   where the action answers its failure itself.
 - **Vars and secrets through their schemas.** `yield* env.config.NAME`, from
@@ -1805,6 +1809,7 @@ What to adopt, none of it required:
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
+- [ ] `tsc` runs the Effect language service, so a floating Effect fails it, and `check` ends with `popweb-fence debt --check`, as [Tooling](#tooling-after-the-upgrade) shows.
 - [ ] `bun test` passes, with tests on `testEnv`, `signedIn` and `readPage`.
 - [ ] No removed names remain. This should print nothing:
 

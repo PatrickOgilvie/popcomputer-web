@@ -792,6 +792,9 @@ export function requestOf(sent: FuzzRequest, origin = 'http://localhost'): Reque
   }
 }
 
+/** How many requests sendFuzzRequest has sent, each from a client address of its own. */
+let clients = 0
+
 /** An answer to a generated request: its response, the body read once, and what the error observer saw. */
 export interface FuzzAnswer {
   readonly response: Response
@@ -806,7 +809,9 @@ export interface FuzzAnswer {
  * for a visitor. Nothing when `fetch` refuses to make the request. The answer
  * holds what the error observer saw, which goes there in place of the
  * application's own observer, so `brokenPromises` sees a defect no answer
- * shows, such as one in background work after the action succeeded.
+ * shows, such as one in background work after the action succeeded. Each
+ * request comes from a client address of its own (`CF-Connecting-IP`), so
+ * a per-client limit never carries from one case to the next.
  */
 export async function sendFuzzRequest(
   app: TestApp,
@@ -817,8 +822,21 @@ export async function sendFuzzRequest(
   if (requestOf(sent, origin) === undefined) return undefined
 
   const { url, init } = partsOf(sent, origin)
+  const headers = new Headers(init.headers)
+
+  // Each request is a client of its own, as testBrowser's browsers are, so a
+  // per-client limit, such as Better Auth's on signing in, counts cases and
+  // test files apart; one whose headers name its address keeps it.
+  if (!headers.has('CF-Connecting-IP')) {
+    clients += 1
+    const address = `198.19.${Math.floor(clients / 250) % 250}.${(clients % 250) + 1}`
+
+    headers.set('CF-Connecting-IP', address)
+    if (!headers.has('X-Forwarded-For')) headers.set('X-Forwarded-For', address)
+  }
+
   const { env: observing, observed } = observingEnv(env)
-  const response = await app.request(url, init, observing)
+  const response = await app.request(url, { ...init, headers }, observing)
 
   return { response, text: await response.text(), observed }
 }
