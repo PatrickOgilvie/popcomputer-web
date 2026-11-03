@@ -117,6 +117,20 @@ application's origin. The scheme is read as a browser reads it, so
 `JavaScript:` or spaces before it make no difference. Keep an email address
 with `email` and build its `mailto:` link in the page.
 
+Cap an optional link's length on `url`, then make it optional with
+`nullable`, which reads an empty field as `null` as `nullableUrl` does. The
+cap counts the link once it is trimmed. `nullableUrl.check(...)` is a type
+error, since its value may be `null`, which has no length:
+
+```ts
+import { Schema as S } from 'effect'
+import { nullable, url } from '@popcomputer/web/schema'
+
+const BookForm = S.Struct({
+  link: nullable(url.check(S.isMaxLength(2000, { message: 'Keep the link under 2,000 characters.' }))),
+})
+```
+
 A body field named like one of the route's placeholders, such as `claim` on
 `PUT /claims/{claim}`, must carry the same value or the request fails
 validation, whether or not the schema reads it; leave such fields out of the

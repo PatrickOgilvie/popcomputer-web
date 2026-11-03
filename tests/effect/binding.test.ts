@@ -494,18 +494,38 @@ describe('who may load a binding', () => {
       bindings,
     })
 
+    // Each type error below is expected on the option's own line: TypeScript
+    // reports the option that is wrong, not that the table is no Effect Schema.
     test('a binding that says more than one thing about who may load it', () => {
       expect(setup({
-        // @ts-expect-error a binding gives one of ownedBy, public, publicWhen and guarded
-        project: routeBinding(projects, { ownedBy: 'userId', public: true }),
+        project: routeBinding(projects, {
+          ownedBy: 'userId',
+          // @ts-expect-error a binding gives one of ownedBy, public, publicWhen and guarded
+          public: true,
+        }),
       })).toThrow('Route binding "project" gives ownedBy and public: it can say only one of ownedBy, public, publicWhen and guarded.')
+      expect(setup({
+        project: routeBinding(S.Struct({ id: S.String, userId: S.String }), {
+          ownedBy: 'userId',
+          // @ts-expect-error a binding gives one of ownedBy, public, publicWhen and guarded, whatever its source
+          public: true,
+        }),
+      })).toThrow('Route binding "project" gives ownedBy and public')
     })
 
     test('an owner or visibility column the table does not have', () => {
-      // @ts-expect-error projects has no column ownerId
-      expect(setup({ project: routeBinding(projects, { ownedBy: 'ownerId' }) })).toThrow('Column "ownerId" for route binding "project"')
-      // @ts-expect-error projects has no column visible
-      expect(setup({ project: routeBinding(projects, { publicWhen: { visible: true } }) })).toThrow('Column "visible" for route binding "project"')
+      expect(setup({
+        project: routeBinding(projects, {
+          // @ts-expect-error projects has no column ownerId
+          ownedBy: 'ownerId',
+        }),
+      })).toThrow('Column "ownerId" for route binding "project"')
+      expect(setup({
+        project: routeBinding(projects, {
+          // @ts-expect-error projects has no column visible
+          publicWhen: { visible: true },
+        }),
+      })).toThrow('Column "visible" for route binding "project"')
       expect(setup({ project: routeBinding(projects, { ownedBy: 'userId' }) })).not.toThrow()
     })
 
@@ -571,8 +591,12 @@ describe('who may load a binding', () => {
     })
 
     test("a publicWhen value of another type than its column's", () => {
-      // @ts-expect-error isPublic is a boolean
-      expect(setup({ project: routeBinding(projects, { publicWhen: { isPublic: 'yes' } }) })).not.toThrow()
+      expect(setup({
+        project: routeBinding(projects, {
+          // @ts-expect-error isPublic is a boolean
+          publicWhen: { isPublic: 'yes' },
+        }),
+      })).not.toThrow()
     })
   })
 })

@@ -20,7 +20,9 @@ and constraint errors behave the same:
   migrations from, `wrangler.jsonc`'s `migrations_dir` (`migrations` unless it
   says otherwise), with drizzle-kit's `out` set to the same folder. The
   databases are typed as the application's D1 binding:
-  `testEnv({ ...testBindings, DB: await databases.fresh() })`. Starting
+  `testEnv({ ...testBindings, DB: await databases.fresh() })`, which returns
+  each binding passed to it with its type, so a test reads rows no page
+  shows from `env.DB`, not `env.DB?.`. Starting
   Miniflare takes a moment, so one holds many databases and another starts
   when they run out. Stop them once, after every test file, with
   `afterAll(() => databases.dispose())` in a file `bunfig.toml`'s

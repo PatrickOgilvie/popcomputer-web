@@ -31,6 +31,21 @@ type RegisteredBindings = Registered<'bindings', never>
 export type TestBindings = [RegisteredBindings] extends [never] ? object : Partial<RegisteredBindings>
 
 /**
+ * A binding a test passes that the application does not declare, such as a
+ * misspelled one, typed so that passing it is an error naming the declared
+ * bindings.
+ */
+type UndeclaredBindings<Given> = [Exclude<keyof Given, keyof RegisteredBindings>] extends [never]
+  ? unknown
+  : {
+      // Written out rather than named, so the compiler's message shows it.
+      readonly [Name in Exclude<keyof Given, keyof RegisteredBindings>]: {
+        readonly __error: "Not one of the application's bindings: declare it in src/env.ts, or correct its name."
+        readonly declaredBindings: keyof RegisteredBindings
+      }
+    }
+
+/**
  * Build a request env that adds `layer` to the request's Effect runtime.
  *
  * Services in `layer` replace the ones effectBridge provides for the request,
@@ -38,9 +53,16 @@ export type TestBindings = [RegisteredBindings] extends [never] ? object : Parti
  * application provides through `setupWeb`'s `services`. A layer that a
  * route registers with `.provide()` still takes precedence for that route.
  *
+ * The env has each binding passed in with the type it was given, so a test
+ * reads its database as `env.DB`, and may have any of the others.
+ *
  * @param bindings - Bindings the request reads from `c.env` and Effect `Config`.
  */
-export function testEnv<ROut>(layer: Layer.Layer<ROut>, bindings?: TestBindings, options?: TestEnvOptions): TestBindings
+export function testEnv<ROut, Given extends TestBindings>(
+  layer: Layer.Layer<ROut>,
+  bindings?: Given & UndeclaredBindings<Given>,
+  options?: TestEnvOptions
+): TestBindings & Given
 /**
  * Build a request env from bindings alone, and a database, for a test whose
  * requests sign in through the application, as a `testBrowser` does.
@@ -48,7 +70,10 @@ export function testEnv<ROut>(layer: Layer.Layer<ROut>, bindings?: TestBindings,
  * @example
  * const env = testEnv(testBindings, { database: await freshDatabase() })
  */
-export function testEnv(bindings: TestBindings, options?: TestEnvOptions): TestBindings
+export function testEnv<Given extends TestBindings>(
+  bindings: Given & UndeclaredBindings<Given>,
+  options?: TestEnvOptions
+): TestBindings & Given
 export function testEnv(
   first: Layer.Layer<never> | TestBindings,
   second?: TestBindings | TestEnvOptions,

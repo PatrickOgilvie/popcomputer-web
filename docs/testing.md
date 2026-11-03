@@ -208,6 +208,15 @@ const expired = await app.request('/invites/abc', {}, env)
 const delivered = await time.settle(app.request('/webhooks/deliver', { method: 'POST' }, env))
 ```
 
+## Rows no page shows
+
+A test that checks rows no page shows, such as the ones a cascade delete
+removes, reads them from the database it gave the request. `testEnv`
+returns each binding passed to it with the type it was given, so on D1 that
+is `env.DB` itself, which `drizzle(env.DB, { schema })` reads with the
+application's schema, or `env.DB.prepare(sql)` without one. On Postgres it
+is the client passed as `testEnv`'s `database`.
+
 ## What test files share
 
 Bun runs every test file in one module registry, so a clock or a test

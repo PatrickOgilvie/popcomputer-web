@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { testD1 } from '../src/testing.js'
+import { testD1, testEnv } from '../src/testing.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
 const migrations = join(import.meta.dir, 'fixtures', 'd1-migrations')
@@ -102,6 +102,15 @@ describe('testD1', () => {
     expect(await notes(first)).toEqual([{ body: 'first' }])
     expect(await notes(second)).toEqual([])
     expect(await notes(third)).toEqual([{ body: 'third' }])
+  })
+
+  test('a test reads the database through the env testEnv returns, which has every binding passed to it', async () => {
+    const env = testEnv({ DB: await databases.fresh() })
+
+    // Not env.DB?.: a binding passed to testEnv keeps its declared type.
+    await write(env.DB, 'read back')
+
+    expect(await notes(env.DB)).toEqual([{ body: 'read back' }])
   })
 
   test("a database has the migrations' constraints", async () => {

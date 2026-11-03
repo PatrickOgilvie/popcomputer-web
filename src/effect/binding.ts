@@ -230,10 +230,27 @@ export type RouteBindingConfig =
 /** Binding parsers registered once at application composition. */
 export type RouteBindingsConfig = Readonly<Record<string, RouteBindingConfig>>
 
+/** What a binding loads its record with: a Drizzle table, or an Effect Schema that parses its row. */
+type RouteBindingSource = RouteBindingTable | S.Codec<unknown, unknown, never, never>
+
+/** A binding's options: for a table, they name its columns and take their columns' types. */
+type RouteBindingOptionsFor<Source> = Source extends RouteBindingTable
+  ? RouteBindingOptions<Extract<keyof Source['$inferSelect'], string>, Source['$inferSelect']>
+  : RouteBindingOptions<string, AnyRow>
+
+/** A binding's model: its table's row, or its schema's type. */
+type RouteBindingModel<Source> = Source extends RouteBindingTable
+  ? Source['$inferSelect']
+  : Source extends S.Codec<infer A, unknown, never, never> ? A : never
+
 /**
  * A route-model binding: its table, or an Effect Schema, and who may load
  * its record (`ownedBy`, `public`, `publicWhen` or `guarded`), with the table
  * name or parent scope when the route parameter cannot say them.
+ *
+ * One signature serves tables and schemas, so a wrong option is reported
+ * where it is written: with an overload each, TypeScript reported the last
+ * overload's complaint, that a table is no Effect Schema.
  *
  * @example
  * bindings: {
@@ -241,19 +258,15 @@ export type RouteBindingsConfig = Readonly<Record<string, RouteBindingConfig>>
  *   showcase: routeBinding(schema.projects, { publicWhen: { visibility: 'public' } }),
  * }
  */
-export function routeBinding<T extends RouteBindingTable>(
-  table: T,
-  options?: RouteBindingOptions<Extract<keyof T['$inferSelect'], string>, T['$inferSelect']>
-): RouteBindingDefinition<T['$inferSelect']>
-export function routeBinding<A>(
-  schema: S.Codec<A, unknown, never, never>,
-  options?: RouteBindingOptions<string, AnyRow>
-): RouteBindingDefinition<A>
-export function routeBinding<A>(
-  schema: S.Codec<A, unknown, never, never> | RouteBindingTable<A>,
+export function routeBinding<Source extends RouteBindingSource>(
+  source: Source,
+  options?: RouteBindingOptionsFor<Source>
+): RouteBindingDefinition<RouteBindingModel<Source>>
+export function routeBinding(
+  source: RouteBindingSource,
   options: RouteBindingOptions<string, AnyRow> = {}
-): RouteBindingDefinition<A> {
-  return { schema, ...options }
+): RouteBindingDefinition {
+  return { schema: source, ...options }
 }
 
 /** A column's inline foreign keys, from `.references(() => ...)`, as Drizzle keeps them. */
