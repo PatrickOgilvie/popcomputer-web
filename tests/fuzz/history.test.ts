@@ -83,7 +83,7 @@ type Step =
   | (typeof tabStep extends Arbitrary.Arbitrary<infer A> ? A : never)
   | { readonly [Act in Change]: { readonly act: Act; readonly member: 'ada' | 'grace' } }[Change]
 
-const steps = Arbitrary.map(stepsOf(turn, { maxLength: 4 }), (turns): Step[] =>
+const steps = Arbitrary.map(stepsOf(turn, { maxLength: 6 }), (turns): Step[] =>
   turns.flatMap((each) => [{ act: each.change, member: each.member }, ...each.steps])
 )
 
