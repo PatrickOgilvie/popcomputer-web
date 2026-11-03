@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+What an application on 1.13.1 needs to change, which `UPGRADING.md`'s "From 1.12 to 1.13" notes: Better Auth 1.7.16 or a later 1.7.x, and a check of the rows Better Auth wrote before it.
+
+### Security
+
+- Better Auth must be 1.7.16 or a later 1.7.x (`>=1.7.16 <1.8.0`), the release with the fixes for its twelve [advisories of 2026-11-03](https://better-auth.com/blog/security-release-2026-11-03): change-email links that outlive the address (GHSA-hwq2-v29r-p69r), phone numbers claimed before they are verified (GHSA-q747-mqgr-4gh7), an OAuth provider's `email_verified: "false"` taken as verified (GHSA-9hm7-xhfp-cx58), email OTP guesses raced past the attempt limit (GHSA-2f9c-7xj7-gh55), revoked sessions kept by secondary storage or the cookie cache (GHSA-fvxx-76fc-893x), MySQL serial ids (GHSA-48c2-w96j-mv3m), the admin plugin's phone numbers (GHSA-g95c-wqvr-8c3j), padded organization roles (GHSA-c85h-5mrr-mgx4), and the Expo (GHSA-4wq4-2ppv-q3hg), Electron (GHSA-9p5w-h4pr-fcrc), Stripe (GHSA-x8j7-xh58-rv6x) and passkey (GHSA-gv75-j3v8-3crm) plugins. Since 1.6.0 the framework had answered the first two at its seam, sending a signed-out visitor who follows a change-email link to sign in and refusing a `phoneNumber` sent to sign-up, and `betterAuthHandler` refuses the Stripe plugin's `stripeCustomerId` as it refuses every plugin's user field `settable` does not name; the rest were Better Auth's alone. The package's Better Auth tests pass against 1.7.16, and `tests/security/production.test.ts` refuses a peer range that allows 1.7.15.
+
+### Fixed
+
+- `AGENTS.md`'s rule 7 gave the phone-number plugin's `phoneNumber` as a field to name in `betterAuthHandler`'s `settable`, where `docs/auth-plugins.md` says no sign-up sets one, since a number's code signs in whoever holds it. It now gives `username`, and says to leave `phoneNumber` out; `settable`'s doc comment says the same.
+- `docs/auth.md` gives the reason that remains on Better Auth 1.7.16 for sending a signed-out visitor who follows a change-email link to sign in: Better Auth no longer signs them in, but still moves the account that asked, so the holder of an address someone else asked for would hand it to the asker's account. The seam suite shows the move without the refusal.
+
 ## [1.13.1] - 2026-11-03
 
 This release fixes what upgrading the five example applications to 1.13.0 found, and merges three fixes made on 1.11 that had not reached a release. Every answer now waits for the request's body to end, so an upload behind a proxy such as portless no longer meets a closed connection; `reloadWorkerModules()` pre-bundles the package's Worker entries; `testEnv` returns the bindings it was given with their types, and `secret()` and `variable()` without a schema read as strings; `sendFuzzRequest` sends each request from a client address of its own; `file()` takes an `ArrayBuffer`, and `FormErrors` has `form`. `docs/uploads.md` says where an upload lives, and the upgrade guide, `AGENTS.md` and the fuzzing docs answer what the examples' upgrades asked.

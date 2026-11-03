@@ -43,7 +43,9 @@ settings (step 2 of `plans/request-pipeline.md`). `HistoryClear.tla` and
 flash cookie moved into `src/response-output.ts`'s `finishResponse`
 (step 4). `SignInLimits.tla` was confirmed on 2026-11-01 when its
 statements came to run through `dbQuery` and `dbMutation` (step 7), each
-still one statement.
+still one statement. `MagicLink.tla` was confirmed on 2026-11-03 against
+better-auth 1.7.16, whose magic-link plugin changed only in form (its
+`createSession` moved to line 198), and every config gave what step 2 says.
 
 ## Run the check
 

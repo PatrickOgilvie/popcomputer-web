@@ -160,7 +160,7 @@ describe('UPGRADING.md', () => {
 
     test('a peer range package.json moved', () => {
       expect(stalePlaces(guide, pkg.version, { ...pkg.peerDependencies, 'better-auth': '>=1.8.0 <1.9.0' })).toEqual([
-        expect.stringContaining('gives better-auth >=1.7.7 <1.8.0, where package.json needs >=1.8.0 <1.9.0'),
+        expect.stringContaining(`gives better-auth ${pkg.peerDependencies['better-auth']}, where package.json needs >=1.8.0 <1.9.0`),
       ])
     })
   })

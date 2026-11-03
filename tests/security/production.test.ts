@@ -336,8 +336,11 @@ describe('the libraries the package composes', () => {
       ['hono', '4.13.4', '4.13.5'],
       // Quoting in sql.identifier() and .as() (CVE-2026-39356).
       ['drizzle-orm', '0.45.1', '0.45.2'],
-      // OAuth state accepted as a magic link token (GHSA-965c-763c-88jm).
-      ['better-auth', '1.7.6', '1.7.7'],
+      // OAuth state accepted as a magic link token (GHSA-965c-763c-88jm, 1.7.7); email-change
+      // links, phone numbers claimed unverified, string email_verified claims, email OTP races
+      // and revoked sessions (GHSA-hwq2-v29r-p69r, GHSA-q747-mqgr-4gh7, GHSA-9hm7-xhfp-cx58,
+      // GHSA-2f9c-7xj7-gh55, GHSA-fvxx-76fc-893x, and seven more of 2026-11-03, 1.7.16).
+      ['better-auth', '1.7.15', '1.7.16'],
     ]
 
     for (const [name, vulnerable, fixed] of floors) {

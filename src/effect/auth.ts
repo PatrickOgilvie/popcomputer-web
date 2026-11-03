@@ -764,9 +764,10 @@ function movesAccount(token: unknown): boolean {
 
 /**
  * Refuse a signed-out visitor a link that moves an account to a new address:
- * Better Auth signs whoever follows one with no session in to the account
- * that asked, so the holder of the new address would land in it. A signed-in
- * visitor goes on, and Better Auth refuses any but that account.
+ * Better Auth moves the account that asked for whoever follows one with no
+ * session, so the holder of the new address, following a link someone else
+ * asked for, would hand that address to the asker's account. A signed-in visitor
+ * goes on, and Better Auth refuses any but that account.
  */
 function signedInToMove(path: string, tokens: ReadonlyArray<unknown>): Effect.Effect<void, UnauthorizedError> {
   if (path !== '/verify-email' || !tokens.some(movesAccount)) return Effect.void
@@ -940,8 +941,10 @@ export interface BetterAuthHandlerOptions {
    * sign-up, on a first email-OTP sign-in or phone-number verification, and
    * later with its update-user, where the application's actions do not
    * validate them: the application's fields declared `input: true`, and its
-   * plugins' fields, such as the phone-number plugin's `phoneNumber` or the
-   * username plugin's `username`. A request setting any other is refused.
+   * plugins' fields, such as the username plugin's `username`. A request
+   * setting any other is refused. Leave out the phone-number plugin's
+   * `phoneNumber`: a member proves a number through `/phone-number/verify`
+   * once signed in.
    */
   readonly settable: ReadonlyArray<BetterAuthInputField>
 }
@@ -957,7 +960,7 @@ type BetterAuthHandlerArguments = [InputFieldsOf<AuthOptions>] extends [never]
  * update-user, the emailOTP plugin's sign-in and the phoneNumber plugin's
  * verify create the user on first use (unless emailOTP's `disableSignUp`, or
  * with phoneNumber's `signUpOnVerification`) from the rest of the body.
- * Checked against better-auth 1.7.10; the admin plugin's create-user and
+ * Checked against better-auth 1.7.16; the admin plugin's create-user and
  * update-user take fields from an admin, whose permissions Better Auth checks.
  */
 const USER_WRITING_ENDPOINTS = new Set(['/update-user', '/sign-in/email-otp', '/phone-number/verify'])

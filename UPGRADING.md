@@ -90,7 +90,7 @@ you installed:
   | `effect` | `^4.0.0` | Always |
   | `hono` | `^4.13.5` | Always |
   | `drizzle-orm` | `>=0.45.2 <1.0.0` | You use Drizzle or route model binding |
-  | `better-auth` | `>=1.7.7 <1.8.0` | You use the Better Auth integration |
+  | `better-auth` | `>=1.7.16 <1.8.0` | You use the Better Auth integration |
   | `miniflare` | `>=4.0.0 <5.0.0` | You test against Cloudflare D1 |
   | `@types/react` | `>=18` | You use the React page types |
   | `vite` | `>=6.1.0` | You use `reloadWorkerModules` in `vite.config.ts` |
@@ -105,7 +105,7 @@ you installed:
   ```bash
   bun remove honertia                    # if you are on honertia
   bun add @popcomputer/web@^1.13.1 effect@^4.0.0
-  bun add 'better-auth@>=1.7.7 <1.8.0'   # if you use Better Auth
+  bun add 'better-auth@>=1.7.16 <1.8.0'  # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
 
@@ -1709,6 +1709,31 @@ an application's own code. Check these against your tests:
 - **A form in `fuzzRequest`'s `forms` with a field that holds `{name}`.** The
   braces name a placeholder now, as in the path: `note={note}` takes the
   values `params` gives `note`.
+
+From 1.13.2, an application that uses Better Auth upgrades it:
+
+- **Better Auth must be 1.7.16 or a later 1.7.x,** the release with the
+  fixes for Better Auth's twelve
+  [security advisories of 3 November 2026](https://better-auth.com/blog/security-release-2026-11-03).
+  Install it with each `@better-auth/*` plugin package at the same version,
+  `bun add 'better-auth@>=1.7.16 <1.8.0'`. The upgrade leaves the rows
+  written before it as they are, so check those that apply to you:
+  - With the phone-number plugin, clear the numbers nobody verified,
+    `UPDATE "user" SET "phoneNumber" = NULL WHERE "phoneNumber" IS NOT NULL AND "phoneNumberVerified" IS NOT TRUE`
+    (use your table's names); their members add them again, signed in.
+  - With the organization plugin, where a role other than the owner's
+    invites, look for invitations and memberships whose `role` changes when
+    trimmed, such as `' owner'`, and review the owners their members
+    invited. Do not trim them in place: `admin, owner` trimmed is an owner.
+  - With `@better-auth/stripe`, look for a `stripeCustomerId` more than one
+    user holds.
+  - With the admin plugin and access control of your own, grant the new
+    `user:set-phone` permission to the roles that change phone numbers.
+  - With `@better-auth/expo` or `@better-auth/electron` on the server,
+    rotate the auth secret, and with Electron each social provider's
+    client secret too.
+  - A change-email link or email-OTP change code sent before the upgrade
+    no longer works: the member asks again.
 
 Changes you may notice without acting on them:
 

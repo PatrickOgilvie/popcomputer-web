@@ -315,5 +315,5 @@ void betterAuthHandler({ settable: ['role'] })
 // @ts-expect-error phoneNumberVerified is the phone-number plugin's, never input.
 void betterAuthHandler({ settable: ['phoneNumberVerified'] })
 void betterAuthHandler({ settable: ['timeZone'] })
-// A plugin's field a visitor may set, such as the phone-number plugin's, is named here too.
+// A plugin's input field type-checks here too, as the phone-number plugin's does, though no application names it.
 void betterAuthHandler({ settable: ['phoneNumber'] })

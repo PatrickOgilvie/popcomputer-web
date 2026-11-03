@@ -1,9 +1,9 @@
 ---- MODULE MagicLink ----
 \* Better Auth's magic link, as the template serves it: docs/auth-plugins.md
-\* 18-26 and tests/better-auth/app.ts showMagicLink and verifyMagicLink
-\* (159-169, 276-277). Better Auth consumes the token on its first
+\* 18-30 and tests/better-auth/app.ts showMagicLink and verifyMagicLink
+\* (169-179, 286-287). Better Auth consumes the token on its first
 \* verification and creates a session (better-auth/dist/plugins/magic-link/
-\* index.mjs 43-46, 195). Design "code" serves a page on GET whose button
+\* index.mjs 43-46, 198, in 1.7.16). Design "code" serves a page on GET whose button
 \* posts the token; "1.6", release 1.6.0's fixture, verified on the GET, and
 \* must break.
 CONSTANTS Design  \* "code" or "1.6"
