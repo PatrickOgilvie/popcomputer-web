@@ -250,6 +250,12 @@ bun run test
 After changing `AGENTS.md`, regenerate the skill with
 `bun scripts/build-skill.ts`; a test fails while it is stale.
 
+`bun run mutate` checks `AGENTS.md`'s rule 12 on a change: it plants small
+bugs (mutants) in the `src/` lines changed since `HEAD`, or `--base <ref>`,
+or in every line of the `src/` files it is given, runs each against the test
+files whose coverage reaches its line, and lists the ones no test catches.
+`--fail-under <percent>` makes it exit non-zero below that score.
+
 The repository verifies runtime behavior, strict TypeScript and module
 augmentation contracts, that every TypeScript example in this README, in
 `docs/`, in `AGENTS.md` and in `UPGRADING.md` type-checks, that every link

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `bun run mutate`, in the framework's own repository, checks `AGENTS.md`'s rule 12 on a change: it plants small bugs in the `src/` lines changed since `HEAD`, or `--base <ref>`, or in every line of the files it is given, runs each against the test files whose coverage reaches its line, and lists the ones no test catches, with a score per file and per operator; `--fail-under <percent>` makes it fail below that score. The review of the tests that 1.11.0's test fixes came from planted its 2,065 bugs with tooling run by hand; on `src/effect/body-limit.ts` the script plants 13 in under 30 seconds, of which 3 survive. `AGENTS.md`'s "Before finishing" names it for work on the package itself.
+
 ## [1.12.1] - 2026-11-02
 
 Nothing an application on 1.12.0 needs to change. A JSON client signing out through `betterAuthLogoutAction` gets a 204 that expires the session cookies, where it was redirected to `redirectTo`, which with the documented `redirectTo: paths.login` sent it to the sign-in page. A browser and an Inertia visit still get the 303. A test that signs out as a JSON client sees the 204.
