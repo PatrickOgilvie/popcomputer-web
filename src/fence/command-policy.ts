@@ -134,6 +134,8 @@ const HOOKS_PATH = 'core.hooksPath'
 const GATE_WORDS: ReadonlyArray<string> = ['git', 'commit', '-n', HOOKS_PATH]
 /** The same, for an unquoted expansion, which the shell may split into several words, as `$(echo git commit)`. */
 const GATE_RUNS: ReadonlyArray<ReadonlyArray<string>> = [['git', 'commit'], ['commit', '-n'], ['git', 'commit', '-n']]
+/** Whether a word is one of those, or names the hooks setting, as `-c core.hooksPath=` does. */
+const namesGate = (word: string) => GATE_WORDS.includes(word) || word.toLowerCase().includes(HOOKS_PATH.toLowerCase())
 /** How many unread words of one command take another reading at once: git, its commit and the flag. */
 const MAX_REREAD = 3
 /** How many unread words of one command are read otherwise; the rest are read as the shell's own expansion. */
@@ -223,20 +225,41 @@ const REASONS: Readonly<Record<Exclude<FenceRule, 'hook-bypass' | 'fence-change'
 class Inspection {
   readonly findings: Finding[] = []
 
-  constructor(private readonly options: CommandPolicyOptions) {}
+  /**
+   * @param reading The files and package scripts being read on the way to
+   * this command, so one that names itself, as a deploy script's "run bun run
+   * deploy again" does, is read once.
+   */
+  constructor(private readonly options: CommandPolicyOptions, private readonly reading = new Set<string>()) {}
 
-  script(text: string, depth: number, via?: string): void {
+  /** A command line; `inCode` when it is a program's string, whose placeholders are its own. */
+  script(text: string, depth: number, via?: string, inCode = false): void {
     if (depth > MAX_DEPTH) return
-    for (const command of readCommands(text)) this.command(command, depth, via)
+    for (const command of readCommands(text)) this.command(command, depth, via, inCode)
   }
 
-  private command(command: SimpleCommand, depth: number, via: string | undefined): void {
+  private command(command: SimpleCommand, depth: number, via: string | undefined, inCode: boolean): void {
     const text = shown([...command.assignments.map(({ name, value }) => `${name}=${value}`), ...command.words])
 
     for (const { name, value } of command.assignments) this.environment(name, value, text, via, basename(command.words[0] ?? ''))
     for (const target of command.writes) this.findings.push(...fileFindings(target, from(`${text} > ${target}`, via)))
     this.words(command.words, command, depth, via)
-    if (command.marked !== undefined) this.unread(command, command.marked, depth, via)
+    // A program's string that names neither git, its commit, `-n` nor the
+    // hooks setting is a message, as a deploy script's `${name} isn't set
+    // yet`, or a command built at run time, which the fence cannot read: its
+    // placeholders are not read as the gate's words.
+    if (command.marked !== undefined && (!inCode || command.words.some(namesGate))) this.unread(command, command.marked, depth, via)
+  }
+
+  /** Read `key` (a file, or a package script) unless it is already being read on the way here. */
+  private once(key: string, read: () => void): void {
+    if (this.reading.has(key)) return
+    this.reading.add(key)
+    try {
+      read()
+    } finally {
+      this.reading.delete(key)
+    }
   }
 
   /**
@@ -268,7 +291,7 @@ class Inspection {
       if (tried.has(key)) continue
       tried.add(key)
 
-      const probe = new Inspection(this.options)
+      const probe = new Inspection(this.options, this.reading)
       probe.words(reading, command, depth, via)
 
       if (probe.findings.some((finding) => finding.decision === 'deny')) {
@@ -468,7 +491,7 @@ class Inspection {
 
   /** Inline code: each string literal, and each run of literals an argument list holds, read as a command line. */
   private code(source: string, depth: number, via: string | undefined): void {
-    for (const line of commandsInCode(source)) this.script(line, depth + 1, via)
+    for (const line of commandsInCode(source)) this.script(line, depth + 1, via, true)
   }
 
   /** A file a command runs: a shell script read as one, a JavaScript or TypeScript program by its strings. */
@@ -480,8 +503,10 @@ class Inspection {
 
     const shebang = /^#!.*\b(node|bun|deno|tsx|ts-node)\b/.test(source) || /\.[cm]?[jt]sx?$/.test(path)
     const subject = shown([path, ...args])
-    if (shebang) this.code(source, depth, from(subject, via))
-    else this.script(source, depth + 1, from(subject, via))
+    this.once(`file:${path}`, () => {
+      if (shebang) this.code(source, depth, from(subject, via))
+      else this.script(source, depth + 1, from(subject, via))
+    })
   }
 
   /** `npx`, `bunx`, `pnpx`, `npm exec`, `pnpm dlx`, `yarn dlx`: the package's bin, with its version dropped. */
@@ -514,9 +539,11 @@ class Inspection {
     const extra = args[0] === '--' ? args.slice(1) : args
     const label = from(shown([runner, 'run', name, ...args]), via)
 
-    this.script(scripts[`pre${name}`] ?? '', depth + 1, label)
-    this.script([scripts[name], ...extra.map(quote)].join(' '), depth + 1, label)
-    this.script(scripts[`post${name}`] ?? '', depth + 1, label)
+    this.once(`script:${name}`, () => {
+      this.script(scripts[`pre${name}`] ?? '', depth + 1, label)
+      this.script([scripts[name], ...extra.map(quote)].join(' '), depth + 1, label)
+      this.script(scripts[`post${name}`] ?? '', depth + 1, label)
+    })
     return true
   }
 

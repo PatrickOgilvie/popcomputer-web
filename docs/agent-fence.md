@@ -90,7 +90,12 @@ variable the line does not set, it cannot read: it tries each such word as
 `git`, `commit` and commit's `-n`, and refuses a command one of those makes
 a way around the gate, as `git $(echo commit) -n`, so write such a command
 out in full. A quoted substitution is one word, so `git commit -m
-"$(cat <<'EOF' ... EOF)"` runs.
+"$(cat <<'EOF' ... EOF)"` runs. In a program's strings it tries a
+placeholder so only where the string names `git`, `commit`, `-n` or
+`core.hooksPath`, as `` `git commit ${flags}` `` does: one that names none,
+as a message's `` `${name} isn't set` ``, is no way around the gate it can
+read. It reads each script once on the way to a command, so a deploy script
+whose message says to run `bun run deploy` again is read once.
 
 ### Claude Code
 

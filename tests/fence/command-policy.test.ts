@@ -23,6 +23,7 @@ const scripts = {
   announce: 'echo shipping',
   preannounce: 'git push',
   loop: 'bun run loop',
+  launch: 'bun scripts/launch.ts',
 }
 
 const files: Readonly<Record<string, string>> = {
@@ -30,6 +31,14 @@ const files: Readonly<Record<string, string>> = {
   'scripts/check.sh': '#!/bin/sh\nbun test\nbunx oxlint\n',
   'scripts/deploy.ts': "import { $ } from 'bun'\nawait $`wrangler deploy --env production`\n",
   'scripts/commit.ts': "Bun.spawnSync(['git', 'commit', '--no-verify', '-m', 'wip'])\n",
+  // Its messages name the script itself and start with, or are only, a placeholder.
+  'scripts/launch.ts': [
+    "const RERUN = 'bun run launch'",
+    "console.log(`${target} isn't set yet (${why}): set it, then run ${RERUN} again.`)",
+    "Bun.spawnSync(['wrangler', 'deploy'])",
+    '',
+  ].join('\n'),
+  'scripts/sneak.ts': "import { execSync } from 'node:child_process'\nexecSync(`git commit ${flags}`)\nexecSync(`${tool} commit -n`)\n",
 }
 
 const options: CommandPolicyOptions = { scripts, readFile: (path) => files[path.replace(/^\.\//, '')] }
@@ -276,6 +285,15 @@ describe('commandPolicy', () => {
     const verdict = commandPolicy('bun run deploy', { scripts })
 
     expect(verdict).toMatchObject({ decision: 'ask', subject: 'bun run deploy: wrangler deploy' })
+  })
+
+  test('reads a script that names itself once, and its messages as messages', () => {
+    expect(commandPolicy('bun run launch', options)).toMatchObject({ decision: 'ask', rule: 'deploy', subject: 'bun run launch: scripts/launch.ts: wrangler deploy' })
+  })
+
+  test("reads a program's placeholders as the gate's words where its string names git, its commit or -n", () => {
+    expect(commandPolicy('bun scripts/sneak.ts', options)).toMatchObject({ decision: 'deny', rule: 'hook-bypass' })
+    expect(commandPolicy('bun scripts/sneak.ts', { ...options, readFile: () => 'execSync(`${tool} commit -n`)\n' })).toMatchObject({ decision: 'deny' })
   })
 
   test('without the scripts, a script name is just a word', () => {
