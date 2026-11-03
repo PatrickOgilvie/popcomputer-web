@@ -13,9 +13,9 @@
  *
  * Each property runs a few hundred cases from a fixed seed, so a commit gate
  * is repeatable. `FUZZ_RUNS` sets the number of cases, `FUZZ_SEED=random`
- * picks a seed per run, and a failure prints the shrunk input, why the
- * property refused it, and a replay token for `FUZZ_REPLAY`, which runs that
- * case again.
+ * picks a seed per run, `FUZZ_SHRINKS` the candidates a failure shrinks
+ * through, and a failure prints the shrunk input, why the property refused
+ * it, and a replay token for `FUZZ_REPLAY`, which runs that case again.
  *
  * @example
  * ```ts
@@ -26,7 +26,7 @@
  * }), fuzzTimeout)
  * ```
  */
-import { Arbitrary, Effect, Option, Predicate, Schema as S, type SchemaAST } from 'effect'
+import { Arbitrary, Effect, Option, Predicate, Schema as S, SchemaGetter, type SchemaAST } from 'effect'
 import type { PathParamName } from './paths.js'
 import type { RouteModelMetadata, RouteRegistry, RouteRow } from './effect/route-registry.js'
 import type { EffectErrorEvent } from './effect/error-observer.js'
@@ -34,6 +34,7 @@ import { observingEnv } from './effect/test-env.js'
 import type { TestApp, TestBindings } from './testing.js'
 
 const configuredRuns = process.env.FUZZ_RUNS === undefined ? undefined : Number(process.env.FUZZ_RUNS)
+const configuredShrinks = process.env.FUZZ_SHRINKS === undefined ? undefined : Number(process.env.FUZZ_SHRINKS)
 // `random` picks a seed per run; the replay token a failure prints records it.
 const seed = process.env.FUZZ_SEED === 'random' ? Date.now() : process.env.FUZZ_SEED ?? 'popweb'
 const replay = process.env.FUZZ_REPLAY
@@ -44,6 +45,12 @@ export type Refusal = string | ReadonlyArray<string> | undefined
 export interface FuzzOptions {
   /** Cases to run, for a property whose cases are slow; `FUZZ_RUNS` overrides it. Default 300. */
   readonly runs?: number
+  /**
+   * Candidates a failure shrinks through, each a run of the property;
+   * `FUZZ_SHRINKS` overrides it. Default 1,000, where Effect's check stops
+   * at 100: dropping each step a long sequence does not need takes one.
+   */
+  readonly shrinks?: number
 }
 
 /**
@@ -56,7 +63,9 @@ export const fuzzTimeout = configuredRuns === undefined ? 60_000 : 3_600_000
  * Check `holds` on generated inputs. Resolves when every case holds, and
  * rejects with the shrunk input, why `holds` refused it and a replay token
  * otherwise. Run it as a test of any runner:
- * `test(name, () => fuzz(arbitrary, holds), fuzzTimeout)`.
+ * `test(name, () => fuzz(arbitrary, holds), fuzzTimeout)`. Shrinking stops
+ * with a quarter of `fuzzTimeout` left, and the failure says so, so a slow
+ * property reports its failure before its test times out.
  */
 export async function fuzz<A>(
   arbitrary: Arbitrary.Arbitrary<A>,
@@ -72,12 +81,30 @@ export async function fuzz<A>(
       return `threw ${error instanceof Error ? `${error.name}: ${error.message}` : show(error)}`
     }
   }
+  const shrinkUntil = Date.now() + fuzzTimeout * 0.75
+  let shrinking = false
+  let stopped = false
   const result = await Effect.runPromise(
-    Arbitrary.checkEffect(arbitrary, (value) => Effect.promise(async () => (await reasonFor(value)) === undefined), {
-      runs: configuredRuns ?? options.runs ?? 300,
-      seed,
-      replay,
-    })
+    Arbitrary.checkEffect(
+      arbitrary,
+      (value) =>
+        Effect.promise(async () => {
+          // A candidate that holds is one Effect's shrink passes over, so
+          // past the deadline every candidate holds and the shrink ends.
+          if (shrinking && Date.now() > shrinkUntil) {
+            stopped = true
+
+            return true
+          }
+
+          const holding = (await reasonFor(value)) === undefined
+
+          shrinking ||= !holding
+
+          return holding
+        }),
+      { runs: configuredRuns ?? options.runs ?? 300, maxShrinks: configuredShrinks ?? options.shrinks ?? 1000, seed, replay }
+    )
   )
 
   if (result._tag === 'Passed') return
@@ -87,7 +114,13 @@ export async function fuzz<A>(
     ? (await reasonFor(result.shrunkInput)) ?? 'nothing when run again, so the case fails only after the cases before it or by chance, and FUZZ_REPLAY will not reproduce it: start each case from fresh state'
     : undefined
 
-  throw new Error([Arbitrary.formatCheckFailure(result), refusal && `Refused: ${refusal}`].filter(Boolean).join('\n'))
+  throw new Error(
+    [
+      Arbitrary.formatCheckFailure(result),
+      refusal && `Refused: ${refusal}`,
+      stopped && 'Stopped shrinking with a quarter of fuzzTimeout left: a smaller input may fail too.',
+    ].filter(Boolean).join('\n')
+  )
 }
 
 function reasonOf(refusal: Refusal): string | undefined {
@@ -134,13 +167,31 @@ function upTo(first: number, last: number): readonly [number, ...number[]] {
 const held = Arbitrary.schema(S.Literals(upTo(0, 15)), { shrink: (value) => (value === 0 ? [] : [0]) })
 
 /**
+ * The positions of the steps a sequence drops, none as generated. A schema
+ * of literals generates each of its values, so this one is declared: it
+ * generates through its link, always none, and keeps any positions a shrink
+ * gives it.
+ */
+const Dropped = S.declare((value): value is ReadonlyArray<number> => Array.isArray(value), {
+  toCodecArbitrary: () => S.link<ReadonlyArray<number>>()(S.Literal(0), { decode: SchemaGetter.transform(() => []), encode: SchemaGetter.forbiddenEncoding }),
+})
+
+/** Which of `count` steps a sequence drops: none, shrinking by dropping any one step left. */
+function droppedOf(count: number): Arbitrary.Arbitrary<ReadonlyArray<number>> {
+  return Arbitrary.schema(Dropped, {
+    shrink: (dropped) => Array.from({ length: count }, (_, index) => index).filter((index) => !dropped.includes(index)).map((index) => [...dropped, index]),
+  })
+}
+
+/**
  * Sequences of `step`, for state that lasts between requests: a lifecycle's
  * steps, as `pick(['finish', 'invoice', 'signOff'])`, or a record whose
  * fields are each generated, as `{ act: pick([...]), quantity: pick([...]) }`.
  * Each sequence's length is drawn evenly from none to `maxLength`, so most
  * are long enough to take a lifecycle down a path several steps deep. A
- * failing sequence shrinks by dropping each step it does not need, and then
- * each step toward its first choice.
+ * failing sequence shrinks from its last step back, dropping each step it
+ * does not need and shrinking each other toward its first choice, and then
+ * drops each step left that it no longer needs, until it needs every one.
  */
 export function stepsOf<A>(step: Arbitrary.Arbitrary<A>, options?: StepsOptions): Arbitrary.Arbitrary<Array<A>>
 export function stepsOf<Fields extends Readonly<Record<string, Arbitrary.Arbitrary<unknown>>>>(
@@ -162,7 +213,20 @@ export function stepsOf(
   // never shrinks: dropping a slot's step shrinks the sequence instead.
   const length = Arbitrary.schema(S.Literals(upTo(0, maxLength)))
 
-  return Arbitrary.flatMap(length, (count) => Arbitrary.map(Arbitrary.all(Array.from({ length: count }, () => slot)), (slots) => slots.flat()))
+  // Effect shrinks the slots in order and never returns to one. The first
+  // slot holds the last step, since a step can need the ones before it, as a
+  // request names the record an earlier one created: the earlier steps it
+  // stops needing as it shrinks are dropped before their own fields shrink,
+  // which the hundred candidates a check tries cannot spare. The dropped
+  // positions shrink last, over the steps the slots kept, so a step needed
+  // only while another stood, as one undoing it, is dropped too.
+  return Arbitrary.flatMap(length, (count) =>
+    Arbitrary.flatMap(Arbitrary.all(Array.from({ length: count }, () => slot)), (slots) => {
+      const steps = slots.flat().reverse()
+
+      return Arbitrary.map(droppedOf(steps.length), (dropped) => steps.filter((_, index) => !dropped.includes(index)))
+    })
+  )
 }
 
 /** Text made of the given pieces, up to `maxPieces` of them. */
