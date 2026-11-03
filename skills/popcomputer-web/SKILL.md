@@ -378,9 +378,10 @@ lint message names the API to use instead; fix the code rather than
 disabling the rule, and when a line breaks one on purpose, say why in the
 disable comment.
 
-In this package's own repository, also run `bun run mutate`: it plants small
-bugs in the `src/` lines a change touches and lists each one no test catches,
-so each needs the test rule 12 asks for.
+Then run `bunx popweb-mutate`: it plants small bugs in the `src/` lines a
+change touches, a flipped comparison or an Effect that swallows one of its
+own errors, and lists each one no test catches, so each needs the test rule
+12 asks for (`docs/mutation.md`).
 
 A type error
 at `routes.get(...)` names the problem: `missingServices` lists services the

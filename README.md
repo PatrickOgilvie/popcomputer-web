@@ -108,6 +108,7 @@ Testing and reference:
 - [Fuzzing sessions](docs/fuzz-sessions.md): sequences of requests against one database, each naming records earlier ones created
 - [A database for tests](docs/test-database.md): PGlite for Postgres, and D1 through Miniflare
 - [Fuzzing at the limits](docs/fuzz-limits.md): each limit set from the input, so every case lands on its edge
+- [Mutation testing](docs/mutation.md): `popweb-mutate` plants small bugs in the lines a change touches and lists the ones no test catches
 - [Lower-level composition](docs/lower-level.md): the middleware without `setupWeb`
 - [State machines](docs/state-machines.md): what the framework keeps across requests, the rule each keeps, and the models that check them
 
@@ -251,14 +252,10 @@ bun run test
 After changing `AGENTS.md`, regenerate the skill with
 `bun scripts/build-skill.ts`; a test fails while it is stale.
 
-`bun run mutate` checks `AGENTS.md`'s rule 12 on a change: it plants small
-bugs (mutants) in the `src/` lines changed since `HEAD`, or `--base <ref>`,
-or in every line of the `src/` files it is given, runs each against the test
-files whose coverage reaches its line, and lists the ones no test catches.
-Besides syntax bugs, such as a flipped comparison or a dropped guard, it makes
-each function that returns an Effect recover from each tagged error its type
-declares, which survives where no test makes the function fail that way.
-`--fail-under <percent>` makes it exit non-zero below that score.
+`bun run mutate` runs the package's own `popweb-mutate` from source, on this
+repository: it plants small bugs in the `src/` lines a change touches and
+lists the ones no test catches, as [Mutation testing](docs/mutation.md)
+explains.
 
 The repository verifies runtime behavior, strict TypeScript and module
 augmentation contracts, that every TypeScript example in this README, in

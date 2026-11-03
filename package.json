@@ -84,7 +84,8 @@
     }
   },
   "bin": {
-    "popweb-fence": "dist/fence/cli.js"
+    "popweb-fence": "dist/fence/cli.js",
+    "popweb-mutate": "dist/mutate.js"
   },
   "files": [
     "dist",
@@ -104,7 +105,7 @@
     "test:types": "bun tests/typecheck-tests.ts && bun run build && bun tests/docs/check-docs.ts && tsc -p tests/consumer-types",
     "test:watch": "bun test --watch",
     "fuzz": "FUZZ_RUNS=${FUZZ_RUNS:-20000} FUZZ_SEED=${FUZZ_SEED:-random} bun test tests/fuzz",
-    "mutate": "bun scripts/mutate.ts",
+    "mutate": "bun src/mutate.ts",
     "test:coverage": "bun test --coverage",
     "prepublishOnly": "bun run test"
   },
@@ -153,7 +154,8 @@
     "miniflare": ">=4.0.0 <5.0.0",
     "drizzle-orm": ">=0.45.2 <1.0.0",
     "@types/react": ">=18",
-    "vite": ">=6.1.0"
+    "vite": ">=6.1.0",
+    "typescript": ">=7.0.0 <8.0.0"
   },
   "peerDependenciesMeta": {
     "@types/react": {
@@ -169,6 +171,9 @@
       "optional": true
     },
     "vite": {
+      "optional": true
+    },
+    "typescript": {
       "optional": true
     }
   },

@@ -1,5 +1,5 @@
 /** A module of Effects for tests/mutate.test.ts to recover from the errors of. */
-import { Effect, Schema as S } from 'effect'
+import { Cause, Effect, Schema as S } from 'effect'
 
 export class Missing extends S.TaggedError<Missing>()('Missing', {}) {}
 export class SoldOut extends S.TaggedError<SoldOut>()('SoldOut', {}) {}
@@ -16,3 +16,7 @@ export function take(item: string): Effect.Effect<number, Missing | SoldOut> {
 export const takeTwice = (item: string) => take(item).pipe(Effect.flatMap(() => take(item)))
 
 export const count = (items: readonly string[]): Effect.Effect<number> => Effect.succeed(items.length)
+
+// Effect declares NoSuchElementError: a dependency's error, which it answers, so only Missing is recovered from.
+export const first = (items: readonly string[]): Effect.Effect<string, Missing | Cause.NoSuchElementError> =>
+  items.length === 0 ? Effect.fail(new Missing({})) : Effect.succeed(items[0] ?? '')

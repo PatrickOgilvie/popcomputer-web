@@ -2,12 +2,12 @@ import { expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { changedLines, findMutants, formatReport, mutate, type Result, score } from '../scripts/mutate.js'
+import { dirname, join } from 'node:path'
+import { changedLines, findMutants, formatReport, mutate, type Result, score } from '../src/mutate.js'
 
 const fixture = join(import.meta.dir, 'fixtures', 'mutate', 'tiny.ts')
 const effectFixture = join(import.meta.dir, 'fixtures', 'mutate', 'effect.ts')
-const script = join(import.meta.dir, '..', 'scripts', 'mutate.ts')
+const script = join(import.meta.dir, '..', 'src', 'mutate.ts')
 
 // The fixture's tests, which leave some of its mutants alive on purpose: no
 // age of exactly 18, no value of 0, and no plural of more than one.
@@ -38,10 +38,11 @@ test('plural', () => {
 `
 
 // Two files and one test that reaches both: a's mutant is caught, b's is not.
+// The test is in test/, as the template keeps its tests.
 const TWO_FILES = {
   'src/a.ts': 'export const ready = true\n',
   'src/b.ts': 'export const positive = (n: number) => n > 0\n',
-  'tests/b.test.ts': `import { expect, test } from 'bun:test'
+  'test/b.test.ts': `import { expect, test } from 'bun:test'
 import { ready } from '../src/a'
 import { positive } from '../src/b'
 
@@ -78,7 +79,10 @@ function tinyRepo(files: Record<string, string> = {}, tiny = true): string {
     copyFileSync(fixture, join(root, 'src', 'tiny.ts'))
     writeFileSync(join(root, 'tests', 'tiny.test.ts'), TINY_TESTS)
   }
-  for (const [file, text] of Object.entries(files)) writeFileSync(join(root, file), text)
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, file)), { recursive: true })
+    writeFileSync(join(root, file), text)
+  }
   spawnSync('git', ['init', '--quiet'], { cwd: root })
   return root
 }
@@ -160,12 +164,14 @@ test('findMutants makes each function that returns an Effect recover from each t
   const recovered = mutants.filter((mutant) => mutant.operator === 'swallow-tag')
 
   // takeTwice's callback has none of its own: its failures flow out through
-  // takeTwice's. count declares no error.
+  // takeTwice's. count declares no error, and first's NoSuchElementError is
+  // Effect's, a dependency's.
   expect(recovered.map((mutant) => `${mutant.line} ${mutant.description}`)).toEqual([
     '9 Missing recovered as success',
     '9 SoldOut recovered as success',
     '16 Missing recovered as success',
     '16 SoldOut recovered as success',
+    '21 Missing recovered as success',
   ])
   expect(recovered[2].replacement).toBe(
     '(take(item).pipe(Effect.flatMap(() => take(item)))).pipe(Effect.catchTag("Missing", () => Effect.succeed(undefined)))'
@@ -186,6 +192,8 @@ test('mutate reports an error a function recovers from where no test makes it fa
       '9 SoldOut recovered as success: survived',
       '16 Missing recovered as success: survived',
       '16 SoldOut recovered as success: survived',
+      // No test loads first's line.
+      '21 Missing recovered as success: survived',
     ])
     expect(formatReport(run)).toContain('  src/shop.ts:9  swallow-tag  SoldOut recovered as success\n      export function take(')
   } finally {
@@ -225,7 +233,7 @@ test('mutate, given no files, mutates only the src/ lines changed since the base
   }
 }, 60_000)
 
-test('bun run mutate prints the report, and fails only when the score is under --fail-under', () => {
+test('popweb-mutate prints the report, and fails only when the score is under --fail-under', () => {
   const root = tinyRepo(TWO_FILES, false)
   const cli = (...args: string[]) => spawnSync(process.execPath, [script, ...args], { cwd: root, encoding: 'utf8' })
 
@@ -237,9 +245,9 @@ test('bun run mutate prints the report, and fails only when the score is under -
 
     expect(cli('src/a.ts', 'src/b.ts', '--fail-under', '51').status).toBe(1)
 
-    const wrong = cli('tests/b.test.ts')
+    const wrong = cli('test/b.test.ts')
     expect(wrong.status).toBe(2)
-    expect(wrong.stderr).toContain('tests/b.test.ts is not a TypeScript file in src/.')
+    expect(wrong.stderr).toContain('test/b.test.ts is not a TypeScript file in src/.')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

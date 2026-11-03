@@ -1,5 +1,6 @@
+#!/usr/bin/env bun
 /**
- * Mutation testing for the lines a change touches.
+ * `popweb-mutate`: mutation testing for the lines a change touches.
  *
  * AGENTS.md rule 12 says a new test must fail when the behaviour it covers is
  * reverted. This checks it mechanically: it plants one small bug (a mutant) at
@@ -9,8 +10,13 @@
  * makes each function that returns an Effect recover from each tagged error
  * its type declares, which survives when no test makes it fail that way.
  *
- * Run: bun run mutate [files...] [--base <ref>] [--fail-under <percent>]
- *                     [--workers <n>] [--timeout <seconds>]
+ * Run from the repository's root, whose src/ holds the application:
+ *
+ *   bunx popweb-mutate [files...] [--base <ref>] [--fail-under <percent>]
+ *                      [--workers <n>] [--timeout <seconds>]
+ *
+ * It runs under Bun, as `bun test` does, and reads the code with the
+ * repository's own TypeScript 7.
  *
  * With no files it mutates the src/ lines changed since --base (HEAD by
  * default), committed or not; with files, every line of them. Each test file
@@ -222,7 +228,12 @@ const isFunction = (node: Node): node is Node & { readonly body: Node } =>
 /** Whether a file imports Effect as a value, which the error-channel mutants call. */
 const importsEffect = (text: string) => /import\s*\{[^}]*(?<!type\s)\bEffect\b[^}]*\}\s*from\s*'effect'/.test(text)
 
-/** The `_tag` of each error in the `E` of the `Effect<A, E, R>` a function declares it returns. */
+/**
+ * The `_tag` of each error in the `E` of the `Effect<A, E, R>` a function
+ * declares it returns, but a dependency's: an error a package declares, such
+ * as the framework's `DatabaseError` in an application's action, is one the
+ * package answers, often for a failure no test of the application makes.
+ */
 async function failureTags(checker: Checker, declaration: Node): Promise<string[]> {
   const signature = await checker.getSignatureFromDeclaration(declaration)
   const returned = signature === undefined ? undefined : await checker.getReturnTypeOfSignature(signature)
@@ -233,6 +244,9 @@ async function failureTags(checker: Checker, declaration: Node): Promise<string[
 
   const tags: string[] = []
   for (const member of failure.isUnionType() ? await failure.getTypes() : [failure]) {
+    const declarations = (await member.getSymbol())?.declarations ?? []
+    if (declarations.some((declaration) => declaration.path.includes('/node_modules/'))) continue
+
     const tag = await checker.getPropertyOfType(member, '_tag')
     const type = tag === undefined ? undefined : await checker.getTypeOfSymbol(tag)
     if (type?.isStringLiteralType()) tags.push(type.value)
@@ -369,7 +383,7 @@ export function changedLines(diff: string): Map<string, Set<number>> {
 }
 
 const isSource = (file: string) => file.startsWith('src/') && /\.tsx?$/.test(file) && !file.endsWith('.d.ts')
-const isTest = (file: string) => file.startsWith('tests/') && /\.test\.tsx?$/.test(file)
+const isTest = (file: string) => /\.test\.tsx?$/.test(file) && !/(^|\/)(node_modules|dist)\//.test(file)
 
 function push<K, V>(map: Map<K, V[]>, key: K, value: V) {
   const values = map.get(key)

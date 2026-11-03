@@ -88,6 +88,7 @@ you installed:
   | `miniflare` | `>=4.0.0 <5.0.0` | You test against Cloudflare D1 |
   | `@types/react` | `>=18` | You use the React page types |
   | `vite` | `>=6.1.0` | You use `reloadWorkerModules` in `vite.config.ts` |
+  | `typescript` | `>=7.0.0 <8.0.0` | You run `popweb-mutate` |
 
   Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
