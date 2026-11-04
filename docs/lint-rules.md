@@ -73,8 +73,9 @@ written in the file, and nothing a helper in another module does.
   a function call (`const seen = makeCache()`). It counts as the collection
   a local name that shadows one inside a function, and as the Worker's a
   browser module in another folder that does not import
-  `@popcomputer/web/react`, such as a client entry: say why on its disable
-  comment.
+  `@popcomputer/web/react`: move one only the browser runs, such as a store
+  or a cache its components share, under `src/components/`, and say why on
+  the disable comment of a client entry, which stays where Vite looks for it.
 - `no-testing-in-production`. Covers: `import`, `export ... from`,
   `import('...')` and `require('...')` of `@popcomputer/web/testing` or
   `@popcomputer/web/fuzz` with the source written as a string, in any file
@@ -158,6 +159,10 @@ and patch the installed TypeScript on every install:
   "scripts": { "prepare": "effect-tsgo patch" }
 }
 ```
+
+On TypeScript 5 the patch exits 1, `Unable to discover an installed
+typescript binary`, so as `prepare` it fails every `bun install`: leave the
+service out until the application moves to TypeScript 7.
 
 `tsc --noEmit` then fails with `effect(floatingEffect)` on the statement, in
 `.ts` and `.tsx` files alike: `floatingEffect` is an error by default, and an

@@ -360,7 +360,9 @@ has `errors.name` (a JSON request gets a `422`).
 
 Run the application's type check (`tsc --noEmit`), the package's lint rules
 (`bunx oxlint`, with `oxlint.config.ts` exporting
-`defineConfig(webLint())` from `@popcomputer/web/lint`) and `bun test`. Let
+`defineConfig(webLint())` from `@popcomputer/web/lint`) and `bun test`. On
+TypeScript 7, the only one `@effect/tsgo` supports (on TypeScript 5 its
+patch fails every install), let
 the type check run the Effect language service, whose `floatingEffect` fails
 it on any Effect neither yielded nor assigned, where the lint rule sees only
 the framework's calls: `bun add -d @effect/tsgo`, `"plugins": [{ "name":
@@ -371,7 +373,7 @@ lint message names the API to use instead; fix the code rather than
 disabling the rule, and when a line breaks one on purpose, say why in the
 disable comment.
 
-Then run `bunx popweb-mutate`: it plants small bugs in the `src/` lines a
+Then, on TypeScript 7 too, run `bunx popweb-mutate`: it plants small bugs in the `src/` lines a
 change touches, a flipped comparison or an Effect that swallows one of its
 own errors, and lists each one no test catches, so each needs the test rule
 12 asks for (`docs/mutation.md`).

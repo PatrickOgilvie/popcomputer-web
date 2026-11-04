@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `UPGRADING.md`'s "From 1.13.2" list for Better Auth 1.7.16 says what upgrading four applications found. Rotating the auth secret after the Expo or Electron advisory comes after the deploy, and it breaks the jwt plugin's tokens, which `@better-auth/mcp` uses, until the `jwks` rows go; the alternative is Better Auth's versioned `secrets`. A wildcard `trustedOrigins` entry now matches by the URL's parsed scheme, host and path, in Better Auth's core and so for every application. Accounts from a provider that sends `email_verified` as a string need a review. The install line names each `@better-auth/*` package the application pins.
+- "From 1.5 to 1.6" says no check reports a field `settable` leaves out until a visitor's request answers 400, and gives the search that finds the browser's calls first; an upgrade broke a profile sheet's username change this way. A browser-only module that `no-module-level-mutable-state` reports moves under `src/components/` rather than taking a disable comment, as `docs/lint-rules.md` now says too.
+- The Effect language service and `popweb-mutate` need TypeScript 7: on TypeScript 5, `effect-tsgo patch` exits 1, so `"prepare": "effect-tsgo patch"` fails every `bun install`. `AGENTS.md`, `docs/lint-rules.md`, `UPGRADING.md`'s tooling and its checklist say so, and the checklist no longer asks for the optional fence's debt check of an application without it.
+
 ## [1.13.2] - 2026-11-04
 
 This release needs Better Auth 1.7.16, the release with the fixes for Better Auth's twelve security advisories of 2026-11-03, and checks that its peer range allows no earlier one. Two of the twelve the framework had already answered at its seam since 1.6.0; the rest were Better Auth's alone. `AGENTS.md` no longer gives `phoneNumber` as a field for `betterAuthHandler`'s `settable`.

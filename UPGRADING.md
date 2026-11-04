@@ -1304,12 +1304,20 @@ the new lint rules report. Check each item against yours:
   warning. Run `bunx oxlint` and fix what they report. A setting that weakens
   a protection on purpose keeps its warning, or takes
   `// oxlint-disable-next-line popcomputer-web/explain-security-loosening -- <reason>`.
-  [Lint rules](docs/lint-rules.md) describes each.
+  A module only the browser runs that `no-module-level-mutable-state`
+  reports, such as a store or a cache its components share, moves under
+  `src/components/`, which the rule reads as browser code, rather than taking
+  a disable comment. [Lint rules](docs/lint-rules.md) describes each.
 - **Plugin fields in `settable`.** Browser code that sets a plugin's user
   field through Better Auth's API, such as signing up with the username
   plugin's `username`, names it: `betterAuthHandler({ settable: ['username'] })`.
   `betterAuthHandler` now refuses plugins' user fields that `settable` does
-  not name, as it refuses the application's own `input: true` fields.
+  not name, as it refuses the application's own `input: true` fields. No
+  type check, lint rule or test reports a field left out until a visitor
+  sends it and gets a 400, `This request sets username, which visitors may
+  not set through this API.` Find the browser's calls that send user fields
+  first, `grep -rnE "updateUser|signUp\.|update-user|sign-up/" src`, and name
+  each field they send.
 - **The verification link.** An application that adopted 1.5.0's single
   `routes.get(paths.verifyEmail, verifyEmail)`, which proved the address on
   any fetch of the link, a mail scanner's included, registers
@@ -1717,9 +1725,11 @@ From 1.13.2, an application that uses Better Auth upgrades it:
 - **Better Auth must be 1.7.16 or a later 1.7.x,** the release with the
   fixes for Better Auth's twelve
   [security advisories of 3 November 2026](https://better-auth.com/blog/security-release-2026-11-03).
-  Install it with each `@better-auth/*` plugin package at the same version,
-  `bun add 'better-auth@>=1.7.16 <1.8.0'`. The upgrade leaves the rows
-  written before it as they are, so check those that apply to you:
+  Install it with each `@better-auth/*` package the application names at the
+  same version, naming each: `bun add 'better-auth@>=1.7.16 <1.8.0'
+  '@better-auth/mcp@>=1.7.16 <1.8.0'` for one with the MCP plugin. The
+  upgrade leaves the rows written before it as they are, so check those that
+  apply to you:
   - With the phone-number plugin, clear the numbers nobody verified,
     `UPDATE "user" SET "phoneNumber" = NULL WHERE "phoneNumber" IS NOT NULL AND "phoneNumberVerified" IS NOT TRUE`
     (use your table's names); their members add them again, signed in.
@@ -1732,8 +1742,26 @@ From 1.13.2, an application that uses Better Auth upgrades it:
   - With the admin plugin and access control of your own, grant the new
     `user:set-phone` permission to the roles that change phone numbers.
   - With `@better-auth/expo` or `@better-auth/electron` on the server,
-    rotate the auth secret, and with Electron each social provider's
-    client secret too.
+    deploy 1.7.16 first and then rotate the auth secret, since the old
+    endpoints sign with, or leak, whatever secret they hold; with Electron,
+    rotate each social provider's client secret too. Look in the Worker's
+    logs for requests to `/expo-authorization-proxy`. A new secret signs
+    everyone out, and the anonymous plugin's guests lose their accounts.
+    The jwt plugin, which `@better-auth/mcp` uses, encrypts its keys with
+    the secret, so its tokens fail to sign until you delete the `jwks` rows
+    and MCP clients sign in again. Or rotate with Better Auth's versioned
+    `secrets: [{ version: 1, value: newSecret }]` (or `BETTER_AUTH_SECRETS`),
+    keeping the old value as `secret`, which then only decrypts.
+  - With a wildcard in `trustedOrigins`, such as `https://*.example.com` or
+    `myapp://*`, check the origins it should admit still pass: 1.7.16 matches
+    a wildcard by the URL's parsed scheme, host and path, refuses a URL with
+    userinfo, and lets a host of digits, dots and wildcards, such as
+    `192.168.*.*`, admit only IPv4 addresses.
+  - With an OAuth provider that sends `email_verified` as a string and lets
+    its users keep an unverified address (Amazon Cognito's user info),
+    `genericOAuth` with a provider that has a JWKS endpoint, or Zoom, review
+    the accounts it created or linked: Better Auth marked an address
+    verified when the claim said `"false"`.
   - A change-email link or email-OTP change code sent before the upgrade
     no longer works: the member asks again.
 
@@ -1824,15 +1852,20 @@ What to adopt, none of it required:
   }
   ```
 
-- **The Effect language service in the type check.** `bun add -d
-  @effect/tsgo`, name `@effect/language-service` in `tsconfig.json`'s
-  `plugins`, and patch `tsc` on every install with `"prepare": "effect-tsgo
-  patch"`, so an Effect neither yielded nor assigned fails `tsc --noEmit`, as
-  [`docs/lint-rules.md`](docs/lint-rules.md) shows.
+- **The Effect language service in the type check,** on TypeScript 7, the
+  only one `@effect/tsgo` supports. `bun add -d @effect/tsgo`, name
+  `@effect/language-service` in `tsconfig.json`'s `plugins`, and patch `tsc`
+  on every install with `"prepare": "effect-tsgo patch"`, so an Effect
+  neither yielded nor assigned fails `tsc --noEmit`, as
+  [`docs/lint-rules.md`](docs/lint-rules.md) shows. On TypeScript 5 the
+  patch exits 1, `Unable to discover an installed typescript binary`, so as
+  `prepare` it fails every `bun install`: leave the service out until the
+  application moves to TypeScript 7.
 
 - **`popweb-mutate`** plants small bugs in the lines a change touches and
   lists each one no test catches; give it a script, `"mutate":
-  "popweb-mutate"`, as [`docs/mutation.md`](docs/mutation.md) shows.
+  "popweb-mutate"`, as [`docs/mutation.md`](docs/mutation.md) shows. It
+  needs TypeScript 7 too.
 
 - **The agent fence.** [`docs/agent-fence.md`](docs/agent-fence.md) sets up
   a commit gate that runs the type check, the lint rules and the tests, a
@@ -1852,7 +1885,7 @@ What to adopt, none of it required:
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
-- [ ] `tsc` runs the Effect language service, so a floating Effect fails it, and `check` ends with `popweb-fence debt --check`, as [Tooling](#tooling-after-the-upgrade) shows.
+- [ ] On TypeScript 7, `tsc` runs the Effect language service, so a floating Effect fails it; with the fence's ledger, `check` ends with `popweb-fence debt --check`, as [Tooling](#tooling-after-the-upgrade) shows.
 - [ ] `bun test` passes, with tests on `testEnv`, `signedIn` and `readPage`.
 - [ ] No removed names remain. This should print nothing:
 
