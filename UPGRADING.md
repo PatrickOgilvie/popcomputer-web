@@ -18,7 +18,8 @@ components, which [From 1.7 to 1.8](#from-17-to-18) lists, and 1.8.1 changes
 nothing more. 1.9.0 counts an IPv6 client's sign-ins by its network, which
 [From 1.8 to 1.9](#from-18-to-19) lists. 1.10.0 adds `stepsOf` to
 `@popcomputer/web/fuzz`, which [From 1.9 to 1.10](#from-19-to-110) lists.
-1.11.0 rebuilds how a request and a job get their services and refuses
+1.11.0, never published to npm but carried by 1.12.0, rebuilds how a
+request and a job get their services and refuses
 a job that needs a request, which [From 1.10 to 1.11](#from-110-to-111)
 lists, 1.12.0 keeps each route's facts as data and checks where a
 failure sends the visitor, which [From 1.11 to 1.12](#from-111-to-112)
@@ -98,7 +99,8 @@ you installed:
   | `vite` | `>=6.1.0` | You use `reloadWorkerModules` in `vite.config.ts` |
   | `typescript` | `>=7.0.0 <8.0.0` | You run `popweb-mutate` |
 
-  Each floor is the first release with the security fixes for the parts the
+  `bun add` installs a release whose peers are below these ranges without a
+  warning, so move each peer you use with it. Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
 - **Install 1.13.2** with the peers your application uses, removing `honertia`
@@ -113,6 +115,8 @@ you installed:
 
   Add `hono@^4.13.5` only if your Hono is older than 4.13.5: `bun add` writes
   the range you give, so it would loosen a tighter one, such as `^4.13.10`.
+  An exact pin stays exact the same way: an application pinning
+  `effect@4.0.5` or `better-auth@1.7.16` adds that version, not the range.
   Better Auth's plugin packages, such as `@better-auth/mcp`, move with
   `better-auth` to the same version.
 
@@ -1071,10 +1075,10 @@ application and its tests.
 
 ## From 1.0 to 1.3
 
-Nothing to change. Install 1.3.0:
+Nothing to change. Install the newest 1.3 release:
 
 ```bash
-bun add @popcomputer/web@^1.3.0
+bun add @popcomputer/web@~1.3.0
 ```
 
 What 1.1.0 brought:
@@ -1154,10 +1158,10 @@ What 1.3.0 brings:
 Your routes answer as before: a binding that names only its table still
 loads any record its path names. What changes is that each binding now says
 who may load its record, beside its table, instead of each action checking.
-Install 1.4.0:
+Install the newest 1.4 release:
 
 ```bash
-bun add @popcomputer/web@^1.4.0
+bun add @popcomputer/web@~1.4.0
 ```
 
 `bun run check` then reports `require-binding-access` on each binding that
@@ -1206,10 +1210,10 @@ A guard that decides who may load a `guarded: true` record is made with
 
 ## From 1.4 to 1.5
 
-Install 1.5.0:
+Install the newest 1.5 release:
 
 ```bash
-bun add @popcomputer/web@^1.5.0
+bun add @popcomputer/web@~1.5.0
 ```
 
 1.5.0 fixes what a security audit of 1.4.2 found, and most applications
@@ -1264,7 +1268,11 @@ change nothing. Check each item against yours:
   action.
 - **Large bodies.** An action that takes uploads or JSON over 1 MiB passes
   `validateRequest(Schema, { bodyLimit })`, or `setupWeb` takes `bodyLimit`
-  for every action. A larger body is refused with a 413.
+  for every action. A larger body is refused with a 413. `RequestService`'s
+  `json()` and `parseBody()` read within the same limit, so an action that
+  reads an upload there passes `parseBody({ bodyLimit })`: their refusal,
+  `BodyTooLarge`, reaches an action that catches every failure as its own
+  error rather than a 413, and no test sending a small file sees it.
 - **Jobs that purge.** A job that calls `purgeCache` is safe to repeat: a
   failed purge now fails `routes.run` and `routes.scheduled`, and a queue
   retries its message.
@@ -1287,10 +1295,10 @@ Changes you may notice without acting on them:
 
 ## From 1.5 to 1.6
 
-Install 1.6.0:
+Install the newest 1.6 release:
 
 ```bash
-bun add @popcomputer/web@^1.6.0
+bun add @popcomputer/web@~1.6.0
 ```
 
 1.6.0 fixes what a second security audit found in the changes 1.5.0 made,
@@ -1390,10 +1398,10 @@ Changes you may notice without acting on them:
 
 ## From 1.6 to 1.7
 
-Install 1.7.0:
+Install the newest 1.7 release:
 
 ```bash
-bun add @popcomputer/web@^1.7.0
+bun add @popcomputer/web@~1.7.0
 ```
 
 1.7.0 fixes four security issues in the state the framework keeps between
@@ -1448,10 +1456,10 @@ runs on, see [Fuzzing](docs/fuzzing.md).
 
 ## From 1.7 to 1.8
 
-Install 1.8.0:
+Install the newest 1.8 release:
 
 ```bash
-bun add @popcomputer/web@^1.8.0
+bun add @popcomputer/web@~1.8.0
 ```
 
 1.8.0 adds `@popcomputer/web/vite` and widens two lint rules to a page's
@@ -1482,10 +1490,10 @@ Changes you may notice without acting on them:
 
 ## From 1.8 to 1.9
 
-Install 1.9.0:
+Install the newest 1.9 release:
 
 ```bash
-bun add @popcomputer/web@^1.9.0
+bun add @popcomputer/web@~1.9.0
 ```
 
 1.9.0 closes a gap in `auth.signInLimits`: the Rate Limiting binding counted
@@ -1512,10 +1520,10 @@ Changes you may notice without acting on them:
 
 ## From 1.9 to 1.10
 
-Install 1.10.0:
+Install the newest 1.10 release:
 
 ```bash
-bun add @popcomputer/web@^1.10.0
+bun add @popcomputer/web@~1.10.0
 ```
 
 1.10.0 adds `stepsOf(step, { maxLength })` to `@popcomputer/web/fuzz`, the
@@ -1541,10 +1549,12 @@ Changes you may notice without acting on them:
 
 ## From 1.10 to 1.11
 
-Install 1.11.0:
+1.11.0 was never published to npm; 1.12.0 is the first release with its
+changes. Install the newest 1.12 release, and make this section's changes
+with those of [From 1.11 to 1.12](#from-111-to-112):
 
 ```bash
-bun add @popcomputer/web@^1.11.0
+bun add @popcomputer/web@~1.12.0
 ```
 
 1.11.0 rebuilds the code that runs each request, after a review of the
@@ -1610,10 +1620,10 @@ Changes you may notice without acting on them:
 
 ## From 1.11 to 1.12
 
-Install 1.12.0:
+Install the newest 1.12 release:
 
 ```bash
-bun add @popcomputer/web@^1.12.0
+bun add @popcomputer/web@~1.12.0
 ```
 
 1.12.0 keeps each route's facts as data: the route table holds every fact a
@@ -1700,10 +1710,13 @@ What to adopt, none of it required:
 
 ## From 1.12 to 1.13
 
-Install 1.13.0:
+Install the newest 1.13 release, with Better Auth 1.7.16 as the Better Auth
+list below says, since `bun add` does not warn about a peer left below its
+range:
 
 ```bash
-bun add @popcomputer/web@^1.13.0
+bun add @popcomputer/web@~1.13.0
+bun add 'better-auth@>=1.7.16 <1.8.0'   # if you use Better Auth
 ```
 
 1.13.0 adds to what an application's tests and its coding agent check with:
@@ -1738,7 +1751,18 @@ From 1.13.2, an application that uses Better Auth upgrades it:
     trimmed, such as `' owner'`, and review the owners their members
     invited. Do not trim them in place: `admin, owner` trimmed is an owner.
   - With `@better-auth/stripe`, look for a `stripeCustomerId` more than one
-    user holds.
+    user holds, and, where only organizations are billed, for any user that
+    holds one: 1.7.16 still writes a user's email onto the customer their
+    row names at each update, so compare each with the customer's
+    `metadata.userId` and clear those that are not the user's.
+  - With MySQL and `advanced.database.generateId: "serial"`, a sign-in could
+    receive another request's session: revoke every session after the
+    upgrade.
+  - With `secondaryStorage`, a session could escape a revoke-all or a ban
+    made before the upgrade: revoke those users' sessions again.
+  - With the email OTP plugin's `changeEmail`, a code requested from one
+    account could verify an address on another: review the addresses its
+    changes verified.
   - With the admin plugin and access control of your own, grant the new
     `user:set-phone` permission to the roles that change phone numbers.
   - With `@better-auth/expo` or `@better-auth/electron` on the server,
