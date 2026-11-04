@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.13.2] - 2026-11-04
+
+This release needs Better Auth 1.7.16, the release with the fixes for Better Auth's twelve security advisories of 2026-11-03, and checks that its peer range allows no earlier one. Two of the twelve the framework had already answered at its seam since 1.6.0; the rest were Better Auth's alone. `AGENTS.md` no longer gives `phoneNumber` as a field for `betterAuthHandler`'s `settable`.
 
 What an application on 1.13.1 needs to change, which `UPGRADING.md`'s "From 1.12 to 1.13" notes: Better Auth 1.7.16 or a later 1.7.x, and a check of the rows Better Auth wrote before it.
 

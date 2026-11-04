@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.13.1
+# Upgrading to @popcomputer/web 1.13.2
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.13.1.
+`honertia` package it was renamed from, to 1.13.2.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -24,11 +24,13 @@ lists, 1.12.0 keeps each route's facts as data and checks where a
 failure sends the visitor, which [From 1.11 to 1.12](#from-111-to-112)
 lists, 1.12.1 answers a JSON client's sign-out with a 204, which the
 same section notes, 1.13.0 adds fuzzing over sessions and
-`popweb-mutate`, which [From 1.12 to 1.13](#from-112-to-113) lists, and
+`popweb-mutate`, which [From 1.12 to 1.13](#from-112-to-113) lists,
 1.13.1 reads a request's body to its end before answering and types the
-bindings a test passes, which the same section notes. So the
+bindings a test passes, which the same section notes, and 1.13.2 needs
+Better Auth 1.7.16, with its security fixes, which the same section notes
+with the rows to check after it. So the
 path is one jump: make the 1.0.0 changes below,
-install 1.13.1, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
+install 1.13.2, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
 shows, check the lists in [From 1.4 to 1.5](#from-14-to-15),
 [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17),
 [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19),
@@ -83,7 +85,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.13.1 needs:
+- **Check the peer dependencies.** 1.13.2 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -99,12 +101,12 @@ you installed:
   Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
-- **Install 1.13.1** with the peers your application uses, removing `honertia`
+- **Install 1.13.2** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.13.1 effect@^4.0.0
+  bun add @popcomputer/web@^1.13.2 effect@^4.0.0
   bun add 'better-auth@>=1.7.16 <1.8.0'  # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
@@ -1845,7 +1847,7 @@ What to adopt, none of it required:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.13.1`.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.13.2`.
 - [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19), [From 1.9 to 1.10](#from-19-to-110), [From 1.10 to 1.11](#from-110-to-111), [From 1.11 to 1.12](#from-111-to-112) and [From 1.12 to 1.13](#from-112-to-113) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
