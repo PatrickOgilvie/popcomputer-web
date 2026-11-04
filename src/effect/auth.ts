@@ -613,7 +613,7 @@ function definedErrors(
 interface BetterAuthInstance {
   readonly api: object
   readonly handler: (request: Request) => Response | Promise<Response>
-  readonly $context?: Promise<{ readonly baseURL?: string }>
+  readonly $context?: Promise<{ readonly baseURL?: string; readonly options?: unknown }>
   readonly options?: { readonly basePath?: string }
 }
 
@@ -622,10 +622,18 @@ function isBetterAuthInstance(auth: unknown): auth is BetterAuthInstance {
 }
 
 /**
- * The options an instance was built with, which the sign-in limits read,
- * whatever type the registered auth client gives the instance.
+ * The options Better Auth was built with, which the `settable` check and the
+ * sign-in limits read: the instance's own, or those of the `$context` a
+ * wrapper that loads Better Auth on first use forwards. Undefined for a
+ * wrapper that gives neither, whose callers refuse what they cannot check.
  */
-const optionsOf = (auth: BetterAuthInstance): unknown => auth.options
+async function optionsOf(auth: BetterAuthInstance): Promise<object | undefined> {
+  if (auth.options instanceof Object) return auth.options
+
+  const context = auth.$context === undefined ? undefined : await auth.$context
+
+  return context?.options instanceof Object ? context.options : undefined
+}
 
 /**
  * Better Auth's own endpoints the framework calls by itself, by their path
@@ -798,12 +806,13 @@ function callEndpoint(
 
     yield* signedInToMove(path, [input.query instanceof Object ? Reflect.get(input.query, 'token') : undefined])
 
-    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, input.body, optionsOf(auth)))
+    const options = yield* Effect.promise(() => optionsOf(auth))
+    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, input.body, options))
 
     const response = yield* withinSignInLimits(
       attempt,
       sendToBetterAuth(() => sendThroughHandler(auth, raw, name, input)),
-      optionsOf(auth)
+      options
     ).pipe(
       Effect.flatMap(inspectBetterAuthResponse),
       Effect.mapError((failure) => failure instanceof AuthRateLimitError ? failure : toAuthActionError(failure, errors))
@@ -974,10 +983,9 @@ const writesUser = (path: string): boolean => path.startsWith('/sign-up/') || US
  * `input` is not false. A plugin's field, such as the phone-number plugin's
  * `phoneNumber`, is written at sign-up like the application's own.
  */
-function inputUserFields(auth: BetterAuthInstance): ReadonlyArray<string> {
-  const options: unknown = auth.options
-  const user: unknown = options instanceof Object ? Reflect.get(options, 'user') : undefined
-  const plugins: unknown = options instanceof Object ? Reflect.get(options, 'plugins') : undefined
+function inputUserFields(options: object): ReadonlyArray<string> {
+  const user: unknown = Reflect.get(options, 'user')
+  const plugins: unknown = Reflect.get(options, 'plugins')
   const pluginFields = (Array.isArray(plugins) ? plugins : []).map((plugin: unknown) => {
     const schema: unknown = plugin instanceof Object ? Reflect.get(plugin, 'schema') : undefined
     const users: unknown = schema instanceof Object ? Reflect.get(schema, 'user') : undefined
@@ -1064,10 +1072,20 @@ export function betterAuthHandler(
     }
 
     const body = read?.body
+    const options = yield* Effect.promise(() => optionsOf(auth))
 
     if (writesUser(path) && body instanceof Object) {
+      // Without Better Auth's options, the fields a visitor may not set are
+      // unknown, so none is let through: refusing fails closed.
+      if (options === undefined) {
+        return yield* new HttpError({
+          status: 500,
+          message: "This request writes user fields, which betterAuthHandler checks against Better Auth's options, and setupWeb's auth.client returned a wrapper, such as one that loads Better Auth on first use, that shows neither them nor Better Auth's $context: return Better Auth's instance, or forward its $context from the wrapper.",
+        })
+      }
+
       const own = ENDPOINT_INPUT_KEYS.get(path)
-      const refused = inputUserFields(auth).filter((field) =>
+      const refused = inputUserFields(options).filter((field) =>
         !settable.has(field) && own?.has(field) !== true && Object.hasOwn(body, field))
 
       if (refused.length > 0) {
@@ -1078,14 +1096,14 @@ export function betterAuthHandler(
       }
     }
 
-    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, body, optionsOf(auth)))
+    const attempt = yield* signInAttempt(path, raw.headers, accountOf(path, body, options))
     const response = yield* withinSignInLimits(
       attempt,
       Effect.tryPromise({
         try: (): Promise<Response> => Promise.resolve(auth.handler(forwarded)),
         catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
       }),
-      optionsOf(auth)
+      options
     )
 
     // Better Auth's own server error is the application's to answer, with its

@@ -26,8 +26,8 @@ export interface Bindings {
   readonly SESSION?: CreateAuthOptions['session']
   /** The origin emailed links name, a declared var as docs/setup.md declares it. */
   readonly APP_URL?: string
-  /** Load Better Auth on first use, as an application keeping it out of Worker startup does. */
-  readonly LAZY?: boolean
+  /** Load Better Auth on first use, as an application keeping it out of Worker startup does; `'with-context'` forwards its `$context`. */
+  readonly LAZY?: boolean | 'with-context'
 }
 
 /** A site whose forms setupWeb's cross-site check accepts, and Better Auth's trusted origins leave out. */
@@ -73,7 +73,7 @@ export const web = setupWeb(new Hono<{ Bindings: Bindings }>(), {
     client: (c, { db }) => {
       const create = () => createAuth({ db, outbox: c.env.OUTBOX, session: c.env.SESSION, baseURL: c.env.APP_URL })
 
-      return c.env.LAZY === true ? loadedOnFirstUse(create) : create()
+      return c.env.LAZY === undefined || c.env.LAZY === false ? create() : loadedOnFirstUse(create, { context: c.env.LAZY === 'with-context' })
     },
     session: betterAuthSession(tableSchema(schema.user), tableSchema(schema.session)),
     signInPath: paths.signIn,

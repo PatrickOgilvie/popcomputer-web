@@ -85,7 +85,7 @@ OwnerSignedIn ==
 Spent == ~row.present \/ now >= row.last + CooldownAfter(row.count) + Window
 Cooling == ~Spent /\ row.count >= Max /\ now < row.last + CooldownAfter(row.count)
 
-\* withinSignInLimits 551-568: one upsert, through dbMutation, counts the sign-in unless the
+\* withinSignInLimits 565-582: one upsert, through dbMutation, counts the sign-in unless the
 \* account is cooling, when it returns no row and the sign-in is refused.
 CheckCode(p) ==
   /\ pc[p] = "idle"
@@ -102,7 +102,7 @@ CheckCode(p) ==
                     ELSE UNCHANGED <<cooled, coolEnd, resetEarly, sinceOwner>>
   /\ UNCHANGED <<now, seenAt, seenRow, ownerIn>>
 
-\* Line 452: a 401 is already counted; a success deletes the row.
+\* Line 586: a 401 is already counted; a success deletes the row.
 AnswerCode(p) ==
   /\ pc[p] = "checked"
   /\ IF p \in Guessers
@@ -113,7 +113,7 @@ AnswerCode(p) ==
             /\ OwnerSignedIn
   /\ UNCHANGED <<now, seenAt, seenRow, started, coolEnd, resetEarly>>
 
-\* sweepSignInFailures 583-597 deletes spent rows.
+\* sweepSignInFailures 597-611 deletes spent rows.
 SweepCode ==
   /\ row.present
   /\ Spent

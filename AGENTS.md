@@ -148,7 +148,9 @@ here, as the demo's does.
    uses with `betterAuthCall(endpoint, { body })`. Never call `auth.api` from
    an action: it skips them. Both find the endpoint on Better Auth's
    instance, so give `auth.client` the instance, not a wrapper that loads
-   Better Auth on first use. Limit password guessing with `setupWeb`'s
+   Better Auth on first use; `betterAuthHandler` and the sign-in limits read
+   its options, and through a wrapper that forwards neither them nor
+   `$context` they refuse what they cannot check. Limit password guessing with `setupWeb`'s
    `auth.signInLimits: { limiter: 'SIGN_IN_LIMITER', table: schema.rateLimit }`
    (a Workers Rate Limiting binding, and Better Auth's `rateLimit` table for
    each account's failures), sweep the table with

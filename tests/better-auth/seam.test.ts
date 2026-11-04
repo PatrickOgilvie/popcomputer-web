@@ -19,7 +19,7 @@ import { testBrowser, testEnv } from '../../src/testing.js'
 import { betterAuthSession } from '../../src/auth.js'
 import { isLimitedPath } from '../../src/effect/sign-in-limits.js'
 import { tableSchema } from '../../src/schema.js'
-import { acme, createAuth, createDatabase, newOutbox, schema, SECRET, type CreateAuthOptions } from './fixture.js'
+import { acme, createAuth, createDatabase, newOutbox, schema, SECRET, type CreateAuthOptions, type TestDatabase } from './fixture.js'
 import { app, PARTNER_ORIGIN } from './app.js'
 
 const repoRoot = join(import.meta.dir, '..', '..')
@@ -182,6 +182,38 @@ describe('signing up, in and out', () => {
     expect(updated.status).toBe(400)
     expect((await me(member)).body).toMatchObject({ timeZone: 'Europe/London' })
     expect((await api('/update-user', { name: 'Ada King' }, member)).status).toBe(200)
+  })
+
+  /** Sign up through Better Auth's API, from a browser whose Better Auth is loaded on first use. */
+  const signUpLazily = (lazy: true | 'with-context', db: TestDatabase, fields: object = {}) =>
+    testBrowser(app, testEnv({ OUTBOX: newOutbox(), LAZY: lazy }, { database: db })).request('/api/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+      body: JSON.stringify({ name: 'Eve', email: 'eve@example.com', password: 'correct horse battery', ...fields }),
+    })
+
+  test('a Better Auth loaded on first use that hides its options writes no user through its API, since the fields visitors may set cannot be read', async () => {
+    const db = createDatabase()
+
+    const res = await signUpLazily(true, db, { timeZone: 'Mars/Olympus' })
+
+    expect(res.status).toBe(500)
+    expect(await res.text()).toContain('$context')
+    expect(await db.select().from(schema.user)).toEqual([])
+  })
+
+  test('a Better Auth loaded on first use that forwards its $context keeps the check, refusing a field and signing up without it', async () => {
+    const refusing = createDatabase()
+    const refused = await signUpLazily('with-context', refusing, { timeZone: 'Mars/Olympus' })
+
+    expect(refused.status).toBe(400)
+    expect((await refused.json()).message).toContain('timeZone')
+    expect(await refusing.select().from(schema.user)).toEqual([])
+
+    const accepting = createDatabase()
+
+    expect((await signUpLazily('with-context', accepting)).status).toBe(200)
+    expect(await accepting.select({ email: schema.user.email }).from(schema.user)).toEqual([{ email: 'eve@example.com' }])
   })
 
   test("the same fields are refused however the request spells its path or its body's type", async () => {
@@ -809,6 +841,8 @@ describe('a link that moves an account to a new address', () => {
       const follower = browser()
       const followed = await follow(follower, token)
 
+      // Sent to sign in to the account that asked, as the framework refuses a signed-out visitor.
+      expect(followed.headers.get('Location')).toStartWith('/sign-in?redirect=')
       expect(setsSession(followed)).toBe(false)
       expect((await me(follower)).status).toBe(401)
       expect(users()).toEqual([{ email: 'mallory@example.com', emailVerified: true }])

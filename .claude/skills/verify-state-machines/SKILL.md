@@ -46,6 +46,11 @@ statements came to run through `dbQuery` and `dbMutation` (step 7), each
 still one statement. `MagicLink.tla` was confirmed on 2026-11-03 against
 better-auth 1.7.16, whose magic-link plugin changed only in form (its
 `createSession` moved to line 198), and every config gave what step 2 says.
+`SignInLimits.tla` was confirmed on 2026-11-04 when `withinSignInLimits`
+came to refuse a counted call beside a Better Auth whose options it cannot
+read, a check before any count that adds no step to the model; its line
+references moved to the code (the success's delete, cited as line 452, is
+586), and its three configs gave what step 2 says.
 
 ## Run the check
 

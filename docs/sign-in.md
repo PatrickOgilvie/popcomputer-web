@@ -150,11 +150,13 @@ through `testBrowser`.
 An application that loads Better Auth on first use, to keep it out of a
 Worker's startup, gives `auth.client` a wrapper whose endpoints load it, and
 `betterAuthLogoutAction` works through it. `betterAuthRedirect` and
-`betterAuthCall` find the endpoint's path on Better Auth's instance, so
-through a wrapper they fail and say why: send those forms to Better Auth's
-handler yourself, by path, or give `auth.client` the instance. Importing
-anything from `better-auth` into a module the Worker loads at startup,
-`APIError` included, loads Better Auth with it.
+`betterAuthCall` find the endpoint's path on the instance, so through a
+wrapper they fail and say why: send those forms to Better Auth's handler
+yourself, or give `auth.client` the instance. `betterAuthHandler` and the
+sign-in limits read its options, or a wrapper's forwarded `$context`, and
+answer 500, saying why, to a request they cannot check without either.
+Importing anything from `better-auth` into a module the Worker loads at
+startup, `APIError` included, loads Better Auth with it.
 
 A signed-out visitor to a guarded page is redirected with 302 on a page load
 and 303 on an Inertia visit, as Inertia requires; a test asserts the
@@ -164,9 +166,8 @@ while signed out, as after a session expires, cannot be replayed, so
 
 `betterAuthHandler()` forwards a request to Better Auth's own API. Register
 it on the paths the application needs Better Auth to answer itself, and no
-others: an OAuth provider's callback,
-`routes.get(paths.authCallback, betterAuthHandler())` with
-`authCallback: '/api/auth/callback/{provider}'`, as
+others: an OAuth provider's callback, `routes.get(paths.authCallback, betterAuthHandler())`
+with `authCallback: '/api/auth/callback/{provider}'`, as
 [Signing in with an OAuth provider](auth-plugins.md#signing-in-with-an-oauth-provider) shows.
 Browser code that calls Better Auth directly (its client SDK) needs all of it,
 `routes.all(paths.authApi, betterAuthHandler())` with
@@ -183,8 +184,7 @@ keeps every field to the application's own forms. It reads a body within
 setupWeb's `bodyLimit`, as an action's `form` does, and answers a larger one
 with a 413 before Better Auth reads it. A sign-in or a call that writes user
 fields is read as Better Auth will read it, so its body is JSON, typed
-`application/json` or `application/*+json`, or a form; any other is refused
-with a 415.
+`application/json` or `application/*+json`, or a form; any other gets a 415.
 
 ## The sign-in page
 

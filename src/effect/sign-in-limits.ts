@@ -512,7 +512,10 @@ export function signInLimitsStorageError(betterAuth: unknown): Error | undefined
  * the account cools down, which refuses it, and a successful one clears the
  * count. Without `auth.signInLimits`, the call runs as it is. `betterAuth` is
  * the registered Better Auth's options: with limits whose storage would
- * delete the counts, every call fails, naming the fix.
+ * delete the counts, every call fails, naming the fix, and without the
+ * options, which a wrapper around Better Auth can hide, every call the limits
+ * count fails too, since neither that storage nor the username normalizer
+ * can be read.
  */
 export function withinSignInLimits<E, R>(
   attempt: SignInAttempt,
@@ -524,13 +527,24 @@ export function withinSignInLimits<E, R>(
 
     if (Option.isNone(configured)) return yield* call
 
-    // setupWeb refuses this before any route runs; this guards a call made
-    // with the limits but outside setupWeb's own request setup.
+    // setupWeb refuses this before any route runs when the instance shows its
+    // options; this guards a call made with the limits outside setupWeb's own
+    // request setup, or through a wrapper that shows them only in $context.
     const storageError = signInLimitsStorageError(betterAuth)
 
     if (storageError !== undefined) return yield* Effect.die(storageError)
 
     if (!isLimitedPath(attempt.path)) return yield* call
+
+    // Hidden options could hide a storage that deletes the counts, or a
+    // normalizer that folds spellings counted apart: refusing fails closed.
+    if (betterAuth === undefined) {
+      return yield* Effect.die(new Error(
+        "auth.signInLimits reads Better Auth's options for its rate-limit storage and its username normalizer, and " +
+          "setupWeb's auth.client returned a wrapper, such as one that loads Better Auth on first use, that shows " +
+          "neither them nor Better Auth's $context: return Better Auth's instance, or forward its $context from the wrapper."
+      ))
+    }
 
     const limits = configured.value
 

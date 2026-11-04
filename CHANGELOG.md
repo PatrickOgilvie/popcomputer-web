@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+What an application may need to change: one whose `auth.client` returns a wrapper around Better Auth, such as one that loads it on first use, forwards Better Auth's `$context` from it, or returns the instance, before a visitor's sign-up or update-user through `betterAuthHandler` answers 500.
+
+### Security
+
+- `betterAuthHandler`'s `settable` check fails closed. It read the user fields a visitor may set from `auth.options`, which a wrapper that loads Better Auth on first use does not have, so it found none and refused nothing: through such a wrapper, sign-up and update-user stored any `input: true` or plugin user field, as the Stripe plugin's `stripeCustomerId` was on an application upgrading to 1.13.2. It now reads Better Auth's options from the instance or from the `$context` a wrapper forwards, and a request that writes user fields answers 500, naming the fix, when it can read neither. The sign-in limits, which read the same options for Better Auth's rate-limit storage and the username plugin's normalizer, refuse a call they count in the same case. `tests/better-auth/seam.test.ts` and `tests/effect/sign-in-limits.test.ts` cover both, and fail on the code before.
+
 ### Fixed
 
 - `UPGRADING.md`'s "From 1.13.2" list for Better Auth 1.7.16 says what upgrading four applications found. Rotating the auth secret after the Expo or Electron advisory comes after the deploy, and it breaks the jwt plugin's tokens, which `@better-auth/mcp` uses, until the `jwks` rows go; the alternative is Better Auth's versioned `secrets`. A wildcard `trustedOrigins` entry now matches by the URL's parsed scheme, host and path, in Better Auth's core and so for every application. Accounts from a provider that sends `email_verified` as a string need a review. The install line names each `@better-auth/*` package the application pins. The list gains the rows other advisories leave behind: a user-level `stripeCustomerId` where only organizations are billed, which 1.7.16 still writes the user's email onto at each update; every session after MySQL's serial ids; sessions that escaped a revoke-all with `secondaryStorage`; and addresses email OTP's `changeEmail` verified. "Before you start" says an exact pin, such as `effect@4.0.5`, takes its exact version rather than the range.

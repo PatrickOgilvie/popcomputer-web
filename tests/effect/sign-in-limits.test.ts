@@ -637,6 +637,21 @@ describe("Better Auth's own limits beside the sign-in limits", () => {
     expect(Exit.isFailure(exit) && String(exit.cause)).toContain("storage: 'memory'")
   })
 
+  test("a sign-in within the limits beside a Better Auth that hides its options is refused, since its storage and username normalizer cannot be read", async () => {
+    const limits = activeSignInLimits({ limiter: 'SIGN_IN_LIMITER', table: rateLimit }, { SIGN_IN_LIMITER: testRateLimiter({ limit: 100 }) })
+    const call = (path: string) => Effect.runPromiseExit(
+      withinSignInLimits({ path, address: '192.0.2.1', account: undefined }, Effect.succeed(new Response()), undefined).pipe(
+        Effect.provideService(SignInLimits, limits)
+      )
+    )
+
+    const refused = await call('/sign-in/username')
+
+    expect(Exit.isFailure(refused) && String(refused.cause)).toContain('$context')
+    // A call the limits leave alone goes on.
+    expect(Exit.isSuccess(await call('/get-session'))).toBe(true)
+  })
+
   test('its memory storage, or none, leaves the counts alone and signs in', async () => {
     for (const rateLimit of [{ enabled: true, storage: 'memory' }, { enabled: false, storage: 'database' }] as const) {
       const { app, env } = await createApp(testRateLimiter({ limit: 100 }), 3, { rateLimit })

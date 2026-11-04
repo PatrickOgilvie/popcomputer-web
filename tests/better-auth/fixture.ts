@@ -277,9 +277,11 @@ export type TestAuth = ReturnType<typeof createAuth>
 /**
  * Better Auth loaded on first use, as an application wraps it to keep it out
  * of a Worker's startup: `auth.api`'s endpoints are functions that load it,
- * without the endpoints' own properties, such as their `path`.
+ * without the endpoints' own properties, such as their `path`, and with no
+ * `options`. With `context`, it forwards Better Auth's `$context`, which
+ * loads it too.
  */
-export function loadedOnFirstUse(load: () => TestAuth): TestAuth {
+export function loadedOnFirstUse(load: () => TestAuth, { context = false }: { readonly context?: boolean } = {}): TestAuth {
   let instance: TestAuth | undefined
   const auth = () => (instance ??= load())
   const api = new Proxy({}, {
@@ -289,6 +291,10 @@ export function loadedOnFirstUse(load: () => TestAuth): TestAuth {
       : (...args: ReadonlyArray<unknown>) => Reflect.apply(Reflect.get(auth().api, name), auth().api, args),
   })
 
-  // SAFETY: the wrapper answers every endpoint and request as the instance does; it lacks only the endpoints' own properties, which is the case under test.
-  return { api, handler: (request: Request) => auth().handler(request) } as unknown as TestAuth
+  const wrapper = { api, handler: (request: Request) => auth().handler(request) }
+
+  if (context) Object.defineProperty(wrapper, '$context', { get: () => auth().$context })
+
+  // SAFETY: the wrapper answers every endpoint and request as the instance does; it lacks only the endpoints' own properties and the options, which is the case under test.
+  return wrapper as unknown as TestAuth
 }
