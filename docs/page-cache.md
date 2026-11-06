@@ -8,13 +8,19 @@ on every request, when it reads:
 - the database, through `dbQuery` or any other use of `DatabaseService`,
   whether its client reaches the database through a binding or a
   connection string;
-- a binding on `c.env` (D1, KV, R2, Durable Objects, service bindings, AI,
-  Hyperdrive);
+- a binding on `c.env` it calls (D1, KV, R2, Durable Objects, service
+  bindings, AI), or an object it takes from one;
 - a request header, the raw request or request state, through
   `RequestService` or `RequestStateService`, or through the context a
   `web.services` request callback, `routes.middleware(...)`,
   `prefixMiddleware(...)` or the `render` template receives;
 - a route model binding.
+
+Looking at a binding reads nothing, so it leaves a page cached: a check that
+it has a method, as `auth.signInLimits` makes of its Rate Limiting binding on
+every request, or a setting such as the `connectionString` a `database`
+factory takes from Hyperdrive on every request. Querying that database is what
+makes a page dynamic.
 
 Cached pages are keyed by deploy. Bind the version metadata so each deploy
 starts from an empty cache:
@@ -46,6 +52,10 @@ so server-only changes still appear.
   before the next request: a page is stored once its body has streamed. A test
   request signed in with `signedIn` sends no session cookie, so it can be
   served a guest's cached page; send the session cookie a browser would.
+- A double of a binding in such a test is a class instance, as Cloudflare's
+  bindings are and `testRateLimiter()` and `testQueue()` are. The page cache
+  takes a plain object for a value, so a page that calls one would be cached
+  in the test and render per request in production.
 
 The framework can't see data a page gets another way, such as an external
 `fetch()` or the current time. Give those routes `cache: 'private'`: each

@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Test entrypoints and Hono/SDK fixtures retain native Promise contracts; inner Effect programs remain composable. */
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, setSystemTime, test } from 'bun:test'
 import { Clock, Context, DateTime, Effect, Layer, Schedule, Schema as S } from 'effect'
 import { TestClock } from 'effect/testing'
 import { Hono } from 'hono'
@@ -8,7 +8,7 @@ import { action } from '../src/effect/action.js'
 import { authorize, AuthUserService, DatabaseService } from '../src/effect/services.js'
 import { flash, json, notFound, redirect, render } from '../src/effect/responses.js'
 import { effectRoutes } from '../src/effect/routing.js'
-import { applyMigrations, readMigrations, readPage, signedIn, testBrowser, testClock, testEnv } from '../src/testing.js'
+import { applyMigrations, readMigrations, readPage, signedIn, testBrowser, testClock, testEnv, testRateLimiter } from '../src/testing.js'
 import { HttpError } from '../src/effect/errors.js'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -462,3 +462,22 @@ describe('testBrowser', () => {
   })
 })
 
+describe('testRateLimiter', () => {
+  afterEach(() => {
+    setSystemTime()
+  })
+
+  test('a refused key may call again once its period has passed, and not before', async () => {
+    const limiter = testRateLimiter({ limit: 1, period: 60 })
+
+    setSystemTime(new Date(0))
+    expect(await limiter.limit({ key: 'a' })).toEqual({ success: true })
+
+    setSystemTime(new Date(59_999))
+    expect(await limiter.limit({ key: 'a' })).toEqual({ success: false })
+
+    setSystemTime(new Date(60_000))
+    expect(await limiter.limit({ key: 'a' })).toEqual({ success: true })
+    expect(limiter.refused).toEqual(['a'])
+  })
+})

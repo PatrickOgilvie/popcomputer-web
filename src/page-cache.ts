@@ -9,8 +9,8 @@
  *
  * - the database, through any use of `DatabaseService`, whether its client
  *   reaches the database through a binding or a connection string;
- * - a Cloudflare binding on `c.env` (D1, KV, R2, Durable Objects, service
- *   bindings, AI, Hyperdrive…);
+ * - a Cloudflare binding on `c.env` it calls (D1, KV, R2, Durable Objects,
+ *   service bindings, AI…), since looking at one reads nothing;
  * - request headers or the raw request through `RequestService`, or through
  *   the context a `web.services` request callback, route middleware or
  *   prefix middleware receives, or request state through
@@ -600,9 +600,10 @@ function waitUntil<E extends Env>(c: Context<E>, work: Promise<void>): void {
 }
 
 /**
- * Copy an env whose bindings report any use through `onRead`. Plain values
- * (vars and secrets) and plain objects are copied unchanged; class instances,
- * which is what Cloudflare bindings are, are wrapped.
+ * Copy an env whose bindings report each use through `onRead`, as
+ * {@link trackBinding} says what one is. Plain values (vars and secrets) and
+ * plain objects are copied unchanged; class instances, which is what
+ * Cloudflare bindings are, are wrapped.
  */
 export function trackBindings<T>(env: T, onRead: () => void): T {
   if (!(env instanceof Object)) {
@@ -661,12 +662,28 @@ export function trackDatabase<E extends Env, T>(c: Context<E>, db: T): T {
   return trackBinding(db, () => recordPrivacy(c, 'data'))
 }
 
+/** A value with no members of its own, so nothing a binding holds can be reached through it. */
+const isPrimitive = (value: unknown): boolean =>
+  value === null || (typeof value !== 'object' && typeof value !== 'function')
+
+/**
+ * `binding`, reporting through `onRead` each use that can bring a page data:
+ * calling a method, or taking out anything else that is not a primitive,
+ * such as Drizzle's `db.query`, or an RPC method, which workerd makes callable
+ * without making it a Function.
+ *
+ * Looking at a binding is no use of it, so a page reads nothing by a check
+ * that a method exists, as the sign-in limits make of their binding on every
+ * request, or by a setting such as the connection string a `database` factory
+ * takes from Hyperdrive on every request. A method is handed out unreported
+ * and reports when it is called.
+ */
 function trackBinding<T extends object>(binding: T, onRead: () => void): T {
   return new Proxy(binding, {
     get(target, key) {
       const value: unknown = Reflect.get(target, key, target)
 
-      if (typeof key === 'symbol' || key === 'then') {
+      if (typeof key === 'symbol' || key === 'then' || isPrimitive(value)) {
         return value
       }
 
@@ -679,18 +696,28 @@ function trackBinding<T extends object>(binding: T, onRead: () => void): T {
         return value
       }
 
-      onRead()
-
       // Bindings and clients are objects whose methods need the real
       // receiver; a class is returned as itself.
-      return value instanceof Function && key !== 'constructor' ? value.bind(target) : value
+      if (value instanceof Function && key !== 'constructor') {
+        return trackBinding(value.bind(target), onRead)
+      }
+
+      onRead()
+
+      return value
     },
-    // A client that is itself a function, as postgres.js's `sql` is; the
-    // trap runs only for one.
+    // A client that is itself a function, as postgres.js's `sql` is, and each
+    // method; the trap runs only for those.
     apply(target, receiver, args) {
       onRead()
 
       return target instanceof Function ? Reflect.apply(target, receiver, args) : undefined
+    },
+    // A class a binding holds, which is a method to the trap above.
+    construct(target, args) {
+      onRead()
+
+      return target instanceof Function ? Reflect.construct(target, args) : target
     },
   })
 }

@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { Context, Effect, Layer, Option, Schema as S } from 'effect'
 import { Hono, type MiddlewareHandler } from 'hono'
 import { setupWeb, webDefaults } from '../src/setup.js'
@@ -19,12 +20,12 @@ import { effectRoutes } from '../src/effect/routing.js'
 import { forbidden, render } from '../src/effect/responses.js'
 import { guard } from '../src/effect/guard.js'
 import { responseHeader } from '../src/effect/response-headers.js'
-import { DatabaseService, RequestService, RequestStateService } from '../src/effect/services.js'
+import { BindingsService, DatabaseService, RequestService, RequestStateService } from '../src/effect/services.js'
 import { dbQuery } from '../src/effect/database.js'
 import { PAGE_CACHE_HEADER, pageCache, trackBindings, trackDatabase, type PageCacheStore } from '../src/page-cache.js'
 import { openWebContext, webServices } from '../src/request-context.js'
 import { keptFrom } from '../src/privacy.js'
-import { signedIn, testEnv } from '../src/testing.js'
+import { signedIn, testEnv, testRateLimiter, type TestRateLimiter } from '../src/testing.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
 /** An in-memory stand-in for caches.default. */
@@ -61,11 +62,18 @@ class FakeD1 {
   }
 }
 
+/** A stand-in for a Hyperdrive binding: a class instance that holds its settings. */
+class FakeHyperdrive {
+  connectionString = 'postgres://db.example.com/app'
+}
+
 /** The Worker bindings the app reads. */
 type PageCacheEnv = {
   Bindings: {
     readonly DB: FakeD1
     readonly DATABASE_URL?: string
+    readonly HYPERDRIVE: FakeHyperdrive
+    readonly SIGN_IN_LIMITER: TestRateLimiter
   }
 }
 
@@ -592,6 +600,109 @@ describe('a database reached through a connection string', () => {
   })
 })
 
+describe('a binding a page looks at without using it', () => {
+  const rateLimit = sqliteTable('rate_limit', {
+    id: text('id').primaryKey(),
+    key: text('key').notNull().unique(),
+    count: integer('count').notNull(),
+    lastRequest: integer('last_request').notNull(),
+  })
+  const renderHtml = (page: unknown) => `<html>${JSON.stringify(page)}</html>`
+
+  const createLimitedApp = () => {
+    const app = new Hono<PageCacheEnv>()
+    setupWeb(app, {
+      version: '1.0.0',
+      render: renderHtml,
+      auth: {
+        client: () => ({ options: { rateLimit: { enabled: true, storage: 'memory' } } }),
+        signInLimits: { limiter: 'SIGN_IN_LIMITER', table: rateLimit },
+      },
+    })
+    const limiter = Effect.map(BindingsService, (bindings): TestRateLimiter => Reflect.get(bindings, 'SIGN_IN_LIMITER'))
+    const limited = Effect.gen(function* () {
+      const binding = yield* limiter
+      const outcome = yield* Effect.promise(() => binding.limit({ key: 'page' }))
+
+      return yield* render('Limited', { success: outcome.success })
+    })
+    const looks = Effect.flatMap(limiter, (binding) => render('Looks', { limits: binding.limit instanceof Function }))
+
+    effectRoutes(app).get('/about', render('About')).get('/limited', limited).get('/looks', looks)
+
+    return app
+  }
+
+  const createHyperdriveApp = () => {
+    const app = new Hono<PageCacheEnv>()
+    setupWeb(app, {
+      version: '1.0.0',
+      render: renderHtml,
+      // As an application on Postgres does on every request.
+      database: (c) => {
+        const url = c.env.HYPERDRIVE.connectionString
+
+        return { projects: () => ({ sql: url }), publicProjects: async () => [url] }
+      },
+    })
+    const explore = Effect.flatMap(dbQuery((db) => db.publicProjects()), (names) => render('Explore', { names }))
+
+    effectRoutes(app).get('/about', render('About')).get('/explore', explore)
+
+    return app
+  }
+
+  test('auth.signInLimits, which checks its binding on every request, keeps a public page in the cache', async () => {
+    const app = createLimitedApp()
+    const env = production({ SIGN_IN_LIMITER: testRateLimiter() })
+
+    expect((await get(app, '/about', {}, env)).status).toBe('MISS')
+    expect((await get(app, '/about', {}, env)).status).toBe('HIT')
+  })
+
+  test('a page that checks a binding has a method is kept', async () => {
+    const app = createLimitedApp()
+    const env = production({ SIGN_IN_LIMITER: testRateLimiter() })
+
+    const first = await get(app, '/looks', {}, env)
+
+    expect(first.status).toBe('MISS')
+    expect(first.body).toContain('"limits":true')
+    expect((await get(app, '/looks', {}, env)).status).toBe('HIT')
+  })
+
+  test('a page that calls the limiter renders per request, and the limiter counts the call', async () => {
+    const app = createLimitedApp()
+    const limiter = testRateLimiter({ limit: 1 })
+    const env = production({ SIGN_IN_LIMITER: limiter })
+
+    const allowed = await get(app, '/limited', {}, env)
+    const refused = await get(app, '/limited', {}, env)
+
+    expect([allowed.status, refused.status]).toEqual(['DYNAMIC', 'DYNAMIC'])
+    expect(allowed.body).toContain('"success":true')
+    expect(refused.body).toContain('"success":false')
+    expect(limiter.refused).toEqual(['page'])
+    expect(cache.entries.size).toBe(0)
+  })
+
+  test("a database factory that reads Hyperdrive's connection string keeps a public page in the cache", async () => {
+    const app = createHyperdriveApp()
+    const env = production({ HYPERDRIVE: new FakeHyperdrive() })
+
+    expect((await get(app, '/about', {}, env)).status).toBe('MISS')
+    expect((await get(app, '/about', {}, env)).status).toBe('HIT')
+  })
+
+  test('a page that queries that database renders per request', async () => {
+    const app = createHyperdriveApp()
+    const env = production({ HYPERDRIVE: new FakeHyperdrive() })
+
+    expect((await get(app, '/explore', {}, env)).status).toBe('DYNAMIC')
+    expect((await get(app, '/explore', {}, env)).status).toBe('DYNAMIC')
+  })
+})
+
 /** A service a guard is composed with. */
 class Plan extends Context.Service<Plan, string>()('test/Plan') {}
 
@@ -893,6 +1004,109 @@ describe('trackBindings', () => {
     expect(d1.queries).toBe(1)
     expect(reads).toBeGreaterThan(0)
   })
+
+  class Session {
+    constructor(readonly name: string) {}
+  }
+
+  const marker = Symbol('marker')
+
+  /** A binding with each kind of member a Cloudflare binding has. */
+  class Binding {
+    [marker] = { kind: 'binding' }
+    // Not callable, so nothing awaiting a binding follows it; the Promise machinery reads it all the same.
+    then = { thenable: false }
+    region = 'eu'
+    missing: string | undefined = undefined
+    frozen!: { readonly mode: string }
+    settings = { tier: 'free' }
+    // What workerd makes an RPC method: callable, and not a Function.
+    rpc = Object.setPrototypeOf(() => 'remote', Object.prototype) as () => string
+    Session = Session
+
+    constructor() {
+      Object.defineProperty(this, 'frozen', { value: { mode: 'fixed' } })
+    }
+
+    read(this: Binding) {
+      return this.region
+    }
+  }
+
+  const tracked = () => {
+    const uses = { count: 0 }
+    const { BINDING } = trackBindings({ BINDING: new Binding() }, () => {
+      uses.count += 1
+    })
+
+    return { binding: BINDING, uses }
+  }
+
+  test.each<[string, (binding: Binding) => unknown, unknown]>([
+    ['a setting', (binding) => binding.region, 'eu'],
+    ['a member it lacks', (binding) => binding.missing, undefined],
+    ['a symbol', (binding) => binding[marker], { kind: 'binding' }],
+    ['whether it is a thenable', (binding) => binding.then, { thenable: false }],
+    ['that it has a method', (binding) => binding.read instanceof Function, true],
+    ["a method's type", (binding) => typeof binding.read, 'function'],
+    ["a method's name", (binding) => binding.read.name, 'bound read'],
+  ])('reading %s is not a use', (_name, look, expected) => {
+    const { binding, uses } = tracked()
+
+    expect(look(binding)).toEqual(expected)
+    expect(uses.count).toBe(0)
+  })
+
+  test.each<[string, (binding: Binding) => unknown, unknown]>([
+    ['calling a method', (binding) => binding.read(), 'eu'],
+    ['calling a method it was given as a value', (binding) => Reflect.apply(binding.read, binding, []), 'eu'],
+    ['calling a method through its own call', (binding) => binding.read.call(binding), 'eu'],
+    ['calling a method bound by hand', (binding) => binding.read.bind(binding)(), 'eu'],
+    ['calling what workerd makes an RPC method', (binding) => binding.rpc(), 'remote'],
+    ['taking an object out of it', (binding) => binding.settings.tier, 'free'],
+    ['taking a frozen object out of it', (binding) => binding.frozen.mode, 'fixed'],
+    ['constructing what it holds', (binding) => new binding.Session('edge').name, 'edge'],
+  ])('%s is a use', (_name, use, expected) => {
+    const { binding, uses } = tracked()
+
+    expect(use(binding)).toEqual(expected)
+    expect(uses.count).toBeGreaterThan(0)
+  })
+
+  test('a method held and called later reports the call', () => {
+    const { binding, uses } = tracked()
+    const held = binding.read
+
+    expect(uses.count).toBe(0)
+    expect(Reflect.apply(held, undefined, [])).toBe('eu')
+    expect(uses.count).toBe(1)
+  })
+
+  test('what a binding holds keeps its class', () => {
+    const { binding } = tracked()
+
+    expect(binding).toBeInstanceOf(Binding)
+    expect(new binding.Session('edge')).toBeInstanceOf(Session)
+  })
+
+  test('tracks testRateLimiter as it tracks the binding it stands in for', async () => {
+    let reads = 0
+    const limiter = testRateLimiter({ limit: 1 })
+    const env = trackBindings({ SIGN_IN_LIMITER: limiter }, () => {
+      reads += 1
+    })
+
+    expect(env.SIGN_IN_LIMITER).not.toBe(limiter)
+    expect(env.SIGN_IN_LIMITER.limit instanceof Function).toBe(true)
+    expect(reads).toBe(0)
+
+    expect(await env.SIGN_IN_LIMITER.limit({ key: 'a' })).toEqual({ success: true })
+    expect(reads).toBe(1)
+    expect(await env.SIGN_IN_LIMITER.limit({ key: 'a' })).toEqual({ success: false })
+    expect(reads).toBe(2)
+    expect(env.SIGN_IN_LIMITER.refused).toEqual(['a'])
+    expect(limiter.refused).toEqual(['a'])
+  })
 })
 
 describe('trackDatabase', () => {
@@ -930,5 +1144,20 @@ describe('trackDatabase', () => {
     const res = await app.request('/')
 
     expect(await res.json()).toEqual({ values: [['row'], 'select ?', 'ended'], marks: [true, true, true], isClient: true })
+  })
+
+  test("reports a query through Drizzle's db.query, which is an object and no method of the client", async () => {
+    class Client {
+      readonly query = { users: { findMany: () => ['row'] } }
+    }
+    const app = new Hono()
+
+    app.get('/', (c) => {
+      const rows = trackDatabase(c, new Client()).query.users.findMany()
+
+      return c.json({ rows, kept: keptFrom(c, 'page') })
+    })
+
+    expect(await (await app.request('/')).json()).toEqual({ rows: ['row'], kept: true })
   })
 })
