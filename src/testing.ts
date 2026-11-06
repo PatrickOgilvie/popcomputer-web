@@ -252,16 +252,20 @@ const MINIFLARE_FRAME = /[\\/]miniflare[\\/]/
 let waitingForLateReplies = false
 
 /**
- * Let Miniflare's proxy read a reply that lands just after it wakes.
+ * Let Miniflare's proxy read a reply it was woken too early for.
  *
- * A call on a D1 binding from outside `workerd` blocks in `Atomics.wait`
- * until a worker thread has the reply, then reads it with
- * `receiveMessageOnPort` and asserts it is there. Under Bun the wake-up can
- * beat the reply, measured at 10 microseconds, a few times in a long run on a
- * busy machine. The assertion fails (`false == true`), the reply stays on the
- * port, and every later call on that Miniflare reads the reply before its own
- * and fails too. Waiting for the reply cures it. Only Miniflare's read waits:
- * anyone else who asks for a message is told at once there is none.
+ * A call on a D1 binding from outside `workerd` blocks in `Atomics.wait` on a
+ * flag a worker thread sets after posting the reply, then reads the reply with
+ * `receiveMessageOnPort` and asserts it is there. With both threads preempted,
+ * as on a busy machine under any runtime, one reply's notify can land after
+ * the next call has armed its wait. That call wakes with no reply, the
+ * assertion fails (`false == true`), and every later call on that Miniflare
+ * reads the reply before its own and fails too. Waiting for the reply cures
+ * it. Only Miniflare's read waits: anyone else who asks for a message is told
+ * at once there is none.
+ *
+ * Miniflare fixed this on its 5.x line (cloudflare/workers-sdk#15552), and no
+ * 4.x release has it. Remove this when the peer range leaves 4.x.
  */
 async function waitForLateReplies(): Promise<void> {
   if (waitingForLateReplies) return
