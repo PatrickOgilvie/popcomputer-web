@@ -38,7 +38,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { availableParallelism, tmpdir } from 'node:os'
+import { availableParallelism, tmpdir, totalmem } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import {
@@ -382,8 +382,8 @@ export function changedLines(diff: string): Map<string, Set<number>> {
   return changed
 }
 
-const isSource = (file: string) => file.startsWith('src/') && /\.tsx?$/.test(file) && !file.endsWith('.d.ts')
 const isTest = (file: string) => /\.test\.tsx?$/.test(file) && !/(^|\/)(node_modules|dist)\//.test(file)
+const isSource = (file: string) => file.startsWith('src/') && /\.tsx?$/.test(file) && !file.endsWith('.d.ts') && !isTest(file)
 
 function push<K, V>(map: Map<K, V[]>, key: K, value: V) {
   const values = map.get(key)
@@ -453,6 +453,14 @@ function copyTree(root: string, files: readonly string[], target: string) {
 
 const BASELINE_TIMEOUT = 10 * 60 * 1000
 
+/** The memory a worker's tests may use at once: each runs a whole test file, an application's with Miniflares of its own. */
+const MEMORY_PER_WORKER = 4 * 1024 * 1024 * 1024
+
+/** A worker for each share of the memory, leaving a core for everything else. */
+export function defaultWorkers(cores: number, memory: number): number {
+  return Math.max(1, Math.min(cores - 1, Math.floor(memory / MEMORY_PER_WORKER)))
+}
+
 /** Plant each mutant in turn and run the tests that reach it. */
 export async function mutate(options: Options): Promise<Run> {
   const { root, base, log = () => undefined } = options
@@ -494,7 +502,7 @@ export async function mutate(options: Options): Promise<Run> {
     return [...mutated].some((each) => closure.has(each))
   })
 
-  const workers = Math.max(1, Math.min(options.workers ?? availableParallelism() - 1, Math.max(candidates.length, mutants.length)))
+  const workers = Math.max(1, Math.min(options.workers ?? defaultWorkers(availableParallelism(), totalmem()), Math.max(candidates.length, mutants.length)))
   const workspace = mkdtempSync(join(realpathSync(tmpdir()), 'popweb-mutate-'))
   const copies = Array.from({ length: workers }, (_, index) => join(workspace, `w${index}`))
   const children = new Set<ChildProcess>()
@@ -511,7 +519,12 @@ export async function mutate(options: Options): Promise<Run> {
 
   const run = (cwd: string, args: readonly string[], timeout: number) =>
     new Promise<{ code: number | null; timedOut: boolean }>((resolve) => {
-      const child = spawn(process.execPath, args, { cwd, detached: true, stdio: 'ignore' })
+      // A mutant really runs, with whatever the code it breaks can reach: a
+      // temporary directory of the copy's own keeps what it does there, and
+      // what a killed run leaves, inside this run's workspace.
+      const temporary = `${cwd}.tmp`
+      const env = { ...process.env, TMPDIR: temporary, TMP: temporary, TEMP: temporary }
+      const child = spawn(process.execPath, args, { cwd, detached: true, env, stdio: 'ignore' })
       let timedOut = false
       const timer = setTimeout(() => {
         timedOut = true
@@ -542,7 +555,10 @@ export async function mutate(options: Options): Promise<Run> {
   }
 
   try {
-    for (const copy of copies) copyTree(root, listed, copy)
+    for (const copy of copies) {
+      copyTree(root, listed, copy)
+      mkdirSync(`${copy}.tmp`)
+    }
 
     // Coverage: each test file alone, the largest first so the slowest is not
     // left until last.
@@ -551,7 +567,7 @@ export async function mutate(options: Options): Promise<Run> {
     // The lines Bun counts in each mutated file, reached or not.
     const counted = new Map([...mutated].map((file) => [file, new Set<number>()]))
     const sizeOf = (test: string) => readFileSync(join(root, test)).length
-    await pool([...candidates].sort((a, b) => sizeOf(b) - sizeOf(a)), async (test, copy, index) => {
+    const measure = async (test: string, copy: string, index: number) => {
       const directory = join(workspace, `coverage-${index}`)
       rmSync(directory, { recursive: true, force: true })
       const started = performance.now()
@@ -582,7 +598,15 @@ export async function mutate(options: Options): Promise<Run> {
       }
 
       coverage.set(test, { passed: code === 0, ms, hits })
-    })
+    }
+    await pool([...candidates].sort((a, b) => sizeOf(b) - sizeOf(a)), measure)
+
+    // A test file can fail beside the others for the memory it lost to them,
+    // and leaving it out turns what only it catches into survivors: each
+    // gets the machine to itself before it is left out.
+    const failedBeside = [...coverage].filter(([, entry]) => !entry.passed).map(([test]) => test)
+    if (failedBeside.length > 0) log(`coverage: running ${failedBeside.length} failing test files again, one at a time`)
+    for (const test of failedBeside) await measure(test, copies[0], 0)
 
     const passing = [...coverage].filter(([, entry]) => entry.passed)
     const failing = [...coverage].filter(([, entry]) => !entry.passed).map(([test]) => test).sort()
@@ -691,12 +715,15 @@ export function formatReport(run: Run): string {
   const count = (status: Status) => results.filter((result) => result.status === status).length
   const survivors = results.filter((result) => result.status === 'survived')
   const timedOut = results.filter((result) => result.status === 'timed out')
+  const unreached = survivors.filter((survivor) => survivor.tests === 0).length
   const files = [...new Set(results.map((result) => result.file))]
+  const left = run.failing.length
 
   const lines = [
     `${results.length} mutants in ${files.length === 1 ? files[0] : `${files.length} files`}, against the ${run.testFiles} test files that load ${files.length === 1 ? 'it' : 'them'}`,
     '',
-    `score ${Math.floor(score(results))}%: ${count('killed')} killed, ${count('timed out')} timed out, ${count('survived')} survived`,
+    `score ${Math.floor(score(results))}%: ${count('killed')} killed, ${count('timed out')} timed out, ${count('survived')} survived${unreached === 0 ? '' : `, ${unreached} of them on ${unreached === 1 ? 'a line' : 'lines'} no test reaches`}`,
+    ...(left === 0 ? [] : [`partial: ${left === 1 ? '1 test file left out, so a mutant only it would catch' : `${left} test files left out, so a mutant only they would catch`} shows as a survivor`]),
     '',
     'by file',
     ...table(results, (result) => result.file),

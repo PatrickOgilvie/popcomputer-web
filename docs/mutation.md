@@ -54,16 +54,23 @@ bunx popweb-mutate src/actions/projects.ts
 ```
 
 Each test file, any `*.test.ts` or `*.test.tsx` outside `node_modules` and
-`dist`, that imports a mutated file runs once alone with coverage. Each
-mutant then runs against the test files whose coverage reaches its line, in
-copies of the working tree, so the checkout is never edited. A test file
-that fails with no mutant planted is left out, and the report says so.
+`dist`, that imports a mutated file runs once with coverage; none of them is
+mutated, even under `src/`. Each mutant then runs against the test files
+whose coverage reaches its line, in copies of the working tree, so the
+checkout is never edited. A mutant really runs, so each copy has a temporary
+directory of its own, removed with it: code that cleans up after itself cannot
+reach the machine's. Anything else the code can reach, it still can, such as
+a real service a test forgets to fake. A test file that fails with no mutant planted runs
+again with nothing beside it, since a file can fail for the memory it lost to
+the others. One that fails then too is left out, and the report says so
+beside the score and lists it at its end: the score is partial, as a mutant
+only that file would catch shows as a survivor.
 
 | Option | Does |
 | --- | --- |
 | `--base <ref>` | mutates the lines changed since that ref |
 | `--fail-under <percent>` | exits 1 when the score is below it; otherwise it exits 0 |
-| `--workers <n>` | copies of the tree run at once |
+| `--workers <n>` | copies of the tree run at once; by default one for each 4 GiB of memory, leaving a core free |
 | `--timeout <seconds>` | how long a mutant's tests may take; twice their unmutated time, plus 10 seconds, by default |
 
 ## Reading the report

@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { changedLines, findMutants, formatReport, mutate, type Result, score } from '../src/mutate.js'
+import { changedLines, defaultWorkers, findMutants, formatReport, mutate, type Result, score } from '../src/mutate.js'
 
 const fixture = join(import.meta.dir, 'fixtures', 'mutate', 'tiny.ts')
 const effectFixture = join(import.meta.dir, 'fixtures', 'mutate', 'effect.ts')
@@ -147,7 +147,8 @@ test('mutate runs each mutant against the tests that reach it and reports the on
     expect(score(run.results)).toBe((100 * 10) / 14)
 
     const report = formatReport(run)
-    expect(report).toContain('score 71%: 9 killed, 1 timed out, 4 survived')
+    expect(report).toContain('score 71%: 9 killed, 1 timed out, 4 survived, 1 of them on a line no test reaches')
+    expect(report).toContain('partial: 1 test file left out, so a mutant only it would catch shows as a survivor')
     expect(report).toContain('  src/tiny.ts:4  boundary  >= → >\n      return age >= 18')
     expect(report).toContain('  src/tiny.ts:32  negate-eq  === → !==  (no test reaches this line)')
     expect(report).toContain('left out, failing with no mutant planted: tests/broken.test.ts')
@@ -158,6 +159,94 @@ test('mutate runs each mutant against the tests that reach it and reports the on
     rmSync(root, { recursive: true, force: true })
   }
 }, 60_000)
+
+test('a test file that fails under load runs again alone before it is left out', async () => {
+  const marker = join(mkdtempSync(join(realpathSync(tmpdir()), 'mutate-load-')), 'ran')
+  const root = tinyRepo({
+    // Its first run fails, as one that loses to the others for memory does.
+    'tests/load.test.ts': `import { expect, test } from 'bun:test'
+import { existsSync, writeFileSync } from 'node:fs'
+import { plural } from '../src/tiny'
+
+test('passes once it has the machine', () => {
+  const first = !existsSync(${JSON.stringify(marker)})
+  writeFileSync(${JSON.stringify(marker)}, '')
+  expect(first).toBe(false)
+  expect(plural(2)).toBe('a pair')
+})
+`,
+  })
+
+  try {
+    const run = await mutate({ root, files: ['src/tiny.ts'], workers: 2, timeout: 3000 })
+
+    expect(run.failing).toEqual([])
+    expect(run.testFiles).toBe(2)
+    // Line 31's survivor in the fixture's own tests is caught by this file.
+    expect(run.results.find((result) => result.line === 31 && result.operator === 'skip-guard')?.status).toBe('killed')
+    expect(formatReport(run)).not.toContain('partial')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(dirname(marker), { recursive: true, force: true })
+  }
+}, 60_000)
+
+test('each run has a temporary directory of its own, gone with the run, so a mutant cannot reach the real one', async () => {
+  const seen = join(mkdtempSync(join(realpathSync(tmpdir()), 'mutate-temporary-')), 'seen')
+  const root = tinyRepo({
+    'tests/temporary.test.ts': `import { expect, test } from 'bun:test'
+import { appendFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { plural } from '../src/tiny'
+
+test('notes where its temporary directory is', () => {
+  appendFileSync(${JSON.stringify(seen)}, [tmpdir(), process.env.TMP, process.env.TEMP].join('|') + '\\n')
+  expect(plural(1)).toBe('one')
+})
+`,
+  })
+
+  try {
+    await mutate({ root, files: ['src/tiny.ts'], workers: 2, timeout: 3000 })
+
+    const directories = readFileSync(seen, 'utf8').trim().split('\n').flatMap((line) => line.split('|'))
+
+    expect(new Set(directories.map((directory) => /popweb-mutate-[^/]+\/w\d+\.tmp$/.test(directory)))).toEqual(new Set([true]))
+    // Each copy's its own, so a mutant in one cannot reach another's run.
+    expect(new Set(directories).size).toBe(2)
+    expect(existsSync(directories[0])).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(dirname(seen), { recursive: true, force: true })
+  }
+}, 60_000)
+
+test('a test file under src/ gets no mutants: a change to a test is not a bug the tests should catch', async () => {
+  const root = tinyRepo()
+  const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: root })
+
+  try {
+    git('add', '.')
+    git('commit', '--quiet', '-m', 'Add the fixture')
+    writeFileSync(join(root, 'src', 'tiny.test.ts'), `import { expect, test } from 'bun:test'\nimport { plural } from './tiny'\ntest('plural', () => expect(plural(1) === 'one').toBe(true))\n`)
+    writeFileSync(join(root, 'src', 'tiny.ts'), `${readFileSync(fixture, 'utf8')}\nexport const isZero = (value: number) => value === 0\n`)
+
+    const run = await mutate({ root, workers: 2, timeout: 3000 })
+
+    expect([...new Set(run.results.map((result) => result.file))]).toEqual(['src/tiny.ts'])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 60_000)
+
+test('the default number of workers leaves each its share of the memory', () => {
+  const gibibytes = 1024 * 1024 * 1024
+
+  expect(defaultWorkers(12, 24 * gibibytes)).toBe(6)
+  expect(defaultWorkers(4, 64 * gibibytes)).toBe(3)
+  expect(defaultWorkers(12, 2 * gibibytes)).toBe(1)
+  expect(defaultWorkers(1, 64 * gibibytes)).toBe(1)
+})
 
 test('findMutants makes each function that returns an Effect recover from each tagged error it declares', async () => {
   const mutants = await findMutants(join(import.meta.dir, '..'), ['tests/fixtures/mutate/effect.ts'])
