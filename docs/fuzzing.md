@@ -8,7 +8,7 @@ lifecycle's steps. Its pieces stand alone, on Effect's generators
 
 | Piece | What it gives |
 | --- | --- |
-| `fuzz(arbitrary, holds, { runs, shrinks })` | runs a property: resolves when every case holds, rejects with the case shrunk through up to `shrinks` candidates (1,000, or `FUZZ_SHRINKS`), why it was refused and a replay token; shrinking stops, saying so, with a quarter of `fuzzTimeout` left |
+| `fuzz(arbitrary, holds, { runs, shrinks, examples })` | runs a property: resolves when every case holds, rejects with the case shrunk through up to `shrinks` candidates (1,000, or `FUZZ_SHRINKS`), why it was refused and a replay token; shrinking stops, saying so, with a quarter of `fuzzTimeout` left, and a failure the input does not explain stops the run unshrunk; `examples` are checked on every run, before the generated cases |
 | `pick`, `oneOf`, `weighted`, `textOf`, `stepsOf`, `anyText`, `show` | generators that shrink toward their first choice, sequences of a lifecycle's steps of every length up to `maxLength`, and a value shown with its invisible characters escaped |
 | `fuzzRequest({ paths, routes, params, people })` | requests to the application's declared paths, and a form for each route that writes, from each person and a signed-out visitor |
 | `ownership(routes, table)` | the keys `strangerWrites` reads a table's rows by: its primary key and the column its binding's `ownedBy` names |
@@ -44,7 +44,8 @@ test('a slug is one URL segment of lowercase words', () => fuzz(names, (name) =>
 
 `bun test` runs each property for 300 cases from a fixed seed, so the commit
 gate gives the same answer each time; `{ runs }` lowers it for a property
-whose cases are slow. Run many more from a random seed now and then:
+whose cases are slow. Run many more from a random seed at the end of a batch
+of work, as [Long fuzz runs](fuzz-runs.md) says:
 
 ```bash
 FUZZ_RUNS=20000 FUZZ_SEED=random bun test
@@ -52,8 +53,7 @@ FUZZ_RUNS=20000 FUZZ_SEED=random bun test
 
 A failure prints the smallest case shrinking found, the reason the property
 gave, and a replay token: `FUZZ_REPLAY='<token>' bun test -t '<name>'` runs
-that case again; one that holds when run again failed on what earlier cases
-left, and says so. Keep a fixed bug's case as a plain test beside the
+that case again. Keep a fixed bug's case as a plain test beside the
 property; a new one must first fail on its bug planted (rule 12 of `AGENTS.md`).
 
 ## Requests to the application
@@ -111,7 +111,8 @@ test('any request keeps the rules', () => fuzz(requests, async (sent) => {
       { id: 'p-public', userId: 'ada', name: 'Apollo', slug: 'apollo', isPublic: true },
     ])
 
-    const rows = () => db.select({ id: projects.id, userId: projects.userId, name: projects.name, isPublic: projects.isPublic }).from(projects).orderBy(projects.id)
+    // Whole rows: the rules see only the columns they are given.
+    const rows = () => db.select().from(projects).orderBy(projects.id)
     const env = sent.person === null
       ? testEnv(testBindings, { database: db })
       : testEnv(signedIn({ id: sent.person }), testBindings, { database: db })
@@ -161,9 +162,8 @@ The rules each answer keeps:
 - `strangerWrites`: no row is changed or deleted by anyone but its owner,
   moved to another owner, or created for someone other than its sender.
 - `refusedWrites`: a 4xx answer changed no rows. Refusing everything keeps
-  every rule, so also check after `fuzz` that each route that writes
-  answered 2xx or wrote; a failed form's 303 back reaches nothing, and an
-  app of thirty routes needs more than 200 cases to reach each.
+  every rule, so also show that each write happens, as
+  [Reaching every write](fuzz-writes.md) does.
 
 Each request starts from the database the test seeded. To send sequences of
 them, each naming the records earlier ones created, see

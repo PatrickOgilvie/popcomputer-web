@@ -29,9 +29,20 @@ and constraint errors behave the same:
   `[test] preload` names: a Miniflare left running keeps its `workerd`
   process alive after `bun test` exits, and Bun shares modules between test
   files, so an `afterAll` in the module that creates the databases stops them
-  while other files still use them. A test that runs past its timeout takes
-  its Miniflare down with it, so every later test on those databases fails
-  with `ECONNREFUSED`: look for the first timeout, not the refusals.
+  while other files still use them. A `fuzz` property that takes a database
+  per case needs nothing more: a database a case asked for is finished when
+  the case ends, and a Miniflare stops once all of its are, so a run of
+  thousands holds one `workerd`. A case must keep none for a later one; a
+  database made outside a case, as in `beforeAll`, stays until `dispose()`. A
+  loop of your own that makes thousands may call `dispose()` between rounds:
+  the next `fresh()` starts again. A run killed before it could `dispose()`
+  leaves its `workerd` and its folder in the temporary directory, which the
+  next run's first database removes as it goes on: each folder's name holds
+  its run's process id, so a run still going keeps its own, and only a
+  `workerd` holding a file in an abandoned folder is stopped. A test that
+  runs past its timeout takes its Miniflare down with it, so every later test
+  on those databases fails with `ECONNREFUSED`: look for the first timeout,
+  not the refusals.
   Miniflare's `getKVNamespace` and
   `getR2Bucket` give the other bindings; their types differ slightly from
   `@cloudflare/workers-types`', so provide a KV store to the data cache as

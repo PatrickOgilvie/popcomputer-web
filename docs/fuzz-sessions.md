@@ -111,7 +111,8 @@ test('any session keeps the rules after each step', () => fuzz(sessions, async (
       owners: { 'p-ada': 'ada', 'p-grace': 'grace' },
       created,
     })
-    const rows = () => db.select({ id: projects.id, userId: projects.userId, name: projects.name }).from(projects).orderBy(projects.id)
+    // Whole rows: the rules see only the columns they are given.
+    const rows = () => db.select().from(projects).orderBy(projects.id)
 
     for (const step of steps) {
       const before = await rows()

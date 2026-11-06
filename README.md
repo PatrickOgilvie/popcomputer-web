@@ -109,6 +109,8 @@ Testing and reference:
 - [Fuzzing sessions](docs/fuzz-sessions.md): sequences of requests against one database, each naming records earlier ones created
 - [A database for tests](docs/test-database.md): PGlite for Postgres, and D1 through Miniflare
 - [Fuzzing at the limits](docs/fuzz-limits.md): each limit set from the input, so every case lands on its edge
+- [Reaching every write](docs/fuzz-writes.md): one request for each write on every run, watching whole rows
+- [Long fuzz runs](docs/fuzz-runs.md): when to run thousands of cases, and a failure the input does not explain
 - [Mutation testing](docs/mutation.md): `popweb-mutate` plants small bugs in the lines a change touches and lists the ones no test catches
 - [Lower-level composition](docs/lower-level.md): the middleware without `setupWeb`
 - [State machines](docs/state-machines.md): what the framework keeps across requests, the rule each keeps, and the models that check them

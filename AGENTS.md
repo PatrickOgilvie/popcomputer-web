@@ -262,7 +262,14 @@ here, as the demo's does.
     `strangerWrites` (given `ownership(routes, table)`) and
     `refusedWrites`, as `docs/fuzzing.md` shows, and add the application's
     own rules beside them; give each new placeholder its values, and
-    `forms` only a request it cannot generate, such as a file's. Read who
+    `forms` only a request it cannot generate, such as a file's. Watch whole
+    rows, `db.select().from(table)`, since the rules see only the columns
+    they are given, and give `fuzz` one request for each write as `examples`,
+    since chance reaches a given write too rarely to count on, as
+    `docs/fuzz-writes.md` shows. Run thousands of cases once at the end of a
+    batch of work, not after each change; a failure the input does not
+    explain stops the run, so look at the machine before the route it names
+    (`docs/fuzz-runs.md`). Read who
     reaches each route with `routes.access()`. Send sequences of them to one
     database with `fuzzSession` and `startFuzzSession`, as
     `docs/fuzz-sessions.md` shows, naming in `creates` each placeholder

@@ -16,6 +16,8 @@ import { TestClock } from 'effect/testing'
 import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser } from './effect/services.js'
 import type { Registered } from './effect/register.js'
 import { attachTestDatabase, attachTestLayer } from './effect/test-env.js'
+import { whenTestCaseEnds } from './test-case.js'
+import { POOL_DIRECTORY, removePoolDirectory, sweepAbandonedPools } from './test-pools.js'
 import type { PageName } from './effect/pages.js'
 import type { ErrorPageProps, FlashData, PagePropsFor } from './react.js'
 import { ErrorResponse, errorResponseWith, type ErrorResponseBody } from './effect/error-response.js'
@@ -169,11 +171,17 @@ export interface TestD1Options {
 
 /** Fresh D1 databases for tests, each in a Miniflare that `dispose()` stops. */
 export interface TestD1 {
-  /** A newly created, migrated and empty D1 database, typed as the application's D1 binding. */
+  /**
+   * A newly created, migrated and empty D1 database, typed as the application's
+   * D1 binding. One a `fuzz` case asks for is finished when the case ends, and
+   * its Miniflare stops once it has no other to hand out or still in use.
+   */
   fresh(): Promise<RegisteredD1>
   /**
    * Stop every Miniflare the databases run in, once every test file is done
    * with them, and remove the databases' files, resolving once they are gone.
+   * The next `fresh()` starts again, so a loop of its own may call it between
+   * rounds.
    */
   dispose(): Promise<void>
 }
@@ -182,6 +190,13 @@ export interface TestD1 {
 interface MiniflareLike {
   getD1Database(name: string): Promise<TestD1Database>
   dispose(): Promise<void>
+}
+
+/** A running Miniflare, how many of its databases it has handed out, and how many of those are finished with. */
+interface StartedMiniflare {
+  readonly miniflare: MiniflareLike
+  next: number
+  finished: number
 }
 
 /** The environment variables `os.tmpdir()` reads, on every platform. */
@@ -213,35 +228,69 @@ function constructIn<A>(directory: string, construct: () => A): A {
   }
 }
 
+/** The sweep this process began, once: what a killed run left can take a while to remove, so nothing waits for it. */
+let sweeping: Promise<void> | undefined
+
 /** A new directory of the pool's own, under the system's temporary directory. */
 async function poolDirectory(): Promise<string> {
   const { mkdtemp } = await import('node:fs/promises')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
 
-  return mkdtemp(join(tmpdir(), 'popweb-test-d1-'))
+  sweeping ??= sweepAbandonedPools(tmpdir()).catch(() => undefined)
+
+  return mkdtemp(join(tmpdir(), `${POOL_DIRECTORY}${process.pid}-`))
 }
 
+/** How long, in milliseconds, Miniflare's read waits for a reply that has not landed. */
+const LATE_REPLY_MILLIS = 30_000
+
+/** A stack frame of Miniflare's own. */
+const MINIFLARE_FRAME = /[\\/]miniflare[\\/]/
+
+/** Whether this process's Miniflare reads wait yet. */
+let waitingForLateReplies = false
+
 /**
- * Remove the pool's directory, resolving once it is gone. Miniflare is still
- * removing its own directory inside it, unawaited, and a removal that finds
- * entries vanishing under it can resolve leaving their parent: try again until
- * nothing is left.
+ * Let Miniflare's proxy read a reply that lands just after it wakes.
+ *
+ * A call on a D1 binding from outside `workerd` blocks in `Atomics.wait`
+ * until a worker thread has the reply, then reads it with
+ * `receiveMessageOnPort` and asserts it is there. Under Bun the wake-up can
+ * beat the reply, measured at 10 microseconds, a few times in a long run on a
+ * busy machine. The assertion fails (`false == true`), the reply stays on the
+ * port, and every later call on that Miniflare reads the reply before its own
+ * and fails too. Waiting for the reply cures it. Only Miniflare's read waits:
+ * anyone else who asks for a message is told at once there is none.
  */
-async function removePoolDirectory(path: string): Promise<void> {
-  const { rm, stat } = await import('node:fs/promises')
+async function waitForLateReplies(): Promise<void> {
+  if (waitingForLateReplies) return
 
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await rm(path, { recursive: true, force: true })
+  waitingForLateReplies = true
 
-    if (!(await stat(path).then(() => true, () => false))) return
+  const { createRequire } = await import('node:module')
+  const threads: { receiveMessageOnPort(port: unknown): unknown } = createRequire(import.meta.url)('node:worker_threads')
+  const receive = threads.receiveMessageOnPort
+  const pause = new Int32Array(new SharedArrayBuffer(4))
 
-    await new Promise((resolve) => setTimeout(resolve, 50))
+  threads.receiveMessageOnPort = (port) => {
+    let received = receive(port)
+
+    if (received !== undefined || !MINIFLARE_FRAME.test(new Error().stack ?? '')) return received
+
+    for (let waited = 0; received === undefined && waited < LATE_REPLY_MILLIS; waited += 1) {
+      Atomics.wait(pause, 0, 0, 1)
+      received = receive(port)
+    }
+
+    return received
   }
 }
 
 async function loadMiniflare(): Promise<new (options: object) => MiniflareLike> {
   try {
+    await waitForLateReplies()
+
     const { Miniflare } = await import('miniflare')
 
     return Miniflare
@@ -255,7 +304,9 @@ async function loadMiniflare(): Promise<new (options: object) => MiniflareLike> 
  * in process. Starting Miniflare takes a moment, so one holds many databases,
  * and another starts when they run out. Stop them once, after every test file,
  * from a file `bunfig.toml`'s `[test] preload` names: a Miniflare left running
- * keeps its `workerd` process alive after `bun test` exits.
+ * keeps its `workerd` process alive after `bun test` exits. A `fuzz` property
+ * that takes a database per case needs nothing more: each Miniflare stops once
+ * its cases have ended. The first database removes what a killed run left.
  *
  * @example
  * // src/test-support.ts
@@ -267,11 +318,18 @@ async function loadMiniflare(): Promise<new (options: object) => MiniflareLike> 
  */
 export function testD1(options: TestD1Options): TestD1 {
   const names = Array.from({ length: options.perMiniflare ?? 64 }, (_, index) => `TEST_D1_${index}`)
-  const started: MiniflareLike[] = []
-  let current: { readonly miniflare: MiniflareLike; next: number } | undefined
+  const started = new Set<StartedMiniflare>()
+  let current: StartedMiniflare | undefined
   let miniflare: Promise<new (options: object) => MiniflareLike> | undefined
   let statements: Promise<ReadonlyArray<string>> | undefined
   let directory: Promise<string> | undefined
+
+  /** One of a Miniflare's databases is finished with: stop it once they all are, unless `dispose()` already has. */
+  const finish = async (running: StartedMiniflare): Promise<void> => {
+    running.finished += 1
+
+    if (running.finished === names.length && started.delete(running)) await running.miniflare.dispose()
+  }
 
   return {
     async fresh() {
@@ -283,14 +341,18 @@ export function testD1(options: TestD1Options): TestD1 {
         current = {
           miniflare: constructIn(files, () => new Miniflare({ modules: true, script: 'export default {}', d1Databases: names })),
           next: 0,
+          finished: 0,
         }
-        started.push(current.miniflare)
+        started.add(current)
       }
 
-      const name = names[current.next] ?? names[0] ?? 'TEST_D1_0'
-      current.next += 1
+      const running = current
+      const name = names[running.next] ?? names[0] ?? 'TEST_D1_0'
+      running.next += 1
 
-      const database = await current.miniflare.getD1Database(name)
+      whenTestCaseEnds(() => finish(running))
+
+      const database = await running.miniflare.getD1Database(name)
       const migrations = await (statements ??= readMigrations(options.migrations))
 
       if (migrations.length > 0) await database.batch(migrations.map((sql) => database.prepare(sql)))
@@ -299,11 +361,12 @@ export function testD1(options: TestD1Options): TestD1 {
       return database as RegisteredD1
     },
     async dispose() {
-      const stopping = started.splice(0)
+      const stopping = [...started]
       const files = directory
+      started.clear()
       current = undefined
       directory = undefined
-      await Promise.all(stopping.map((running) => running.dispose()))
+      await Promise.all(stopping.map((running) => running.miniflare.dispose()))
 
       if (files !== undefined) await removePoolDirectory(await files)
     },

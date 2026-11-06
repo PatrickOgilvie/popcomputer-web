@@ -16,7 +16,8 @@
  * is repeatable. `FUZZ_RUNS` sets the number of cases, `FUZZ_SEED=random`
  * picks a seed per run, `FUZZ_SHRINKS` the candidates a failure shrinks
  * through, and a failure prints the shrunk input, why the property refused
- * it, and a replay token for `FUZZ_REPLAY`, which runs that case again.
+ * it, and a replay token for `FUZZ_REPLAY`, which runs that case again. A
+ * failure the input does not explain stops the run at its case, unshrunk.
  *
  * @example
  * ```ts
@@ -32,6 +33,7 @@ import type { PathParamName } from './paths.js'
 import type { RouteModelMetadata, RouteRegistry, RouteRow } from './effect/route-registry.js'
 import type { EffectErrorEvent } from './effect/error-observer.js'
 import { observingEnv } from './effect/test-env.js'
+import { inTestCase } from './test-case.js'
 import { testBrowser, type TestApp, type TestBindings, type TestBrowser } from './testing.js'
 
 const configuredRuns = process.env.FUZZ_RUNS === undefined ? undefined : Number(process.env.FUZZ_RUNS)
@@ -43,7 +45,7 @@ const replay = process.env.FUZZ_REPLAY
 /** Why a property refused an input, as one reason or a list of broken rules; undefined or an empty list when it holds. */
 export type Refusal = string | ReadonlyArray<string> | undefined
 
-export interface FuzzOptions {
+export interface FuzzOptions<A = never> {
   /** Cases to run, for a property whose cases are slow; `FUZZ_RUNS` overrides it. Default 300. */
   readonly runs?: number
   /**
@@ -52,6 +54,35 @@ export interface FuzzOptions {
    * at 100: dropping each step a long sequence does not need takes one.
    */
   readonly shrinks?: number
+  /**
+   * Inputs checked by the same property on every run, before the cases it
+   * generates and however few `FUZZ_RUNS` asks for, for what chance reaches
+   * too rarely to count on, such as one request for each write an application
+   * makes. A refused example is reported as it is, unshrunk.
+   */
+  readonly examples?: ReadonlyArray<A>
+}
+
+/** How a case failed: why the property refused it, and the stack of what it threw. */
+interface CaseFailure {
+  readonly reason: string
+  readonly stack: string | undefined
+}
+
+/** The failure's reason, and the stack of whatever threw it, as a report shows them. */
+function describedFailure(failure: CaseFailure): string {
+  return failure.stack === undefined ? failure.reason : `${failure.reason}\n${failure.stack}`
+}
+
+/** An error's stack, and those of what it wraps, as a query error wraps what its database said. */
+function stackOf(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined
+
+  const cause: unknown = error.cause
+
+  if (cause === undefined) return error.stack
+
+  return `${error.stack}\nCaused by ${cause instanceof Error ? stackOf(cause) : show(cause)}`
 }
 
 /**
@@ -67,42 +98,90 @@ export const fuzzTimeout = configuredRuns === undefined ? 60_000 : 3_600_000
  * `test(name, () => fuzz(arbitrary, holds), fuzzTimeout)`. Shrinking stops
  * with a quarter of `fuzzTimeout` left, and the failure says so, so a slow
  * property reports its failure before its test times out.
+ *
+ * Shrinking assumes the input is what failed. So a first failure is run again
+ * at once, and then the case before it: when it holds now, or that case fails
+ * now too, something else gave way, such as the machine or a test's harness,
+ * and every candidate would hold or fail alike. The run stops there, unshrunk,
+ * and reports what failed, which is printed before any shrinking in any case.
  */
 export async function fuzz<A>(
   arbitrary: Arbitrary.Arbitrary<A>,
   holds: (value: A) => Refusal | Promise<Refusal>,
-  options: FuzzOptions = {}
+  options: FuzzOptions<NoInfer<A>> = {}
 ): Promise<void> {
   // A property that throws, as an `expect` or the code under test does,
   // refuses its input like any other, so the failure shrinks and replays.
-  const reasonFor = async (value: A): Promise<string | undefined> => {
+  const attempt = async (value: A): Promise<CaseFailure | undefined> => {
     try {
-      return reasonOf(await holds(value))
+      const reason = reasonOf(await inTestCase(() => holds(value)))
+
+      return reason === undefined ? undefined : { reason, stack: undefined }
     } catch (error) {
-      return `threw ${error instanceof Error ? `${error.name}: ${error.message}` : show(error)}`
+      return {
+        reason: `threw ${error instanceof Error ? `${error.name}: ${error.message}` : show(error)}`,
+        stack: stackOf(error),
+      }
     }
   }
+
   const shrinkUntil = Date.now() + fuzzTimeout * 0.75
-  let shrinking = false
+  // FUZZ_REPLAY runs the one case its token names.
+  const examples = replay === undefined ? options.examples ?? [] : []
+
+  for (const [index, example] of examples.entries()) {
+    const failure = await attempt(example)
+
+    if (failure !== undefined) {
+      throw new Error(`Example ${index + 1} of ${examples.length} refused: ${describedFailure(failure)}\nInput: ${show(example)}`)
+    }
+  }
+
+  let cases = 0
+  let held: { readonly input: A } | undefined
+  let first: CaseFailure | undefined
+  let outsideInput: string | undefined
   let stopped = false
+  const failedOutsideInput = async (value: A): Promise<string | undefined> => {
+    if ((await attempt(value)) === undefined) return CASE_HELD_AGAIN
+
+    const before = held === undefined ? undefined : await attempt(held.input)
+
+    return before && `${CASE_BEFORE_FAILS}\nThe case before it: ${describedFailure(before)}`
+  }
   const result = await Effect.runPromise(
     Arbitrary.checkEffect(
       arbitrary,
       (value) =>
         Effect.promise(async () => {
           // A candidate that holds is one Effect's shrink passes over, so
-          // past the deadline every candidate holds and the shrink ends.
-          if (shrinking && Date.now() > shrinkUntil) {
+          // once no more is to be learned every candidate holds and it ends.
+          if (outsideInput !== undefined) return true
+
+          if (first !== undefined && Date.now() > shrinkUntil) {
             stopped = true
 
             return true
           }
 
-          const holding = (await reasonFor(value)) === undefined
+          const failure = await attempt(value)
 
-          shrinking ||= !holding
+          // A candidate of a shrink.
+          if (first !== undefined) return failure === undefined
 
-          return holding
+          cases += 1
+
+          if (failure === undefined) {
+            held = { input: value }
+
+            return true
+          }
+
+          first = failure
+          console.error(`fuzz: case ${cases} failed on ${show(value)}: ${describedFailure(failure)}`)
+          outsideInput = await failedOutsideInput(value)
+
+          return false
         }),
       { runs: configuredRuns ?? options.runs ?? 300, maxShrinks: configuredShrinks ?? options.shrinks ?? 1000, seed, replay }
     )
@@ -110,19 +189,24 @@ export async function fuzz<A>(
 
   if (result._tag === 'Passed') return
 
-  // A case that holds when run again failed on what the cases before it left, or by chance.
-  const refusal = result._tag === 'Falsified'
-    ? (await reasonFor(result.shrunkInput)) ?? 'nothing when run again, so the case fails only after the cases before it or by chance, and FUZZ_REPLAY will not reproduce it: start each case from fresh state'
-    : undefined
+  const shrunk = result._tag === 'Falsified' && outsideInput === undefined ? await attempt(result.shrunkInput) : undefined
+
+  // A smallest case that holds when run at the end failed on something else too.
+  if (result._tag === 'Falsified' && outsideInput === undefined && shrunk === undefined) outsideInput = CASE_HELD_AGAIN
 
   throw new Error(
     [
       Arbitrary.formatCheckFailure(result),
-      refusal && `Refused: ${refusal}`,
+      shrunk && `Refused: ${shrunk.reason}`,
+      outsideInput,
+      first && `First failure: ${describedFailure(first)}`,
       stopped && 'Stopped shrinking with a quarter of fuzzTimeout left: a smaller input may fail too.',
     ].filter(Boolean).join('\n')
   )
 }
+
+const CASE_HELD_AGAIN = 'The case held when run again, so the input alone does not explain the failure, and FUZZ_REPLAY may not reproduce it. Suspect the machine (memory, disk, Miniflare), what an earlier case left, or a race, not this input: see the first failure below. Each case should start from fresh state.'
+const CASE_BEFORE_FAILS = 'The run stopped here, unshrunk: the case before it, which held, fails now too, so what broke is outside this input, in the machine (memory, disk, Miniflare) or what a case left, and later cases would mean nothing. See the first failure below.'
 
 function reasonOf(refusal: Refusal): string | undefined {
   if (refusal === undefined || Predicate.isString(refusal)) return refusal
