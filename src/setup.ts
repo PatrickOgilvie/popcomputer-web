@@ -46,6 +46,8 @@ import { ForbiddenError, HttpError, NotFoundError } from './effect/errors.js'
 import { discardUnreadBody } from './effect/body-limit.js'
 import { assertBindingsConfig, type RouteBindingsConfig } from './effect/binding.js'
 import type { PageSchemas } from './effect/pages.js'
+import { keptFrom } from './privacy.js'
+import { withoutSharedCaching } from './effect/response-cache.js'
 
 /** Better Auth-compatible owner for deferred promise work. */
 export interface AuthBackgroundTasks {
@@ -626,11 +628,23 @@ function createSetupMiddleware<
   })
 
   const middlewares: MiddlewareHandler<E>[] = [
-    // First, so every member and the error page read the same settings.
-    (c, next) => {
+    // First, so every member and the error page read the same settings, and
+    // last to see the answer: a header the application's middleware read
+    // after its route answered keeps that answer from shared caches too.
+    // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
+    async (c, next) => {
       useSetup(c, setup)
 
-      return next()
+      await next()
+
+      if (keptFrom(c, 'route')) {
+        const kept = withoutSharedCaching(c.res)
+
+        // Hono's setter copies the old response's headers onto the new one,
+        // so the shared headers would come back: clear it first.
+        c.res = undefined
+        c.res = kept
+      }
     },
     // Before the rest, so every answer, whichever member gives it, waits for
     // the body nothing read.

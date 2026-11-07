@@ -299,15 +299,16 @@ describe('a job whose cache purge fails', () => {
     })
   }
 
-  test('fails its run when it names more tags than Workers Cache purges at once', async () => {
+  test('purges more tags than Workers Cache takes at once in batches, and fails its run when a tag is one Workers Cache refuses', async () => {
     const { routes } = createApp()
     const env = { REGION: 'weur' }
 
-    await expect(routes.run(unpublish('p2', 100), env)).rejects.toBeInstanceOf(ResponseCachePurgeError)
-    await expect(routes.scheduled(() => unpublish('p2', 100))({ cron: '0 3 * * *', scheduledTime: 0 }, env)).rejects.toBeInstanceOf(ResponseCachePurgeError)
+    await expect(routes.run(unpublish('p2', 100), env)).resolves.toBe('p2')
+    await expect(routes.run(purgeCache(`projects:${'x'.repeat(2000)}`), env)).rejects.toBeInstanceOf(ResponseCachePurgeError)
+    await expect(routes.scheduled(() => purgeCache(`projects:${'x'.repeat(2000)}`))({ cron: '0 3 * * *', scheduledTime: 0 }, env)).rejects.toBeInstanceOf(ResponseCachePurgeError)
 
     const batch = testBatch([{ project: 'p2' }])
-    await routes.queue(Unpublish, (message) => unpublish(message.project, 100))(batch, env)
+    await routes.queue(Unpublish, () => purgeCache(`projects:${'x'.repeat(2000)}`))(batch, env)
 
     expect(batch.retried()).toEqual([{ project: 'p2' }])
   })

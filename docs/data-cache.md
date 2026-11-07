@@ -88,8 +88,12 @@ Inside `dbTransaction` what the cache keeps waits for the commit, since a
 rollback would leave a value that never was: `cacheSet` stores once it commits,
 `invalidateCacheTags` purges then, and `cache` computes from the transaction
 without storing. A rollback drops all three.
-A tagged read costs one store read per tag besides the entry's own; a purge of
-a tag no entry uses costs a read and no write. KV accepts one write a second
+A tagged read costs one store read per tag besides the entry's own; a purge
+writes each tag's new generation, whether or not an entry uses it, since KV may
+not yet show another location's entries. A failed write is tried three times,
+a quarter second, a half and a second apart, then fails the purge, so a job's
+queue retries it. `cacheInvalidate(key)` writes a short-lived mark too, so a
+value computed before it is not stored over it. KV accepts one write a second
 to a key and takes up to a minute to show a write everywhere, so tag data by
 the records it reads rather than by a table written many times a second.
 

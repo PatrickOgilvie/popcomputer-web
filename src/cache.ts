@@ -8,7 +8,7 @@
  * instead, and the failure is reported to EffectErrorObserverService.
  */
 
-import { Clock, Duration, Effect, Layer, Option, Random, Schema } from 'effect'
+import { Clock, Duration, Effect, Layer, Option, Random, Schedule, Schema } from 'effect'
 import { CacheService, ExecutionContextService, type CacheClient } from './effect/services.js'
 import { CacheError } from './effect/errors.js'
 import { observeOrLog } from './effect/error-observer.js'
@@ -106,6 +106,63 @@ const readTagGenerations = (
     }),
     { concurrency: 'unbounded' }
   ).pipe(Effect.map((entries) => Object.fromEntries(entries)))
+
+/**
+ * Whether every tag an entry was stored with is still at the generation it
+ * recorded: those a read names, as `named` holds them, and any others the
+ * entry carries, read from the store. A read that names fewer tags than the
+ * entry has still sees a purge of the others.
+ */
+const tagsCurrent = (
+  client: CacheClient,
+  recorded: Readonly<Record<string, string>> | undefined,
+  named: Readonly<Record<string, string>>
+): Effect.Effect<boolean, CacheError> =>
+  Effect.gen(function* () {
+    const entryTags = recorded ?? {}
+
+    if (!Object.entries(named).every(([tag, generation]) => entryTags[tag] === generation)) return false
+
+    const others = Object.entries(entryTags).filter(([tag]) => !Object.hasOwn(named, tag))
+    const current = yield* Effect.forEach(
+      others,
+      ([tag, generation]) => Effect.map(client.get(tagGenerationKey(tag)), (now) => now === generation),
+      { concurrency: 'unbounded' }
+    )
+
+    return current.every(Boolean)
+  })
+
+/** The store key that marks when a cache key was last invalidated. */
+const invalidatedKey = (key: string): string => `popweb:gone:${key}`
+
+/** How long that mark is kept: longer than any computation a cache waits for. */
+const INVALIDATION_MARK_TTL_SECONDS = 300
+
+/**
+ * Whether the key was invalidated at or after `since`: a value computed from
+ * then on may hold what the write behind the invalidation replaced.
+ */
+const invalidatedSince = (client: CacheClient, key: string, since: number): Effect.Effect<boolean, CacheError> =>
+  Effect.map(client.get(invalidatedKey(key)), (mark) => mark !== null && Number(mark) >= since)
+
+/**
+ * Give each tag a new generation, whatever the store says it holds: a read
+ * that finds none may only have not yet seen another location's write, as
+ * KV's can for up to a minute, and an entry stored under that generation must
+ * still end. KV takes one write a second to a key, so a refused write is tried
+ * again, briefly.
+ *
+ * @internal
+ */
+export const writeTagGenerations = (client: CacheClient, tags: ReadonlyArray<string>): Effect.Effect<void, CacheError> =>
+  Effect.forEach(
+    tags,
+    (tag) => Effect.flatMap(newGeneration, (generation) =>
+      client.put(tagGenerationKey(tag), generation, { expirationTtl: TAG_GENERATION_TTL_SECONDS })
+    ).pipe(Effect.retry({ times: 3, schedule: Schedule.exponential('250 millis') })),
+    { concurrency: 'unbounded', discard: true }
+  )
 
 /**
  * Simple string hash function (djb2 algorithm).
@@ -326,11 +383,13 @@ export const cache = <V, E, R>(
           ),
     ], { concurrency: 'unbounded' })
 
-    // Store a computed value; a failed write leaves the value uncached.
-    const storeInCache = (value: V) =>
+    // Store a value computed from `since`; a failed write leaves it uncached.
+    const storeInCache = (value: V, since: number) =>
       Effect.gen(function* () {
-        // A value read inside a transaction may yet roll back.
+        // A value read inside a transaction may yet roll back, and one read
+        // before the key was invalidated may hold what the write replaced.
         if (Option.isNone(generations) || (yield* inTransaction)) return
+        if (yield* invalidatedSince(cacheService, effectiveKey, since)) return
 
         const t = yield* Clock.currentTimeMillis
         const newEntry: CacheEntry<V> = tags.length === 0 ? { v: value, t } : { v: value, t, g: generations.value }
@@ -347,9 +406,12 @@ export const cache = <V, E, R>(
     const now = yield* Clock.currentTimeMillis
 
     // A purge of any of its tags since the entry was stored makes it a miss,
-    // as does an entry stored after now, by a clock a test has set back.
+    // whichever tags this read names, as does an entry stored after now, by a
+    // clock a test has set back.
     const entry = decoded !== undefined && Option.isSome(generations) && decoded.t <= now &&
-      tags.every((tag) => decoded.g?.[tag] === generations.value[tag])
+      (yield* tagsCurrent(cacheService, decoded.g, generations.value).pipe(
+        Effect.catch((error) => Effect.as(reportStoreFailure('cache.tags')(error), false))
+      ))
       ? decoded
       : undefined
 
@@ -368,8 +430,9 @@ export const cache = <V, E, R>(
           // reads what committed, not the closed transaction.
           yield* afterCommit(executionContext.runInBackground(
             Effect.gen(function* () {
+              const since = yield* Clock.currentTimeMillis
               const freshValue = yield* compute
-              yield* storeInCache(freshValue)
+              yield* storeInCache(freshValue, since)
             })
           ))
 
@@ -384,10 +447,11 @@ export const cache = <V, E, R>(
     }
 
     // Compute value (cold cache or expired)
+    const since = yield* Clock.currentTimeMillis
     const value = yield* compute
 
     // Store with timestamp
-    yield* storeInCache(value)
+    yield* storeInCache(value, since)
 
     return value
   }).pipe(Effect.withSpan('Web.cache'))
@@ -434,13 +498,7 @@ export const cacheGet = <V>(
     if (entry === undefined) return Option.none<V>()
 
     // So does one stored with tags, once any of them was invalidated since.
-    const current = yield* Effect.forEach(
-      Object.entries(entry.g ?? {}),
-      ([tag, generation]) => Effect.map(cacheService.get(tagGenerationKey(tag)), (now) => now === generation),
-      { concurrency: 'unbounded' }
-    )
-
-    return current.every(Boolean) ? Option.some(entry.v) : Option.none<V>()
+    return (yield* tagsCurrent(cacheService, entry.g, {})) ? Option.some(entry.v) : Option.none<V>()
   }).pipe(Effect.withSpan('Web.cacheGet'))
 
 /**
@@ -503,6 +561,7 @@ export function cacheSet<V, E, R>(
     // any of them makes the entry a miss. They are read before the value is,
     // when cacheSet is given its read, so a purge during the read counts.
     const generations = tags.length === 0 ? undefined : yield* readTagGenerations(cacheService, tags)
+    const since = yield* Clock.currentTimeMillis
     const value = Effect.isEffect(given) ? yield* given : given
     const t = yield* Clock.currentTimeMillis
 
@@ -511,7 +570,10 @@ export function cacheSet<V, E, R>(
       Effect.mapError(entryError('The value does not match the cache schema.'))
     )
 
-    const store = cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
+    // A value read before its key was invalidated may hold what the write replaced.
+    const store = Effect.flatMap(invalidatedSince(cacheService, effectiveKey, since), (invalidated) =>
+      invalidated ? Effect.void : cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
+    )
 
     // Inside a transaction the value waits for the commit, and a rollback
     // drops it; a store that fails then is reported, the commit stands.
@@ -556,6 +618,9 @@ export const cacheInvalidate = <V = unknown>(
       : key
 
     yield* cacheService.delete(effectiveKey)
+    // A computation that started before this may yet store what the write
+    // behind it replaced: the mark tells it not to.
+    yield* cacheService.put(invalidatedKey(effectiveKey), String(yield* Clock.currentTimeMillis), { expirationTtl: INVALIDATION_MARK_TTL_SECONDS })
   }).pipe(
     Effect.catchTag('CacheError', reportInvalidationFailure('invalidate')),
     Effect.withSpan('Web.cacheInvalidate')
@@ -611,21 +676,11 @@ export const cacheInvalidatePrefix = (
 export const invalidateCacheTags = (tags: ReadonlyArray<CacheTag>): Effect.Effect<void> =>
   // Inside a transaction the purge waits for its commit: a value read before
   // the commit would otherwise be stored under the new generation.
-  afterCommit(Effect.flatMap(Effect.serviceOption(CacheService), (store) => {
-    if (Option.isNone(store) || tags.length === 0) return Effect.void
-
-    const client = store.value
-
-    return Effect.forEach(
-      tags,
-      (tag) => Effect.gen(function* () {
-        if ((yield* client.get(tagGenerationKey(tag))) === null) return
-
-        yield* client.put(tagGenerationKey(tag), yield* newGeneration, { expirationTtl: TAG_GENERATION_TTL_SECONDS })
-      }),
-      { concurrency: 'unbounded', discard: true }
-    ).pipe(Effect.catch(reportInvalidationFailure('cache.invalidateTags')))
-  }))
+  afterCommit(Effect.flatMap(Effect.serviceOption(CacheService), (store) =>
+    Option.isNone(store) || tags.length === 0
+      ? Effect.void
+      : writeTagGenerations(store.value, tags).pipe(Effect.catch(reportInvalidationFailure('cache.invalidateTags')))
+  ))
 
 export { CacheService, type CacheClient } from './effect/services.js'
 export { CacheError }

@@ -362,17 +362,21 @@ function storeWhenComplete<E extends Env>(
     settle = resolve
   }))
 
+  // The body has been read to its end, or has failed or been cancelled. A
+  // page is kept only once it is whole, and only if nothing reading it, to its
+  // last chunk, made it someone's own: a binding read while it streamed counts.
   const finish = (complete: boolean) => {
     const final = c.res
 
-    if (!complete || !finalHeadersAllowStore(final.headers)) {
+    if (!complete || !finalHeadersAllowStore(final.headers) || keptFrom(c, 'page')) {
       settle()
 
       return
     }
 
-    store
-      .put(state.key, storedCopy(new Response(concatenate(chunks), final), state.ttl))
+    // A store that throws as it is called settles as one that rejects does.
+    Promise.resolve()
+      .then(() => store.put(state.key, storedCopy(new Response(concatenate(chunks), final), state.ttl)))
       .catch(() => {})
       .finally(settle)
   }
@@ -380,7 +384,11 @@ function storeWhenComplete<E extends Env>(
   const body = new ReadableStream<Uint8Array>({
     // oxlint-disable-next-line effecttsgo/async-function -- ReadableStream sources are promise-based.
     async pull(controller) {
-      const { done, value } = await reader.read()
+      const { done, value } = await reader.read().catch((cause: unknown) => {
+        finish(false)
+
+        throw cause
+      })
 
       if (done) {
         controller.close()

@@ -1387,12 +1387,12 @@ describe('cache tags', () => {
     expect(await evaluated()).toBe(3)
   })
 
-  it('writes nothing for a purged tag no entry uses', async () => {
+  it('writes a new generation for a purged tag even where none is stored, since KV may not yet show one', async () => {
     const { layer, store } = makeTestCache()
 
     await Effect.gen(function* () {
       yield* invalidateCacheTags(['projects:p1'])
-      expect([...store.keys()]).toEqual([])
+      expect([...store.keys()]).toEqual(['popweb:tag:projects:p1'])
 
       yield* cache('project:p1', Effect.succeed(1), S.Number, { ttl: Duration.hours(1), tags: ['projects:p1'] })
       const first = store.get('popweb:tag:projects:p1')?.value

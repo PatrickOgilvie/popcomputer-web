@@ -11,6 +11,12 @@ What an application may need to change: one with a test that expects no purge wh
 
 ### Fixed
 
+- A cached value a purge or an invalidation replaced is no longer read back or stored again. `cache` read with fewer tags than the entry was stored with returned an entry a purge of the others had ended. `cacheInvalidate` during a computation let the computation store the value it read before the write. A purge at a location KV had not yet shown the tag to wrote nothing, so the entry stayed until its `ttl`. A purge now writes each tag's generation whether or not one is stored, which costs a KV write per tag where it cost none.
+- A data cache purge that KV refuses fails the run, as a refused Workers Cache purge does, so a job's queue retries it. It was reported and dropped. A refused write is tried three times first, since KV takes one write a second to a key.
+- A purge of more than 100 tags goes to Workers Cache in batches, after the data cache. It failed before either, after the write had committed.
+- The default page cache keeps no page a binding was read for while it streamed, and settles when the body fails or a store throws as it is called. A streamed page could reach the next visitor with the first one's data.
+- A route's own `cache` option keeps private a page whose header an application middleware read after the route answered. Only a read before `next()` counted.
+- `ResponseCacheService.purge` reaches Workers Cache alone, and `recordCacheTag`'s example now uses `purgeCache`, which reaches the data cache too.
 - A write that committed is purged whatever the request then answers. A route purged only when its action succeeded, so a write followed by a failure, such as a 422 from validation that came after it or a 409 the action answered, left the cached pages that show the record stale until their `maxAge`. A failure before any write still purges nothing.
 - Work a rollback must cancel waits for the commit. Inside `dbTransaction`, `purgeCache` purged though the transaction rolled back, `invalidateCacheTags` purged before the commit, so a request that read the old value meanwhile stored it under the new generation, and `background()` and a stale `cache` value's refresh ran on the transaction after it had closed, so their writes failed and reached only the log. Now each waits for the commit, and a rollback drops it. `cache` inside a transaction computes without storing, and `cacheSet` stores once it commits.
 

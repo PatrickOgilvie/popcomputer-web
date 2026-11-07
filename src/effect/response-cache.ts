@@ -21,7 +21,8 @@
  */
 
 import { Predicate, Context, Data, Effect, Exit, Option, Schema as S } from 'effect'
-import { invalidateCacheTags } from '../cache.js'
+import { CacheService } from './services.js'
+import { writeTagGenerations } from '../cache.js'
 import { cell, type Refused, type Table } from '../machine.js'
 import { afterCommit } from './commit.js'
 import { HEADERS } from '../types.js'
@@ -208,10 +209,11 @@ export type CacheTag = [DeclaredSchema] extends [never] ? string : TableName | `
  * cached page tags itself with the record of each of its route's bindings,
  * and `purges: true` purges the records its route's bindings name, so a page
  * read through `/posts/{post:slug}` is purged by `PUT /posts/{post}`. Purge
- * it yourself when a record changes elsewhere, such as in a queue consumer.
+ * it yourself when a record changes elsewhere, such as in a queue consumer,
+ * with `purgeCache`, which reaches the data cache and Workers Cache alike.
  *
  * @example
- * yield* cache.purge({ tags: [recordCacheTag('posts', post.id)] })
+ * yield* purgeCache(recordCacheTag('posts', post.id))
  */
 export function recordCacheTag<const Table extends TableName>(
   table: Table,
@@ -466,6 +468,24 @@ export function applyRouteCacheOption(
 }
 
 /**
+ * A response a shared cache may no longer keep, because something read what
+ * no cache key holds after its route had answered, such as an application's
+ * middleware reading a header once `next()` returned: no shared cache keeps
+ * it, as if the read had come first.
+ */
+export function withoutSharedCaching(response: Response): Response {
+  if (!response.headers.has('Cloudflare-CDN-Cache-Control')) return response
+
+  const result = new Response(response.body, response)
+
+  result.headers.delete('Cloudflare-CDN-Cache-Control')
+  result.headers.delete('Cache-Tag')
+  result.headers.set('Cache-Control', 'no-store')
+
+  return result
+}
+
+/**
  * Apply a cache-policy decision to a response. Returns the response with
  * headers applied (a copy when headers must change, since responses from
  * handlers may carry immutable header guards).
@@ -532,7 +552,8 @@ export class ResponseCachePurgeError extends S.TaggedError<ResponseCachePurgeErr
 }
 
 /**
- * Client interface for purging Workers Cache entries.
+ * Client interface for purging Workers Cache entries. It reaches Workers Cache
+ * alone: purge a tag with `purgeCache`, which reaches the data cache too.
  *
  * @example
  * const cache = yield* ResponseCacheService
@@ -767,23 +788,33 @@ export const purgeTags = (tags: readonly string[]): Effect.Effect<void, Response
   Effect.gen(function* () {
     if (tags.length === 0) return
 
-    const preparedTags = prepareCachePurgeTags(tags)
+    // Cached data first: its tags need fit no limit of Workers Cache's, and
+    // the Workers Cache purge can fail. A refused generation fails the purge,
+    // as a refused Workers Cache purge does, so a job's queue retries it.
+    const data = yield* Effect.serviceOption(CacheService)
 
-    if (Predicate.isTagged(preparedTags, 'invalid')) {
-      return yield* new ResponseCachePurgeError({
-        input: { tags },
-        cause: ResponseCachePurgeFailure.InvalidCacheTags({ reason: preparedTags.reason }),
-      })
+    if (Option.isSome(data)) {
+      yield* writeTagGenerations(data.value, tags).pipe(
+        Effect.mapError((cause) => new ResponseCachePurgeError({ input: { tags }, cause: ResponseCachePurgeFailure.DataCachePurgeFailed({ cause }) }))
+      )
     }
 
-    // Cached data tagged with them goes too, before the Workers Cache purge,
-    // which can fail.
-    // SAFETY: the tags are the record and table tags of a route's bound
-    // tables, or tags passed to purgeCache, all CacheTags.
-    yield* invalidateCacheTags(tags as ReadonlyArray<CacheTag>)
-
+    // Workers Cache takes a limited number of tags at once: the rest go after.
     const cache = yield* ResponseCacheService
-    yield* cache.purge({ tags: preparedTags.tags })
+
+    for (let start = 0; start < tags.length; start += MAX_CACHE_PURGE_TAG_COUNT) {
+      const batch = tags.slice(start, start + MAX_CACHE_PURGE_TAG_COUNT)
+      const prepared = prepareCachePurgeTags(batch)
+
+      if (Predicate.isTagged(prepared, 'invalid')) {
+        return yield* new ResponseCachePurgeError({
+          input: { tags },
+          cause: ResponseCachePurgeFailure.InvalidCacheTags({ reason: prepared.reason }),
+        })
+      }
+
+      yield* cache.purge({ tags: prepared.tags })
+    }
   })
 
 /**
@@ -847,6 +878,8 @@ type ResponseCachePurgeFailure = Data.TaggedEnum<{
   InvalidCacheTags: { readonly reason: string }
   WorkersCachePurgeRejected: { readonly errors: readonly WorkersCachePurgeFailure[] }
   InvalidWorkersCachePurgeResult: {}
+  /** The data cache refused a tag's new generation. */
+  DataCachePurgeFailed: { readonly cause: unknown }
 }>
 
 /** Structured causes produced by response-cache validation and purge responses. */
