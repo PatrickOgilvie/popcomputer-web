@@ -170,7 +170,9 @@ are the parent and its table (`threads`), not the new post's. When an action
 creates or changes another record, such as a reply's post or the listing an
 accepted offer sold, it adds that record's tag with `purgeCache`. The route purges it after the action
 succeeds, or leaves with `redirectNow`, together with its own `purges` if it
-has any, and not at all when the action fails:
+has any. After a failure it purges them only once a write has committed, and
+inside `dbTransaction` they wait for its commit, so a rolled-back write purges
+nothing:
 
 ```ts
 yield* purgeCache(recordCacheTag('projects', 'project-1'), 'projects')

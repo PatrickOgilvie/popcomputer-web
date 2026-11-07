@@ -37,7 +37,7 @@ import { keptFrom, recordPrivacy } from '../privacy.js'
 import {
   applyRouteCacheOption,
   isPartialReloadRequest,
-  purgeTags,
+  settlingPurges,
   type ResponseCachePurgeError,
   type ResponseCacheService,
   PendingPurges,
@@ -494,29 +494,9 @@ function routePurgesOf(
   return Effect.map(Effect.flatMap(RouteRecords, (records) => records.tags), (tags) => [...tags, ...writtenTable])
 }
 
-/**
- * The action, then, once it succeeds (any redirect, or a response below
- * 400), the route's purges and those it asked for with purgeCache, once:
- * inside the Effect, so a failed purge surfaces as its failure rather than
- * leaving stale entries silently. `onFailure` hears a failed purge first.
- */
-function purgingOnSuccess<Err, R>(
-  effect: Effect.Effect<Response | Redirect, Err, R>,
-  routePurges: Effect.Effect<readonly string[], BoundModelError, RouteRecords>,
-  onFailure: (error: BoundModelError | ResponseCachePurgeError) => void
-): Effect.Effect<Response | Redirect, Err | BoundModelError | ResponseCachePurgeError, R | RouteRecords | PendingPurges | ResponseCacheService> {
-  return effect.pipe(
-    Effect.tap((result) => {
-      if (!(result instanceof Redirect || (result instanceof Response && result.status < 400))) return Effect.void
-
-      return Effect.gen(function* () {
-        const requested = yield* Effect.flatMap(PendingPurges, (pending) => pending.take)
-
-        yield* purgeTags([...new Set([...(yield* routePurges), ...requested])])
-      }).pipe(Effect.tapError((error) => Effect.sync(() => onFailure(error))))
-    })
-  )
-}
+/** Whether an action's answer is a success: any redirect, or a response below 400. */
+const answeredWithSuccess = (result: Response | Redirect): boolean =>
+  result instanceof Redirect || result.status < 400
 
 /** Whether the request's path parameters decode with the route's params schema, when it has one. */
 function paramsMatch<E extends Env>(c: HonoContext<E>, schema: S.Codec<unknown, unknown, never, never> | undefined): boolean {
@@ -655,9 +635,10 @@ export class EffectRouteBuilder<
       fullLayer = Layer.provideMerge(Layer.succeedContext(testServices), fullLayer)
     }
 
-    // What the job names with purgeCache is purged once it succeeds; a
-    // failed purge fails its run, so the queue retries and the cron fails.
-    const job = Effect.tap(effect, () => Effect.flatMap(Effect.flatMap(PendingPurges, (pending) => pending.take), purgeTags))
+    // What the job names with purgeCache is purged once it succeeds, or once
+    // it fails after a write committed; a failed purge after a success fails
+    // its run, so the queue retries and the cron fails.
+    const job = settlingPurges(effect, { succeeded: () => true })
 
     // One runtime holds the job's services, the builder's scoped layers
     // among them, until the background work it started has settled.
@@ -1111,13 +1092,14 @@ export class EffectRouteBuilder<
       }
 
       // The route's purges and any the action asked for with purgeCache run
-      // once, after the action succeeds, so a failed purge fails it. A job
-      // that routes.run sent here fails its run, so the queue retries.
-      handlerEffect = purgingOnSuccess(
-        handlerEffect,
-        routePurgesOf(route.purges, routeModels),
-        (error) => failRun(c.req.raw, error)
-      )
+      // once, after the action succeeds, so a failed purge fails it, and
+      // after it fails only once a write has committed. A job that
+      // routes.run sent here fails its run, so the queue retries.
+      handlerEffect = settlingPurges(handlerEffect, {
+        succeeded: answeredWithSuccess,
+        declared: routePurgesOf(route.purges, routeModels),
+        onPurgeFailure: (error) => failRun(c.req.raw, error),
+      })
 
       // The route runtime owns every provided Layer until background work has
       // settled, including scoped services added with route.provide().

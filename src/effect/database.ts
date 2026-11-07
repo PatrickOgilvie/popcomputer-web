@@ -16,6 +16,8 @@ import { Cause, Context, Data, Effect, Exit, Option, Result, Schema as S } from 
 import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core'
 import type { SQLiteRaw } from 'drizzle-orm/sqlite-core/query-builders/raw'
 import { cell, type MachineCell, type Table } from '../machine.js'
+import { afterCommit, holdUntilCommit } from './commit.js'
+import { recordWrite } from './response-cache.js'
 import { DatabaseService, type DatabaseType } from './services.js'
 import { DatabaseConstraintViolation, DatabaseError, ValidationError } from './errors.js'
 
@@ -119,6 +121,8 @@ export function dbTransaction<A, E, R>(
     // SAFETY: TransactionSupport admits the call only when DatabaseType has an
     // asynchronous `transaction(run)`.
     const transactional = db as unknown as AsyncTransactions<DatabaseType>
+    // What the Effect starts that a rollback must cancel waits for the commit.
+    const { held, release } = holdUntilCommit(transaction)
 
     const outcome = yield* Effect.tryPromise({
       try: (signal) =>
@@ -126,7 +130,7 @@ export function dbTransaction<A, E, R>(
           const open = cell(transactionTable, Transaction.Open())
 
           return Effect.runPromiseExitWith(context)(
-            transaction.pipe(
+            held.pipe(
               Effect.provideService(DatabaseService, tx),
               Effect.provideService(OpenTransaction, abortsOnFailure(tx) ? Option.some(open) : Option.none()),
               // A failure the Effect caught leaves a transaction Postgres will
@@ -143,7 +147,11 @@ export function dbTransaction<A, E, R>(
       catch: (cause) => cause,
     }).pipe(Effect.result)
 
-    if (Result.isSuccess(outcome)) return outcome.success
+    if (Result.isSuccess(outcome)) {
+      yield* release
+
+      return outcome.success
+    }
 
     // The Effect failed, and its failure rolled the transaction back.
     if (outcome.failure instanceof RolledBack) {
@@ -476,7 +484,9 @@ function run<A, E>(
       catch: (cause) => cause,
     }).pipe(
       Effect.tapError((cause) => Option.isSome(open) ? Effect.ignore(open.value.send(TransactionEvent.StatementFailed({ cause }))) : Effect.void),
-      Effect.catch(classify)
+      Effect.catch(classify),
+      // A write the route's purges answer for, once it commits.
+      Effect.tap(() => operation === 'query' ? Effect.void : afterCommit(recordWrite))
     )
   }).pipe(Effect.withSpan(SPANS[operation]))
 }

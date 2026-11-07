@@ -44,9 +44,13 @@ why.
 | State | Event | Moves to | Mark |
 |---|---|---|---|
 | Open | `Add` | Open | ok |
-| Open | `Take` | Taken | ok |
-| Taken | `Add` | Taken | refused: The work it belongs to has finished, so nothing would purge it. Give work that outlives its action to background(). |
-| Taken | `Take` | Taken | refused: A piece of work's purges are taken once, when it has succeeded. |
+| Open | `Wrote` | Open | ok |
+| Open | `Take` | Settled | ok |
+| Open | `Abandon` | Settled | ok |
+| Settled | `Add` | Settled | refused: The work it belongs to has finished, so nothing would purge it. Give work that outlives its action to background(). |
+| Settled | `Wrote` | Settled | ignored: the work's purges are settled; a write after them is no route's to purge |
+| Settled | `Take` | Settled | refused: A piece of work's purges are settled once, when it ends. |
+| Settled | `Abandon` | Settled | refused: A piece of work's purges are settled once, when it ends. |
 
 ### Tags a stored response carries
 

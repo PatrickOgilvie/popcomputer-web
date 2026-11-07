@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+What an application may need to change: one with a test that expects no purge when an action fails after a write it made outside a transaction. That write committed, so its purges now run.
+
+### Fixed
+
+- A write that committed is purged whatever the request then answers. A route purged only when its action succeeded, so a write followed by a failure, such as a 422 from validation that came after it or a 409 the action answered, left the cached pages that show the record stale until their `maxAge`. A failure before any write still purges nothing.
+- Work a rollback must cancel waits for the commit. Inside `dbTransaction`, `purgeCache` purged though the transaction rolled back, `invalidateCacheTags` purged before the commit, so a request that read the old value meanwhile stored it under the new generation, and `background()` and a stale `cache` value's refresh ran on the transaction after it had closed, so their writes failed and reached only the log. Now each waits for the commit, and a rollback drops it. `cache` inside a transaction computes without storing, and `cacheSet` stores once it commits.
+
 ## [1.14.0] - 2026-11-07
 
 This release fixes two security bugs. A constraint violation caught inside `dbTransaction` on Postgres returned success with every write gone, which is the one change an application may need: a statement that may fail belongs in a nested `dbTransaction`. And in a browser two people share, a partial reload after the session changed could leave one person's page in the next person's history, on 1.7.0 to 1.13.2. It also fixes what a walk of every implicit state machine against every event found in the session lookup, the flash cookie and what an isolate keeps. `UPGRADING.md`'s "From 1.13 to 1.14" lists what to check.

@@ -18,7 +18,7 @@ to check a change against them.
 | An account's sign-ins | `src/effect/sign-in-limits.ts` `withinSignInLimits`, `sweepSignInFailures` | spent, counting, cooling, cooled: conditions on its `rateLimit` row | a password sign-in, its answer, time, the sweep |
 | Inertia's history | `src/middleware.ts` `web()`, `src/page-version.ts` | per tab: its key, its entries, its page's version; per browser: the session cookie and the clear | a page, an answer that ends or starts a session, Back |
 | Flash and a failed form's errors | `src/flash.ts` `flashCookieTable`, `openFlash` | empty, holding, unreadable | the answer actually sent: a page, a redirect, anything else, a prefetch |
-| Purges a route owes | `src/effect/response-cache.ts` `makePendingPurges`, `makePendingCacheTags` | open with tags, then taken; a later add is a defect | `purgeCache`, `tagCache`, the route's success |
+| Purges a route owes | `src/effect/response-cache.ts` `pendingPurgesTable`, `pendingCacheTagsTable` | open with tags and whether a write committed, then settled; a later add is a defect | `purgeCache`, `tagCache`, a committed write, the work's success or failure |
 | `routes.run`, `routes.queue`, `routes.scheduled` | `src/effect/routing.ts` `runJobs`, `failRun`, `run` | registered, done, resolved or rejected; a message acked or retried | the job's exit, its purge |
 | Background work of a request | `src/effect/bridge.ts` `createExecutionContextSupervisor` | idle, pending, draining, drained, disposed | `background()`, `waitUntil`, the runtimes' disposal |
 | The default page cache | `src/page-cache.ts` | per request: dynamic or not; per URL: stored with a deploy's id | a read of a header, binding or the database; the response |

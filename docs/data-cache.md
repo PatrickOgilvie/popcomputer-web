@@ -83,6 +83,11 @@ Given a value read earlier, `cacheSet` records them as they are when it
 runs, and cannot know when the value was read: a value read before a write
 whose purge ran before `cacheSet` stays until its `ttl`. Give a tagged
 `cacheSet` its read, or compute the value through `cache`.
+
+Inside `dbTransaction` what the cache keeps waits for the commit, since a
+rollback would leave a value that never was: `cacheSet` stores once it commits,
+`invalidateCacheTags` purges then, and `cache` computes from the transaction
+without storing. A rollback drops all three.
 A tagged read costs one store read per tag besides the entry's own; a purge of
 a tag no entry uses costs a read and no write. KV accepts one write a second
 to a key and takes up to a minute to show a write everywhere, so tag data by

@@ -12,6 +12,7 @@ import { Clock, Duration, Effect, Layer, Option, Random, Schema } from 'effect'
 import { CacheService, ExecutionContextService, type CacheClient } from './effect/services.js'
 import { CacheError } from './effect/errors.js'
 import { observeOrLog } from './effect/error-observer.js'
+import { afterCommit, inTransaction } from './effect/commit.js'
 import type { CacheTag } from './effect/response-cache.js'
 
 // ============================================================================
@@ -328,7 +329,8 @@ export const cache = <V, E, R>(
     // Store a computed value; a failed write leaves the value uncached.
     const storeInCache = (value: V) =>
       Effect.gen(function* () {
-        if (Option.isNone(generations)) return
+        // A value read inside a transaction may yet roll back.
+        if (Option.isNone(generations) || (yield* inTransaction)) return
 
         const t = yield* Clock.currentTimeMillis
         const newEntry: CacheEntry<V> = tags.length === 0 ? { v: value, t } : { v: value, t, g: generations.value }
@@ -362,12 +364,14 @@ export const cache = <V, E, R>(
       if (swrMs > 0 && age < ttlMs + swrMs) {
         // Stale but within SWR window - return stale, trigger background refresh
         if (executionContext?.isAvailable === true) {
-          yield* executionContext.runInBackground(
+          // Inside a transaction, the refresh waits for its commit, and
+          // reads what committed, not the closed transaction.
+          yield* afterCommit(executionContext.runInBackground(
             Effect.gen(function* () {
               const freshValue = yield* compute
               yield* storeInCache(freshValue)
             })
-          )
+          ))
 
           return entry.v
         }
@@ -507,7 +511,15 @@ export function cacheSet<V, E, R>(
       Effect.mapError(entryError('The value does not match the cache schema.'))
     )
 
-    yield* cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
+    const store = cacheService.put(effectiveKey, serialized, { expirationTtl: totalTtlSeconds })
+
+    // Inside a transaction the value waits for the commit, and a rollback
+    // drops it; a store that fails then is reported, the commit stands.
+    if (yield* inTransaction) {
+      yield* afterCommit(store.pipe(Effect.catch(reportStoreFailure('cache.put'))))
+    } else {
+      yield* store
+    }
   }).pipe(Effect.withSpan('Web.cacheSet'))
 }
 
@@ -597,7 +609,9 @@ export const cacheInvalidatePrefix = (
  * a cache store it does nothing.
  */
 export const invalidateCacheTags = (tags: ReadonlyArray<CacheTag>): Effect.Effect<void> =>
-  Effect.flatMap(Effect.serviceOption(CacheService), (store) => {
+  // Inside a transaction the purge waits for its commit: a value read before
+  // the commit would otherwise be stored under the new generation.
+  afterCommit(Effect.flatMap(Effect.serviceOption(CacheService), (store) => {
     if (Option.isNone(store) || tags.length === 0) return Effect.void
 
     const client = store.value
@@ -611,7 +625,7 @@ export const invalidateCacheTags = (tags: ReadonlyArray<CacheTag>): Effect.Effec
       }),
       { concurrency: 'unbounded', discard: true }
     ).pipe(Effect.catch(reportInvalidationFailure('cache.invalidateTags')))
-  })
+  }))
 
 export { CacheService, type CacheClient } from './effect/services.js'
 export { CacheError }

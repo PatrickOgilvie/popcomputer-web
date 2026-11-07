@@ -54,7 +54,8 @@ and `sendBatch` sends several in one request. A queue that refuses a message
 fails the send with `QueueSendError`, which answers 503, and a binding the
 Worker lacks is a configuration error naming it. A send inside
 `dbTransaction` goes out though the transaction may roll back: send after it
-commits. `routes.queue(Schema, handle)` decodes a queue something else sends
+commits. `background()` inside `dbTransaction` waits for the commit itself, and a
+rollback drops it. `routes.queue(Schema, handle)` decodes a queue something else sends
 to.
 
 ```ts

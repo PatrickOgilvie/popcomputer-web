@@ -20,9 +20,10 @@
  * distinct from CacheService, the KV-backed data cache inside actions.
  */
 
-import { Predicate, Context, Data, Effect, Option, Schema as S } from 'effect'
+import { Predicate, Context, Data, Effect, Exit, Option, Schema as S } from 'effect'
 import { invalidateCacheTags } from '../cache.js'
-import { cell, type Table } from '../machine.js'
+import { cell, type Refused, type Table } from '../machine.js'
+import { afterCommit } from './commit.js'
 import { HEADERS } from '../types.js'
 import { setsRecipientState } from '../response-output.js'
 import { createStructuredError, ErrorCodes } from './error-catalog.js'
@@ -557,14 +558,24 @@ export class PendingPurges extends Context.Service<
   PendingPurges,
   {
     readonly add: (tags: readonly string[]) => Effect.Effect<void>
+    /** A write committed, so the work owes its purges whatever it answers. */
+    readonly wrote: Effect.Effect<void>
+    /** The work succeeded: everything it asked to purge. */
     readonly take: Effect.Effect<readonly string[]>
+    /** The work failed: what it asked to purge if a write committed, and none if none did. */
+    readonly abandon: Effect.Effect<Option.Option<readonly string[]>>
   }
 >()('@popcomputer/web/PendingPurges') {}
+
+/** Tell the work's pending purges, if it has any, that a write committed. */
+export const recordWrite: Effect.Effect<void> = Effect.flatMap(Effect.serviceOption(PendingPurges), (pending) =>
+  Option.isSome(pending) ? pending.value.wrote : Effect.void
+)
 
 type PendingTags = Data.TaggedEnum<{
   /** Tags are added. */
   Open: { readonly tags: ReadonlySet<string> }
-  /** What was added has been handed over, to purge or to tag a response with. */
+  /** What was added has been handed over, to tag a response with. */
   Taken: {}
 }>
 
@@ -576,52 +587,81 @@ type PendingTagsEvent = Data.TaggedEnum<{
 const PendingTags = Data.taggedEnum<PendingTags>()
 const PendingTagsEvent = Data.taggedEnum<PendingTagsEvent>()
 
-const pendingTagsTable = (lateAdd: string, secondTake: string): Table<PendingTags, PendingTagsEvent, ReadonlyArray<string>> => ({
+/** The tags a response a route stores carries. */
+export const pendingCacheTagsTable: Table<PendingTags, PendingTagsEvent, ReadonlyArray<string>> = {
   Open: {
     Add: { to: 'Open', run: (state, event) => [PendingTags.Open({ tags: new Set([...state.tags, ...event.tags]) }), []] },
     Take: { to: 'Taken', run: (state) => [PendingTags.Taken(), [...state.tags]] },
   },
   Taken: {
-    Add: { refuse: lateAdd },
-    Take: { refuse: secondTake },
+    Add: { refuse: 'Its route has stored the response, so it would tag nothing. Tag the response in the action, before it answers.' },
+    Take: { refuse: "A response's cache tags are taken once, when its route stores it." },
   },
-})
+}
 
-/** The purges a piece of work owes. */
-export const pendingPurgesTable = pendingTagsTable(
-  'The work it belongs to has finished, so nothing would purge it. Give work that outlives its action to background().',
-  'A piece of work\'s purges are taken once, when it has succeeded.'
-)
+type OwedPurges = Data.TaggedEnum<{
+  /** Tags are added, and `wrote` says whether a write has committed. */
+  Open: { readonly tags: ReadonlySet<string>; readonly wrote: boolean }
+  /** The work has ended, and what it owed has been handed over to purge. */
+  Settled: {}
+}>
 
-/** The tags a response a route stores carries. */
-export const pendingCacheTagsTable = pendingTagsTable(
-  'Its route has stored the response, so it would tag nothing. Tag the response in the action, before it answers.',
-  'A response\'s cache tags are taken once, when its route stores it.'
-)
+type OwedPurgesEvent = Data.TaggedEnum<{
+  Add: { readonly tags: ReadonlyArray<string> }
+  /** A write committed: after this the work owes its purges whatever it answers. */
+  Wrote: {}
+  /** The work succeeded. */
+  Take: {}
+  /** The work failed. */
+  Abandon: {}
+}>
 
-/** An empty set of tags, moved by its table: a refused move is a defect in the code that made it. */
-function pendingTags(table: typeof pendingPurgesTable, helper: string) {
-  const pending = cell(table, PendingTags.Open({ tags: new Set() }))
+const OwedPurges = Data.taggedEnum<OwedPurges>()
+const OwedPurgesEvent = Data.taggedEnum<OwedPurgesEvent>()
 
-  return {
-    add: (added: readonly string[]): Effect.Effect<void> => pending.send(PendingTagsEvent.Add({ tags: added })).pipe(
-      Effect.asVoid,
-      Effect.catchTag('Refused', (refused) => Effect.die(new Error(`${helper}(${added.join(', ')}): ${refused.because}`)))
-    ),
-    take: pending.send(PendingTagsEvent.Take()).pipe(
-      Effect.catchTag('Refused', (refused) => Effect.die(new Error(refused.because)))
-    ),
-  }
+/**
+ * The purges a piece of work owes. A success purges everything it asked for.
+ * A failure purges it too once a write has committed, since the write is in
+ * the database whatever the answer says; before any, a purge would change
+ * nothing. The output is the tags to purge, or none when nothing is owed.
+ */
+export const pendingPurgesTable: Table<OwedPurges, OwedPurgesEvent, Option.Option<ReadonlyArray<string>>> = {
+  Open: {
+    Add: { to: 'Open', run: (state, event) => [OwedPurges.Open({ ...state, tags: new Set([...state.tags, ...event.tags]) }), Option.none()] },
+    Wrote: { to: 'Open', run: (state) => [OwedPurges.Open({ ...state, wrote: true }), Option.none()] },
+    Take: { to: 'Settled', run: (state) => [OwedPurges.Settled(), Option.some([...state.tags])] },
+    Abandon: { to: 'Settled', run: (state) => [OwedPurges.Settled(), state.wrote ? Option.some([...state.tags]) : Option.none()] },
+  },
+  Settled: {
+    Add: { refuse: 'The work it belongs to has finished, so nothing would purge it. Give work that outlives its action to background().' },
+    Wrote: { ignore: "the work's purges are settled; a write after them is no route's to purge", output: Option.none() },
+    Take: { refuse: "A piece of work's purges are settled once, when it ends." },
+    Abandon: { refuse: "A piece of work's purges are settled once, when it ends." },
+  },
 }
 
 /**
  * An empty set of pending purges, for one request or one piece of detached
- * work. It is taken once, when the work it belongs to has succeeded: a tag
- * added after that, by work that outlived it, would never be purged, so
- * adding one is a defect.
+ * work. It is settled once, when the work it belongs to ends: a tag added
+ * after that, by work that outlived it, would never be purged, so adding one
+ * is a defect.
  */
 export function makePendingPurges(): PendingPurges['Service'] {
-  return PendingPurges.of(pendingTags(pendingPurgesTable, 'purgeCache'))
+  const owed = cell(pendingPurgesTable, OwedPurges.Open({ tags: new Set(), wrote: false }))
+  const refusedIsADefect = (refused: Refused) => Effect.die(new Error(refused.because))
+
+  return PendingPurges.of({
+    add: (added) => owed.send(OwedPurgesEvent.Add({ tags: added })).pipe(
+      Effect.asVoid,
+      Effect.catchTag('Refused', (refused) => Effect.die(new Error(`purgeCache(${added.join(', ')}): ${refused.because}`)))
+    ),
+    wrote: owed.send(OwedPurgesEvent.Wrote()).pipe(Effect.asVoid, Effect.catchTag('Refused', refusedIsADefect)),
+    take: owed.send(OwedPurgesEvent.Take()).pipe(
+      Effect.map(Option.getOrElse((): ReadonlyArray<string> => [])),
+      Effect.catchTag('Refused', refusedIsADefect)
+    ),
+    abandon: owed.send(OwedPurgesEvent.Abandon()).pipe(Effect.catchTag('Refused', refusedIsADefect)),
+  })
 }
 
 /** The cache tags an action added to the response it caches. The route provides it per request. */
@@ -639,7 +679,15 @@ export class PendingCacheTags extends Context.Service<
  * outlived the action, would tag nothing, so adding one is a defect.
  */
 export function makePendingCacheTags(): PendingCacheTags['Service'] {
-  return PendingCacheTags.of(pendingTags(pendingCacheTagsTable, 'tagCache'))
+  const pending = cell(pendingCacheTagsTable, PendingTags.Open({ tags: new Set() }))
+
+  return PendingCacheTags.of({
+    add: (added) => pending.send(PendingTagsEvent.Add({ tags: added })).pipe(
+      Effect.asVoid,
+      Effect.catchTag('Refused', (refused) => Effect.die(new Error(`tagCache(${added.join(', ')}): ${refused.because}`)))
+    ),
+    take: pending.send(PendingTagsEvent.Take()).pipe(Effect.catchTag('Refused', (refused) => Effect.die(new Error(refused.because)))),
+  })
 }
 
 /**
@@ -655,16 +703,58 @@ export const tagCache = (...tags: readonly CacheTag[]): Effect.Effect<void, neve
   Effect.flatMap(PendingCacheTags, (pending) => pending.add(tags))
 
 /**
- * Purge cached responses with these tags once the action succeeds, with its
+ * Purge cached responses with these tags once the action ends, with its
  * route's `purges`: what the action changed besides the records its route
- * names, such as the listing an accepted offer sold. Nothing is purged when
- * the action fails, so a rolled-back write leaves the cache alone.
+ * names, such as the listing an accepted offer sold. A success purges them,
+ * and so does a failure once a write has committed. Inside `dbTransaction`
+ * they wait for its commit, so a rolled-back write leaves the cache alone.
  *
  * @example
  * yield* purgeCache(recordCacheTag('listings', offer.listingId), 'listings')
  */
 export const purgeCache = (...tags: readonly CacheTag[]): Effect.Effect<void, never, PendingPurges> =>
-  Effect.flatMap(PendingPurges, (pending) => pending.add(tags))
+  Effect.flatMap(PendingPurges, (pending) => afterCommit(pending.add(tags)))
+
+/**
+ * `work`, then the purges it owes, with those `declared` for it, such as its
+ * route's `purges`. A success purges them, and a purge that fails fails the
+ * work, so it is not left stale silently. A failure purges them only once a
+ * write has committed, and a purge that fails then is reported, leaving the
+ * work's own failure as its answer.
+ *
+ * @internal
+ */
+export const settlingPurges = <A, E, R, DE = never, DR = never>(
+  work: Effect.Effect<A, E, R>,
+  options: {
+    readonly succeeded: (value: A) => boolean
+    readonly declared?: Effect.Effect<readonly string[], DE, DR>
+    readonly onPurgeFailure?: (error: DE | ResponseCachePurgeError) => void
+  }
+): Effect.Effect<A, E | DE | ResponseCachePurgeError, R | DR | PendingPurges | ResponseCacheService> =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(work)
+    const pending = yield* PendingPurges
+    const declared = options.declared ?? Effect.succeed<readonly string[]>([])
+    const purge = (requested: readonly string[]) =>
+      Effect.flatMap(declared, (tags) => purgeTags([...new Set([...tags, ...requested])])).pipe(
+        Effect.tapError((error) => Effect.sync(() => options.onPurgeFailure?.(error)))
+      )
+
+    if (Exit.isSuccess(exit) && options.succeeded(exit.value)) {
+      yield* purge(yield* pending.take)
+    } else {
+      const owed = yield* pending.abandon
+
+      if (Option.isSome(owed)) {
+        yield* purge(owed.value).pipe(
+          Effect.catch((error) => Effect.logError('The purges a failed request owed for its committed writes failed.', error))
+        )
+      }
+    }
+
+    return yield* exit
+  })
 
 /**
  * Purge the cached data and the Workers Cache responses tagged with any of
@@ -713,11 +803,9 @@ export const withOwnPurges = <A, E, R>(
     const pending = makePendingPurges()
     const responseCache = Option.getOrElse(service, createUnavailableResponseCacheClient)
 
-    return effect.pipe(
+    return settlingPurges(effect, { succeeded: () => true }).pipe(
       Effect.provideService(PendingPurges, pending),
-      Effect.tap(() =>
-        Effect.flatMap(pending.take, purgeTags).pipe(Effect.provideService(ResponseCacheService, responseCache))
-      )
+      Effect.provideService(ResponseCacheService, responseCache)
     )
   })
 
