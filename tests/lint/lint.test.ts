@@ -118,6 +118,10 @@ describe('@popcomputer/web/lint', () => {
     expect(new Set(diagnostics.map((diagnostic) => diagnostic.severity))).toEqual(new Set(['warning']))
   })
 
+  test('reports each route builder whose result is dropped', () => {
+    expect(found(lint('invalid-routes.ts'))).toEqual(expected('invalid-routes.ts').sort())
+  })
+
   test('reports each Effect built and never run', () => {
     expect(found(lint('invalid-effects.ts'))).toEqual(expected('invalid-effects.ts').sort())
   })

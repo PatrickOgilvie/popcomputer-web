@@ -699,6 +699,33 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     })
   }
 
+  /** Create an error for a builder whose result was dropped: nothing registered a route on it. */
+  static builderDropped(how: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `routes.${how} returned a new builder, and nothing registered a route on it: its result was dropped, so the routes registered on the builder it came from have none of what it adds.`,
+      hint: `Register on the builder it returns, as routes.${how}.get(path, action), or keep it, as const scoped = routes.${how}, and register on that. @popcomputer/web/lint's no-dropped-route-builder reports it at its line.`,
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
+  /** Create an error for a route registered once the application has served a request. */
+  static registeredAfterFirstRequest(method: string, path: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `${method === 'all' ? 'ALL' : method.toUpperCase()} ${path} is registered after the application served its first request, when Hono has built its router and takes no more routes.`,
+      hint: 'Register every route when the application starts, before it serves: at module load, not in a handler or a test after a request.',
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
+  /** Create an error for prefixMiddleware given after a route under its prefix, which it would skip. */
+  static prefixMiddlewareAfterRoute(prefix: string, method: string, path: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `prefixMiddleware on '${prefix || '/'}' is given after ${method === 'all' ? 'ALL' : method.toUpperCase()} ${path}, which it would not run for: Hono runs middleware only for the routes registered after it.`,
+      hint: 'Call prefixMiddleware right after prefix(), before any route under it.',
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
   /** Create an error for a path registered twice for one method. */
   static routeRegisteredTwice(method: string, path: string): RouteConfigurationError {
     const verb = method === 'all' ? 'ALL' : method.toUpperCase()

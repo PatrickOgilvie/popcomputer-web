@@ -26,6 +26,7 @@ import { checkEnv, EnvInvalid, type EnvDeclaration } from './env.js'
 import { useSetup, webSetup } from './web-setup.js'
 import {
   EffectRouteBuilder,
+  assertUnsetApp,
   declareAppBindings,
   declareAppJobs,
   type BaseServices,
@@ -419,6 +420,7 @@ export function setupWeb<
   SetupTypes<E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields, Paths>,
   RoutePath<Paths>
 > {
+  assertUnsetApp(app)
   assertSetupConfig(config)
   if (config.auth?.signInLimits !== undefined) assertSignInLimitsConfig(config.auth.signInLimits)
   if (config.bindings !== undefined) {

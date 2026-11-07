@@ -262,6 +262,77 @@ function patternMatches(pattern: string, path: string): boolean {
 }
 
 /** The bindings and schema setupWeb declared for an app, which registration checks paths against. */
+/** Whether a builder derived with provide, middleware, prefix or jsonApi, or one derived from it, registered anything. */
+interface BuilderUse {
+  used: boolean
+  readonly parent: BuilderUse | undefined
+  /** The call that derived it, as the error names it: `provide(...)`, `prefix('/api')`. */
+  readonly how: string
+}
+
+/**
+ * One application's routes: every row, whichever registry holds it, the
+ * builders derived for it, and whether it has served a request. Hono builds
+ * its router on the first request and takes no route after it, so the first
+ * request seals the table, and checks that no derived builder was dropped.
+ */
+interface AppRoutes {
+  readonly rows: RouteRow[]
+  readonly derived: BuilderUse[]
+  served: boolean
+  /** The dropped builder's error, null once the first request found none. */
+  dropped: RouteConfigurationError | null | undefined
+}
+
+const appRoutes = new WeakMap<object, AppRoutes>()
+
+/** The application's routes, sealed by its first request. */
+function routesOfApp<E extends Env>(app: Hono<E>): AppRoutes {
+  const existing = appRoutes.get(app)
+
+  if (existing !== undefined) return existing
+
+  const state: AppRoutes = { rows: [], derived: [], served: false, dropped: undefined }
+
+  appRoutes.set(app, state)
+  app.use('*', (_c, next) => {
+    state.served = true
+    state.dropped ??= droppedBuilder(state.derived)
+
+    if (state.dropped !== null) throw state.dropped
+
+    return next()
+  })
+
+  return state
+}
+
+/** The error for the first derived builder nothing registered on, or null. */
+function droppedBuilder(derived: ReadonlyArray<BuilderUse>): RouteConfigurationError | null {
+  const dropped = derived.find((use) => !use.used)
+
+  return dropped === undefined ? null : RouteConfigurationError.builderDropped(dropped.how).atStartup()
+}
+
+/**
+ * Refuse setupWeb on an app that has one, or whose routes were registered
+ * before it, unchecked against the bindings it declares, before setupWeb
+ * changes anything.
+ *
+ * @internal
+ */
+export function assertUnsetApp(app: object): void {
+  if (appJobs.has(app)) {
+    throw new Error('setupWeb was called on this app already: declare the application once, in one setupWeb, and register its routes on the routes it returns.')
+  }
+
+  const registered = appRoutes.get(app)?.rows.length ?? 0
+
+  if (registered > 0) {
+    throw new Error(`effectRoutes(app) registered ${registered === 1 ? 'a route' : `${registered} routes`} on this app before setupWeb, unchecked against the bindings it declares: register every route on the routes setupWeb returns.`)
+  }
+}
+
 const declaredBindings = new WeakMap<object, { readonly bindings?: RouteBindingsConfig; readonly schema?: object }>()
 
 /** Record setupWeb's bindings and schema, so routes registered on the app are checked against them. */
@@ -603,9 +674,26 @@ export class EffectRouteBuilder<
     private readonly registry: RouteRegistry = getAppRouteRegistry(app),
     private readonly middlewares: MiddlewareHandler<E>[] = [],
     /** Whether every request to these routes is a JSON client (`jsonApi()`). */
-    private readonly answersJson: boolean = false
+    private readonly answersJson: boolean = false,
+    /** How this builder was derived, which a registration on it marks used; none for a root. */
+    private readonly use: BuilderUse | undefined = undefined
   ) {
+    routesOfApp(app)
     this.installRunner()
+  }
+
+  /** Record a builder derived from this one, which the first request checks something registered on. */
+  private derive(how: string): BuilderUse {
+    const use: BuilderUse = { used: false, parent: this.use, how }
+
+    routesOfApp(this.app).derived.push(use)
+
+    return use
+  }
+
+  /** Mark this builder, and those it was derived from, used. */
+  private markUsed(): void {
+    for (let use = this.use; use !== undefined && !use.used; use = use.parent) use.used = true
   }
 
   /**
@@ -662,6 +750,8 @@ export class EffectRouteBuilder<
     env: Partial<E['Bindings']>,
     executionCtx?: ExecutionContext
   ): Promise<A> {
+    this.markUsed()
+
     // SAFETY: setupWeb declared it for this app, whose Env this builder has.
     const prepare = appJobs.get(this.app) as JobPreparer<E> | undefined
 
@@ -783,6 +873,8 @@ export class EffectRouteBuilder<
   scheduled<Err, R>(
     job: (event: ScheduledEvent) => Effect.Effect<unknown, Err, R> & RunCheck<R | Needs, Services>
   ): (event: ScheduledEvent, env: Partial<E['Bindings']>, executionCtx?: ExecutionContext) => Promise<void> {
+    this.markUsed()
+
     return async (event, env, executionCtx) => {
       await this.run(job(event), env, executionCtx)
     }
@@ -816,6 +908,8 @@ export class EffectRouteBuilder<
     source: QueueDeclaration<A, I> | S.Codec<A, I, never, never>,
     handle: (body: A, message: QueueMessageInfo) => Effect.Effect<unknown, Err, R> & RunCheck<R | Needs, Services>
   ): (batch: QueueBatch, env: Partial<E['Bindings']>, executionCtx?: ExecutionContext) => Promise<void> {
+    this.markUsed()
+
     // A declared queue's messages left as JSON, encoded by its schema.
     const decode = isQueueDeclaration(source) ? S.decodeUnknownEffect(S.toCodecJson(source.schema)) : S.decodeUnknownEffect(source)
 
@@ -887,7 +981,12 @@ export class EffectRouteBuilder<
       this.bridgeConfig,
       this.registry,
       this.middlewares,
-      this.answersJson
+      this.answersJson,
+      // A dropped layer that gives a service is a type error at any action
+      // that needs it; one that decides who gets in, a guard or
+      // RequireAuthLayer, is no type error, so the first request checks it.
+      // A builder kept for a job's services may run it only later.
+      layerFactOf(layer) === undefined ? this.use : this.derive('provide(...)')
     )
   }
 
@@ -918,7 +1017,8 @@ export class EffectRouteBuilder<
       this.bridgeConfig,
       this.registry,
       [...this.middlewares, ...handlers],
-      this.answersJson
+      this.answersJson,
+      this.derive('middleware(...)')
     )
   }
 
@@ -946,6 +1046,18 @@ export class EffectRouteBuilder<
   prefixMiddleware(
     ...handlers: MiddlewareHandler<E>[]
   ): this {
+    const prefixPath = this.pathPrefix === '' ? '' : toHonoPath(this.pathPrefix)
+    const skipped = routesOfApp(this.app).rows.find((row) =>
+      prefixPath === '' || row.fullPath === prefixPath || row.fullPath.startsWith(`${prefixPath}/`)
+    )
+
+    // Hono runs middleware only for routes registered after it.
+    if (skipped !== undefined) {
+      throw RouteConfigurationError.prefixMiddlewareAfterRoute(this.pathPrefix, skipped.method, skipped.path).atStartup()
+    }
+
+    this.markUsed()
+
     // A cached page is served before this middleware runs, and it may turn
     // visitors away, so no page under the prefix is cached by default; a
     // header it reads keeps a route's own cache option from sharing the
@@ -994,7 +1106,8 @@ export class EffectRouteBuilder<
       this.bridgeConfig,
       this.registry,
       this.middlewares,
-      this.answersJson
+      this.answersJson,
+      this.derive(`prefix('${normalizedPath}')`)
     )
   }
 
@@ -1015,7 +1128,8 @@ export class EffectRouteBuilder<
       this.bridgeConfig,
       this.registry,
       this.middlewares,
-      true
+      true,
+      this.derive('jsonApi()')
     )
   }
 
@@ -1055,12 +1169,12 @@ export class EffectRouteBuilder<
     const bindings = [...route.bindings]
     const cacheOption = route.cache === 'default' ? undefined : route.cache
     // The page this route's form is on, which the first request looks up
-    // once every route is registered.
-    let formPage: string | null | undefined
+    // once every route is registered, and keeps, none included.
+    let formPage: { readonly page: string | null } | undefined
     const formPageOf = (): string | null => {
-      formPage ??= registry.formPageOf(route) ?? null
+      formPage ??= { page: registry.formPageOf(route) ?? null }
 
-      return formPage
+      return formPage.page
     }
     // Dev-only observability for an ineffective `cache` option:
     // once per route (this handler closure), not once per request.
@@ -1239,6 +1353,12 @@ export class EffectRouteBuilder<
     options?: EffectRouteOptions,
     endpoint?: Endpoint
   ): void {
+    const appTable = routesOfApp(this.app)
+
+    if (appTable.served) throw RouteConfigurationError.registeredAfterFirstRequest(method, path).atStartup()
+
+    this.markUsed()
+
     // The prefix's placeholders are the route's too: /orgs/{org} as a prefix
     // binds org for every route under it.
     const routePath = this.resolvePath(path)
@@ -1269,8 +1389,8 @@ export class EffectRouteBuilder<
 
     // Routes answer in registration order, so a path an earlier route's
     // pattern matches, such as /products/new after /products/{product}, is
-    // never reached.
-    const shadowing = this.registry.all().find((earlier) =>
+    // never reached, whichever registry holds it.
+    const shadowing = appTable.rows.find((earlier) =>
       (earlier.method === method || earlier.method === 'all') && patternMatches(earlier.fullPath, fullPath)
     )
 
@@ -1296,9 +1416,12 @@ export class EffectRouteBuilder<
       if (missing.length > 0) throw RouteConfigurationError.formPagePlaceholders(routePath, page, missing).atStartup()
     }
 
+    this.registry.assertNameFree(options?.name)
+
     // The route's row: every fact its registration states, which its
-    // handler is derived from.
-    const route = this.registry.register({
+    // handler is derived from. The registry holds it once Hono has accepted
+    // the route, so the table lists no route that does not answer.
+    const route = routeRowOf({
       method,
       path,
       honoPath,
@@ -1348,6 +1471,9 @@ export class EffectRouteBuilder<
     } else {
       this.app[method](fullPath, handler)
     }
+
+    this.registry.add(route)
+    appTable.rows.push(route)
   }
 
   /** Register a GET route. Supports Laravel-style route model binding: /projects/{project} */

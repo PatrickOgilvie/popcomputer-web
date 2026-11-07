@@ -48,6 +48,7 @@ import {
 import { requireDisableReason } from './directives.js'
 import { noFloatingEffect } from './effects.js'
 import { explainSecurityLoosening } from './security.js'
+import { noDroppedRouteBuilder } from './routes.js'
 
 export type { LintRule } from './ast.js'
 
@@ -73,6 +74,7 @@ export const rules: Readonly<Record<string, LintRule>> = {
   'prefer-checked-config': preferCheckedConfig,
   'require-binding-access': requireBindingAccess,
   'no-floating-effect': noFloatingEffect,
+  'no-dropped-route-builder': noDroppedRouteBuilder,
   'no-module-level-mutable-state': noModuleLevelMutableState,
   'no-testing-in-production': noTestingInProduction,
   'no-server-imports-in-pages': noServerImportsInPages,

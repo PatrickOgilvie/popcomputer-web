@@ -48,6 +48,17 @@ The framework builds each route's handler from its row, so the table says
 what the route does. `routes.getRegistry().all()` gives the rows themselves,
 an endpoint's with its contract and a route's with its `params` schema.
 
+The table is sealed by the application's first request, when Hono builds its
+router: a route registered after it is refused, and the table lists no route
+that does not answer. A path is registered once on an app, whichever registry
+holds it, and `prefixMiddleware` comes before the routes under its prefix,
+which it would otherwise skip. `provide`, `middleware`, `prefix` and
+`jsonApi` each return a new builder and change nothing on the one they are
+called on, so their result is registered on or kept. A dropped `middleware`,
+`prefix`, `jsonApi`, or `provide` of a guard or `RequireAuthLayer`, makes
+every request answer a configuration error naming it, and the
+`no-dropped-route-builder` lint rule reports it at its line.
+
 ## Who reaches each route
 
 `routes.access()` reads the table as who reaches each route: a signed-out

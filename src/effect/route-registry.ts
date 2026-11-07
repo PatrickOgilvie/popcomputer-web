@@ -267,22 +267,38 @@ export class RouteRegistry {
    * @throws Error if a route with the same name already exists
    */
   register(metadata: RouteMetadata): RouteRow {
-    if (metadata.name) {
-      const existing = this.findByName(metadata.name)
-
-      if (existing) {
-        throw new Error(
-          `Duplicate route name '${metadata.name}'. ` +
-            `Already registered for ${existing.method.toUpperCase()} ${existing.fullPath}`
-        )
-      }
-    }
-
     const row = routeRowOf(metadata)
 
-    this.routes.push(row)
+    this.add(row)
 
     return row
+  }
+
+  /**
+   * Add a row the route builder made, once Hono has accepted its route, so
+   * the table never lists a route that does not answer.
+   * @internal
+   */
+  add(row: RouteRow): void {
+    this.assertNameFree(row.name)
+    this.routes.push(row)
+  }
+
+  /**
+   * Refuse a name another route has, before anything is registered.
+   * @internal
+   */
+  assertNameFree(name: string | undefined): void {
+    if (!name) return
+
+    const existing = this.findByName(name)
+
+    if (existing) {
+      throw new Error(
+        `Duplicate route name '${name}'. ` +
+          `Already registered for ${existing.method.toUpperCase()} ${existing.fullPath}`
+      )
+    }
   }
 
   /**

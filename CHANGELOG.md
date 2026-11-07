@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The `no-dropped-route-builder` lint rule reports `routes.provide(...)`, `.middleware(...)`, `.prefix(...)` or `.jsonApi()` written as a statement, whose new builder is dropped, so the routes registered after it have none of what it adds.
+
 What an application may need to change: one with a test that expects no purge when an action fails after a write it made outside a transaction. That write committed, so its purges now run. And one whose `background()` work, run in a test without an execution context, sets a cookie, header or flash value on the response: that work ran before the response, and now runs after it, as in a Worker, so the write is refused. Set it in the action instead.
 
 ### Fixed
@@ -18,6 +22,9 @@ What an application may need to change: one with a test that expects no purge wh
 - A route's own `cache` option keeps private a page whose header an application middleware read after the route answered. Only a read before `next()` counted.
 - `ResponseCacheService.purge` reaches Workers Cache alone, and `recordCacheTag`'s example now uses `purgeCache`, which reaches the data cache too.
 - A write that committed is purged whatever the request then answers. A route purged only when its action succeeded, so a write followed by a failure, such as a 422 from validation that came after it or a 409 the action answered, left the cached pages that show the record stale until their `maxAge`. A failure before any write still purges nothing.
+- A route builder whose result was dropped is refused. `routes.provide(RequireAuthLayer)` as a statement, or a dropped `middleware`, `prefix` or `jsonApi`, left the routes registered after it open, at the wrong path or answering pages, with no error. Now the first request answers a configuration error naming the call. A dropped `provide` of a layer that gives a service stays a type error at any action that needs it, and a builder kept for a job's services may run it later.
+- A route registered after the application's first request is refused before it changes anything. Hono refused it after the route table had listed it, so the table, and a failed form's page, named a route that answered 404. A path registered twice is refused across registries too, `prefixMiddleware` after a route under its prefix is refused rather than skipping it, and a route with no form page looks it up once rather than on every request.
+- `setupWeb` refuses an app set up already, whose second setup's `render` and jobs replaced the first's, and one with routes registered before it, which were never checked against its bindings.
 - A finalizer that dies releasing a service no longer changes what the request or job answered. A route's committed 200 became a 500, a job that succeeded rejected, and a queue message whose work succeeded was retried, so it ran again. The failure is reported to the error observer, and what the request holds, `testEnv`'s services among it, is still released.
 - Every failure of work beside a request is reported. A promise handed to `waitUntil` that rejected went unreported when a route's layer had failed, when a slow observer was still reporting the one before, or when a finalizer handed it over, and a guard that failed after one made `app.fetch` reject, a guard's redirect included. A guard that dies now reaches the error observer an action reaches, through the request's own services.
 - What a request holds is released after the work it started, whatever that work did. A release ran while work a `waitUntil` promise or a finalizer scheduled was still running, or never ran once a report failed. Releases run in order, the route's runtime before the request's services, and `webContext(c).runtime`, deprecated, is refused once released rather than built again.
