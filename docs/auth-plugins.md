@@ -172,8 +172,11 @@ true`, which fails a later sign-in whose email another account here holds.
 A test stands in for the provider with `testOAuthProvider` from
 `@popcomputer/web/testing`, which answers the application's `fetch` requests
 to the provider's token and user info endpoints as the provider would,
-refusing what it would refuse: a code exchanged twice, or without the
-client's secret or the PKCE verifier its authorization named. `signIn` starts
+refusing what it would refuse: a code exchanged a second time, even after a
+refused exchange, or without the client's secret or the PKCE verifier its
+authorization named, and an access token once the hour its `expires_in` gives
+has passed, by `Date.now` or the `now` it is given (`now: () => time.now()`
+for a `testClock`). `signIn` starts
 the sign-in through the application's route and returns the callback's
 answer, as the provider sends the browser back once the person has signed in
 there:
@@ -204,4 +207,6 @@ test('a person signs in with their Acme account', async () => {
 same steps one at a time, for a test of a sign-in finished in another
 browser, and `accessTokens` holds the tokens it issued, for a test that no
 page shows one. A person's `emailVerified: false` tests what an unverified
-email at the provider can reach.
+email at the provider can reach. Each `install()` is removed once, by
+`restore()` or by disposing of what it returns, in any order: two providers
+installed together restore without either undoing the other.

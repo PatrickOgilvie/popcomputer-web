@@ -38,6 +38,12 @@ export interface TestOAuthProviderOptions {
    * `genericOAuth` reads.
    */
   readonly profile?: (person: TestOAuthPerson) => Readonly<Record<string, unknown>>
+  /**
+   * The current time, which decides when an access token's hour is up.
+   * Defaults to `Date.now`, which Bun's `setSystemTime` moves; give a
+   * `testClock`'s, `now: () => time.now()`, to move it with that clock.
+   */
+  readonly now?: () => Date | number
 }
 
 /** A stand-in OAuth provider. */
@@ -45,14 +51,22 @@ export interface TestOAuthProvider {
   /**
    * Answer `fetch` requests to the provider's endpoints from now on, passing
    * every other request to the `fetch` installed before. Restore it with
-   * `restore()`, or let `using` dispose of the result.
+   * `restore()`, or let `using` dispose of the result. Each install is
+   * removed once, in any order: removing one that another install, this
+   * provider's or another's, was made over leaves that one answering.
    *
    * @example
    * beforeEach(() => acme.install())
    * afterEach(() => acme.restore())
    */
   install(): Disposable
-  /** Put back the `fetch` installed before `install()`. */
+  /**
+   * Remove this provider's latest install still in effect. When no install
+   * of any provider was made after it, put back the `fetch` installed before
+   * it, over any `fetch` a test assigned since; otherwise the later installs
+   * stay, and the removed one passes every request on. Does nothing when
+   * none of this provider's installs is in effect.
+   */
   restore(): void
   /**
    * Sign `person` in through the application: post to `path`, the
@@ -117,6 +131,69 @@ function clientOf(request: Request, form: URLSearchParams): { readonly id: strin
 
 const sameEndpoint = (url: URL, endpoint: URL) => url.origin === endpoint.origin && url.pathname === endpoint.pathname
 
+/** How long an access token reads the person, as its `expires_in` says. */
+const TOKEN_LIFETIME_SECONDS = 3600
+
+/** One install of a provider's stand-in `fetch`. */
+interface Install {
+  readonly provider: TestOAuthProvider
+  /** The `fetch` installed before, which every request the stand-in does not answer passes to. */
+  readonly previous: typeof fetch
+  /** The stand-in this install put in `globalThis.fetch`. */
+  readonly standIn: typeof fetch
+}
+
+/**
+ * Every install still in effect, of every provider, in the order they were
+ * made: one stack, whose entries leave it in any order.
+ */
+const installs: Array<Install> = []
+
+/** Each stand-in, removed or not, to its install, so a removal can step past removed ones. */
+const installOf = new WeakMap<typeof fetch, Install>()
+
+/** Put a stand-in over `globalThis.fetch` that answers what `respond` answers while its install is in effect. */
+function installStandIn(provider: TestOAuthProvider, respond: (request: Request) => Promise<Response> | undefined): Install {
+  const previous = globalThis.fetch
+  const standIn = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    // A removed install stays in the chain of any `fetch` made over it, passing everything on.
+    const answered = installs.includes(entry) ? respond(new Request(input, init)) : undefined
+
+    return answered ?? previous(input, init)
+  }
+  // Bun's fetch carries `preconnect`, which the stand-in passes on.
+  const entry: Install = { provider, previous, standIn: Object.assign(standIn, { preconnect: previous.preconnect }) }
+
+  installs.push(entry)
+  installOf.set(entry.standIn, entry)
+  globalThis.fetch = entry.standIn
+
+  return entry
+}
+
+/**
+ * Take `entry` off the stack, once. The latest install puts back the `fetch`
+ * installed before it, stepping past stand-ins already removed; one under a
+ * later install leaves `fetch` to that one.
+ */
+function removeStandIn(entry: Install): void {
+  const at = installs.indexOf(entry)
+
+  if (at === -1) return
+
+  installs.splice(at, 1)
+
+  if (at < installs.length) return
+
+  let previous = entry.previous
+
+  for (let under = installOf.get(previous); under !== undefined && !installs.includes(under); under = installOf.get(previous)) {
+    previous = under.previous
+  }
+
+  globalThis.fetch = previous
+}
+
 /**
  * Stand in for an OAuth 2.0 provider using the authorization code flow, such
  * as a company's own one configured in Better Auth's `genericOAuth`.
@@ -148,15 +225,26 @@ export function testOAuthProvider(options: TestOAuthProviderOptions): TestOAuthP
     picture: person.image ?? null,
   }))
 
+  const now = () => {
+    const time = options.now?.() ?? Date.now()
+
+    return time instanceof Date ? time.getTime() : time
+  }
+
   const grants = new Map<string, Grant>()
-  const tokens = new Map<string, TestOAuthPerson>()
+  /** Each access token issued, to the person it reads and when it stops reading them. */
+  const tokens = new Map<string, { readonly person: TestOAuthPerson; readonly expiresAt: number }>()
   const accessTokens = new Set<string>()
   const requests: Array<{ readonly method: string; readonly url: string }> = []
-  const installed: Array<typeof fetch> = []
 
   async function exchange(request: Request): Promise<Response> {
     const form = new URLSearchParams(await request.text())
     const client = clientOf(request, form)
+    const code = form.get('code') ?? ''
+    const grant = grants.get(code)
+    // A code is good for one exchange, whatever its outcome: one from another
+    // client, or for another grant type, spends it too.
+    grants.delete(code)
 
     if (options.client !== undefined && (client.id !== options.client.id || (options.client.secret !== undefined && client.secret !== options.client.secret))) {
       return answer({ error: 'invalid_client' }, 401)
@@ -164,26 +252,21 @@ export function testOAuthProvider(options: TestOAuthProviderOptions): TestOAuthP
 
     if (form.get('grant_type') !== 'authorization_code') return answer({ error: 'unsupported_grant_type' }, 400)
 
-    const code = form.get('code') ?? ''
-    const grant = grants.get(code)
-    // A code is good for one exchange, whatever its outcome.
-    grants.delete(code)
-
     if (grant === undefined || grant.redirectUri !== form.get('redirect_uri') || !(await verifies(grant, form.get('code_verifier')))) {
       return answer({ error: 'invalid_grant' }, 400)
     }
 
     const token = `test-oauth-${crypto.randomUUID()}`
-    tokens.set(token, grant.person)
+    tokens.set(token, { person: grant.person, expiresAt: now() + TOKEN_LIFETIME_SECONDS * 1000 })
     accessTokens.add(token)
 
-    return answer({ access_token: token, token_type: 'Bearer', expires_in: 3600 })
+    return answer({ access_token: token, token_type: 'Bearer', expires_in: TOKEN_LIFETIME_SECONDS })
   }
 
   function userInfo(request: Request): Response {
-    const person = tokens.get(request.headers.get('Authorization')?.replace(/^Bearer /i, '') ?? '')
+    const issued = tokens.get(request.headers.get('Authorization')?.replace(/^Bearer /i, '') ?? '')
 
-    return person === undefined ? answer({ error: 'invalid_token' }, 401) : answer(profile(person))
+    return issued === undefined || now() >= issued.expiresAt ? answer({ error: 'invalid_token' }, 401) : answer(profile(issued.person))
   }
 
   /** The provider's answer to a request for one of its endpoints, or none for any other. */
@@ -197,32 +280,27 @@ export function testOAuthProvider(options: TestOAuthProviderOptions): TestOAuthP
     return undefined
   }
 
+  /** `respond`, recording each request the provider answers. */
+  function serve(request: Request): Promise<Response> | undefined {
+    const answered = respond(request)
+
+    if (answered !== undefined) requests.push({ method: request.method, url: request.url })
+
+    return answered
+  }
+
   const provider: TestOAuthProvider = {
     accessTokens,
     requests,
     install() {
-      const previous = globalThis.fetch
-      const standIn = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const request = new Request(input, init)
-        const answered = respond(request)
+      const entry = installStandIn(provider, serve)
 
-        if (answered === undefined) return previous(input, init)
-
-        requests.push({ method: request.method, url: request.url })
-
-        return answered
-      }
-
-      installed.push(previous)
-      // Bun's fetch carries `preconnect`, which the stand-in passes on.
-      globalThis.fetch = Object.assign(standIn, { preconnect: previous.preconnect })
-
-      return { [Symbol.dispose]: () => provider.restore() }
+      return { [Symbol.dispose]: () => removeStandIn(entry) }
     },
     restore() {
-      const previous = installed.pop()
+      const latest = installs.filter((entry) => entry.provider === provider).at(-1)
 
-      if (previous !== undefined) globalThis.fetch = previous
+      if (latest !== undefined) removeStandIn(latest)
     },
     authorization(response) {
       const location = response.headers.get('X-Inertia-Location') ?? response.headers.get('Location')

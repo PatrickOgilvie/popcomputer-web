@@ -94,12 +94,17 @@ describe('testOAuthProvider', () => {
   })
 
   test('an exchange refuses another client, whether it names itself in the body or as Basic authentication', async () => {
-    const code = codeOf(provider.callback(await authorization(), ADA))
-    const { client_id: _id, client_secret: _secret, ...withoutClient } = grant(code)
+    // Each exchange spends its code, so each has its own.
+    const code = async () => codeOf(provider.callback(await authorization(), ADA))
+    const withoutClient = async () => {
+      const { client_id: _id, client_secret: _secret, ...fields } = grant(await code())
 
-    expect((await exchange(grant(code, { client_secret: 'guessed' }))).status).toBe(401)
-    expect((await exchange(withoutClient, { Authorization: `Basic ${btoa('app:guessed')}` })).status).toBe(401)
-    expect((await exchange(withoutClient, { Authorization: `Basic ${btoa('app:app-secret')}` })).status).toBe(200)
+      return fields
+    }
+
+    expect((await exchange(grant(await code(), { client_secret: 'guessed' }))).status).toBe(401)
+    expect((await exchange(await withoutClient(), { Authorization: `Basic ${btoa('app:guessed')}` })).status).toBe(401)
+    expect((await exchange(await withoutClient(), { Authorization: `Basic ${btoa('app:app-secret')}` })).status).toBe(200)
   })
 
   test('the user info refuses a token the provider did not issue', async () => {
