@@ -152,6 +152,7 @@ test('mutate runs each mutant against the tests that reach it and reports the on
     expect(report).toContain('  src/tiny.ts:4  boundary  >= → >\n      return age >= 18')
     expect(report).toContain('  src/tiny.ts:32  negate-eq  === → !==  (no test reaches this line)')
     expect(report).toContain('left out, failing with no mutant planted: tests/broken.test.ts')
+    expect(report).not.toContain('crashed')
 
     // The working tree is never edited.
     expect(readFileSync(join(root, 'src', 'tiny.ts'), 'utf8')).toBe(readFileSync(fixture, 'utf8'))
@@ -317,6 +318,48 @@ test('mutate, given no files, mutates only the src/ lines changed since the base
     const run = await mutate({ root, workers: 1 })
 
     expect(run.results.map(outcome)).toEqual(['4 boundary >= → >: survived'])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 60_000)
+
+test('mutate, given files and a base, mutates only the changed lines of those files', async () => {
+  const root = tinyRepo(TWO_FILES, false)
+  const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: root })
+
+  try {
+    git('add', '.')
+    git('commit', '--quiet', '-m', 'Add the files')
+    writeFileSync(join(root, 'src', 'a.ts'), 'export const ready = true\nexport const off = false\n')
+    writeFileSync(join(root, 'src', 'b.ts'), 'export const positive = (n: number) => n > 0\nexport const negative = (n: number) => n < 0\n')
+
+    const run = await mutate({ root, files: ['src/a.ts'], base: 'HEAD', workers: 1 })
+
+    expect(run.results.map((result) => `${result.file}:${result.line} ${result.original}`)).toEqual(['src/a.ts:2 false'])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 60_000)
+
+test('a file tracked under dist/ is copied into each copy, which then has no link to dist/', async () => {
+  const root = tinyRepo({
+    'src/b.ts': TWO_FILES['src/b.ts'],
+    'dist/version.txt': '1\n',
+    'test/b.test.ts': `import { expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { positive } from '../src/b'
+
+test('positive', () => {
+  expect(readFileSync('dist/version.txt', 'utf8')).toBe('1\\n')
+  expect(positive(5)).toBe(true)
+})
+`,
+  }, false)
+
+  try {
+    const run = await mutate({ root, files: ['src/b.ts'], workers: 1 })
+
+    expect(run.results.map(outcome)).toEqual(['1 boundary > → >=: survived'])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

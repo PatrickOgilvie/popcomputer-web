@@ -46,8 +46,8 @@ is planted in them.
 ## Which lines, and which tests
 
 With no files it mutates the `src/` lines changed since `HEAD`, committed or
-not; `--base <ref>` compares with another ref, such as `main` for a branch.
-Given files, it mutates every line of them:
+not, and the new files there; `--base <ref>` compares with another ref, such
+as `main` for a branch. Given files, it mutates every line of them:
 
 ```bash
 bunx popweb-mutate src/actions/projects.ts
@@ -56,15 +56,24 @@ bunx popweb-mutate src/actions/projects.ts
 Each test file, any `*.test.ts` or `*.test.tsx` outside `node_modules` and
 `dist`, that imports a mutated file runs once with coverage; none of them is
 mutated, even under `src/`. Each mutant then runs against the test files
-whose coverage reaches its line, in copies of the working tree, so the
-checkout is never edited. A mutant really runs, so each copy has a temporary
-directory of its own, removed with it: code that cleans up after itself cannot
-reach the machine's. Anything else the code can reach, it still can, such as
-a real service a test forgets to fake. A test file that fails with no mutant planted runs
+whose coverage reaches its line, in copies of a snapshot of the working tree
+taken when the run starts, so the checkout is never edited, and an edit to it
+during the run reaches none of the run. Each copy is put back as the snapshot
+has it before every test run, so no mutant's tests read what another's left. A
+mutant really runs, so each copy has a temporary directory of its own, removed
+with it: code that cleans up after itself cannot reach the machine's. Anything
+else the code can reach, it still can, such as a real service a test forgets
+to fake. A test file that fails with no mutant planted runs
 again with nothing beside it, since a file can fail for the memory it lost to
 the others. One that fails then too is left out, and the report says so
 beside the score and lists it at its end: the score is partial, as a mutant
 only that file would catch shows as a survivor.
+
+A mutant is killed only when its tests' failure is its own: the test files
+that failed run again at once with no mutant planted, and must pass. Ctrl-C,
+`SIGTERM` or `SIGHUP` stops the run, its test runs with it, and removes its
+copies; should the run be killed outright, a process it started does that
+for it.
 
 | Option | Does |
 | --- | --- |
@@ -88,6 +97,13 @@ it, as rule 12 asks, then run again. Some survivors change nothing a caller
 can see, such as a guard the next line repeats; leave those, and say so
 where the change is reviewed. A survivor that no test reaches says so:
 start with a test that loads its line.
+
+A mutant whose tests gave no answer is `crashed`, listed apart with the
+reason and not counted as caught: a signal not its timeout ended them, as the
+system does when memory runs out, or the files that failed fail with no
+mutant planted too, as when a test reads something outside the copy that
+changed during the run. Run again once the cause is gone, with fewer
+`--workers` for memory.
 
 Fuzz properties run here with their fixed seed, as `bun test` runs them, so
 a mutant their cases miss survives: [Fuzzing at the limits](fuzz-limits.md)
