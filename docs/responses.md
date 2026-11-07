@@ -49,8 +49,11 @@ the failure's response. A test reads the value a response set with
 ## Files, headers and polling
 
 `file(body, { contentType, filename })` answers with a file, such as an export
-or a feed: text, bytes, or an Effect `Stream` sent as it is produced. A
-`filename` offers it as a download. [Serving an upload back](#serving-an-upload-back)
+or a feed: text, bytes, or an Effect `Stream` sent as it is produced, with
+the action's services held until it has been sent or the client stops
+reading. A Stream that fails part way ends the body, and its failure reaches
+the error observer; its answer has started, so a cookie it sets then is
+refused. A `filename` offers it as a download. [Serving an upload back](#serving-an-upload-back)
 shows doing so safely.
 
 `json` and `text` take `{ status, headers }` as well as a status, and an

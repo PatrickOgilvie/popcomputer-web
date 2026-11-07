@@ -117,7 +117,8 @@ export function cookie<A, I>(name: string, schema: S.Codec<A, I, never, never>, 
 
   // A value whose JSON form is a string, such as an id, is stored as it is,
   // so a cookie an application wrote by hand reads the same; one stored as a
-  // JSON string reads too.
+  // JSON string reads too. A string that starts with a quote is stored as
+  // JSON, so it does not read as a JSON string of something else.
   const parse = (raw: string): Option.Option<A> =>
     raw.startsWith('"')
       ? Option.orElse(decodeJson(raw), () => decodeValue(raw))
@@ -172,7 +173,7 @@ export function cookie<A, I>(name: string, schema: S.Codec<A, I, never, never>, 
       encode(value).pipe(
         Effect.mapError((issue) => new Error(`The value for cookie '${name}' does not match its schema: ${issue.message}`)),
         Effect.orDie,
-        Effect.map((encoded) => (typeof encoded === 'string' ? encoded : JSON.stringify(encoded))),
+        Effect.map((encoded) => (typeof encoded === 'string' && !encoded.startsWith('"') ? encoded : JSON.stringify(encoded))),
         Effect.flatMap((stored) =>
           signing === undefined
             ? Effect.succeed(stored)

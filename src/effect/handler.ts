@@ -38,6 +38,7 @@ import {
   type EffectErrorEvent,
 } from './error-observer.js'
 import { openWebContext } from '../request-context.js'
+import { reportThrough } from './report.js'
 
 /**
  * Memoized formatter instances to avoid recreation on every error.
@@ -367,16 +368,17 @@ function classifyMissingService(cause: unknown): ConfigurationError | null {
 }
 
 /**
- * Observe an Effect error without changing request behavior.
+ * Observe an Effect error without changing request behavior: through the
+ * route's runtime, or, when its layers failed to build, through the
+ * request's own services, so a guard that fails reaches the same observer an
+ * action that fails does.
  */
-// oxlint-disable-next-line effecttsgo/async-function -- This Hono boundary awaits ManagedRuntime exits and converts typed failures, defects, and redirects into HTTP responses.
-async function observeEffectError(
+function observeEffectError<E extends Env>(
   event: EffectErrorEvent,
+  c: HonoContext<E>,
   runtime: ManagedRuntime.ManagedRuntime<never, unknown>
 ): Promise<void> {
-  // An unavailable route Layer is represented in the returned Exit in v4.
-  // Observation must never replace the original request failure.
-  await runtime.runPromiseExit(observeEffectErrorEvent(event))
+  return reportThrough(c, observeEffectErrorEvent(event), runtime)
 }
 
 /**
@@ -418,6 +420,7 @@ export async function errorToResponse<E extends Env>(
       error,
       structured,
     },
+    c,
     runtime
   )
 
@@ -476,12 +479,15 @@ export async function runEffectWithRuntime<
 >(
   effect: Effect.Effect<Response | Redirect, Err, R>,
   c: HonoContext<E>,
-  runtime: ManagedRuntime.ManagedRuntime<R, RuntimeError>
+  runtime: ManagedRuntime.ManagedRuntime<R, RuntimeError>,
+  onExit?: (exit: Exit.Exit<Response | Redirect, unknown>) => void
 ): Promise<Response> {
   // ManagedRuntime includes both Layer acquisition failures and handler
   // failures in the Exit returned by its v4 runner.
   const exit: Exit.Exit<Response | Redirect, unknown> =
     await runtime.runPromiseExit(effect)
+
+  onExit?.(exit)
 
   return handleExit(exit, c, runtime)
 }
@@ -547,6 +553,7 @@ async function handleExit<E extends Env>(
             error: err,
             structured,
           },
+          c,
           runtime
         )
         return renderErrorResponse(new Error(err instanceof Error ? err.message : structured.message), c, boundaryConfig, structured)
@@ -567,6 +574,7 @@ async function handleExit<E extends Env>(
           error: err,
           structured,
         },
+        c,
         runtime
       )
 
@@ -589,6 +597,7 @@ async function handleExit<E extends Env>(
       error: new Error('Unknown effect failure'),
       structured,
     },
+    c,
     runtime
   )
   return renderErrorResponse(new Error('Unknown effect failure'), c, boundaryConfig, structured)

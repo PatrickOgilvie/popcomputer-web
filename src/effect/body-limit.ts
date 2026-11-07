@@ -113,6 +113,11 @@ export function streamsAsRead(body: ReadableStream<Uint8Array>): void {
   streamingBodies.add(body)
 }
 
+/** Whether `file()` streams this body as it is read. */
+export function isStreamedAsRead(body: ReadableStream<Uint8Array>): boolean {
+  return streamingBodies.has(body)
+}
+
 /**
  * Read a request's body nothing read to its end, and drop it, before
  * `response` answers it, as readBody does a refused one's: an answer that

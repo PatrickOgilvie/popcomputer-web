@@ -17,8 +17,21 @@ import { HEADERS } from './types.js'
 import { webUrl } from './locations.js'
 import { setupOf } from './web-setup.js'
 
+/**
+ * Refuse a write to the response once it is finished: what background work
+ * or a streamed body writes after the answer has left cannot reach it, so the
+ * write fails, and the work's failure is reported, rather than vanishing.
+ */
+export function refuseAfterFinish<E extends Env>(c: Context<E>, what: string): void {
+  if (!outputOf(c).finished) return
+
+  throw new Error(`${what} was written after the response was finished, which cannot carry it. Write it before the action answers, not in background work or a streamed body.`)
+}
+
 /** Queue an application cookie, a whole Set-Cookie value, for the response. */
 export function queueCookie<E extends Env>(c: Context<E>, setCookie: string): void {
+  refuseAfterFinish(c, `The cookie ${setCookieName(setCookie)}`)
+
   const context = openWebContext(c)
 
   context.responseCookies = [...(context.responseCookies ?? []), setCookie]
@@ -33,6 +46,8 @@ export function queueSessionLookupCookies<E extends Env>(c: Context<E>, cookies:
 
 /** Queue a header for the response, appended to any it already has. */
 export function queueHeader<E extends Env>(c: Context<E>, name: string, value: string): void {
+  refuseAfterFinish(c, `The header ${name}`)
+
   const context = openWebContext(c)
 
   context.responseHeaders = [...(context.responseHeaders ?? []), [name, value]]
@@ -122,6 +137,19 @@ export function finishResponse<E extends Env>(c: Context<E>, response: Response)
   for (const [name, value] of added) headers.append(name, value)
 
   return new Response(followed.body, { status: followed.status, statusText: followed.statusText, headers })
+}
+
+/**
+ * An error page that replaces an answer already finished: the page's mark,
+ * which only a finish takes off, is taken off here, since what the finish
+ * adds went with that answer.
+ */
+export function replacingFinished(response: Response): Response {
+  const headers = new Headers(response.headers)
+
+  headers.delete(PAGE_MARK)
+
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
 }
 
 /** Whether the request's response has been finished. */

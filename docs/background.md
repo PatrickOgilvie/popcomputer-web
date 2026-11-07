@@ -9,12 +9,15 @@ the Effect. The name identifies the work in error reports:
 yield* background('audit.send', sendAuditEvent(event))
 ```
 
-In a Worker, background work starts at once and runs beside the rest of the
-action: the response does not wait for it, and the Worker's execution context
-keeps it alive after the response. Without an execution context, as in tests,
-it runs where it is called, before the response returns, so a test sees its
-effects but not a race between them; pass an execution context as
-`app.request`'s fourth argument to test concurrent behaviour. Tags the work
+Background work starts at once and runs beside the rest of the action: the
+response does not wait for it. In a Worker, the execution context keeps it
+alive after the response; without one, as in tests, `app.request` resolves
+once it has settled, so a test sees its effects. Either way it runs after the
+response is finished, so a cookie, header or flash value it writes then is
+refused: the write fails, and the failure is reported as the work's. A
+failure of the work, or of a promise handed to `waitUntil`, reaches the error
+observer, and so does a finalizer that dies releasing a service, which never
+changes the answer. Tags the work
 names with `purgeCache` are purged once it succeeds, and a failed purge is
 reported as the work's failure. Work handed to `ExecutionContextService`'s
 `runInBackground` or `schedule` purges the same way; `purgeCache` called by
@@ -79,10 +82,12 @@ export default {
 
 A scheduled job that fails rejects, so the platform records a failed run. The
 queue handler decodes each message's body with the queue's schema and
-handles the messages one at a time: one whose work succeeds is acknowledged, and one whose
-body does not decode, or whose work fails, is logged and left for the queue
-to retry, after which the queue drops it or moves it to its dead-letter
-queue. The handler also receives the message's `id` and `attempts`, for work
+handles the messages one at a time: one whose work succeeds is acknowledged
+once the background work it started has settled, and one whose body does
+not decode, or whose work fails, or whose services fail to build, is logged
+once and left for the queue to retry, after which the queue drops it or
+moves it to its dead-letter queue. Bindings the env declaration refuses
+leave each message to retry, as [the env declaration](env.md) says. The handler also receives the message's `id` and `attempts`, for work
 that must happen once however often a message is delivered. A job whose
 `purgeCache` purge fails has failed too: it rejects, and the queue retries
 the message.

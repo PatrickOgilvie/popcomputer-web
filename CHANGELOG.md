@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-What an application may need to change: one with a test that expects no purge when an action fails after a write it made outside a transaction. That write committed, so its purges now run.
+What an application may need to change: one with a test that expects no purge when an action fails after a write it made outside a transaction. That write committed, so its purges now run. And one whose `background()` work, run in a test without an execution context, sets a cookie, header or flash value on the response: that work ran before the response, and now runs after it, as in a Worker, so the write is refused. Set it in the action instead.
 
 ### Fixed
 
@@ -18,6 +18,15 @@ What an application may need to change: one with a test that expects no purge wh
 - A route's own `cache` option keeps private a page whose header an application middleware read after the route answered. Only a read before `next()` counted.
 - `ResponseCacheService.purge` reaches Workers Cache alone, and `recordCacheTag`'s example now uses `purgeCache`, which reaches the data cache too.
 - A write that committed is purged whatever the request then answers. A route purged only when its action succeeded, so a write followed by a failure, such as a 422 from validation that came after it or a 409 the action answered, left the cached pages that show the record stale until their `maxAge`. A failure before any write still purges nothing.
+- A finalizer that dies releasing a service no longer changes what the request or job answered. A route's committed 200 became a 500, a job that succeeded rejected, and a queue message whose work succeeded was retried, so it ran again. The failure is reported to the error observer, and what the request holds, `testEnv`'s services among it, is still released.
+- Every failure of work beside a request is reported. A promise handed to `waitUntil` that rejected went unreported when a route's layer had failed, when a slow observer was still reporting the one before, or when a finalizer handed it over, and a guard that failed after one made `app.fetch` reject, a guard's redirect included. A guard that dies now reaches the error observer an action reaches, through the request's own services.
+- What a request holds is released after the work it started, whatever that work did. A release ran while work a `waitUntil` promise or a finalizer scheduled was still running, or never ran once a report failed. Releases run in order, the route's runtime before the request's services, and `webContext(c).runtime`, deprecated, is refused once released rather than built again.
+- `background()` runs beside the action without an execution context too, as it does in a Worker, and `app.request` resolves once it has settled. A cookie, header or flash value written after the response is finished, by background work or a streamed body, is refused: the write fails and is reported. It was dropped in a Worker and landed in a test.
+- A body `file()` streams from an Effect `Stream` keeps the action's services until it has been sent or the client stops reading. They were released before its first chunk. A Stream that fails part way reaches the error observer; it ended the body and was reported nowhere.
+- `routes.queue` logs the reason for every retry once, a failed purge or a layer that failed to build among them, which retried with no trace, and acknowledges a message once the background work it started has settled.
+- `routes.run` on a stack composed by hand gives the job `testEnv`'s services over the builder's layers, as on `setupWeb`, and rejects with the failure of the services that failed before the job ran, not with "could not reach its route".
+- Application middleware that calls `next()` twice is refused, as Hono's compose refuses it: the members after it ran twice. An error page that replaces a finished answer, thrown by middleware after `next()`, carries none of that answer's cookies or `Location` and shows no flash, which showed its messages twice.
+- A flash value the cookie's JSON cannot hold fails where it is set. It failed the finish, whose 500 carried nothing the request had queued. A cookie whose string value starts with a quote reads back the same; it lost its quotes.
 - Work a rollback must cancel waits for the commit. Inside `dbTransaction`, `purgeCache` purged though the transaction rolled back, `invalidateCacheTags` purged before the commit, so a request that read the old value meanwhile stored it under the new generation, and `background()` and a stale `cache` value's refresh ran on the transaction after it had closed, so their writes failed and reached only the log. Now each waits for the commit, and a rollback drops it. `cache` inside a transaction computes without storing, and `cacheSet` stores once it commits.
 
 ## [1.14.0] - 2026-11-07

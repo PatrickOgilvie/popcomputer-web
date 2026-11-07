@@ -273,9 +273,10 @@ const EnvProblemSchema = S.Struct({
 
 /**
  * The Worker's bindings do not match the env declaration: `setupWeb` fails a
- * request with it, and `routes.scheduled`, `routes.queue` and `routes.run`
- * reject with it. Its message names each var and secret, never a value.
- * Outside development, a page shows only that the server failed.
+ * request with it, `routes.scheduled` and `routes.run` reject with it, and
+ * `routes.queue` leaves each message to retry. Its message names each var
+ * and secret, never a value. Outside development, a page shows only that the
+ * server failed.
  */
 export class EnvInvalid extends S.TaggedError<EnvInvalid>()('EnvInvalid', {
   message: S.String,

@@ -45,9 +45,10 @@ import { readTestLayer } from './test-env.js'
 import type { RouteBindingsConfig } from './binding.js'
 import type { DeclaredFields, PageSchemas } from './pages.js'
 import { observeOrLog } from './error-observer.js'
-import { readBody } from './body-limit.js'
+import { reportRelease, reportThrough, type ReportingRuntime } from './report.js'
+import { isStreamedAsRead, readBody, streamsAsRead } from './body-limit.js'
 import { setupOf, WebSetupService } from '../web-setup.js'
-import { queueCookie, queueHeader } from '../response-output.js'
+import { queueCookie, queueHeader, refuseAfterFinish } from '../response-output.js'
 
 /**
  * Configuration for the Effect bridge.
@@ -303,215 +304,190 @@ function makeObservedBackground<A, E, R>(
 export interface BackgroundSupervisor {
   readonly client: ExecutionContextClient
   readonly hasPending: () => boolean
-  readonly extendLifetime: (promise: Promise<unknown>) => void
-  readonly drain: <R, RuntimeError>(
-    runtime?: ManagedRuntime.ManagedRuntime<R, RuntimeError>
-  ) => Promise<void>
+  /**
+   * Release what a request or job holds once the work it started has
+   * settled: wait for that work, reporting each failure through `runtime`
+   * first, run `release`, then wait for what its finalizers started.
+   * Releases run in the order they were asked for, so a route's runtime is
+   * released before the request's services it was built on. In a Worker
+   * with work still running it returns at once, and the Worker waits for
+   * the rest; elsewhere it resolves once all of it is done. It never rejects.
+   */
+  readonly settle: (release: () => Promise<void>, runtime?: ReportingRuntime) => Promise<void>
+  /** A body that holds the request's services until it ends or the client cancels it. */
+  readonly holdUntilSent: (body: ReadableStream<Uint8Array>) => ReadableStream<Uint8Array>
+}
+
+/**
+ * The response, with a body `file()` streams holding the request's services
+ * until it has been sent: the Stream's chunks are produced as the body is
+ * read, after the answer, and read the services the action had.
+ */
+export function holdUntilSent<E extends Env>(c: HonoContext<E>, response: Response): Response {
+  const body = response.body
+
+  if (body === null || !isStreamedAsRead(body)) return response
+
+  const held = getOrCreateBackgroundSupervisor(c).holdUntilSent(body)
+
+  streamsAsRead(held)
+
+  return new Response(held, { status: response.status, statusText: response.statusText, headers: response.headers })
 }
 
 /**
  * Dispose a request runtime only after its owned background work settles.
  *
  * Worker runtimes hand the drain and disposal promise to `waitUntil`; inline
- * runtimes await completion before releasing scoped services.
+ * runtimes await completion before releasing scoped services. A finalizer
+ * that dies is reported, and never changes the answer or the job's result.
  */
-// oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
-export async function disposeRequestRuntime<E extends Env, R, RuntimeError>(
+export function disposeRequestRuntime<E extends Env, R, RuntimeError>(
   c: HonoContext<E>,
   runtime: ManagedRuntime.ManagedRuntime<R, RuntimeError>
 ): Promise<void> {
-  const supervisor = openWebContext(c).backgroundSupervisor
-
-  if (supervisor?.hasPending() && supervisor.client.isAvailable) {
-    supervisor.extendLifetime(
-      supervisor.drain(runtime).then(() => runtime.dispose())
-    )
-
-    return
-  }
-
-  await supervisor?.drain(runtime)
-  await runtime.dispose()
-}
-
-/**
- * Release what a request holds, such as testEnv's services, only after its
- * background work settles, as disposeRequestRuntime releases a runtime.
- */
-export function disposeAfterBackground<E extends Env>(
-  c: HonoContext<E>,
-  release: () => Promise<void>
-): Promise<void> {
-  const supervisor = openWebContext(c).backgroundSupervisor
-
-  if (supervisor?.hasPending() && supervisor.client.isAvailable) {
-    supervisor.extendLifetime(supervisor.drain().then(release))
-
-    return Promise.resolve()
-  }
-
-  return (supervisor?.drain() ?? Promise.resolve()).then(release)
+  return getOrCreateBackgroundSupervisor(c).settle(
+    () => Effect.runPromiseExit(runtime.disposeEffect).then((exit) => reportRelease(c, exit)),
+    runtime
+  )
 }
 
 /**
  * Finish background promises when outer middleware exits before the Effect
  * bridge can own request teardown.
  */
-// oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
-export async function drainRequestBackground<E extends Env>(
+export function drainRequestBackground<E extends Env>(
   c: HonoContext<E>
 ): Promise<void> {
-  const supervisor = openWebContext(c).backgroundSupervisor
-
-  if (!supervisor?.hasPending()) return
-
-  const draining = supervisor.drain()
-
-  if (supervisor.client.isAvailable) {
-    supervisor.extendLifetime(draining)
-
-    return
-  }
-
-  await draining
+  return openWebContext(c).backgroundSupervisor?.settle(() => Promise.resolve()) ?? Promise.resolve()
 }
 
-function createExternalPromiseTracker() {
-  const pending = new Set<Promise<void>>()
+/**
+ * One request's background work, in a Worker or not: each piece runs beside
+ * the request and is waited for before what it uses is released, and each
+ * failure is reported. In a Worker each piece is also handed to `waitUntil`.
+ */
+function createBackgroundSupervisor<E extends Env>(
+  c: HonoContext<E>,
+  ctx: CloudflareExecutionContext | undefined
+): BackgroundSupervisor {
+  // Work running beside the request, each piece removed once it settles, and
+  // the failures of promises handed to waitUntil, not yet reported.
+  const running = new Set<Promise<void>>()
   const failures: unknown[] = []
+  // The releases asked for so far, one after another, and how many of them
+  // the Worker waits for after the answer.
+  let releases: Promise<void> = Promise.resolve()
+  let deferred = 0
+  // Bodies being sent, which hold the request's services: outside a Worker
+  // too, a release waits for them, after the answer.
+  let sending = 0
 
-  const track = (promise: Promise<unknown>): Promise<void> => {
-    const tracked: Promise<void> = promise.then(
-      () => undefined,
-      (cause: unknown) => {
-        failures.push(cause)
-      }
-    ).then(() => {
-      pending.delete(tracked)
+  const hold = (work: Promise<unknown>): void => {
+    const held: Promise<void> = work.then(() => undefined, () => undefined).then(() => {
+      running.delete(held)
     })
 
-    pending.add(tracked)
-
-    return tracked
+    running.add(held)
+    ctx?.waitUntil(held)
   }
 
-  return {
-    pending,
-    hasWork: () => pending.size > 0 || failures.length > 0,
-    track,
-    // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
-    drain: async <R, RuntimeError>(runtime?: ManagedRuntime.ManagedRuntime<R, RuntimeError>) => {
-      while (pending.size > 0) {
-        await Promise.allSettled(pending)
-      }
+  // The work runs beside the action and may outlive it, so what it names with
+  // purgeCache is its own to purge once it succeeds.
+  const schedule = <A, Err, R>(
+    operation: string,
+    effect: Effect.Effect<A, Err, R>
+  ): Effect.Effect<void, never, R> =>
+    Effect.flatMap(withOwnPurges(effect), (owned) =>
+      Effect.flatMap(Effect.context<R>(), (context) =>
+        Effect.sync(() => hold(Effect.runPromise(makeObservedBackground(operation, owned).pipe(Effect.provide(context)))))
+      )
+    )
 
+  const client: ExecutionContextClient = {
+    isAvailable: ctx !== undefined,
+    waitUntil: (promise) => hold(promise.then(undefined, (cause: unknown) => {
+      failures.push(cause)
+    })),
+    runInBackground: (effect) => schedule('background', effect),
+    schedule,
+  }
+
+  const hasPending = () => running.size > 0 || failures.length > 0
+
+  // Until nothing runs and every failure is reported: work that settles may
+  // start more, and a report is work of its own.
+  // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
+  const drain = async (runtime?: ReportingRuntime): Promise<void> => {
+    while (hasPending()) {
       for (const cause of failures.splice(0)) {
-        const observation = observeOrLog({
+        hold(reportThrough(c, observeOrLog({
           source: 'framework',
           handling: 'unhandled',
           kind: 'failure',
           error: cause,
           metadata: { operation: 'external-background' },
-        }, 'Background work failed')
-
-        await (runtime
-          ? runtime.runPromise(observation)
-          : Effect.runPromise(observation))
-      }
-    },
-  }
-}
-
-function createExecutionContextSupervisor(
-  ctx: CloudflareExecutionContext
-): BackgroundSupervisor {
-  const pending = new Set<Promise<void>>()
-  const external = createExternalPromiseTracker()
-  let drainPromise: Promise<void> | undefined
-
-  // The work runs beside the action and may outlive it, so what it names with
-  // purgeCache is its own to purge once it succeeds.
-  const schedule = <A, E, R>(
-    operation: string,
-    effect: Effect.Effect<A, E, R>
-  ): Effect.Effect<void, never, R> =>
-    Effect.flatMap(withOwnPurges(effect), (owned) =>
-      Effect.flatMap(Effect.context<R>(), (context) =>
-        Effect.sync(() => {
-          const running = Effect.runPromise(
-            makeObservedBackground(operation, owned).pipe(Effect.provide(context))
-          )
-
-          const tracked: Promise<void> = running.then(() => {
-            pending.delete(tracked)
-          })
-
-          pending.add(tracked)
-          ctx.waitUntil(tracked)
-        })
-      )
-    )
-
-  const client: ExecutionContextClient = {
-    isAvailable: true,
-    waitUntil: (promise) => {
-      const tracked = external.track(promise)
-      ctx.waitUntil(tracked)
-    },
-    runInBackground: (effect) => schedule('background', effect),
-    schedule,
-  }
-
-  const drain: BackgroundSupervisor['drain'] = (runtime) => {
-    if (drainPromise) return drainPromise
-
-    // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request runtime.
-    drainPromise = (async () => {
-      while (pending.size > 0) {
-        await Promise.allSettled(pending)
+        }, 'Background work failed'), runtime))
       }
 
-      await external.drain(runtime)
-    })()
-
-    return drainPromise
+      await Promise.allSettled(running)
+    }
   }
 
-  return {
-    client,
-    hasPending: () => pending.size > 0 || external.hasWork(),
-    extendLifetime: (promise) => ctx.waitUntil(promise),
-    drain,
+  const settle: BackgroundSupervisor['settle'] = (release, runtime) => {
+    const defer = sending > 0 || deferred > 0 || (ctx !== undefined && hasPending())
+    const released = releases
+      .then(() => drain(runtime))
+      .then(release)
+      .then(undefined, (cause: unknown) => reportRelease(c, Exit.die(cause)))
+    // What the finalizers started, such as work handed to waitUntil.
+    const settled = released.then(() => drain())
+
+    releases = settled
+    ctx?.waitUntil(settled)
+
+    if (!defer) return ctx === undefined ? settled : released
+
+    // A Worker holds settled through waitUntil; elsewhere it settles once the
+    // body being sent has ended, and nothing outlives the process to hold it.
+    deferred += 1
+    // oxlint-disable-next-line no-floating-promises -- settled never rejects, and a Worker holds it through waitUntil above; this only counts it out.
+    settled.then(() => {
+      deferred -= 1
+    })
+
+    return Promise.resolve()
   }
-}
 
-/** Create an inline owner for environments without ExecutionContext. */
-function createInlineExecutionContextSupervisor(): BackgroundSupervisor {
-  const external = createExternalPromiseTracker()
-  let drainPromise: Promise<void> | undefined
+  const holdUntilSent: BackgroundSupervisor['holdUntilSent'] = (body) => {
+    const reader = body.getReader()
+    let sent = () => {}
 
-  const client: ExecutionContextClient = {
-    isAvailable: false,
-    waitUntil: (promise) => {
-      // oxlint-disable-next-line no-floating-promises -- external owns this promise and its rejection; the request awaits external.drain() before disposing services.
-      external.track(promise)
-    },
-    // Inline, the work runs before the action's own purges are taken; it
-    // still purges what it names itself, as it would in a Worker.
-    runInBackground: (effect) => Effect.flatMap(withOwnPurges(effect), (owned) => makeObservedBackground('background', owned)),
-    schedule: (operation, effect) => Effect.flatMap(withOwnPurges(effect), (owned) => makeObservedBackground(operation, owned)),
+    sending += 1
+    hold(new Promise<void>((resolve) => {
+      sent = resolve
+    }).then(() => {
+      sending -= 1
+    }))
+
+    return new ReadableStream<Uint8Array>({
+      pull: (controller) => reader.read().then(
+        (chunk) => {
+          if (!chunk.done) return controller.enqueue(chunk.value)
+
+          controller.close()
+          sent()
+        },
+        (error: unknown) => {
+          controller.error(error)
+          sent()
+        }
+      ),
+      cancel: (reason) => reader.cancel(reason).finally(sent),
+    })
   }
 
-  return {
-    client,
-    hasPending: external.hasWork,
-    extendLifetime: () => {},
-    drain: (runtime) => {
-      drainPromise ??= external.drain(runtime)
-
-      return drainPromise
-    },
-  }
+  return { client, hasPending, settle, holdUntilSent }
 }
 
 function getOrCreateBackgroundSupervisor<E extends Env>(
@@ -523,11 +499,7 @@ function getOrCreateBackgroundSupervisor<E extends Env>(
     return requestContext.backgroundSupervisor
   }
 
-  const executionContext = getCloudflareExecutionContext(c)
-
-  const supervisor = executionContext
-    ? createExecutionContextSupervisor(executionContext)
-    : createInlineExecutionContextSupervisor()
+  const supervisor = createBackgroundSupervisor(c, getCloudflareExecutionContext(c))
 
   requestContext.backgroundSupervisor = supervisor
 
@@ -593,7 +565,10 @@ function createPageRenderer<E extends Env>(
     flashed: declared.flash,
     render: (component, props, options) => Promise.resolve(page.render(component, props, options)),
     share: (key, value) => page.share(key, value),
-    flash: (key, value) => requestContext.flash?.set(key, value),
+    flash: (key, value) => {
+      refuseAfterFinish(c, `The flash value ${key}`)
+      requestContext.flash?.set(key, value)
+    },
   }
 }
 
@@ -884,16 +859,34 @@ export function createEffectBridge<E extends Env, CustomServices = never>(
 
     // Code that read the request's runtime from its context still finds one,
     // built only when it is read: routes build their own, one per request.
+    // A report reads it when the route's layers failed. Once released it is
+    // gone, and reading it is refused rather than building one nothing
+    // releases.
     let runtime: ManagedRuntime.ManagedRuntime<never, Config.ConfigError> | undefined
+    let released = false
+    const requestRuntime = () => released ? undefined : runtime ??= ManagedRuntime.make(layer)
+
+    requestCtx.requestRuntime = requestRuntime
     Object.defineProperty(requestCtx, 'runtime', {
       configurable: true,
       enumerable: true,
-      get: () => runtime ??= ManagedRuntime.make(layer),
+      get: () => {
+        const current = requestRuntime()
+
+        if (current === undefined) throw new Error("The request's runtime was released with its services, once its answer and background work were done: read it while the request runs.")
+
+        return current
+      },
     })
 
-    return () => disposeAfterBackground(c, () =>
-      (runtime?.dispose() ?? Promise.resolve()).then(() => Effect.runPromise(Scope.close(testScope, Exit.void)))
-    )
+    // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary releases the request's services after its background work, reporting any finalizer that dies.
+    const release = async () => {
+      released = true
+      await reportRelease(c, runtime === undefined ? Exit.void : await Effect.runPromiseExit(runtime.disposeEffect))
+      await reportRelease(c, await Effect.runPromiseExit(Scope.close(testScope, Exit.void)))
+    }
+
+    return () => getOrCreateBackgroundSupervisor(c).settle(release)
   }
 
   // oxlint-disable-next-line effecttsgo/async-function -- This Hono/Worker runtime boundary owns native background promises and completes teardown before releasing the request's services.

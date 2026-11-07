@@ -177,6 +177,10 @@ export function openFlash(c: Context, options: { readonly pages?: boolean } = {}
   const held = cookie._tag === 'Holding' ? cookie.data : empty()
   const pending = empty()
   let shown: FlashedPageData | undefined
+  // Once the answer's cookie is written, a page rendered after it, such as
+  // an error page replacing that answer, shows nothing: what it would show
+  // is in that cookie, or already shown.
+  let written = false
 
   const serialized = (next: MutableFlash): string => {
     const fitting = withinBudget(next)
@@ -197,6 +201,14 @@ export function openFlash(c: Context, options: { readonly pages?: boolean } = {}
 
   return {
     set(key, value) {
+      // The cookie holds JSON, so a value it cannot hold fails here, where
+      // it is set, not when the answer is finished.
+      try {
+        JSON.stringify(value)
+      } catch (cause) {
+        throw new TypeError(`The flash value ${key} cannot be stored in the flash cookie, which holds JSON: ${cause instanceof Error ? cause.message : String(cause)}`)
+      }
+
       pending.flash[key] = value
     },
 
@@ -213,12 +225,16 @@ export function openFlash(c: Context, options: { readonly pages?: boolean } = {}
     },
 
     take() {
+      if (written) return empty()
+
       shown = prefetch ? { ...pending } : merged(held, pending)
 
       return shown
     },
 
     cookie(answer) {
+      written = true
+
       const left = shown === undefined || !answer.page ? pending : unshown(pending, shown)
       const event = prefetch
         ? FlashEvent.Prefetch({ pending: left })

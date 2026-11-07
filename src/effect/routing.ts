@@ -4,14 +4,16 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
+import { Cause, Context as EffectContext, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S, Scope } from 'effect'
 import { Context as HonoRequestContext } from 'hono'
 import type { Context as HonoContext, ExecutionContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { renderErrorResponse, runEffectWithRuntime } from './handler.js'
+import { observeOrLog } from './error-observer.js'
 import {
   bindingsConfiguration,
   buildContextLayer,
   disposeRequestRuntime,
+  holdUntilSent,
   getEffectBridgeConfig,
   serviceRequestContext,
   setEffectBridgeConfig,
@@ -299,14 +301,69 @@ export function declareAppJobs<E extends Env>(app: Hono<E>, prepare: JobPreparer
  */
 const RUN_PATH = '/__popweb/run'
 
-/** An Effect waiting for `run`'s request, keyed by that request. */
+/** An Effect waiting for `run`'s request, keyed by that request, with the builder's layers. */
 interface RunJob {
   readonly effect: Effect.Effect<unknown, unknown, never>
+  readonly layers: Layer.Layer<never, AppError, never>
   readonly done: (exit: Exit.Exit<unknown, unknown>) => void
+}
+
+/**
+ * The services testEnv gave the route, which the runner gives its job over
+ * the builder's layers, as a route gives them over its own.
+ */
+const GivenByTest = EffectContext.Reference<EffectContext.Context<never>>('@popcomputer/web/GivenByTest', {
+  defaultValue: () => EffectContext.empty(),
+})
+
+/**
+ * A job with the builder's layers, built for it and released after it, and
+ * testEnv's services over them. A finalizer that dies is reported, and never
+ * changes the job's result.
+ */
+function withJobLayers(job: RunJob): Effect.Effect<unknown, unknown> {
+  return Effect.flatMap(GivenByTest, (tests) =>
+    Effect.acquireUseRelease(
+      Scope.make(),
+      (scope) => Effect.flatMap(Layer.buildWithScope(job.layers, scope), (built) =>
+        Effect.provide(job.effect, EffectContext.merge(built, tests))
+      ),
+      (scope, exit) => Scope.close(scope, exit).pipe(Effect.catchCause((cause) => observeOrLog({
+        source: 'framework',
+        handling: 'unhandled',
+        kind: 'defect',
+        error: Cause.squash(cause),
+        metadata: { operation: 'release' },
+      }, 'Releasing a service failed')))
+    )
+  )
 }
 
 const runJobs = new WeakMap<Request, RunJob>()
 const appsWithRunner = new WeakSet<object>()
+
+/**
+ * The Worker's execution context, noting each promise handed to `waitUntil`
+ * in `handed` as well, so a queue message is acknowledged after them.
+ */
+function noting(ctx: ExecutionContext, handed: Promise<unknown>[]): ExecutionContext {
+  const noted = {
+    waitUntil: (promise: Promise<unknown>) => {
+      handed.push(promise)
+      ctx.waitUntil(promise)
+    },
+    passThroughOnException: () => ctx.passThroughOnException(),
+    get props(): unknown {
+      return ctx.props
+    },
+    // The Workers Cache purge API, which the response cache reads from it.
+    get cache(): unknown {
+      return Reflect.get(ctx, 'cache')
+    },
+  }
+
+  return noted
+}
 
 /** A job's value, or its failure thrown, as `run` rejects with it. */
 function jobResult<A>(exit: Exit.Exit<A, unknown>): A {
@@ -567,7 +624,7 @@ export class EffectRouteBuilder<
 
       if (!job) return yield* new NotFoundError({ resource: 'page' })
 
-      const exit = yield* Effect.exit(job.effect)
+      const exit = yield* Effect.exit(withJobLayers(job))
       job.done(exit)
 
       return new Response(null, { status: Exit.isSuccess(exit) ? 204 : 500 })
@@ -679,8 +736,9 @@ export class EffectRouteBuilder<
     runJobs.set(request, {
       // SAFETY: RunCheck admits only Effects whose services this builder's
       // routes provide; the runner route runs with the setup's services and
-      // this builder's layers are provided here.
-      effect: Effect.provide(effect, provided) as Effect.Effect<unknown, unknown, never>,
+      // gives it this builder's layers.
+      effect: effect as Effect.Effect<unknown, unknown, never>,
+      layers: provided,
       done: (exit) => {
         result = exit
       },
@@ -763,19 +821,40 @@ export class EffectRouteBuilder<
 
     return async (batch, env, executionCtx) => {
       for (const message of batch.messages) {
+        const retrying = `Queue message ${message.id} failed; the queue will retry it.`
+        // Its own failure is logged with the job's services, its logger
+        // among them; one found outside it, such as a layer that failed to
+        // build or a purge after it, is logged below.
+        let logged = false
         const work = Effect.flatMap(decode(message.body), (body) => handle(body, message)).pipe(
-          Effect.tapCause((cause) => Effect.logError(`Queue message ${message.id} failed; the queue will retry it.`, cause))
+          Effect.tapCause((cause) => Effect.andThen(Effect.sync(() => {
+            logged = true
+          }), Effect.logError(retrying, cause)))
         )
 
         // SAFETY: decoding adds only a SchemaError, which `run` reports like
         // the handler's own failures; the services are the handler's, which
         // RunCheck admitted.
         const checked = work as Effect.Effect<unknown, unknown, R> & RunCheck<R | Needs, Services>
-
-        await this.run(checked, env, executionCtx).then(
-          () => message.ack(),
-          () => message.retry()
+        // The message is acknowledged once what its work handed waitUntil,
+        // its background work among it, has settled: a Worker that stops
+        // before then leaves it to be retried.
+        const handed: Promise<unknown>[] = []
+        const ran = await this.run(checked, env, executionCtx === undefined ? undefined : noting(executionCtx, handed)).then(
+          () => undefined,
+          (failure: unknown) => ({ failure })
         )
+
+        while (handed.length > 0) await Promise.allSettled(handed.splice(0))
+
+        if (ran === undefined) {
+          message.ack()
+          continue
+        }
+
+        if (!logged) await Effect.runPromise(Effect.logError(retrying, ran.failure))
+
+        message.retry()
       }
     }
   }
@@ -1054,7 +1133,10 @@ export class EffectRouteBuilder<
       const testServices = openWebContext(c).testServices
 
       if (testServices !== undefined) {
-        fullLayer = Layer.provideMerge(Layer.succeedContext(testServices), fullLayer)
+        fullLayer = Layer.provideMerge(
+          Layer.merge(Layer.succeedContext(testServices), Layer.succeed(GivenByTest, testServices)),
+          fullLayer
+        )
       }
 
       let handlerEffect: Effect.Effect<
@@ -1115,14 +1197,19 @@ export class EffectRouteBuilder<
       let response: Response
 
       try {
-        response = await runEffectWithRuntime(handlerEffect, c, routeRuntime)
+        // A job routes.run sent here whose services failed before it ran
+        // rejects with their failure, not with the error page's status.
+        response = await runEffectWithRuntime(handlerEffect, c, routeRuntime, (exit) => {
+          if (Exit.isFailure(exit)) runJobs.get(c.req.raw)?.done(exit)
+        })
+        // The response with every cookie and header the request queued, so
+        // the cache policy below reads what the browser will receive. It is
+        // finished before the background work settles, in a Worker or not:
+        // what that work writes to it after is refused, never dropped.
+        response = holdUntilSent(c, finishResponse(c, response))
       } finally {
         await disposeRequestRuntime(c, routeRuntime)
       }
-
-      // The response with every cookie and header the request queued, so the
-      // cache policy below reads what the browser will receive.
-      response = finishResponse(c, response)
 
       return applyRouteCacheOption(response, cacheOption, {
         method: c.req.method,

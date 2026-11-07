@@ -47,6 +47,7 @@ import { discardUnreadBody } from './effect/body-limit.js'
 import { assertBindingsConfig, type RouteBindingsConfig } from './effect/binding.js'
 import type { PageSchemas } from './effect/pages.js'
 import { keptFrom } from './privacy.js'
+import { isFinished, replacingFinished } from './response-output.js'
 import { withoutSharedCaching } from './effect/response-cache.js'
 
 /** Better Auth-compatible owner for deferred promise work. */
@@ -743,10 +744,15 @@ function sequence<E extends Env>(
 
       let res: Response | void
       let failed = false
+      let called = false
 
       try {
         // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
         res = await middlewares[i](c, async () => {
+          // As compose refuses it: the members after this one run once.
+          if (called) throw new Error('next() called multiple times')
+
+          called = true
           await dispatch(i + 1)
         })
       } catch (error) {
@@ -754,7 +760,23 @@ function sequence<E extends Env>(
 
         // oxlint-disable-next-line no-param-reassign -- Hono records the error a middleware threw on the context, as compose does.
         c.error = error
+
+        // An error page replaces a finished answer whole. Hono builds a
+        // response from the headers the context holds, and its setter copies
+        // the current one's too: that answer's Location, and its cookies, the
+        // flash cookie among them, which would show its messages twice. The
+        // page starts from an empty response instead.
+        const replacing = isFinished(c)
+
+        if (replacing) {
+          // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
+          c.res = undefined
+          // oxlint-disable-next-line no-param-reassign -- Hono middleware replaces c.res to apply the framework's response policy.
+          c.res = new Response(null)
+        }
+
         res = await onError(error, c)
+        res = replacing ? replacingFinished(res) : res
         failed = true
       }
 

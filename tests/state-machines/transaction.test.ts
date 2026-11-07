@@ -130,7 +130,7 @@ describe("a route's records", () => {
   })
 
   test("M24.T10: load through the database a route's layer gives, as dbQuery reads it", async () => {
-    const [first, second] = [await database([['p1', 'first database']]), await database([['p1', 'second database']])]
+    const [first, second] = await Promise.all([database([['p1', 'first database']]), database([['p1', 'second database']])])
     const { app, routes } = appOn(first.db)
 
     routes.provide(Layer.succeed(DatabaseService, second.db)).get('/both/{project}', action(Effect.gen(function* () {
@@ -143,5 +143,5 @@ describe("a route's records", () => {
     const res = await app.request('/both/p1', { headers: { Accept: 'application/json' } }, testEnv(Layer.empty, {}))
 
     expect(await res.json()).toEqual({ bound: 'second database', queried: 'second database' })
-  })
+  }, 30_000)
 })

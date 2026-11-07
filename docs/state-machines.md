@@ -20,7 +20,7 @@ to check a change against them.
 | Flash and a failed form's errors | `src/flash.ts` `flashCookieTable`, `openFlash` | empty, holding, unreadable | the answer actually sent: a page, a redirect, anything else, a prefetch |
 | Purges a route owes | `src/effect/response-cache.ts` `pendingPurgesTable`, `pendingCacheTagsTable` | open with tags and whether a write committed, then settled; a later add is a defect | `purgeCache`, `tagCache`, a committed write, the work's success or failure |
 | `routes.run`, `routes.queue`, `routes.scheduled` | `src/effect/routing.ts` `runJobs`, `failRun`, `run` | registered, done, resolved or rejected; a message acked or retried | the job's exit, its purge |
-| Background work of a request | `src/effect/bridge.ts` `createExecutionContextSupervisor` | idle, pending, draining, drained, disposed | `background()`, `waitUntil`, the runtimes' disposal |
+| Background work of a request | `src/effect/bridge.ts` `createBackgroundSupervisor` | idle, pending, draining, drained, disposed | `background()`, `waitUntil`, the runtimes' disposal |
 | The default page cache | `src/page-cache.ts` | per request: dynamic or not; per URL: stored with a deploy's id | a read of a header, binding or the database; the response |
 | The data cache | `src/cache.ts` `cache`, `cacheGet`, `cacheSet`, `invalidateCacheTags` | an entry fresh, stale or expired; a tag's generation | a read, a store, a purge |
 | The session lookup | `src/effect/auth.ts` `loadUserMiddleware` | the request's user, set once before the action; renewal cookies | the lookup, a renewal, a revocation |
@@ -179,8 +179,7 @@ The models found these, or the inventory did, and the framework keeps them:
 - A chunk a deploy removed fails after the server answered: the page reloads, and
   the flash it took has gone.
 - A job whose purge fails after its writes committed is retried whole, as
-  [background work](background.md) says, so a job must be safe to run twice;
-  a queue message is acked before the `background()` work it started settles.
+  [background work](background.md) says, so a job must be safe to run twice.
 - A value given to `cacheSet` that was read before a write whose purge ran
   before `cacheSet` is stored as current, until its `ttl`. Given the Effect
   that reads it instead, `cacheSet` keeps no value a purge during the read
@@ -189,9 +188,5 @@ The models found these, or the inventory did, and the framework keeps them:
   write's purge keeps the old page in Workers Cache until its `maxAge`.
   `cache` refuses such an entry by its tags' generations; Workers Cache
   answers before the Worker runs.
-- A promise a request service hands to `waitUntil` as its scope closes,
-  after the request's background work has drained, is kept alive, but its
-  failure is reported nowhere: the runtime whose observer would report it is
-  gone by then.
 - A signed application cookie's signature covers its name and value, not its
   expiry, so a copied value stays valid after its `Max-Age`.

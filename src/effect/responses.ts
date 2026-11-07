@@ -264,7 +264,9 @@ export type FileBody<E, R> =
 
 /**
  * Return a file: an export, a feed or stored media. A Stream body is sent as
- * it is produced; a failure after the response has started ends the body.
+ * it is produced, with the action's services held until it ends or the
+ * client stops reading; a failure after the response has started ends the
+ * body and reaches the error observer.
  *
  * @example
  * return yield* file(Stream.fromIterable(rows).pipe(Stream.map(toCsvLine)), {
@@ -300,8 +302,19 @@ export function file<E = never, R = never>(
       headers.set('Content-Security-Policy', 'sandbox')
     }
 
+    // A Stream's failure after the answer started can only end the body, so
+    // it is reported; a client that stops reading is no failure.
     const content = Stream.isStream(body)
-      ? yield* Stream.toReadableStreamEffect(body.pipe(Stream.map(toBytes)))
+      ? yield* Stream.toReadableStreamEffect(body.pipe(
+        Stream.map(toBytes),
+        Stream.tapCause((cause) => Cause.hasInterruptsOnly(cause) ? Effect.void : observeOrLog({
+          source: 'user',
+          handling: 'unhandled',
+          kind: Cause.hasFails(cause) ? 'failure' : 'defect',
+          error: Cause.squash(cause),
+          metadata: { operation: 'file' },
+        }, 'A streamed body failed after its answer started'))
+      ))
       : body
 
     // A stream may read the request's body as it is sent, so that is left to it.

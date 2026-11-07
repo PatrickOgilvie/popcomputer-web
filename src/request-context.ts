@@ -94,6 +94,12 @@ export interface WebRequestContext<E extends Env = Env> {
    * Removed in 2.0.
    */
   runtime?: ManagedRuntime.ManagedRuntime<never, Config.ConfigError>
+  /**
+   * effectBridge() — the request's own services as a runtime, built when a
+   * report first needs one, as when the route's layers failed; undefined
+   * once they are released.
+   */
+  requestRuntime?: () => ManagedRuntime.ManagedRuntime<never, Config.ConfigError> | undefined
   /** setupWeb() / effectBridge() — owns detached request work and teardown. */
   backgroundSupervisor?: BackgroundSupervisor
   /** effectBridge() — bridge config for downstream route handlers */
