@@ -157,6 +157,11 @@ export interface WebRequestContext<E extends Env = Env> {
    * goes back to when the request names no page of this site as its Referer.
    */
   formPage?: string
+  /**
+   * The route's registration: the most bytes its body may have, from its
+   * action's `form(Schema, { bodyLimit })`, before setupWeb's `bodyLimit`.
+   */
+  routeBodyLimit?: number
   /** response-output.ts — whether the response has been finished with what the request queued. */
   output?: { finished: boolean }
   /** Application cookies an action set, which finishing the response writes. */

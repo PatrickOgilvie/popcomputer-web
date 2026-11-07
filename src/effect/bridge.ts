@@ -46,7 +46,7 @@ import type { RouteBindingsConfig } from './binding.js'
 import type { DeclaredFields, PageSchemas } from './pages.js'
 import { observeOrLog } from './error-observer.js'
 import { reportRelease, reportThrough, type ReportingRuntime } from './report.js'
-import { isStreamedAsRead, readBody, streamsAsRead } from './body-limit.js'
+import { BodyTooLarge, DEFAULT_BODY_LIMIT, isStreamedAsRead, readBody, streamsAsRead } from './body-limit.js'
 import { setupOf, WebSetupService } from '../web-setup.js'
 import { queueCookie, queueHeader, refuseAfterFinish } from '../response-output.js'
 
@@ -108,20 +108,51 @@ export interface EffectBridgeConfig<E extends Env, CustomServices = never> {
 // The per-request runtime, bridge config, and binding schema live in the
 // typed request context (see request-context.ts).
 
+/** The most bytes the route's body may have: its action's form's, else setupWeb's. */
+function routeBodyLimit<E extends Env>(c: HonoContext<E>): number {
+  return openWebContext(c).routeBodyLimit ?? setupOf(c).bodyLimit ?? DEFAULT_BODY_LIMIT
+}
+
+/** The body kinds HonoRequest keeps in its body cache, which another reader may have read. */
+const READ_BODIES = ['arrayBuffer', 'text', 'blob', 'json', 'formData'] as const
+
 /**
- * Read the body into Hono's body cache within `limit` bytes, so its json()
- * and parseBody() parse that copy and a later read reuses it. A body already
- * read, by Hono middleware or an earlier read, is kept as it is.
+ * The request's body, read once into Hono's body cache, so its json() and
+ * parseBody() parse that copy and a later read reuses it, and checked against
+ * `limit`: each reader is held to its own limit, and the first cannot choose
+ * the read's, which is the route's unless it asks for more. A body Hono
+ * middleware read before is measured, and held to the limit too.
  */
-function readBodyWithin<E extends Env>(c: HonoContext<E>, limit: number): void {
-  const cache = c.req.bodyCache
-
-  if (Object.keys(cache).length > 0) return
-
+function bodyWithin<E extends Env>(c: HonoContext<E>, limit: number): Promise<void> {
   // HonoRequest keeps each body read's promise in bodyCache and reads the
   // other kinds from it (#cachedBody), though its type names the values.
-  Object.assign(cache, { arrayBuffer: readBody(c.req.raw, limit) })
+  const cache = c.req.bodyCache
+  const cached = (kind: (typeof READ_BODIES)[number]): Promise<unknown> | undefined => {
+    const value: unknown = Reflect.get(cache, kind)
+
+    return value instanceof Promise ? value : undefined
+  }
+
+  if (cached('arrayBuffer') === undefined) {
+    const read = READ_BODIES.find((kind) => cached(kind) !== undefined)
+    const earlier = read === undefined ? undefined : cached(read)
+
+    Object.assign(cache, {
+      arrayBuffer: earlier === undefined
+        ? readBody(c.req.raw, Math.max(limit, routeBodyLimit(c)))
+        // A parsed body, as a json key would hold, is measured as its JSON.
+        : earlier.then((body) => new Response(isBodyInit(body) ? body : JSON.stringify(body)).arrayBuffer()),
+    })
+  }
+
+  return Promise.resolve(cached('arrayBuffer')).then((bytes) => {
+    if (bytes instanceof ArrayBuffer && bytes.byteLength > limit) throw new BodyTooLarge({ limit })
+  })
 }
+
+/** Whether a body another reader read is one a Response can hold as it is. */
+const isBodyInit = (body: unknown): body is BodyInit =>
+  typeof body === 'string' || body instanceof ArrayBuffer || body instanceof Blob || body instanceof FormData
 
 /**
  * Create a RequestContext from Hono context.
@@ -131,7 +162,6 @@ function createRequestContext<E extends Env>(
 ): RequestContext<NonNullable<E['Bindings']>> {
   // SAFETY: Hono supplies c.env from the route Env; the empty object is used only when that optional binding bag is absent.
   const env = (c.env ?? {}) as NonNullable<E['Bindings']>
-  const { bodyLimit } = setupOf(c)
 
   return {
     method: c.req.method,
@@ -151,28 +181,23 @@ function createRequestContext<E extends Env>(
     },
     query: () => c.req.query(),
     queries: () => c.req.queries(),
-    json: (options): Promise<unknown> => {
-      readBodyWithin(c, options?.bodyLimit ?? bodyLimit)
-
-      return c.req.json()
-    },
+    json: (options): Promise<unknown> => bodyWithin(c, options?.bodyLimit ?? routeBodyLimit(c)).then(() => c.req.json()),
     // The raw request carries every header, and Cloudflare's `cf` data.
     raw: () => {
       markPageDynamic(c)
 
       return c.req.raw
     },
-    parseBody: (options) => {
-      readBodyWithin(c, options?.bodyLimit ?? bodyLimit)
-
-      return c.req.parseBody({ all: true })
-    },
+    parseBody: (options) => bodyWithin(c, options?.bodyLimit ?? routeBodyLimit(c)).then(() => c.req.parseBody({ all: true })),
     header: (name: string) => {
       markPageDynamic(c)
 
       return c.req.header(name)
     },
-    bodyLimit,
+    // The route's, read when a reader asks, after the route's facts are set.
+    get bodyLimit() {
+      return routeBodyLimit(c)
+    },
   }
 }
 

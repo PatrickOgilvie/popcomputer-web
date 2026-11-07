@@ -278,6 +278,8 @@ interface BuilderUse {
  */
 interface AppRoutes {
   readonly rows: RouteRow[]
+  /** Each row's facts, in registration order, which setupWeb's members find by path. */
+  readonly facts: Array<{ readonly row: RouteRow; readonly apply: RouteFacts }>
   readonly derived: BuilderUse[]
   served: boolean
   /** The dropped builder's error, null once the first request found none. */
@@ -292,7 +294,7 @@ function routesOfApp<E extends Env>(app: Hono<E>): AppRoutes {
 
   if (existing !== undefined) return existing
 
-  const state: AppRoutes = { rows: [], derived: [], served: false, dropped: undefined }
+  const state: AppRoutes = { rows: [], facts: [], derived: [], served: false, dropped: undefined }
 
   appRoutes.set(app, state)
   app.use('*', (_c, next) => {
@@ -305,6 +307,62 @@ function routesOfApp<E extends Env>(app: Hono<E>): AppRoutes {
   })
 
   return state
+}
+
+/**
+ * What a request to a route needs known before the route's own middleware
+ * runs, or anything before it fails: whether it answers JSON, the page its
+ * form is on, and the most its body may have. Given the route's params.
+ */
+type RouteFacts = <E extends Env>(c: HonoContext<E>, params: Readonly<Record<string, string>>) => void
+
+
+function routeFactsOf(route: RouteRow, registry: RouteRegistry): RouteFacts {
+  // The page this route's form is on, which the first request looks up once
+  // every route is registered, and keeps, none included.
+  let formPage: { readonly page: string | null } | undefined
+
+  return <E extends Env>(c: HonoContext<E>, params: Readonly<Record<string, string>>) => {
+    const context = openWebContext(c)
+
+    if (route.answers === 'json') context.jsonApi = true
+
+    if (c.req.method !== 'GET') {
+      formPage ??= { page: registry.formPageOf(route) ?? null }
+
+      if (formPage.page !== null) context.formPage = fillPlaceholders(formPage.page, params)
+    }
+
+    context.routeBodyLimit = route.input?.options.bodyLimit
+  }
+}
+
+/** Whether a route registered for `registered` answers a request's `method`. */
+const answersMethod = (registered: string, method: string): boolean =>
+  registered === method || registered === 'all'
+
+/** A concrete path's params under a Hono pattern that `patternMatches` matched. */
+function paramsOf(pattern: string, path: string): Record<string, string> {
+  const target = path.split('/')
+
+  return Object.fromEntries(pattern.split('/').flatMap((segment, index) =>
+    segment.startsWith(':') ? [[segment.slice(1), decodeURIComponent(target[index] ?? '')]] : []
+  ))
+}
+
+/**
+ * Set the facts of the route a request is for, found by matching its path
+ * against the route table in registration order, as Hono does: for the
+ * members of setupWeb's middleware, which run before the route is matched.
+ *
+ * @internal
+ */
+export function applyRouteFactsByPath<E extends Env>(app: Hono<E>, c: HonoContext<E>): void {
+  const method = c.req.method.toLowerCase()
+  const path = c.req.path
+  const found = appRoutes.get(app)?.facts.find(({ row }) => answersMethod(row.method, method) && patternMatches(row.fullPath, path))
+
+  found?.apply(c, paramsOf(found.row.fullPath, path))
 }
 
 /** The error for the first derived builder nothing registered on, or null. */
@@ -1165,34 +1223,19 @@ export class EffectRouteBuilder<
   ): MiddlewareHandler<E> {
     const layers = this.layers
     const bridgeConfig = this.bridgeConfig
-    const registry = this.registry
     const bindings = [...route.bindings]
     const cacheOption = route.cache === 'default' ? undefined : route.cache
-    // The page this route's form is on, which the first request looks up
-    // once every route is registered, and keeps, none included.
-    let formPage: { readonly page: string | null } | undefined
-    const formPageOf = (): string | null => {
-      formPage ??= { page: registry.formPageOf(route) ?? null }
-
-      return formPage.page
-    }
     // Dev-only observability for an ineffective `cache` option:
     // once per route (this handler closure), not once per request.
     let warnedIneffectiveCache = false
 
     const allowsDefaultPageCache = route.pageCache
-    const answersJson = route.answers === 'json'
 
     const routeModelsOf = routeModelsOnce<E>(bindings, route.params, bridgeConfig)
 
     // oxlint-disable-next-line effecttsgo/async-function -- This Hono adapter awaits request parsing and runtime completion, then maps the result to an HTTP response.
     return async (c) => {
       setEffectBridgeConfig(c, bridgeConfig)
-
-      if (answersJson) openWebContext(c).jsonApi = true
-
-      const page = c.req.method === 'GET' ? null : formPageOf()
-      if (page !== null) openWebContext(c).formPage = fillPlaceholders(page, c.req.param())
 
       if (allowsDefaultPageCache) {
         allowDefaultPageCache(c)
@@ -1452,28 +1495,34 @@ export class EffectRouteBuilder<
     // Register with Hono - apply middlewares before the Effect handler
     const created = this.createHandler(effect, route)
     const handler = isForAnyVisitor(effect) ? handlerForAnyVisitor(created) : created
+    const facts = routeFactsOf(route, this.registry)
+    // The route's facts, before its own middleware: one that fails, as a
+    // jsonApi route's key check or a form's, answers as the route does.
+    const leading: MiddlewareHandler<E> = (c, next) => {
+      facts(c, c.req.param())
 
-    if (this.middlewares.length > 0) {
-      // SAFETY: The method is selected from the finite Hono routing-method union and every supplied handler uses the builder's Env.
-      const register = this.app[method] as (
-        path: string,
-        ...handlers: MiddlewareHandler<E>[]
-      ) => void
-
-      // Route middleware reads the request through the observed context, so
-      // a header it decides from, such as an API key, keeps a cached route's
-      // response out of shared caches, as RequestService's reads do.
-      const observed = this.middlewares.map(
-        (middleware): MiddlewareHandler<E> => (c, next) => middleware(observedRequestContext(c), next)
-      )
-
-      register(fullPath, ...observed, handler)
-    } else {
-      this.app[method](fullPath, handler)
+      return next()
     }
+
+
+    // SAFETY: The method is selected from the finite Hono routing-method union and every supplied handler uses the builder's Env.
+    const register = this.app[method] as (
+      path: string,
+      ...handlers: MiddlewareHandler<E>[]
+    ) => void
+
+    // Route middleware reads the request through the observed context, so
+    // a header it decides from, such as an API key, keeps a cached route's
+    // response out of shared caches, as RequestService's reads do.
+    const observed = this.middlewares.map(
+      (middleware): MiddlewareHandler<E> => (c, next) => middleware(observedRequestContext(c), next)
+    )
+
+    register(fullPath, leading, ...observed, handler)
 
     this.registry.add(route)
     appTable.rows.push(route)
+    appTable.facts.push({ row: route, apply: facts })
   }
 
   /** Register a GET route. Supports Laravel-style route model binding: /projects/{project} */

@@ -77,7 +77,11 @@ instead of a closed connection; so is a body nothing reads, such as one posted
 to a missing page, unless a response `file()` streams may read it. An action
 whose form uploads files raises it past their `maxBytes`,
 `form(ReceiptForm, { bodyLimit: 6_000_000 })`, as `ReceiptForm`
-below needs. Headers and the
+below needs. That limit is the route's: the body is read once, within it,
+whoever reads first, a guard or middleware included, and each read is held
+to its own limit, so one may ask for less. Declared on the form, it holds
+for every reader; `validateRequest`'s `bodyLimit` raises it only when that
+read comes first. Headers and the
 raw body, such as an `Idempotency-Key` or a webhook signature, are read from
 `RequestService`'s `header()` and `raw()`.
 

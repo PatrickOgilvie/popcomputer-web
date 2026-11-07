@@ -26,6 +26,7 @@ import { checkEnv, EnvInvalid, type EnvDeclaration } from './env.js'
 import { useSetup, webSetup } from './web-setup.js'
 import {
   EffectRouteBuilder,
+  applyRouteFactsByPath,
   assertUnsetApp,
   declareAppBindings,
   declareAppJobs,
@@ -432,7 +433,7 @@ export function setupWeb<
   const services: ServiceSlots<E> = {}
   let servicesGiven = false
 
-  const { middleware, prepareJob } = createSetupMiddleware(config, services)
+  const { middleware, prepareJob } = createSetupMiddleware(config, services, app)
 
   app.use('*', middleware)
   declareAppJobs(app, prepareJob)
@@ -515,7 +516,8 @@ function createSetupMiddleware<
   config: WebSetupConfig<
     E, DB, Auth, User, PublicUser, Schema, RouteBindings, Pages, SharedFields, FlashFields
   >,
-  services: ServiceSlots<E>
+  services: ServiceSlots<E>,
+  app: Hono<E>
 ): SetupMiddleware<E> {
   const webConfig: WebConfig = {
     version: config.version,
@@ -637,6 +639,9 @@ function createSetupMiddleware<
     // oxlint-disable-next-line effecttsgo/async-function -- Hono middleware and renderer contracts use native next()/Response promises; typed Effect work stays inside that request boundary.
     async (c, next) => {
       useSetup(c, setup)
+      // The route's facts, found by its path, for every member before the
+      // route: the origin check answers a JSON route in JSON.
+      applyRouteFactsByPath(app, c)
 
       await next()
 
