@@ -22,6 +22,7 @@
 
 import { Predicate, Context, Data, Effect, Option, Schema as S } from 'effect'
 import { invalidateCacheTags } from '../cache.js'
+import { cell, type Table } from '../machine.js'
 import { HEADERS } from '../types.js'
 import { setsRecipientState } from '../response-output.js'
 import { createStructuredError, ErrorCodes } from './error-catalog.js'
@@ -560,6 +561,59 @@ export class PendingPurges extends Context.Service<
   }
 >()('@popcomputer/web/PendingPurges') {}
 
+type PendingTags = Data.TaggedEnum<{
+  /** Tags are added. */
+  Open: { readonly tags: ReadonlySet<string> }
+  /** What was added has been handed over, to purge or to tag a response with. */
+  Taken: {}
+}>
+
+type PendingTagsEvent = Data.TaggedEnum<{
+  Add: { readonly tags: ReadonlyArray<string> }
+  Take: {}
+}>
+
+const PendingTags = Data.taggedEnum<PendingTags>()
+const PendingTagsEvent = Data.taggedEnum<PendingTagsEvent>()
+
+const pendingTagsTable = (lateAdd: string, secondTake: string): Table<PendingTags, PendingTagsEvent, ReadonlyArray<string>> => ({
+  Open: {
+    Add: { to: 'Open', run: (state, event) => [PendingTags.Open({ tags: new Set([...state.tags, ...event.tags]) }), []] },
+    Take: { to: 'Taken', run: (state) => [PendingTags.Taken(), [...state.tags]] },
+  },
+  Taken: {
+    Add: { refuse: lateAdd },
+    Take: { refuse: secondTake },
+  },
+})
+
+/** The purges a piece of work owes. */
+export const pendingPurgesTable = pendingTagsTable(
+  'The work it belongs to has finished, so nothing would purge it. Give work that outlives its action to background().',
+  'A piece of work\'s purges are taken once, when it has succeeded.'
+)
+
+/** The tags a response a route stores carries. */
+export const pendingCacheTagsTable = pendingTagsTable(
+  'Its route has stored the response, so it would tag nothing. Tag the response in the action, before it answers.',
+  'A response\'s cache tags are taken once, when its route stores it.'
+)
+
+/** An empty set of tags, moved by its table: a refused move is a defect in the code that made it. */
+function pendingTags(table: typeof pendingPurgesTable, helper: string) {
+  const pending = cell(table, PendingTags.Open({ tags: new Set() }))
+
+  return {
+    add: (added: readonly string[]): Effect.Effect<void> => pending.send(PendingTagsEvent.Add({ tags: added })).pipe(
+      Effect.asVoid,
+      Effect.catchTag('Refused', (refused) => Effect.die(new Error(`${helper}(${added.join(', ')}): ${refused.because}`)))
+    ),
+    take: pending.send(PendingTagsEvent.Take()).pipe(
+      Effect.catchTag('Refused', (refused) => Effect.die(new Error(refused.because)))
+    ),
+  }
+}
+
 /**
  * An empty set of pending purges, for one request or one piece of detached
  * work. It is taken once, when the work it belongs to has succeeded: a tag
@@ -567,19 +621,7 @@ export class PendingPurges extends Context.Service<
  * adding one is a defect.
  */
 export function makePendingPurges(): PendingPurges['Service'] {
-  const tags = new Set<string>()
-  let taken = false
-
-  return PendingPurges.of({
-    add: (added) => taken
-      ? Effect.die(new Error(`purgeCache(${added.join(', ')}) was called after the work it belongs to had finished, so nothing would purge it. Give work that outlives its action to background().`))
-      : Effect.sync(() => added.forEach((tag) => tags.add(tag))),
-    take: Effect.sync(() => {
-      taken = true
-
-      return [...tags]
-    }),
-  })
+  return PendingPurges.of(pendingTags(pendingPurgesTable, 'purgeCache'))
 }
 
 /** The cache tags an action added to the response it caches. The route provides it per request. */
@@ -597,19 +639,7 @@ export class PendingCacheTags extends Context.Service<
  * outlived the action, would tag nothing, so adding one is a defect.
  */
 export function makePendingCacheTags(): PendingCacheTags['Service'] {
-  const tags = new Set<string>()
-  let taken = false
-
-  return PendingCacheTags.of({
-    add: (added) => taken
-      ? Effect.die(new Error(`tagCache(${added.join(', ')}) was called after its route had stored the response, so it would tag nothing. Tag the response in the action, before it answers.`))
-      : Effect.sync(() => added.forEach((tag) => tags.add(tag))),
-    take: Effect.sync(() => {
-      taken = true
-
-      return [...tags]
-    }),
-  })
+  return PendingCacheTags.of(pendingTags(pendingCacheTagsTable, 'tagCache'))
 }
 
 /**

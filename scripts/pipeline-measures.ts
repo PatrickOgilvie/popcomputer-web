@@ -117,6 +117,11 @@ const measures: ReadonlyArray<readonly [string, number | string]> = [
   ['async in src/effect', count(/\basync\b/g, inEffect)],
   ['Reflect.get in src/', count(/Reflect\.get\(/g)],
   ['oxlint-disable in src/', count(/oxlint-disable/g)],
+  // How much of the state is explicit.
+  ['machines with a Table', readFileSync(join(root, 'scripts', 'machine-docs.ts'), 'utf8').match(/source: 'src\//g)?.length ?? 0],
+  ['WeakMap and WeakSet in the runtime', count(/new Weak(?:Map|Set)\b/g, (path) => !/^src\/(?:testing|test-|fuzz|mutate)/.test(path))],
+  ['background supervisors and trackers', count(/^(?:export )?function create\w*(?:Supervisor|Tracker)\b/gm)],
+  ['hand-written language scanners', ['src/fence/shell.ts', 'src/fence/debt.ts'].filter((path) => /\bregexAllowed\b|class Reader\b/.test(text(path))).length],
 ]
 
 const width = Math.max(...measures.map(([name]) => name.length))
