@@ -12,9 +12,10 @@
  * driver reports them, its columns; anything else fails with `DatabaseError`.
  */
 
-import { Cause, Effect, Exit, Result, Schema as S } from 'effect'
+import { Cause, Context, Data, Effect, Exit, Option, Result, Schema as S } from 'effect'
 import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core'
 import type { SQLiteRaw } from 'drizzle-orm/sqlite-core/query-builders/raw'
+import { cell, type MachineCell, type Table } from '../machine.js'
 import { DatabaseService, type DatabaseType } from './services.js'
 import { DatabaseConstraintViolation, DatabaseError, ValidationError } from './errors.js'
 
@@ -93,7 +94,10 @@ export function dbMutation<A>(
  * is the transaction, so every `dbQuery` and `dbMutation` the Effect runs,
  * including those of the services it calls, takes part. The transaction
  * commits when the Effect succeeds; when it fails, the transaction rolls back
- * and the Effect's own failure, typed, is the result.
+ * and the Effect's own failure, typed, is the result. On Postgres a statement
+ * that fails ends the transaction even if the Effect catches it, and the
+ * result is a DatabaseError: put a statement that may fail in a nested
+ * `dbTransaction`, which can fail alone.
  *
  * Needs a driver whose transactions are asynchronous, such as Postgres, MySQL
  * or libsql: Cloudflare D1 and synchronous drivers are a type error. Use
@@ -118,12 +122,24 @@ export function dbTransaction<A, E, R>(
 
     const outcome = yield* Effect.tryPromise({
       try: (signal) =>
-        transactional.transaction((tx) =>
-          Effect.runPromiseExitWith(context)(
-            Effect.provideService(transaction, DatabaseService, tx),
+        transactional.transaction((tx) => {
+          const open = cell(transactionTable, Transaction.Open())
+
+          return Effect.runPromiseExitWith(context)(
+            transaction.pipe(
+              Effect.provideService(DatabaseService, tx),
+              Effect.provideService(OpenTransaction, abortsOnFailure(tx) ? Option.some(open) : Option.none()),
+              // A failure the Effect caught leaves a transaction Postgres will
+              // not commit: COMMIT would roll back and report nothing.
+              Effect.tap(() => Effect.flatMap(open.send(TransactionEvent.Finish()), (statement) =>
+                Option.isSome(statement)
+                  ? Effect.fail(new DatabaseError({ operation: 'transaction', cause: new Error(ABORTED, { cause: statement.value }) }))
+                  : Effect.void
+              ))
+            ),
             { signal }
           ).then((exit) => Exit.isSuccess(exit) ? exit.value : Promise.reject(new RolledBack(exit.cause)))
-        ),
+        }),
       catch: (cause) => cause,
     }).pipe(Effect.result)
 
@@ -138,6 +154,49 @@ export function dbTransaction<A, E, R>(
 
     return yield* classifyFailure(outcome.failure, 'transaction')
   }).pipe(Effect.withSpan(SPANS.transaction))
+}
+
+type Transaction = Data.TaggedEnum<{
+  /** No statement has failed. */
+  Open: {}
+  /** One has, and the database will not commit what came before it. */
+  Poisoned: { readonly cause: unknown }
+}>
+
+type TransactionEvent = Data.TaggedEnum<{
+  StatementFailed: { readonly cause: unknown }
+  /** The Effect succeeded, so the driver is about to commit. */
+  Finish: {}
+}>
+
+const Transaction = Data.taggedEnum<Transaction>()
+const TransactionEvent = Data.taggedEnum<TransactionEvent>()
+
+/** What a transaction does with a failed statement: the output is the failure that stops it committing. */
+export const transactionTable: Table<Transaction, TransactionEvent, Option.Option<unknown>> = {
+  Open: {
+    StatementFailed: { to: 'Poisoned', run: (_, { cause }) => [Transaction.Poisoned({ cause }), Option.none()] },
+    Finish: { ignore: 'nothing failed, so it commits', output: Option.none() },
+  },
+  Poisoned: {
+    StatementFailed: { ignore: 'the first failure is the one to report', output: Option.none() },
+    Finish: { to: 'Poisoned', run: (state) => [state, Option.some(state.cause)] },
+  },
+}
+
+/** The transaction the running Effect is in, where a failed statement stops it committing. */
+const OpenTransaction = Context.Reference<Option.Option<MachineCell<Transaction, TransactionEvent, Option.Option<unknown>>>>(
+  '@popcomputer/web/OpenTransaction',
+  { defaultValue: () => Option.none() }
+)
+
+const ABORTED = 'A statement failed inside this transaction, and Postgres will not commit it: COMMIT would undo every write and report success. Let the failure end the transaction, or put the statement in a nested dbTransaction, which can fail alone.'
+
+/** Whether a failed statement aborts this transaction, as on Postgres; SQLite and MySQL go on. */
+function abortsOnFailure(tx: object): boolean {
+  const dialect: unknown = Reflect.get(tx, 'dialect')
+
+  return dialect instanceof Object && Reflect.get(dialect.constructor, Symbol.for('drizzle:entityKind')) === 'PgDialect'
 }
 
 /** Carries a failed transaction Effect's cause out of the driver's rollback. */
@@ -409,12 +468,16 @@ function run<A, E>(
 ): Effect.Effect<Awaited<A>, E, DatabaseService> {
   return Effect.gen(function* () {
     const db = yield* DatabaseService
+    const open = yield* OpenTransaction
 
     return yield* Effect.tryPromise({
       // oxlint-disable-next-line effecttsgo/async-function -- Drivers return promises, thenable query builders or plain values; awaiting one normalizes all three at this adapter seam.
       try: async (): Promise<Awaited<A>> => await execute(db),
       catch: (cause) => cause,
-    }).pipe(Effect.catch(classify))
+    }).pipe(
+      Effect.tapError((cause) => Option.isSome(open) ? Effect.ignore(open.value.send(TransactionEvent.StatementFailed({ cause }))) : Effect.void),
+      Effect.catch(classify)
+    )
   }).pipe(Effect.withSpan(SPANS[operation]))
 }
 

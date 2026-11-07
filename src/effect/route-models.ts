@@ -136,8 +136,9 @@ export function routeModelsLayer(request: RouteModelsRequest) {
     const lock = Semaphore.makeUnsafe(1)
 
     // The first `count` of the route's models, after any loaded already. They
-    // load through the request's DatabaseService, so a database a test gives
-    // with testEnv serves bound() as it serves dbQuery. The signed-in user,
+    // load through the DatabaseService the caller is on, so a database a test
+    // gives with testEnv or a route's layer gives serves bound() as it serves
+    // dbQuery, and a first read inside a transaction takes part in it. The signed-in user,
     // whose id a binding only its owner may load is looked up by, is read
     // when they load, so a layer the route provides, such as an API key's,
     // has given it.
@@ -145,13 +146,15 @@ export function routeModelsLayer(request: RouteModelsRequest) {
       lock.withPermits(1)(Effect.gen(function* () {
         if (route.configuredBindings === undefined || modelBindings.length === 0) return { models: new Map(), recordTags: [] }
         if (loading.rows.size >= count) return { models: loading.models, recordTags: [...loading.recordTags] }
-        if (Option.isNone(database)) return yield* ConfigurationError.databaseNotConfigured()
+        const current = Option.orElse(yield* Effect.serviceOption(DatabaseService), () => database)
+
+        if (Option.isNone(current)) return yield* ConfigurationError.databaseNotConfigured()
 
         const signedIn = yield* Effect.serviceOption(AuthUserService)
         const plan = yield* route.plan
 
         yield* loadRecords(plan.slice(0, count), param, userIdOf(signedIn), loading).pipe(
-          Effect.provideService(DatabaseService, database.value)
+          Effect.provideService(DatabaseService, current.value)
         )
 
         return { models: loading.models, recordTags: [...loading.recordTags] }

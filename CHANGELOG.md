@@ -19,11 +19,13 @@ What an application with `auth.signInLimits`, or a `database` factory that reads
 
 ### Security
 
+- A statement that failed inside `dbTransaction` on Postgres, where the Effect caught the failure, returned success with every write gone. Postgres aborts the transaction, and its COMMIT then rolls back and reports nothing. Now the transaction fails with a `DatabaseError`. A statement that may fail belongs in a nested `dbTransaction`, which can fail alone.
 - A partial reload after the session changed left one person's data in the next person's history. The answer took the new visitor's version, the client merged it over the old visitor's props, and Back then showed those props without asking the server. A partial reload from a visitor the page did not go to now answers the 409 that reloads the page in full.
 - `betterAuthHandler`'s `settable` check fails closed. It read the user fields a visitor may set from `auth.options`, which a wrapper that loads Better Auth on first use does not have, so it found none and refused nothing: through such a wrapper, sign-up and update-user stored any `input: true` or plugin user field, as the Stripe plugin's `stripeCustomerId` was on an application upgrading to 1.13.2. It now reads Better Auth's options from the instance or from the `$context` a wrapper forwards, and a request that writes user fields answers 500, naming the fix, when it can read neither. The sign-in limits, which read the same options for Better Auth's rate-limit storage and the username plugin's normalizer, refuse a call they count in the same case. `tests/better-auth/seam.test.ts` and `tests/effect/sign-in-limits.test.ts` cover both, and fail on the code before.
 
 ### Fixed
 
+- The first `bound()` inside `dbTransaction` no longer hangs on PGlite, and takes part in the transaction elsewhere. A route's records loaded through the request's database, not the one the caller was on, so they also ignored a database a route's layer provides.
 - The flash cookie moves on the answer actually sent. A page an action rendered and then dropped took the flash and the history's clear, and the page that answered showed neither. Now a redirect after it carries them on, and an error page shows them.
 - A flash survives any answer that is not a page, as it did a redirect. JSON, plain text and a 204 dropped it, and an Inertia redirect to another site did too. Such an answer now leaves the cookie alone, so it no longer repeats `Set-Cookie` and `no-store` on every answer while the history's clear waits for a page.
 - A form too large for the flash cookie keeps as many field errors as fit, in order, with a form error saying the rest could not be shown. Past 69 fields of a typical size the next page had no errors at all.

@@ -6,7 +6,10 @@ event id for a webhook. A write that would break one fails with
 `DatabaseConstraintViolation`, whose `constraint` says which kind
 (`'unique'`, `'check'`, `'foreign-key'`, `'not-null'`, `'exclusion'`,
 `'trigger'`) and `constraintName` which one, and the whole `dbTransaction`,
-or the whole `dbBatch` on Cloudflare D1, is undone. A rule no `CHECK` or
+or the whole `dbBatch` on Cloudflare D1, is undone. On Postgres that holds even when
+the Effect catches the failure: the transaction fails with a `DatabaseError`, since
+Postgres will not commit it. Put a statement that may fail in a nested `dbTransaction`,
+which can fail alone. A rule no `CHECK` or
 unique index can state, such as no two interviews of one interviewer
 overlapping, is an exclusion constraint on Postgres (`EXCLUDE USING gist`,
 which on a text or uuid column needs `CREATE EXTENSION IF NOT EXISTS

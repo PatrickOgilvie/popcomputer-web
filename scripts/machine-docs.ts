@@ -6,6 +6,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { transactionTable } from '../src/effect/database.js'
 import { pendingCacheTagsTable, pendingPurgesTable } from '../src/effect/response-cache.js'
 import { flashCookieTable } from '../src/flash.js'
 import { rows, type TableRow } from '../src/machine.js'
@@ -20,6 +21,7 @@ const END = '<!-- machine tables end -->'
 /** Every machine whose table is the code. */
 const machines: ReadonlyArray<{ readonly name: string; readonly source: string; readonly rows: ReadonlyArray<TableRow> }> = [
   { name: 'The flash cookie', source: 'src/flash.ts', rows: rows(flashCookieTable) },
+  { name: 'A transaction', source: 'src/effect/database.ts', rows: rows(transactionTable) },
   { name: 'Purges a piece of work owes', source: 'src/effect/response-cache.ts', rows: rows(pendingPurgesTable) },
   { name: 'Tags a stored response carries', source: 'src/effect/response-cache.ts', rows: rows(pendingCacheTagsTable) },
 ]

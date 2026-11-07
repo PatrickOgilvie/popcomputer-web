@@ -55,6 +55,17 @@ state, and a refused one says why.
 | Unreadable | `Other` | Empty or Holding | ok |
 | Unreadable | `Prefetch` | Unreadable or Holding | ok |
 
+### A transaction
+
+`src/effect/database.ts`
+
+| State | Event | Moves to | Mark |
+|---|---|---|---|
+| Open | `StatementFailed` | Poisoned | ok |
+| Open | `Finish` | Open | ignored: nothing failed, so it commits |
+| Poisoned | `StatementFailed` | Poisoned | ignored: the first failure is the one to report |
+| Poisoned | `Finish` | Poisoned | ok |
+
 ### Purges a piece of work owes
 
 `src/effect/response-cache.ts`
