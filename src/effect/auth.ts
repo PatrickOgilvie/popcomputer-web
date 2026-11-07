@@ -26,7 +26,8 @@ import {
   type BetterAuthActionError,
 } from './better-auth-boundary.js'
 import { openWebContext } from '../request-context.js'
-import { sessionCookies } from '../session-cookies.js'
+import { cookieNames, sessionCookies, setCookieName, withoutBrowserPrefix } from '../session-cookies.js'
+import { answersAnyVisitor, forAnyVisitor, Visitor } from '../visitor.js'
 import { WebSetupService } from '../web-setup.js'
 import { queueSessionLookupCookies } from '../response-output.js'
 import { BodyTooLarge, DEFAULT_BODY_LIMIT, formatBytes, readBody } from './body-limit.js'
@@ -308,11 +309,25 @@ export interface LoadUserConfig {
    * registers as `auth.session` when it declares another.
    */
   readonly session?: S.Codec<AuthUser, unknown, never, never>
+  /**
+   * `'trusted'` reads a session from Better Auth's `session.cookieCache` for
+   * its `maxAge`, and accepts that a session ended since still reads as
+   * signed in. By default the session store is asked, so a sign-out, a ban or
+   * a password reset takes effect at once.
+   */
+  readonly sessionCookieCache?: 'trusted'
+}
+
+/** Whether Better Auth keeps sessions anywhere but the cookie, which is then only a copy. */
+const keepsSessionsOnServer = (auth: unknown): boolean => {
+  const options: unknown = Object.getOwnPropertyDescriptor(auth, 'options')?.value
+
+  return !(options instanceof Object) || 'database' in options || 'secondaryStorage' in options
 }
 
 /** loadUser, for setupWeb. */
 export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): MiddlewareHandler<E> {
-  const { sessionCookie } = config
+  const { sessionCookie, sessionCookieCache } = config
   const sessionSchema: S.Codec<AuthUser, unknown, never, never> =
     config.session ?? defaultSessionSchema()
 
@@ -334,34 +349,60 @@ export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): Middl
             getSession?: (input: {
               headers: Headers
               returnHeaders: true
+              query?: { disableCookieCache: true }
             }) => Promise<unknown>
           }
         }
       | undefined
 
-    if (!auth?.api?.getSession) {
+    const getSession = auth?.api?.getSession
+
+    if (!getSession) {
       await next()
 
       // Return response for proper propagation in forwarding/proxy scenarios
       return c.res
     }
 
-    // With a session cookie of its own, a request without a session token
-    // has no session to look up. Without one, every request is looked up:
-    // Better Auth may find a session in another header, as its bearer
-    // plugin does.
-    if (sessionCookie && !sessionCookies([sessionCookie]).tokenSentIn(c.req.header('Cookie'))) {
+    // A failed lookup never reads as signed out: it answers with its failure,
+    // unless the route runs whoever is asking, as sign-out does.
+    const unknownVisitor = async (failure: SessionLookupUnavailable | InvalidAuthSession): Promise<Response> => {
+      requestCtx.visitor = Visitor.Unknown()
+
+      if (!answersAnyVisitor(c)) throw failure
+
       await next()
 
       return c.res
     }
 
+    // With a session cookie of its own, a request without a session token
+    // or a bearer token has no session to look up. Without one, every request
+    // is looked up: Better Auth may find a session in another header.
+    if (sessionCookie && !sessionCookies([sessionCookie]).tokenSentIn(c.req.header('Cookie')) && c.req.header('Authorization') === undefined) {
+      requestCtx.visitor = Visitor.Guest()
+      await next()
+
+      return c.res
+    }
+
+    // A session the cookie cache holds may have ended since it was cached,
+    // so the store is asked unless the application says otherwise. A session
+    // that only ever lived in the cookie has no store to ask.
+    const lookUp = (): Promise<unknown> => getSession.call(auth?.api, {
+      headers: c.req.raw.headers,
+      returnHeaders: true,
+      ...(sessionCookieCache !== 'trusted' && keepsSessionsOnServer(auth) ? { query: { disableCookieCache: true } } : {}),
+    })
+
     let looked: unknown
 
     try {
-      looked = await auth.api.getSession({ headers: c.req.raw.headers, returnHeaders: true })
+      // A lookup that races a revocation throws where the session row went
+      // away; asked again, it finds no session and expires the cookies.
+      looked = await lookUp().catch(() => lookUp())
     } catch (cause: unknown) {
-      throw new SessionLookupUnavailable({ operation: 'getSession', cause })
+      return unknownVisitor(new SessionLookupUnavailable({ operation: 'getSession', cause }))
     }
 
     // Better Auth answers with the cookies the lookup sets: the session's,
@@ -376,13 +417,16 @@ export function loadUserMiddleware<E extends Env>(config: LoadUserConfig): Middl
       const exit = await Effect.runPromiseExit(S.decodeEffect(sessionSchema)(session))
 
       if (Exit.isFailure(exit)) {
-        throw new InvalidAuthSession({
+        return unknownVisitor(new InvalidAuthSession({
           operation: 'parseSession',
           cause: Cause.squash(exit.cause),
-        })
+        }))
       }
 
-      openWebContext(c).authUser = exit.value
+      requestCtx.authUser = exit.value
+      requestCtx.visitor = Visitor.Member({ user: exit.value })
+    } else {
+      requestCtx.visitor = Visitor.Guest()
     }
 
     await next()
@@ -1038,7 +1082,7 @@ export function betterAuthHandler(
 ): Effect.Effect<Response, HttpError | AuthRateLimitError | UnauthorizedError, RequestService | AuthService> {
   const settable = new Set<string>(options?.settable ?? [])
 
-  return Effect.gen(function* () {
+  return forAnyVisitor(Effect.gen(function* () {
     const auth = yield* AuthService
     const request = yield* RequestService
 
@@ -1113,7 +1157,7 @@ export function betterAuthHandler(
     }
 
     return response
-  })
+  }))
 }
 
 /** The request's path under Better Auth's base path, as its endpoints name theirs. */
@@ -1178,7 +1222,7 @@ export interface BetterAuthLogoutConfig<Path extends string = string> {
 export function betterAuthLogoutAction<const Path extends string = '/'>(
   config: BetterAuthLogoutConfig<Path> = {}
 ): Effect.Effect<Response, never, RequestService | AuthService> {
-  return Effect.gen(function* () {
+  return forAnyVisitor(Effect.gen(function* () {
     const auth = yield* AuthService
     const request = yield* RequestService
     // A route always has the cookie jar; a direct call without one clears none.
@@ -1203,15 +1247,25 @@ export function betterAuthLogoutAction<const Path extends string = '/'>(
     const headers = new Headers({ Location: config.redirectTo ?? '/' })
 
     if (answered !== undefined) appendSetCookies(headers, answered.headers)
-    if (!headers.has('set-cookie')) {
-      // The application's session cookie names come from setupWeb's settings,
-      // which a direct call without a route has none of.
-      const cookies = Option.match(yield* Effect.serviceOption(WebSetupService), {
-        onNone: () => sessionCookies(),
-        onSome: (setup) => setup.sessionCookies,
-      })
 
-      appendLogoutCookies(headers, cookies.toExpireOnSignOut(request.header('Cookie'), config.cookieNames))
+    // The application's session cookie names come from setupWeb's settings,
+    // which a direct call without a route has none of.
+    const cookies = Option.match(yield* Effect.serviceOption(WebSetupService), {
+      onNone: () => sessionCookies(),
+      onSome: (setup) => setup.sessionCookies,
+    })
+    const toExpire = cookies.toExpireOnSignOut(request.header('Cookie'), config.cookieNames)
+
+    if (!headers.has('set-cookie')) {
+      appendLogoutCookies(headers, toExpire, crossSubDomain(auth))
+    } else {
+      // Better Auth expires its session's cookies, and no others: the session
+      // an admin keeps while impersonating is the one this browser still holds.
+      const expired = new Set(headers.getSetCookie().map((cookie) => withoutBrowserPrefix(setCookieName(cookie))))
+
+      const left = cookieNames(request.header('Cookie')).filter(cookies.isSession).map(withoutBrowserPrefix)
+
+      appendLogoutCookies(headers, left.filter((name) => !expired.has(name)), crossSubDomain(auth))
     }
 
     if (wantsJson((name) => request.header(name))) {
@@ -1221,7 +1275,7 @@ export function betterAuthLogoutAction<const Path extends string = '/'>(
     }
 
     return new Response(null, { status: 303, headers })
-  })
+  }))
 }
 
 function appendSetCookies(target: Headers, source: Headers): void {
@@ -1231,18 +1285,32 @@ function appendSetCookies(target: Headers, source: Headers): void {
 function appendExpiredCookie(
   target: Headers,
   name: string,
-  options: { secure?: boolean } = {}
+  options: { secure?: boolean; domain?: string } = {}
 ): void {
   const base = `${name}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax`
   const value = options.secure ? `${base}; Secure` : base
   target.append('set-cookie', value)
+  // A browser keeps a cookie set for a domain apart from one with none, so
+  // one Better Auth set across subdomains goes only by naming it.
+  if (options.domain !== undefined) target.append('set-cookie', `${value}; Domain=${options.domain}`)
+}
+
+/** The domain Better Auth sets its cookies for across subdomains, if it does. */
+function crossSubDomain(auth: unknown): string | undefined {
+  const options: unknown = Object.getOwnPropertyDescriptor(auth, 'options')?.value
+  const advanced: unknown = options instanceof Object && 'advanced' in options ? options.advanced : undefined
+  const cross: unknown = advanced instanceof Object && 'crossSubDomainCookies' in advanced ? advanced.crossSubDomainCookies : undefined
+
+  return cross instanceof Object && 'enabled' in cross && cross.enabled === true && 'domain' in cross && typeof cross.domain === 'string'
+    ? cross.domain
+    : undefined
 }
 
 /** Expire each of these cookies, and its `__Secure-` and `__Host-` forms, which only a secure cookie expires. */
-function appendLogoutCookies(target: Headers, names: readonly string[]): void {
+function appendLogoutCookies(target: Headers, names: readonly string[], domain?: string): void {
   for (const name of names) {
-    appendExpiredCookie(target, name)
-    appendExpiredCookie(target, `__Secure-${name}`, { secure: true })
+    appendExpiredCookie(target, name, { domain })
+    appendExpiredCookie(target, `__Secure-${name}`, { secure: true, domain })
     appendExpiredCookie(target, `__Host-${name}`, { secure: true })
   }
 }

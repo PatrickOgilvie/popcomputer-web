@@ -38,6 +38,22 @@ export function pageVersion(assets: string, member: string | undefined): Promise
   })
 }
 
+/**
+ * What tells this member's pages from another's: their id, or, for a session
+ * schema that decodes none, everything it does decode. It is only ever hashed.
+ */
+export function memberKey(authUser: unknown): string {
+  const id = userIdOf(authUser)
+
+  if (id !== undefined) return id
+
+  try {
+    return JSON.stringify(authUser) ?? ''
+  } catch {
+    return ''
+  }
+}
+
 /** Whether a client's `X-Inertia-Version` is the current assets', whoever its page went to. */
 export function isCurrentVersion(sent: string, assets: string): boolean {
   return sent === assets || (sent.startsWith(assets) && MARK.test(sent.slice(assets.length)))

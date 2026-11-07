@@ -14,6 +14,7 @@ import type { Context as HonoContext, MiddlewareHandler, Env } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { RequestServicesLayer, WebRequestContext } from '../request-context.js'
 import { openWebContext } from '../request-context.js'
+import { Visitor } from '../visitor.js'
 import { HEADER_READS, markPageDynamic, observedRequestContext, trackDatabase } from '../page-cache.js'
 import {
   ResponseCacheService,
@@ -869,7 +870,10 @@ export function createEffectBridge<E extends Env, CustomServices = never>(
         // and page caching, as it does for actions.
         const testUser = EffectContext.getOption(built.value, AuthUserService)
 
-        if (Option.isSome(testUser)) requestCtx.authUser = testUser.value
+        if (Option.isSome(testUser)) {
+          requestCtx.authUser = testUser.value
+          requestCtx.visitor = Visitor.Member({ user: testUser.value })
+        }
       } else {
         // A test layer that fails to build fails the action with its error.
         layer = Layer.merge(layer, Layer.effectDiscard(Effect.failCause(built.cause)))

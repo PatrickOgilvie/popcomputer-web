@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 What an application may need to change: one whose `auth.client` returns a wrapper around Better Auth, such as one that loads it on first use, forwards Better Auth's `$context` from it, or returns the instance, before a visitor's sign-up or update-user through `betterAuthHandler` answers 500.
 
+What an application with Better Auth's `session.cookieCache` on may need to change: each request now asks the session store, so a sign-out, ban or password reset takes effect at once. To keep the read it saved, and accept the delay, set `auth.sessionCookieCache: 'trusted'`.
+
 What an application with `auth.signInLimits`, or a `database` factory that reads Hyperdrive's connection string, may need to change: its public pages are cached for the first time, so a page that reads an external `fetch()` or the current time without `cache: 'private'`, which rendered per request only because nothing was cached, now needs that option. A test that held a page calling `testRateLimiter()` to `MISS` then `HIT` was passing on the double: that page answers `DYNAMIC`, as it does in production.
 
 ### Added
@@ -21,6 +23,14 @@ What an application with `auth.signInLimits`, or a `database` factory that reads
 
 ### Fixed
 
+- Who is asking is a closed set, so a session lookup that failed or never ran reads as neither a guest nor a member. A failed lookup, and a refusal before the lookup ran for a request that sent a session, no longer clear the tab's history. An action's error page goes to the member a layer gave it, as its success does.
+- A session that does not decode no longer stops sign-out. `POST /sign-out` and Better Auth's own API run whoever is asking, so a member with such a session can leave it; other routes answer 500 as before.
+- Signing out while impersonating expires the admin's session cookie too. It stayed in the browser after Better Auth expired the impersonation's.
+- A cookie Better Auth set across subdomains is expired with its `Domain` when Better Auth cannot be reached.
+- A bearer token is looked up when `auth.sessionCookie` is set. Only a named session cookie was.
+- A session lookup that races a revocation asks again, so the browser's cookies expire on that answer rather than a 503.
+- A member whose session schema decodes no id has a history mark of their own.
+- A deleted session no longer reads as signed in while `session.cookieCache` is on. The session store is now asked on every request, which costs the read the cache saved. Set `auth.sessionCookieCache: 'trusted'` to keep it and accept that a sign-out, a ban or a password reset takes up to its `maxAge`.
 - A defect or an interruption while building `web.services({ app })` is no longer kept for the isolate's life. Only a typed failure was retried, and the services' type admits only a `ConfigError`, so a transient failure, which can only be a defect, answered 500 on every request until the isolate was replaced.
 - The env check belongs to each application and runs before the page cache. It was shared by bindings object across applications, so one `setupWeb` could pass or refuse bindings for another. It missed its memo on every uncached request, because the page cache gives each request a new copy of the bindings. And a cached page was served past a refused env.
 - `PendingPurges` and `PendingCacheTags` are taken once, as their comments said: a second `take` was accepted, and gave the same tags again. It is now a defect, as a late `add` was.

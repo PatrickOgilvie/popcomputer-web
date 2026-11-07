@@ -4,7 +4,7 @@
  * Laravel-style routing with Effect handlers.
  */
 
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Schema as S } from 'effect'
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema as S } from 'effect'
 import { Context as HonoRequestContext } from 'hono'
 import type { Context as HonoContext, ExecutionContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { renderErrorResponse, runEffectWithRuntime } from './handler.js'
@@ -24,6 +24,7 @@ import {
   RouteConfigurationError,
 } from './errors.js'
 import { openWebContext } from '../request-context.js'
+import { handlerForAnyVisitor, isForAnyVisitor, Visitor } from '../visitor.js'
 import { isDevelopment } from '../development.js'
 import { setupOf } from '../web-setup.js'
 import { finishResponse } from '../response-output.js'
@@ -46,7 +47,7 @@ import {
   type CacheTag,
   type RouteCacheOptions,
 } from './response-cache.js'
-import { RequestService, type DatabaseService } from './services.js'
+import { AuthUserService, RequestService, type DatabaseService } from './services.js'
 import { isGuard } from './guard.js'
 import { RouteRecords, routeModelsLayer, routeModelsOnce, type RouteModels } from './route-models.js'
 import type {
@@ -1079,7 +1080,16 @@ export class EffectRouteBuilder<
         Response | Redirect,
         AppError | ResponseCachePurgeError,
         R | ResponseCacheService | RouteRecords | PendingPurges | PendingCacheTags
-      > = effect.pipe(
+      > = Effect.flatMap(
+        // A layer may give the action its user, so a failure the boundary
+        // answers goes to the same member its success would.
+        Effect.serviceOption(AuthUserService),
+        (user) => {
+          if (Option.isSome(user)) openWebContext(c).visitor = Visitor.Member({ user: user.value })
+
+          return effect
+        }
+      ).pipe(
         // redirectNow leaves the action with a Redirect failure. It ends the
         // action as redirect() does and keeps what the action wrote, so the
         // route answers it as the Redirect value: its purges run below, and
@@ -1248,7 +1258,8 @@ export class EffectRouteBuilder<
     })
 
     // Register with Hono - apply middlewares before the Effect handler
-    const handler = this.createHandler(effect, route)
+    const created = this.createHandler(effect, route)
+    const handler = isForAnyVisitor(effect) ? handlerForAnyVisitor(created) : created
 
     if (this.middlewares.length > 0) {
       // SAFETY: The method is selected from the finite Hono routing-method union and every supplied handler uses the builder's Env.

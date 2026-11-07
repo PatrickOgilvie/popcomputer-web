@@ -11,12 +11,12 @@ import type {
   RenderOptions,
 } from './types.js'
 import { HEADERS } from './types.js'
-import { openWebContext } from './request-context.js'
+import { openWebContext, visitorOf } from './request-context.js'
 import { openFlash } from './flash.js'
 import { applyDefaultCacheControl, observedRequestContext } from './page-cache.js'
 import { recordPrivacy } from './privacy.js'
 import { ConfigurationError } from './effect/errors.js'
-import { isCurrentVersion, pageVersion, userIdOf } from './page-version.js'
+import { isCurrentVersion, memberKey, pageVersion } from './page-version.js'
 import { setupOf } from './web-setup.js'
 import { finishResponse, pageClearedHistory, sessionLookupCookies } from './response-output.js'
 
@@ -191,22 +191,27 @@ export function web(config: WebConfig): MiddlewareHandler {
         const encrypt = config.history?.encrypt ?? 'signed-in'
         // Signed in by the session lookup, or by a layer the action's
         // runtime has, such as an application's own session.
-        const signedIn = options.signedIn === true || context.authUser !== undefined
+        const visitor = visitorOf(c)
+        const member = visitor._tag === 'Member' ? visitor.user : context.authUser
+        const signedIn = options.signedIn === true || member !== undefined
         // A session the lookup found ended, or one ended or started since the
         // last page, leaves history the previous session's pages wrote.
         const sessionChanged = flashed.clearHistory || setupOf(c).sessionCookies.endsSession(sessionLookupCookies(c))
         // While signed-in pages are the encrypted ones, every page rendered to
-        // a visitor who is not signed in clears the history, however the
-        // session ended: in another tab, by the cookie's expiry, or where a
-        // prefetch or a JSON answer saw it end.
-        const signedOut = encrypt === 'signed-in' && !signedIn
+        // a guest clears the history, however the session ended: in another
+        // tab, by the cookie's expiry, or where a prefetch or a JSON answer saw
+        // it end. A lookup that failed, or that a refusal came before for a
+        // request that sent a session, has no guest: that tab's key stays.
+        const guest = visitor._tag === 'Guest' ||
+          (visitor._tag === 'Unread' && !setupOf(c).sessionCookies.sentIn(c.req.header('Cookie')))
+        const signedOut = encrypt === 'signed-in' && !signedIn && guest
         const page: PageObject = {
           component,
           props: pageProps,
           url: new URL(c.req.url).pathname + new URL(c.req.url).search,
           // A signed-in page's version marks its member, so Back in a tab
           // whose page went to someone else asks the server for theirs.
-          version: await pageVersion(version, signedIn ? options.userId ?? userIdOf(context.authUser) ?? '' : undefined),
+          version: await pageVersion(version, signedIn ? options.userId ?? memberKey(member) : undefined),
           clearHistory: options.clearHistory ?? ((sessionChanged || signedOut) || undefined),
           encryptHistory: options.encryptHistory ??
             ((encrypt === 'signed-in' ? signedIn : encrypt) || undefined),

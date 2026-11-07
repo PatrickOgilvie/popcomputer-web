@@ -25,7 +25,7 @@ const BROWSER_PREFIX = /^__(?:Secure|Host)-/
 const BETTER_AUTH_PREFIX = 'better-auth.'
 
 /** The cookies Better Auth names after its prefix, whatever the prefix is, that carry the session. */
-const BETTER_AUTH_SESSION_COOKIES = ['session_token', 'session_data', 'account_data', 'dont_remember'] as const
+const BETTER_AUTH_SESSION_COOKIES = ['session_token', 'session_data', 'account_data', 'dont_remember', 'admin_session'] as const
 
 /** The cookies sign-out expires when Better Auth's answer expires none, in place of names the application gives. */
 const DEFAULT_SIGN_OUT_COOKIES = BETTER_AUTH_SESSION_COOKIES.map((cookie) => `${BETTER_AUTH_PREFIX}${cookie}`)
@@ -137,7 +137,7 @@ export function setCookieName(setCookie: string): string {
   return setCookie.slice(0, setCookie.indexOf('=')).trim()
 }
 
-function withoutBrowserPrefix(name: string): string {
+export function withoutBrowserPrefix(name: string): string {
   return name.replace(BROWSER_PREFIX, '')
 }
 

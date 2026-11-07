@@ -19,6 +19,7 @@ import type { ErrorBoundaryConfig } from './effect/handler.js'
 import type { RouteBindingsConfig } from './effect/binding.js'
 import type { WebSetup } from './web-setup.js'
 import type { PrivacyReason } from './privacy.js'
+import { Visitor } from './visitor.js'
 
 /**
  * A request's services, typed over any services: which ones depends on each
@@ -48,6 +49,11 @@ export interface WebRequestContext<E extends Env = Env> {
   auth?: AuthType
   /** loadUser() — present only when the request carries a valid session */
   authUser?: AuthUser
+  /**
+   * loadUser() — who is asking, which `authUser`'s absence cannot say: a
+   * guest, or a lookup that failed or never ran. Read it with {@link visitorOf}.
+   */
+  visitor?: Visitor
   /**
    * privacy.ts — why the response may not be shared, which the page cache,
    * a route's `cache` option and the default Cache-Control read.
@@ -195,6 +201,9 @@ export function openWebContext<E extends Env>(
 
   return created
 }
+
+/** Who is asking this request. */
+export const visitorOf = <E extends Env>(c: Context<E>): Visitor => openWebContext(c).visitor ?? Visitor.Unread()
 
 /**
  * Read framework state from plain Hono middleware or handlers.

@@ -989,6 +989,70 @@ describe('organizations', () => {
   })
 })
 
+describe('a session Better Auth has ended, while the cookie cache is on', () => {
+  test('M12.T14: a deleted session is not served from the cookie', async () => {
+    const { browser, db } = setup({ cookieCache: { enabled: true, maxAge: 300 } })
+    const visitor = browser()
+
+    await acme.signIn(visitor, '/sign-in/acme', { id: 'acme-revoked', email: 'revoked@acme.example', name: 'Revoked' })
+    expect(visitor.cookies.has('better-auth.session_data')).toBe(true)
+    expect((await me(visitor)).status).toBe(200)
+
+    db.delete(schema.session).run()
+
+    expect((await me(visitor)).status).not.toBe(200)
+  })
+
+  test('M13.T15: a slow answer that restores the cookies after sign-out signs nobody in', async () => {
+    const { browser, db } = setup({ cookieCache: { enabled: true, maxAge: 300 } })
+    const visitor = browser()
+
+    await acme.signIn(visitor, '/sign-in/acme', { id: 'acme-late', email: 'late@acme.example', name: 'Late' })
+    const before = [...visitor.cookies.entries()]
+
+    await visitor.request('/sign-out', { method: 'POST' })
+    expect(db.select().from(schema.session).all()).toEqual([])
+    for (const [name, value] of before) visitor.setCookie(name, value)
+
+    expect((await me(visitor)).status).not.toBe(200)
+  })
+})
+
+describe('a session that does not decode', () => {
+  const undecodable = async () => {
+    const context = setup()
+    const visitor = context.browser()
+
+    await context.join(visitor, 'ada@example.com')
+    context.db.run(sql`update user set ban_expires = 'not a date'`)
+
+    return { ...context, visitor }
+  }
+
+  test('a route that needs its user still says so', async () => {
+    const { visitor } = await undecodable()
+
+    expect((await me(visitor)).status).toBe(500)
+  })
+
+  test('M12.T22: signing out ends it, at the application\'s own route', async () => {
+    const { visitor, db } = await undecodable()
+    const res = await visitor.request('/sign-out', { method: 'POST' })
+
+    expect(res.status).toBe(303)
+    expect(visitor.cookies.has(SESSION)).toBe(false)
+    expect(db.select().from(schema.session).all()).toEqual([])
+  })
+
+  test('M12.T22: and at Better Auth\'s', async () => {
+    const { visitor, db } = await undecodable()
+    const res = await visitor.request('/api/auth/sign-out', { method: 'POST', headers: { Origin: 'http://localhost', 'Content-Type': 'application/json' }, body: '{}' })
+
+    expect(res.status).toBe(200)
+    expect(db.select().from(schema.session).all()).toEqual([])
+  })
+})
+
 describe('bearer tokens', () => {
   test("a client signed in through Better Auth's API is signed in by its token", async () => {
     const { browser, join } = setup()
@@ -1035,5 +1099,23 @@ describe('admin', () => {
 
     expect(impersonating.headers.get('Location')).toBe('/me')
     expect((await me(admin)).body).toMatchObject({ email: 'member@example.com', impersonatedBy: id('admin@example.com') })
+  })
+
+  test('M14.T7: signing out while impersonating leaves no session of either in the browser', async () => {
+    const { browser, db, join } = setup()
+    const admin = browser()
+    await join(admin, 'admin@example.com', 'Admin')
+    await join(browser(), 'member@example.com', 'Member')
+    db.update(schema.user).set({ role: 'admin' }).where(eq(schema.user.email, 'admin@example.com')).run()
+    const member = db.select().from(schema.user).where(eq(schema.user.email, 'member@example.com')).get()?.id ?? ''
+
+    await admin.request(`/admin/users/${member}/impersonate`, { method: 'POST' })
+    expect(admin.cookies.has('better-auth.admin_session')).toBe(true)
+
+    const res = await admin.request('/sign-out', { method: 'POST' })
+
+    expect(res.status).toBe(303)
+    expect(admin.cookies.has(SESSION)).toBe(false)
+    expect(admin.cookies.has('better-auth.admin_session')).toBe(false)
   })
 })

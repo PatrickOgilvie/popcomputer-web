@@ -80,6 +80,13 @@ export interface WebAuthOptions<
   readonly share?: S.Codec<PublicUser, unknown, never, never>
   readonly sessionCookie?: string
   /**
+   * `'trusted'` reads a session from Better Auth's `session.cookieCache` for
+   * its `maxAge`, and accepts that a session ended since still reads as
+   * signed in. By default the session store is asked on every request, so a
+   * sign-out, a ban or a password reset takes effect at once.
+   */
+  readonly sessionCookieCache?: 'trusted'
+  /**
    * Where a signed-out visitor goes when a route needs a user: `authorize()`
    * and `RequireAuthLayer` redirect here. Defaults to `/login`.
    */
@@ -663,6 +670,7 @@ function createSetupMiddleware<
       : [refuseForeignOrigins<E>(config.security?.verifyOrigin ?? {}, config.errors)]),
     loadUserMiddleware<E>({
       sessionCookie: config.auth?.sessionCookie,
+      sessionCookieCache: config.auth?.sessionCookieCache,
       // SAFETY: the registered AuthUser is this setup's User, the type
       // `auth.session` decodes; inside setupWeb the two are not yet related.
       session: config.auth?.session as S.Codec<AuthUser, unknown, never, never> | undefined,
