@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.14.0] - 2026-11-07
+
+This release fixes two security bugs. A constraint violation caught inside `dbTransaction` on Postgres returned success with every write gone, which is the one change an application may need: a statement that may fail belongs in a nested `dbTransaction`. And in a browser two people share, a partial reload after the session changed could leave one person's page in the next person's history, on 1.7.0 to 1.13.2. It also fixes what a walk of every implicit state machine against every event found in the session lookup, the flash cookie and what an isolate keeps. `UPGRADING.md`'s "From 1.13 to 1.14" lists what to check.
 
 What an application may need to change: one whose `auth.client` returns a wrapper around Better Auth, such as one that loads it on first use, forwards Better Auth's `$context` from it, or returns the instance, before a visitor's sign-up or update-user through `betterAuthHandler` answers 500.
 
@@ -20,7 +22,7 @@ What an application with `auth.signInLimits`, or a `database` factory that reads
 ### Security
 
 - A statement that failed inside `dbTransaction` on Postgres, where the Effect caught the failure, returned success with every write gone. Postgres aborts the transaction, and its COMMIT then rolls back and reports nothing. Now the transaction fails with a `DatabaseError`. A statement that may fail belongs in a nested `dbTransaction`, which can fail alone.
-- A partial reload after the session changed left one person's data in the next person's history. The answer took the new visitor's version, the client merged it over the old visitor's props, and Back then showed those props without asking the server. A partial reload from a visitor the page did not go to now answers the 409 that reloads the page in full.
+- A partial reload after the session changed left one person's data in the next person's history, in a browser they share, on 1.7.0 to 1.13.2. The server sent the next person nothing of the first's: its answer took the new visitor's version, the client merged it over the old visitor's props, and Back then showed those props without asking the server, unencrypted where the new visitor was a guest. A partial reload from a visitor the page did not go to now answers the 409 that reloads the page in full.
 - `betterAuthHandler`'s `settable` check fails closed. It read the user fields a visitor may set from `auth.options`, which a wrapper that loads Better Auth on first use does not have, so it found none and refused nothing: through such a wrapper, sign-up and update-user stored any `input: true` or plugin user field, as the Stripe plugin's `stripeCustomerId` was on an application upgrading to 1.13.2. It now reads Better Auth's options from the instance or from the `$context` a wrapper forwards, and a request that writes user fields answers 500, naming the fix, when it can read neither. The sign-in limits, which read the same options for Better Auth's rate-limit storage and the username plugin's normalizer, refuse a call they count in the same case. `tests/better-auth/seam.test.ts` and `tests/effect/sign-in-limits.test.ts` cover both, and fail on the code before.
 
 ### Fixed
