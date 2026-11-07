@@ -93,6 +93,7 @@ Auth:
 - [Auth](docs/auth.md): `authorize()`, the signed-in user, Better Auth's client and limiting password guessing
 - [Better Auth's tables](docs/auth-tables.md): on Postgres and on Cloudflare D1
 - [Signing in and out](docs/sign-in.md): sign-in and sign-up actions, guest and auth guards, `betterAuthHandler`
+- [The session cookie cache](docs/session-cookie-cache.md): what `session.cookieCache` costs, and how to keep it
 - [Better Auth's plugins](docs/auth-plugins.md): two-factor, magic links, organizations and OAuth providers
 - [Guards and roles](docs/guards.md): layers that guard routes, and roles on memberships
 
@@ -114,6 +115,7 @@ Testing and reference:
 - [Mutation testing](docs/mutation.md): `popweb-mutate` plants small bugs in the lines a change touches and lists the ones no test catches
 - [Lower-level composition](docs/lower-level.md): the middleware without `setupWeb`
 - [State machines](docs/state-machines.md): what the framework keeps across requests, the rule each keeps, and the models that check them
+- [State machine tables](docs/state-machine-tables.md): each machine's table, generated from the code
 
 ## Why this shape
 

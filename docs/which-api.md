@@ -23,6 +23,7 @@ and the lint rules name it where an action reaches for something else.
 | Hide a record the visitor may not see | Its binding's `ownedBy` or `publicWhen`, or `notFound('Project')` in a guard | [Who may load a record](route-models.md#who-may-load-a-record) |
 | Refuse a visitor who can see the record | `authorize((auth) => rule)`, or `forbidden(message)` | [Auth](auth.md) |
 | Store an upload | an R2 bucket a request service wraps, `web.services({ request: (c) => uploadsFor(c.env.UPLOADS) })` | [Storing uploads](uploads.md) |
+| Keep Better Auth's session cookie cache | `auth.sessionCookieCache: 'trusted'` | [The session cookie cache](session-cookie-cache.md) |
 | Serve a file or a download | `file(body, { contentType, filename })` | [Serving an upload back](responses.md#serving-an-upload-back) |
 | Answer a poll that has nothing new | `ifChanged(etag, response)` | [Files, headers and polling](responses.md#files-headers-and-polling) |
 | Add a header to every response of some routes | `responseHeader(name, value)` in a guard layer | [Files, headers and polling](responses.md#files-headers-and-polling) |
