@@ -191,7 +191,8 @@ describe('fuzz', () => {
     }, { runs: 3, examples: [2000, 3000] })
 
     expect(checked.slice(0, 2)).toEqual([2000, 3000])
-    expect(checked).toHaveLength(5)
+    // FUZZ_RUNS, as a long run sets it, overrides the property's runs.
+    expect(checked).toHaveLength(2 + (process.env.FUZZ_RUNS === undefined ? 3 : Number(process.env.FUZZ_RUNS)))
   })
 
   test('says which example was refused, and why, and runs no case after it', async () => {

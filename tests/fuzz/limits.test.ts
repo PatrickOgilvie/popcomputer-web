@@ -92,15 +92,35 @@ describe('each limit at its edge', () => {
   )
 
   property(
-    'flash keeps everything that fits its cookie, then errors alone, then only the history clear',
+    'flash keeps everything that fits its cookie, then errors alone, then the first errors that fit with a form error for the rest, then only the history clear',
     Arbitrary.all({ data: flashData, aimAt: pick(['everything', 'errors']), offset: edge }),
     ({ data, aimAt, offset }) => {
       const errorsOnly = { errors: data.errors, flash: {}, clearHistory: data.clearHistory }
       const maxBytes = storedLength(aimAt === 'everything' ? data : errorsOnly) + offset
-      const expected = storedLength(data) <= maxBytes ? data : storedLength(errorsOnly) <= maxBytes ? errorsOnly : { errors: {}, flash: {}, clearHistory: data.clearHistory }
+      const entries = Object.entries(data.errors)
+      const withFirst = (count: number) => ({
+        errors: { ...Object.fromEntries(entries.slice(0, count)), form: 'Some of the errors in this form could not be shown.' },
+        flash: {},
+        clearHistory: data.clearHistory,
+      })
+      // The most errors, in order, that fit beside the form error, found by trying every count.
+      const fitting = Array.from({ length: entries.length }, (_, count) => entries.length - 1 - count).find((count) => storedLength(withFirst(count)) <= maxBytes)
+      const expected = storedLength(data) <= maxBytes
+        ? data
+        : storedLength(errorsOnly) <= maxBytes
+          ? errorsOnly
+          : fitting === undefined ? { errors: {}, flash: {}, clearHistory: data.clearHistory } : withFirst(fitting)
       const kept = withinBudget(data, maxBytes)
 
       return show(kept) === show(expected) ? undefined : `${show(data)} in ${maxBytes} bytes kept ${show(kept)}, not ${show(expected)}`
+    },
+    {
+      // Errors past the budget, which chance reaches too rarely to count on: the
+      // first is kept with the form error, then none fit beside it.
+      examples: [
+        { data: { errors: { name: 'Required.', email: 'Saved.Saved.Saved.Saved.Saved.' }, flash: {}, clearHistory: false }, aimAt: 'errors', offset: -1 },
+        { data: { errors: { success: 'Saved.Saved.Saved.', email: 'aSaved.\u00e9a', name: '' }, flash: {}, clearHistory: false }, aimAt: 'everything', offset: -1 },
+      ],
     }
   )
 
