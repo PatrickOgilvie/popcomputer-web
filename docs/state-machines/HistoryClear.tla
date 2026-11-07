@@ -11,6 +11,10 @@
 \* server (index.js 1749-1800, 1859-1878, 3283-3287).
 \* Design "code" marks a signed-in page's version with its member; "1.6",
 \* release 1.6.0, gave every page the assets' version, and must break.
+\* A partial reload answers only the props it asks for, which the client merges
+\* over its page (index.js 2946). Partial "reloads" answers one from another
+\* visitor with the 409 that reloads the page in full; "merges", every release
+\* to 1.13, answers it, and must break.
 EXTENDS Naturals, Sequences
 
 CONSTANTS
@@ -18,6 +22,7 @@ CONSTANTS
   Members,   \* people who sign in at this browser
   Encrypt,   \* setupWeb's history.encrypt: "signed-in" (the default) or "always"
   Design,    \* "code" or "1.6"
+  Partial,   \* a partial reload from another visitor: "reloads" or "merges"
   Depth,     \* the most entries a tab's history keeps in the model
   Steps      \* the most steps the model takes
 
@@ -83,6 +88,19 @@ YouOpenAPage(t) ==
   /\ page' = [page EXCEPT ![t] = Rendered(t)]
   /\ UNCHANGED <<session, leak>>
 
+\* A poll or router.reload({ only }) in a tab: the client merges the answer's
+\* props over its page and takes the answer's version, clear and encryption, so
+\* the old visitor's props stay under the new visitor's version. Answered with
+\* the 409 instead, the client reloads the page in full.
+ThePageReloadsInPart(t) ==
+  /\ Count
+  /\ Apply(t)
+  /\ page' = [page EXCEPT ![t] =
+       IF Partial = "reloads" /\ @.ver # Version(session)
+         THEN Rendered(t)
+         ELSE [Rendered(t) EXCEPT !.who = page[t].who]]
+  /\ UNCHANGED <<session, hist, leak>>
+
 \* A member signs in, in any tab: the answer starts a session and raises the flag.
 SomeoneSignsIn(m) ==
   /\ Count
@@ -129,6 +147,7 @@ Done == steps = Steps /\ UNCHANGED vars
 
 Next ==
   \/ \E t \in Tabs : YouOpenAPage(t)
+  \/ \E t \in Tabs : ThePageReloadsInPart(t)
   \/ \E m \in Members : SomeoneSignsIn(m)
   \/ TheMemberSignsOut
   \/ TheSessionExpires

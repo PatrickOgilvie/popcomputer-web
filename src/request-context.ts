@@ -151,12 +151,8 @@ export interface WebRequestContext<E extends Env = Env> {
    * goes back to when the request names no page of this site as its Referer.
    */
   formPage?: string
-  /**
-   * response-output.ts — whether a page this request rendered cleared
-   * Inertia's history, and whether the response has been finished with what
-   * the request queued.
-   */
-  output?: { historyCleared: boolean; finished: boolean }
+  /** response-output.ts — whether the response has been finished with what the request queued. */
+  output?: { finished: boolean }
   /** Application cookies an action set, which finishing the response writes. */
   responseCookies?: string[]
   /**

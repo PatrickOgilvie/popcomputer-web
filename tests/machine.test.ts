@@ -54,6 +54,41 @@ describe('step', () => {
   })
 })
 
+describe('a move to one of several states', () => {
+  type Tank = Data.TaggedEnum<{ Empty: {}; Filled: { readonly litres: number } }>
+  type TankEvent = Data.TaggedEnum<{ Draw: { readonly litres: number } }>
+  const Tank = Data.taggedEnum<Tank>()
+  const TankEvent = Data.taggedEnum<TankEvent>()
+
+  const tank: Table<Tank, TankEvent, number> = {
+    Empty: { Draw: { ignore: 'there is nothing to draw', output: 0 } },
+    Filled: {
+      Draw: {
+        to: ['Empty', 'Filled'],
+        run: (state, event) => state.litres > event.litres ? [Tank.Filled({ litres: state.litres - event.litres }), event.litres] : [Tank.Empty(), state.litres],
+      },
+    },
+  }
+
+  test('chooses from what the event carries', () => {
+    expect(step(tank, Tank.Filled({ litres: 3 }), TankEvent.Draw({ litres: 1 }))).toEqual(Result.succeed([Tank.Filled({ litres: 2 }), 1]))
+    expect(step(tank, Tank.Filled({ litres: 3 }), TankEvent.Draw({ litres: 5 }))).toEqual(Result.succeed([Tank.Empty(), 3]))
+  })
+
+  test('reads as every state it may move to', () => {
+    expect(rows(tank)).toContainEqual({ from: 'Filled', on: 'Draw', to: 'Empty or Filled', mark: 'ok' })
+  })
+
+  test('a move to a state its cell does not name is a defect', () => {
+    const lying: Table<Tank, TankEvent, number> = {
+      ...tank,
+      Filled: { Draw: { to: ['Empty'], run: (state) => [state, 0] } },
+    }
+
+    expect(() => step(lying, Tank.Filled({ litres: 1 }), TankEvent.Draw({ litres: 1 }))).toThrow('moved to Filled, which its cell does not name')
+  })
+})
+
 describe('a state the table does not hold', () => {
   test('is a defect, not a move that does nothing', () => {
     // SAFETY: a durable state decoded without its schema is the way here: the types refuse it.

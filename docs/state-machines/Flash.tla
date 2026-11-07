@@ -1,9 +1,9 @@
 ---- MODULE Flash ----
 \* A failed form's field errors on their way to the page its redirect lands
-\* on: src/flash.ts openFlash (outgoing 94-107, the cookie it writes 115-131,
-\* take 150-163), the render in src/middleware.ts 163, and
-\* src/response-output.ts finishResponse, which writes that cookie on the
-\* answer. Another request from the same
+\* on: src/flash.ts flashCookieTable and openFlash, the render in
+\* src/middleware.ts, and src/response-output.ts finishResponse, which moves
+\* the table on the answer actually sent and writes the cookie it gives.
+\* Another request from the same
 \* browser overlaps it: an Inertia poll or async reload, or a visit in
 \* another tab, which renders a page. TheFormShowsItsErrors breaks on the
 \* code, a limit docs/state-machines.md accepts: the flash cookie is one

@@ -18,7 +18,7 @@ import { recordPrivacy } from './privacy.js'
 import { ConfigurationError } from './effect/errors.js'
 import { isCurrentVersion, memberKey, pageVersion } from './page-version.js'
 import { setupOf } from './web-setup.js'
-import { finishResponse, pageClearedHistory, sessionLookupCookies } from './response-output.js'
+import { CLEARING_PAGE, finishResponse, PAGE_MARK, SHOWN_PAGE, sessionLookupCookies } from './response-output.js'
 
 declare module 'hono' {
   interface ContextVariableMap {
@@ -83,7 +83,7 @@ export function web(config: WebConfig): MiddlewareHandler {
   return async (c: Context, next) => {
     const sharedProps: Record<string, LazyPageProp> = {}
     const errors: ValidationErrorBag = {}
-    const flash = openFlash(c)
+    const flash = openFlash(c, { pages: config.render !== undefined })
     // An Inertia prefetch, which the client keeps and shows only if that URL
     // is visited.
     const prefetch = c.req.header('Purpose') === 'prefetch'
@@ -142,6 +142,23 @@ export function web(config: WebConfig): MiddlewareHandler {
           }
         }
 
+        // Signed in by the session lookup, or by a layer the action's
+        // runtime has, such as an application's own session.
+        const visitor = visitorOf(c)
+        const context = openWebContext(c)
+        const member = visitor._tag === 'Member' ? visitor.user : context.authUser
+        const signedIn = options.signedIn === true || member !== undefined
+        // A signed-in page's version marks its member, so Back in a tab
+        // whose page went to someone else asks the server for theirs.
+        const pageVersionFor = await pageVersion(version, signedIn ? options.userId ?? memberKey(member) : undefined)
+
+        // A partial reload's props are merged over the page the client holds,
+        // so a page that went to someone else would keep their props under
+        // this visitor's version, where Back shows them. It reloads in full.
+        if (partialKeep !== undefined && clientVersion !== undefined && clientVersion !== pageVersionFor) {
+          return c.body(null, { status: 409, headers: { [HEADERS.LOCATION]: c.req.url } })
+        }
+
         // Resolve lazy shared props. Skip any shared prop that is overridden by
         // an explicitly passed prop (the passed value wins) or that a partial
         // reload would discard — avoiding wasted work for deferred/lazy props.
@@ -187,13 +204,7 @@ export function web(config: WebConfig): MiddlewareHandler {
           ? filterPartialProps(Object.fromEntries(mergedProps), partialKeep)
           : Object.fromEntries(mergedProps)
 
-        const context = openWebContext(c)
         const encrypt = config.history?.encrypt ?? 'signed-in'
-        // Signed in by the session lookup, or by a layer the action's
-        // runtime has, such as an application's own session.
-        const visitor = visitorOf(c)
-        const member = visitor._tag === 'Member' ? visitor.user : context.authUser
-        const signedIn = options.signedIn === true || member !== undefined
         // A session the lookup found ended, or one ended or started since the
         // last page, leaves history the previous session's pages wrote.
         const sessionChanged = flashed.clearHistory || setupOf(c).sessionCookies.endsSession(sessionLookupCookies(c))
@@ -209,16 +220,12 @@ export function web(config: WebConfig): MiddlewareHandler {
           component,
           props: pageProps,
           url: new URL(c.req.url).pathname + new URL(c.req.url).search,
-          // A signed-in page's version marks its member, so Back in a tab
-          // whose page went to someone else asks the server for theirs.
-          version: await pageVersion(version, signedIn ? options.userId ?? memberKey(member) : undefined),
+          version: pageVersionFor,
           clearHistory: options.clearHistory ?? ((sessionChanged || signedOut) || undefined),
           encryptHistory: options.encryptHistory ??
             ((encrypt === 'signed-in' ? signedIn : encrypt) || undefined),
           flash: flashed.flash,
         }
-
-        if (page.clearHistory === true && !prefetch) pageClearedHistory(c)
 
         if (signedIn) {
           // The page is the visitor's own, which no cache may keep.
@@ -226,11 +233,14 @@ export function web(config: WebConfig): MiddlewareHandler {
         }
 
         const status = options.status ?? 200
+        // What finishing the response reads, once it is the answer.
+        const mark = page.clearHistory === true && !prefetch ? CLEARING_PAGE : SHOWN_PAGE
 
         if (isInertia) {
           return c.json(page, status, {
             [HEADERS.INERTIA]: 'true',
             'Vary': HEADERS.INERTIA,
+            [PAGE_MARK]: mark,
           })
         }
 
@@ -247,6 +257,7 @@ export function web(config: WebConfig): MiddlewareHandler {
 
         return c.html(html, status, {
           'Vary': HEADERS.INERTIA,
+          [PAGE_MARK]: mark,
         })
       },
     } satisfies WebInstance

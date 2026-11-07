@@ -21,7 +21,7 @@ export function property<A>(
   name: string,
   arbitrary: Arbitrary.Arbitrary<A>,
   holds: (value: A) => Refusal | Promise<Refusal>,
-  options: FuzzOptions = {}
+  options: FuzzOptions<A> = {}
 ): void {
   test(name, () => fuzz(arbitrary, holds, options), fuzzTimeout)
 }

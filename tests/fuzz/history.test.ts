@@ -50,8 +50,8 @@ async function createApp(encrypt: 'signed-in' | true) {
     auth: { client: () => auth },
     history: { encrypt },
   })
-  // Each page says whom the server rendered it for.
-  const page = (component: string) => action(Effect.flatMap(currentUser, (user) => render(component, { who: user?.user.email ?? 'guest' })))
+  // Each page says whom the server rendered it for, and has a prop a poll asks for alone.
+  const page = (component: string) => action(Effect.flatMap(currentUser, (user) => render(component, { count: 1, who: user?.user.email ?? 'guest' })))
 
   routes
     .get('/', page('Home'))
@@ -62,9 +62,9 @@ async function createApp(encrypt: 'signed-in' | true) {
   return testBrowser(app, testEnv({}))
 }
 
-/** What one tab does: open a page, press Back, prefetch one, or have Better Auth's client refetch the session. */
+/** What one tab does: open a page, press Back, prefetch one, poll part of its page, or have Better Auth's client refetch the session. */
 const tabStep = Arbitrary.all({
-  act: weighted<'visit' | 'back' | 'prefetch' | 'session'>(['visit', 3], ['back', 3], ['prefetch', 1], ['session', 1]),
+  act: weighted<'visit' | 'back' | 'prefetch' | 'session' | 'partial'>(['visit', 3], ['back', 3], ['prefetch', 1], ['session', 1], ['partial', 2]),
   tab: pick([0, 1]),
   path: pick(['/dashboard', '/', '/settings']),
 })
@@ -89,12 +89,16 @@ const steps = Arbitrary.map(stepsOf(turn, { maxLength: 6 }), (turns): Step[] =>
 
 /** What the client reads of a page the server sent. */
 const Page = S.Struct({
+  component: S.String,
   url: S.String,
   version: S.String,
   props: S.Struct({ who: S.String }),
   encryptHistory: S.optional(S.Boolean),
   clearHistory: S.optional(S.Boolean),
 })
+
+/** What a partial reload answers: the page without the props it did not ask for. */
+const PartialPage = S.Struct({ ...Page.fields, props: S.Struct({ count: S.Number }) })
 
 interface Entry {
   readonly page: typeof Page.Type
@@ -181,6 +185,29 @@ async function runSteps(encrypt: 'signed-in' | true, sequence: readonly Step[]):
         }
         break
       }
+      case 'partial': {
+        const current = tab.current
+        if (current === undefined) break
+
+        const res = await browser.request(current.page.url, {
+          headers: { ...inertia(current.page.version), 'X-Inertia-Partial-Component': current.page.component, 'X-Inertia-Partial-Data': 'count' },
+        })
+
+        // The answer that makes the client reload the page in full.
+        if (res.status === 409) {
+          const failed = await visit(tab, current.page.url)
+          if (failed !== undefined) return `${at}: ${failed}`
+          break
+        }
+        if (res.status !== 200) return `${at}: a partial reload of ${current.page.url} answered ${res.status}`
+
+        // The client merges the answer over its page, and keeps the rest of its props.
+        const answered = S.decodeUnknownSync(PartialPage)(await res.json())
+
+        if (answered.clearHistory === true) tab.key += 1
+        tab.current = { page: { ...answered, props: current.page.props }, key: tab.key }
+        break
+      }
       case 'prefetch':
         // Inertia keeps a prefetched page for a later visit, and applies nothing now.
         await browser.request(sent.path, { headers: { ...inertia(tab.current?.page.version), Purpose: 'prefetch' } })
@@ -195,6 +222,16 @@ async function runSteps(encrypt: 'signed-in' | true, sequence: readonly Step[]):
   return undefined
 }
 
+/** The six steps HistoryClear.1.13.cfg finds, which chance reaches too rarely to count on. */
+const PARTIAL_RELOAD_AFTER_ANOTHER_SIGN_IN: Step[] = [
+  { act: 'signIn', member: 'ada' },
+  { act: 'visit', tab: 0, path: '/' },
+  { act: 'signIn', member: 'grace' },
+  { act: 'partial', tab: 0, path: '/' },
+  { act: 'visit', tab: 0, path: '/dashboard' },
+  { act: 'back', tab: 0, path: '/' },
+]
+
 describe("Inertia's history across two tabs and two members", () => {
   for (const encrypt of ['signed-in', true] as const) {
     property(
@@ -205,7 +242,7 @@ describe("Inertia's history across two tabs and two members", () => {
 
         return refusal === undefined ? undefined : `${refusal}, after ${show(sequence)}`
       },
-      { runs: 200 }
+      { runs: 200, examples: [PARTIAL_RELOAD_AFTER_ANOTHER_SIGN_IN] }
     )
   }
 })

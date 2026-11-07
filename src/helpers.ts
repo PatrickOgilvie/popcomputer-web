@@ -35,10 +35,12 @@ export interface TemplateOptions {
  * reloads at once, then after 2 and 4 seconds, and no more than three times
  * a minute in a tab, so a file missing for another reason never reloads the
  * page in a loop; where it cannot count, in a browser without
- * `sessionStorage`, it never reloads.
+ * `sessionStorage`, it never reloads. A reload the visitor cancels, at a
+ * prompt the page shows before leaving, leaves the page here, so a later
+ * failure may ask again.
  */
 export const ASSET_RELOAD_SCRIPT =
-  "(()=>{let pending=false;const reload=()=>{if(pending)return true;try{const now=Date.now();const stored=JSON.parse(sessionStorage.getItem('popweb:reloads')||'[]');const recent=Array.isArray(stored)?stored.filter((at)=>now-at<60000):[];if(recent.length>=3)return false;sessionStorage.setItem('popweb:reloads',JSON.stringify([...recent,now]));setTimeout(()=>location.reload(),recent.length*2000);return pending=true}catch{return false}};addEventListener('vite:preloadError',(event)=>{if(reload())event.preventDefault()});addEventListener('error',(event)=>{if(event.target instanceof Element&&event.target.hasAttribute('data-popweb-asset'))reload()},true)})()"
+  "(()=>{let pending=false;const reload=()=>{if(pending)return true;try{const now=Date.now();const stored=JSON.parse(sessionStorage.getItem('popweb:reloads')||'[]');const recent=Array.isArray(stored)?stored.filter((at)=>now-at<60000):[];if(recent.length>=3)return false;sessionStorage.setItem('popweb:reloads',JSON.stringify([...recent,now]));setTimeout(()=>{location.reload();setTimeout(()=>{pending=false},5000)},recent.length*2000);return pending=true}catch{return false}};addEventListener('vite:preloadError',(event)=>{if(reload())event.preventDefault()});addEventListener('error',(event)=>{if(event.target instanceof Element&&event.target.hasAttribute('data-popweb-asset'))reload()},true)})()"
 
 /**
  * The Content-Security-Policy source that allows the script `createTemplate`
@@ -46,7 +48,7 @@ export const ASSET_RELOAD_SCRIPT =
  * it, as in `script-src 'self' ${TEMPLATE_SCRIPT_HASH}`. Without it, the
  * browser refuses the script and a page loaded during a deploy stays blank.
  */
-export const TEMPLATE_SCRIPT_HASH = "'sha256-IDbte3Rzc2LSWWO5xmHTv9h/7f/zz8VToylr2k7C4Sg='"
+export const TEMPLATE_SCRIPT_HASH = "'sha256-KdtOdlgQLs0iUD2pwIqOZYKY+rifKjOEkwW68GfL2sg='"
 
 /** The characters escaped in page data, as JSON's own `\\u` escapes, which `JSON.parse` reads back. */
 const SCRIPT_UNSAFE: Readonly<Record<string, string>> = {

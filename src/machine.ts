@@ -28,12 +28,19 @@ type Move<S extends Tagged, From, On, Out> = {
   }
 }[S['_tag']]
 
+/** A move to one of several states, which `run` chooses from what the event carries. */
+type Branch<S extends Tagged, From, On, Out> = {
+  readonly to: ReadonlyArray<S['_tag']>
+  readonly run: (state: From, event: On) => readonly [S, Out]
+}
+
 /**
  * What one event does in one state: a move, an event that changes nothing
  * for the reason it gives, or one the state refuses.
  */
 export type Cell<S extends Tagged, From, On, Out> =
   | Move<S, From, On, Out>
+  | Branch<S, From, On, Out>
   | { readonly ignore: string; readonly output: Out }
   | { readonly refuse: string }
 
@@ -65,13 +72,20 @@ export function step<S extends Tagged, E extends Tagged, Out>(
   if ('refuse' in cell) return Result.fail(new Refused({ state: state._tag, event: event._tag, because: cell.refuse }))
   if ('ignore' in cell) return Result.succeed([state, cell.output])
 
-  return Result.succeed(cell.run(state, event))
+  const moved = cell.run(state, event)
+
+  if (typeof cell.to !== 'string' && !cell.to.includes(moved[0]._tag)) {
+    throw new RangeError(`${event._tag} in ${state._tag} moved to ${moved[0]._tag}, which its cell does not name`)
+  }
+
+  return Result.succeed(moved)
 }
 
 /** One cell of a table, as the docs and the tests read it. */
 export interface TableRow {
   readonly from: string
   readonly on: string
+  /** The state it moves to, or the states it may, each named in the cell. */
   readonly to: string
   /** `ok`, or `refused:` or `ignored:` with the reason the cell gives. */
   readonly mark: string
@@ -83,7 +97,7 @@ export function rows<S extends Tagged, E extends Tagged, Out>(table: Table<S, E,
     Object.entries(events).map(([on, cell]) => ({
       from,
       on,
-      to: 'to' in cell ? cell.to : from,
+      to: 'to' in cell ? (typeof cell.to === 'string' ? cell.to : cell.to.join(' or ')) : from,
       mark: 'refuse' in cell ? `refused: ${cell.refuse}` : 'ignore' in cell ? `ignored: ${cell.ignore}` : 'ok',
     }))
   )

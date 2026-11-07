@@ -38,10 +38,18 @@ export function queueHeader<E extends Env>(c: Context<E>, name: string, value: s
   context.responseHeaders = [...(context.responseHeaders ?? []), [name, value]]
 }
 
-/** A page this request rendered, and the client shows, cleared Inertia's history. */
-export function pageClearedHistory<E extends Env>(c: Context<E>): void {
-  outputOf(c).historyCleared = true
-}
+/**
+ * Set by a page on the response that carries it, and taken off by
+ * {@link finishResponse}, so the flash cookie and the history's clear move on
+ * the page the request answered with, not on one an action rendered and dropped.
+ */
+export const PAGE_MARK = 'x-popweb-page'
+
+/** The mark of a page that clears Inertia's history. */
+export const CLEARING_PAGE = 'clears'
+
+/** The mark of any other page. */
+export const SHOWN_PAGE = 'shown'
 
 /** The cookies the session lookup set, which tell a page whether the session it found had ended. */
 export function sessionLookupCookies<E extends Env>(c: Context<E>): readonly string[] {
@@ -82,8 +90,9 @@ export function finishResponse<E extends Env>(c: Context<E>, response: Response)
   const lookupCookies = context.sessionLookupCookies ?? []
   const added = context.responseHeaders ?? []
   const flash = context.flash
+  const pageMark = followed.headers.get(PAGE_MARK)
 
-  if (flash !== undefined && !output.historyCleared) {
+  if (flash !== undefined && pageMark !== CLEARING_PAGE) {
     const own = [...followed.headers.getSetCookie(), ...appCookies]
     const ownNames = new Set(own.map(setCookieName))
     const answered = [
@@ -96,14 +105,18 @@ export function finishResponse<E extends Env>(c: Context<E>, response: Response)
     if (session.endsSession(answered) || session.startsSession(answered, c.req.header('Cookie'))) flash.clearHistory()
   }
 
-  const flashCookie = flash?.cookie(followed.status)
+  const flashCookie = flash?.cookie(pageMark === null
+    ? { page: false, status: followed.status }
+    : { page: true, cleared: pageMark === CLEARING_PAGE })
   const cookies = [...(flashCookie === undefined ? [] : [flashCookie]), ...appCookies]
   const setNames = new Set([...followed.headers.getSetCookie(), ...cookies].map(setCookieName))
   const lookups = lookupCookies.filter((cookie) => !setNames.has(setCookieName(cookie)))
 
-  if (cookies.length === 0 && lookups.length === 0 && added.length === 0) return followed
+  if (pageMark === null && cookies.length === 0 && lookups.length === 0 && added.length === 0) return followed
 
   const headers = new Headers(followed.headers)
+
+  headers.delete(PAGE_MARK)
 
   for (const cookie of [...cookies, ...lookups]) headers.append('Set-Cookie', cookie)
   for (const [name, value] of added) headers.append(name, value)
@@ -116,10 +129,10 @@ export function isFinished<E extends Env>(c: Context<E>): boolean {
   return outputOf(c).finished
 }
 
-function outputOf<E extends Env>(c: Context<E>): { historyCleared: boolean; finished: boolean } {
+function outputOf<E extends Env>(c: Context<E>): { finished: boolean } {
   const context = openWebContext(c)
 
-  context.output ??= { historyCleared: false, finished: false }
+  context.output ??= { finished: false }
 
   return context.output
 }

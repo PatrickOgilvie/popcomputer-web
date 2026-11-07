@@ -175,6 +175,38 @@ describe('a page whose assets a deploy replaced', () => {
   })
 })
 
+test('M8.T8: a reload the visitor cancelled leaves the page able to ask again', () => {
+  const timers: Array<() => void> = []
+  const listeners = new Map<string, Listener[]>()
+  const values = new Map<string, string>()
+  let asked = 0
+
+  runInNewContext(inlined, {
+    addEventListener: (type: string, listener: Listener) => listeners.set(type, [...(listeners.get(type) ?? []), listener]),
+    sessionStorage: { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => void values.set(key, value) },
+    Element,
+    Date: { now: () => 1_700_000_000_000 },
+    // A prompt the visitor cancels: the reload does nothing, and the page stays.
+    location: { reload: () => void (asked += 1) },
+    setTimeout: (callback: () => void) => void timers.push(callback),
+  })
+
+  const chunkFails = () => {
+    for (const listener of listeners.get('vite:preloadError') ?? []) listener({ preventDefault: () => {} })
+  }
+
+  chunkFails()
+  timers.shift()?.()
+  expect(asked).toBe(1)
+
+  // The page is still here, and nothing has been counted against it yet.
+  timers.shift()?.()
+  chunkFails()
+  timers.shift()?.()
+
+  expect(asked).toBe(2)
+})
+
 test('TEMPLATE_SCRIPT_HASH allows the inline script under a Content-Security-Policy', () => {
   const digest = createHash('sha256').update(inlined).digest('base64')
 
