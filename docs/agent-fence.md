@@ -204,7 +204,9 @@ src/email.ts:12  @ts-expect-error  (no reason given)
 It counts Oxlint's and ESLint's `disable` comments, TypeScript's
 `@ts-expect-error`, `@ts-ignore` and `@ts-nocheck`, and Effect's
 `@effect-diagnostics` comments that lower a rule below `error`, in the files
-git tracks or would track. A reason follows ` -- `, as
+git tracks or would track. It reads comments with Oxc's parser, as Oxlint
+does, so JSX text, strings and regular expressions hold none, and it refuses
+a file the parser cannot read. A reason follows ` -- `, as
 `// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the column names are constants`.
 
 `popweb-fence debt --update` writes the ledger, `lint-debt.json`: each
@@ -212,21 +214,25 @@ directive without its line, so moving code changes nothing. Commit it.
 Before the first `--update`, give each warning the application means a
 reasoned disable comment, as `explain-security-loosening` on a binding
 public by design: the first ledger records them, and each later one is the
-owner's to allow.
-`popweb-fence debt --check`, the gate's last step, then fails:
+owner's to allow. `popweb-fence debt --check`, the gate's last step, reads
+the index, the commit about to be made, and fails:
 
 - when the code holds more directives than the ledger, naming the new
   ones. Fix the code each rule reports. A directive the owner accepts goes
   in with `popweb-fence debt --update --allow-increase`, which the command
-  hook asks the owner about;
+  hook asks the owner about and which names HEAD as `raisedFrom`;
 - when the code holds fewer, or different ones, until `--update` records
   them, so the baseline follows the debt down and a later directive cannot
-  take the freed place unnoticed.
+  take the freed place unnoticed;
+- when the ledger counts or ignores more than HEAD's without naming HEAD,
+  as one restored from an older commit or moved into place does.
 
-`--update` never raises the count, and a deleted ledger keeps the count
-committed before it. A generated file that turns rules off, such as
-Wrangler's `worker-configuration.d.ts`, goes in the ledger's `ignore`, a
-list of paths and globs (`src/generated/**`):
+`--update` never raises the count, and a deleted ledger keeps HEAD's,
+however `--ledger` spells the path and whatever `GIT_DIR` names. A generated
+file that turns rules off, such as Wrangler's `worker-configuration.d.ts`,
+goes in the ledger's `ignore`, a list of paths and globs
+(`src/generated/**`); a new entry leaves directives out, so the owner
+records it with `--update --allow-increase`:
 
 ```json
 { "count": 0, "ignore": ["worker-configuration.d.ts"], "directives": [] }
