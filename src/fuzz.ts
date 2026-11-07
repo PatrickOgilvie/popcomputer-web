@@ -28,7 +28,7 @@
  * }), fuzzTimeout)
  * ```
  */
-import { Arbitrary, Effect, Option, Predicate, Schema as S, SchemaGetter, type SchemaAST } from 'effect'
+import { Arbitrary, Effect, Formatter, Option, Predicate, Schema as S, SchemaGetter, type SchemaAST } from 'effect'
 import type { PathParamName } from './paths.js'
 import type { RouteModelMetadata, RouteRegistry, RouteRow } from './effect/route-registry.js'
 import type { EffectErrorEvent } from './effect/error-observer.js'
@@ -322,12 +322,26 @@ export function textOf(pieces: readonly [string, ...string[]], maxPieces = 8): A
 /** Any string, as Effect generates `Schema.String`. */
 export const anyText: Arbitrary.Arbitrary<string> = Arbitrary.schema(S.String)
 
-/** A value as JSON with every character outside printable ASCII escaped, so U+00A0 never reads as a space. */
+/**
+ * A value as JSON with every character outside printable ASCII escaped, so
+ * U+00A0 never reads as a space. What JSON cannot write, such as a BigInt or
+ * a value that holds itself, is written as Effect's `Formatter.format` writes
+ * it, `12n` and `[Circular]`, so a report of the input never throws instead.
+ */
 export function show<A>(value: A): string {
-  return (JSON.stringify(value) ?? String(value)).replace(
+  return written(value).replace(
     /[^\x20-\x7e]/g,
     (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
   )
+}
+
+/** The value as JSON, or as Effect's `Formatter` writes what JSON cannot. */
+function written(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value)
+  } catch {
+    return Formatter.format(value)
+  }
 }
 
 /** The objects every request in a realm shares, by name. */
@@ -854,10 +868,16 @@ function bodyInit(body: FuzzBody): BodyInit | undefined {
   }
 }
 
+/** Whether the request carries its body: a GET or a HEAD carries none. */
+function carriesBody(sent: FuzzRequest): boolean {
+  const method = sent.method.toUpperCase()
+
+  return method !== 'GET' && method !== 'HEAD'
+}
+
 /** The URL and init of the request `sent` describes. */
 function partsOf(sent: FuzzRequest, origin: string) {
-  const method = sent.method.toUpperCase()
-  const body = method === 'GET' || method === 'HEAD' ? undefined : bodyInit(sent.body)
+  const body = carriesBody(sent) ? bodyInit(sent.body) : undefined
   const init: RequestInit = { method: sent.method, headers: Object.fromEntries(Object.entries(sent.headers).filter(([, value]) => value !== '')) }
 
   if (body !== undefined) init.body = body
@@ -1272,24 +1292,32 @@ export interface FuzzSession<Person extends string = string> {
   /**
    * Send a step through its person's browser, which keeps the cookies its
    * answers set, with each reference replaced by the record it names, and
-   * update the model when it succeeded: below 400, and not sent to sign in.
-   * A reference to a record no step has created yet stays as it is, and
-   * names none. Nothing when `fetch` refuses to make the request.
+   * update the model when it succeeded: below 400, not sent to sign in, and
+   * with no failure the framework answered, such as a form that failed
+   * validation sent back to its page. A reference to a record no step has
+   * created yet stays as it is, and names none. Nothing when `fetch`
+   * refuses to make the request.
    */
   send(step: FuzzRequest<Person>): Promise<FuzzStep<Person> | undefined>
   /**
    * Send a request as its person's last step went, with the cookies their
-   * browser held before it, keeping none the answer sets: a request beside
-   * the session, such as the same step naming a missing record.
+   * browser held before it, each to the paths it covers, keeping none the
+   * answer sets: a request beside the session, such as the same step naming
+   * a missing record.
    */
   probe(sent: FuzzRequest<Person>): Promise<FuzzAnswer | undefined>
   /**
    * Who owns a record, by the model: the person `owners` gives, or for one
    * a step created, the owner of the record its path names last, such as
-   * the project a note was posted to, else the person who sent it.
+   * the project a note was posted to, else the person who sent it. A record
+   * a step creates again after a step deleted it is a new one, and its
+   * owner is decided again.
    */
   ownerOf(id: string): Person | null | undefined
-  /** Whether the record is in the model and no step that succeeded deleted it: a DELETE to a path that names it last. */
+  /**
+   * Whether the record is in the model and no step that succeeded deleted
+   * it, a DELETE to a path that names it last, since it was last created.
+   */
   exists(id: string): boolean
   /**
    * The canaries `leaks` checks a step's answer against: the texts
@@ -1305,16 +1333,41 @@ export interface FuzzSession<Person extends string = string> {
   readonly history: ReadonlyArray<string>
 }
 
-/** A record of a session's model. */
+/** A record of a session's model, in its latest life. */
 interface ModelRecord<Person extends string> {
   readonly owner: Person | null
-  deleted: boolean
+  /** 0 for a record the database starts with, and one more each time a step creates it. */
+  readonly generation: number
+  readonly deleted: boolean
 }
 
-/** A person's browser, and what the error observer saw of its requests. */
+/**
+ * How a step's answer went, as the model reads it: its action finished, a
+ * failure answered below 400 sent the visitor elsewhere, as a form that
+ * fails validation goes back to its page and a signed-out visitor goes to
+ * sign in, or it was refused, at 400 or above.
+ */
+type Outcome = 'succeeded' | 'bounced' | 'refused'
+
+/**
+ * A failure or defect the framework answered for the request itself: one
+ * left unhandled that, unlike its background work's, names no operation. A
+ * failure the application reported and handled is none.
+ */
+const answeredFailure = (event: EffectErrorEvent): boolean =>
+  event.handling === 'unhandled' && !Predicate.isString(event.metadata?.operation)
+
+/** An answer as its browser received it: what it requested, and the cookies the answer set. */
+interface Received {
+  readonly target: string
+  readonly setCookies: ReadonlyArray<string>
+}
+
+/** A person's browser, what the error observer saw of its requests, and each answer it received, in order. */
 interface ObservedBrowser {
   readonly browser: TestBrowser
   readonly observed: ReadonlyArray<EffectErrorEvent>
+  readonly received: ReadonlyArray<Received>
 }
 
 /** A declared path's segments, each a placeholder's name or the text it must be. */
@@ -1339,6 +1392,28 @@ function recordsNamed(path: string, templates: ReadonlyArray<Template>): string[
   return template === undefined ? [] : template.flatMap((part, index) => ('name' in part ? [segments[index]] : []))
 }
 
+/** A path's segments and a query's names and values, each decoded as the application reads it. */
+function urlValues(path: string, query: string): string[] {
+  return [...path.split('/').map(decodedSegment), ...[...new URLSearchParams(query)].flat()]
+}
+
+/**
+ * The values a request sends, each whole as the application reads it: its
+ * path's segments, its query's and fields' names and values, its text body,
+ * and each header, with the segments and query of one that is a URL, as a
+ * Referer is. A GET or HEAD sends no body.
+ */
+function sentValues(sent: FuzzRequest): Set<string> {
+  const body = !carriesBody(sent) || sent.body.as === 'none' ? [] : sent.body.as === 'text' ? [sent.body.text] : entriesOf(sent.body.fields).flat()
+  const headers = Object.values(sent.headers).flatMap((value) => {
+    const url = URL.canParse(value) ? new URL(value) : undefined
+
+    return url === undefined ? [value] : [value, ...urlValues(url.pathname, url.search)]
+  })
+
+  return new Set([...urlValues(sent.path, sent.query), ...body, ...headers])
+}
+
 /** The request's method and target, and its body's fields, on one line. */
 function requestLine(sent: FuzzRequest): string {
   const body = sent.body.as === 'none' ? '' : sent.body.as === 'text' ? ` text ${show(sent.body.text)}` : ` ${sent.body.as} ${sent.body.fields.join('&')}`
@@ -1352,7 +1427,8 @@ function requestLine(sent: FuzzRequest): string {
  * record, and `created` reads each record a step creates. The model gives
  * a created record to the owner of the record its path names last, such as
  * the project a note was posted to, or else to its sender, and marks a
- * record deleted when a DELETE naming it succeeds.
+ * record deleted when a DELETE naming it succeeds. A record created again
+ * after that is a new one.
  */
 export function startFuzzSession<Person extends string>(app: TestApp, options: StartFuzzSessionOptions<Person>): FuzzSession<Person> {
   const origin = options.origin ?? 'http://localhost'
@@ -1365,23 +1441,35 @@ export function startFuzzSession<Person extends string>(app: TestApp, options: S
       return name === undefined ? { text: segment } : { name }
     }))
     .sort((first, second) => second.filter((part) => 'text' in part).length - first.filter((part) => 'text' in part).length)
-  const records = new Map<string, ModelRecord<Person>>(Object.entries(options.owners).map(([id, owner]) => [id, { owner, deleted: false }]))
-  // The ids of the records steps created, by placeholder, oldest first.
+  const records = new Map<string, ModelRecord<Person>>(Object.entries(options.owners).map(([id, owner]) => [id, { owner, generation: 0, deleted: false }]))
+  // The ids of the records steps created, by placeholder, the latest last.
   const created = new Map<string, string[]>()
   // The created records each person has sent in a request, and so knows.
   const known = new Map<Person | null, Set<string>>()
   const browsers = new Map<Person | null, ObservedBrowser>()
-  const cookiesBefore = new Map<Person | null, ReadonlyMap<string, string>>()
+  // How many answers each person's browser had received before their last step.
+  const receivedBefore = new Map<Person | null, number>()
   const history: string[] = []
 
-  // A browser whose requests give what the error observer sees to its list, as sendFuzzRequest's do.
-  const observedBrowser = (person: Person | null): ObservedBrowser => {
+  // A browser whose requests give what the error observer sees to its list,
+  // as sendFuzzRequest's do, and whose answers are kept.
+  const observedBrowser = (person: Person | null, answering: TestApp): ObservedBrowser => {
     const { env, observed } = observingEnv(options.env(person))
+    const received: Received[] = []
+    const keeping: TestApp = {
+      async request(target, init, given) {
+        const response = await answering.request(target, init, given)
 
-    return { browser: testBrowser(app, env), observed }
+        received.push({ target, setCookies: response.headers.getSetCookie() })
+
+        return response
+      },
+    }
+
+    return { browser: testBrowser(keeping, env), observed, received }
   }
   const browserOf = (person: Person | null): ObservedBrowser => {
-    const browser = browsers.get(person) ?? observedBrowser(person)
+    const browser = browsers.get(person) ?? observedBrowser(person, app)
 
     browsers.set(person, browser)
 
@@ -1429,11 +1517,15 @@ export function startFuzzSession<Person extends string>(app: TestApp, options: S
     return { response, text: await response.text(), observed: observed.slice(seen) }
   }
 
-  const succeeded = (answer: FuzzAnswer): boolean => {
+  const outcomeOf = (answer: FuzzAnswer): Outcome => {
     const { status, headers } = answer.response
     const location = headers.get('location') ?? ''
 
-    return status < 300 || (status < 400 && !(URL.canParse(location, origin) && new URL(location, origin).pathname === signInPath))
+    if (status >= 400) return 'refused'
+
+    const toSignIn = status >= 300 && URL.canParse(location, origin) && new URL(location, origin).pathname === signInPath
+
+    return toSignIn || answer.observed.some(answeredFailure) ? 'bounced' : 'succeeded'
   }
 
   return {
@@ -1441,7 +1533,7 @@ export function startFuzzSession<Person extends string>(app: TestApp, options: S
       const { sent, referenced } = resolve(step)
       const browser = browserOf(sent.person)
 
-      cookiesBefore.set(sent.person, new Map(browser.browser.cookies))
+      receivedBefore.set(sent.person, browser.received.length)
 
       const answer = await through(browser, sent)
 
@@ -1451,38 +1543,67 @@ export function startFuzzSession<Person extends string>(app: TestApp, options: S
         return undefined
       }
 
-      const text = [requestLine(sent), ...Object.values(sent.headers)].join('\n')
+      const values = sentValues(sent)
       const knows = known.get(sent.person) ?? new Set()
 
-      // An id the step sent, as a reference spells it, is one its sender knows.
-      for (const id of [...created.values()].flat()) {
-        if ([encodeURIComponent(id), encodedFirst(encodeURIComponent(id))].some((spelling) => text.includes(spelling))) knows.add(id)
-      }
+      // An id the step sent whole, or by a reference, is one its sender knows.
+      for (const id of [...referenced, ...[...created.values()].flat().filter((id) => values.has(id))]) knows.add(id)
 
       known.set(sent.person, knows)
 
-      const made = succeeded(answer) ? Object.entries(options.created(sent, answer) ?? {}) : []
+      const outcome = outcomeOf(answer)
+      const made = outcome === 'succeeded' ? Object.entries(options.created(sent, answer) ?? {}) : []
       const named = recordsNamed(sent.path, templates).at(-1)
       const parent = named === undefined ? undefined : records.get(named)
+      // The records the step made anew: none was there, or a step had deleted it.
+      const born = new Set(made.map(([, id]) => id).filter((id) => records.get(id)?.deleted !== false))
 
-      for (const [name, id] of made) {
-        const ids = created.get(name) ?? []
-
-        // A record keeps the owner the model first gave it, whichever placeholders name it.
-        if (!records.has(id)) records.set(id, { owner: parent === undefined ? sent.person : parent.owner, deleted: false })
-        if (!ids.includes(id)) created.set(name, [...ids, id])
+      for (const id of born) {
+        records.set(id, { owner: parent === undefined ? sent.person : parent.owner, generation: (records.get(id)?.generation ?? 0) + 1, deleted: false })
       }
 
-      if (parent !== undefined && sent.method.toUpperCase() === 'DELETE' && succeeded(answer)) parent.deleted = true
+      // A record the database started with, which `created` names again, no step created.
+      const listed = made.filter(([, id]) => (records.get(id)?.generation ?? 0) > 0)
 
-      history.push(`${sent.person ?? 'a visitor'} ${requestLine(sent)}: ${answer.response.status}${made.length === 0 ? '' : `, created ${made.map(([name, id]) => `${name} ${id}`).join(', ')}`}`)
+      for (const [name, id] of listed) {
+        const ids = created.get(name) ?? []
+
+        // A record made anew is the latest; one a step made before keeps its place.
+        if (born.has(id)) created.set(name, [...ids.filter((other) => other !== id), id])
+        else if (!ids.includes(id)) created.set(name, [...ids, id])
+      }
+
+      if (named !== undefined && sent.method.toUpperCase() === 'DELETE' && outcome === 'succeeded') {
+        const record = records.get(named)
+
+        if (record !== undefined) records.set(named, { ...record, deleted: true })
+      }
+
+      const notes = [
+        String(answer.response.status),
+        ...(outcome === 'bounced' ? ['bounced'] : []),
+        ...(listed.length === 0 ? [] : [`created ${listed.map(([name, id]) => `${name} ${id}`).join(', ')}`]),
+      ]
+
+      history.push(`${sent.person ?? 'a visitor'} ${requestLine(sent)}: ${notes.join(', ')}`)
 
       return { sent, answer, referenced }
     },
     async probe(sent) {
-      const aside = observedBrowser(sent.person)
+      const before = (browsers.get(sent.person)?.received ?? []).slice(0, receivedBefore.get(sent.person) ?? 0)
+      // A browser of its own is handed again, in order, the cookies each
+      // answer set before the person's last step, and keeps them by its own
+      // rules: the paths each covers, and which replaces which.
+      const replay = before.values()
+      const aside = observedBrowser(sent.person, {
+        request: (target, init, given) => {
+          const next = replay.next()
 
-      for (const [name, value] of cookiesBefore.get(sent.person) ?? new Map<string, string>()) aside.browser.setCookie(name, value)
+          return next.done === true ? app.request(target, init, given) : new Response(null, { status: 204, headers: next.value.setCookies.map((cookie) => ['set-cookie', cookie]) })
+        },
+      })
+
+      for (const { target } of before) await aside.browser.request(target, { method: 'HEAD' })
 
       return through(aside, resolve(sent).sent)
     },

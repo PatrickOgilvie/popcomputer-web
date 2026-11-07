@@ -32,10 +32,14 @@ record no step has created yet names none.
 signed-out visitor, has a `testBrowser`, so cookies and flash carry between
 their steps, and the session keeps a model of who owns each record: the
 seeded ones `owners` gives, and each one a step created, which `created`
-reads from an answer that succeeded. A created record belongs to the owner
-of the record its path names last, such as the project a task was posted
-to, or else to its sender. A DELETE that succeeds marks the record its path
-names last deleted. After each step, the rules check the answer against the
+reads from an answer that succeeded: below 400, not sent to sign in, and
+with no failure the framework answered, so a form that fails validation
+and goes back to its page creates and deletes nothing, whatever its
+Location names. A created record belongs to the owner of the record its
+path names last, such as the project a task was posted to, or else to its
+sender. A DELETE that succeeds marks the record its path names last
+deleted, and a step that creates it again makes a new record, its owner
+decided again. After each step, the rules check the answer against the
 model:
 
 ```ts
@@ -141,18 +145,21 @@ test('any session keeps the rules after each step', () => fuzz(sessions, async (
 ```
 
 `session.canaries(viewer, canaries)` adds to each person's canaries the ids
-of the records they own that steps created, unless `viewer` has sent one:
-no one else learns them unless the application shows them. Give `creates`
-each placeholder that binds the same table, as `project` and `showcase`
-bind projects, and have `created` return the record under each.
+of the records they own that steps created, unless `viewer` has sent one,
+whole as a path segment, a query or field value or a header, or by a
+reference: no one else learns them unless the application shows them.
+Give `creates` each placeholder that binds the same table, as `project`
+and `showcase` bind projects, and have `created` return the record under
+each.
 
 `session.probe(request)` sends a request beside the session, with the
-cookies the person's browser held before their last step, keeping none the
-answer sets. A rule that compares a refusal with the same request naming a
-missing record sends that one this way, and `session.exists(id)` says which
-segments of the path name a record to swap. A failing session shrinks toward
-the steps it needs, and `session.history` shows them with the ids they named
-and each answer's status.
+cookies the person's browser held before their last step, each to the
+paths it covers, keeping none the answer sets. A rule that compares a
+refusal with the same request naming a missing record sends that one this
+way, and `session.exists(id)` says which segments of the path name a
+record to swap. A failing session shrinks toward the steps it needs, and
+`session.history` shows them with the ids they named and each answer's
+status, `bounced` beside one a failure sent elsewhere.
 
 ## What it finds
 

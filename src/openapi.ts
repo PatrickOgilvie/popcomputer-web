@@ -120,21 +120,20 @@ function inputDocument(schema: EndpointSchema): SchemaDocument {
 class Components {
   readonly schemas: Record<string, JsonObject> = { ErrorResponse: documentOf(ErrorResponse).schema }
 
-  /** The document's schema, its `$ref`s pointing at the components. */
+  /**
+   * The document's schema, its `$ref`s pointing at the components. A
+   * definition shares the component of its name when the two are the same
+   * once its `$ref`s point where this document's definitions go, and takes
+   * the next name, `Outer2`, otherwise. Each starts at its own name, so one
+   * that names itself, or another that names it back, shares its component;
+   * one whose `$ref` names a definition that moved compares again, and moves
+   * too.
+   */
   add(document: SchemaDocument): JsonObject {
-    const renamed = new Map<string, string>()
-
-    for (const [name, definition] of Object.entries(document.definitions)) {
-      let target = name
-      let suffix = 2
-
-      while (this.schemas[target] !== undefined && JSON.stringify(this.schemas[target]) !== JSON.stringify(definition)) {
-        target = `${name}${suffix}`
-        suffix += 1
-      }
-
-      renamed.set(name, target)
-    }
+    const definitions = Object.entries(document.definitions)
+    // Where each of the document's definitions goes: its own name, until it moves.
+    const renamed = new Map(definitions.map(([name]) => [name, name]))
+    const suffixes = new Map<string, number>()
 
     const point = (value: JsonValue): JsonValue => {
       if (Array.isArray(value)) return value.map(point)
@@ -151,7 +150,29 @@ class Components {
       }))
     }
 
-    for (const [name, definition] of Object.entries(document.definitions)) {
+    // A name two of the document's definitions go to belongs to the one it
+    // is the name of, else to the earliest.
+    const holder = (target: string) =>
+      renamed.get(target) === target ? target : definitions.find(([name]) => renamed.get(name) === target)?.[0]
+
+    for (let moved = true; moved;) {
+      moved = false
+
+      for (const [name, definition] of definitions) {
+        const target = renamed.get(name) ?? name
+        const stored = this.schemas[target]
+
+        if (holder(target) !== name || (stored !== undefined && JSON.stringify(stored) !== JSON.stringify(point(definition)))) {
+          const suffix = (suffixes.get(name) ?? 1) + 1
+
+          suffixes.set(name, suffix)
+          renamed.set(name, `${name}${suffix}`)
+          moved = true
+        }
+      }
+    }
+
+    for (const [name, definition] of definitions) {
       const pointed = point(definition)
       this.schemas[renamed.get(name) ?? name] = isObject(pointed) ? pointed : definition
     }
