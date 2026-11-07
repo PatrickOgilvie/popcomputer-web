@@ -657,8 +657,14 @@ function definedErrors(
 interface BetterAuthInstance {
   readonly api: object
   readonly handler: (request: Request) => Response | Promise<Response>
-  readonly $context?: Promise<{ readonly baseURL?: string; readonly options?: unknown }>
+  readonly $context?: Promise<{ readonly baseURL?: string; readonly options?: unknown; readonly internalAdapter?: SignUpAdapter }>
   readonly options?: { readonly basePath?: string }
+}
+
+/** The calls on Better Auth's internal adapter that mending a sign-up makes. */
+interface SignUpAdapter {
+  findUserByEmail(email: string): Promise<{ readonly user: { readonly id: string } } | null>
+  deleteUser(id: string): Promise<unknown>
 }
 
 function isBetterAuthInstance(auth: unknown): auth is BetterAuthInstance {
@@ -762,11 +768,61 @@ async function sendThroughHandler(
     if (referer?.origin === arrived) headers.set('referer', `${url.origin}${referer.pathname}${referer.search}`)
   }
 
-  return auth.handler(new Request(url, {
+  const email = input.body instanceof Object ? Reflect.get(input.body, 'email') : undefined
+
+  return mendSignUp(auth, path, email, () => Promise.resolve(auth.handler(new Request(url, {
     method,
     headers,
     body: input.body === undefined || method === 'GET' ? undefined : JSON.stringify(input.body),
-  }))
+  }))))
+}
+
+/** Better Auth's code for a sign-up whose user it could not write, as when another wrote the address first. */
+const FAILED_TO_CREATE_USER = 'FAILED_TO_CREATE_USER'
+
+/** The code of a refusal Better Auth answered with, from its JSON body. */
+async function errorCodeOf(response: Response): Promise<unknown> {
+  try {
+    const body: unknown = await response.clone().json()
+
+    return body instanceof Object ? Reflect.get(body, 'code') : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Send a password sign-up to Better Auth, mending what its separate writes of
+ * a user and of its password's account can leave. A sign-up that lost a race
+ * to the same address, whose user Better Auth then failed to write, is sent
+ * once more, so Better Auth answers it as any sign-up for a registered
+ * address. One that failed after writing its user, when its account's write
+ * failed, removes that user, so the address can sign up again: every later
+ * sign-up would be answered as registered, and no password would sign in.
+ * `send` sends it afresh each call.
+ */
+async function mendSignUp(auth: BetterAuthInstance, path: string, email: unknown, send: () => Promise<Response>): Promise<Response> {
+  if (path !== '/sign-up/email') return send()
+
+  const response = await send()
+
+  if (await errorCodeOf(response) === FAILED_TO_CREATE_USER) return send()
+  if (response.status >= 500) await undoPartialSignUp(auth, email)
+
+  return response
+}
+
+/**
+ * Remove the user a failed sign-up left. Better Auth answers a sign-up for a
+ * registered address before it writes a user, and one that lost a race to
+ * the address with a 422, so the user under the address after a 500 is the
+ * failed sign-up's own; a failed email after it is logged, not a 500.
+ */
+async function undoPartialSignUp(auth: BetterAuthInstance, email: unknown): Promise<void> {
+  const adapter = (auth.$context === undefined ? undefined : await auth.$context)?.internalAdapter
+  const found = await adapter?.findUserByEmail(String(email))
+
+  if (found !== null && found !== undefined) await adapter?.deleteUser(found.user.id)
 }
 
 /** An endpoint's success as the action receives it: its JSON body, and the response carrying its cookies. */
@@ -1144,7 +1200,21 @@ export function betterAuthHandler(
     const response = yield* withinSignInLimits(
       attempt,
       Effect.tryPromise({
-        try: (): Promise<Response> => Promise.resolve(auth.handler(forwarded)),
+        // A sign-up may be sent twice: again, it is sent from a copy of the
+        // body, which forwarded holds read within the limit.
+        try: (): Promise<Response> => {
+          const copy = forwarded.clone()
+          const email = body instanceof Object ? Reflect.get(body, 'email') : undefined
+          let sent = 0
+
+          return mendSignUp(auth, path, email, async () => {
+            sent += 1
+
+            return sent === 1
+              ? auth.handler(forwarded)
+              : auth.handler(new Request(forwarded.url, { method: forwarded.method, headers: forwarded.headers, body: await copy.arrayBuffer() }))
+          })
+        },
         catch: (cause) => new HttpError({ status: 502, message: 'Authentication service failed.', cause }),
       }),
       options

@@ -49,6 +49,7 @@ from a small factory beside `src/db.ts`, which the [Quick start](setup.md#3-conf
 // src/auth.ts
 import { betterAuth, type BetterAuthOptions } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
+import { createEmailVerificationToken } from 'better-auth/api'
 import type { Database } from './db'
 import { paths } from './paths'
 import * as schema from './schema'
@@ -66,6 +67,15 @@ export interface CreateAuthOptions {
 // Better Auth's tables (user, session, account, verification, rateLimit)
 // belong in ./schema, as auth-tables.md shows.
 export function createAuth(options: CreateAuthOptions) {
+  // The link proves the address and signs nobody in: the member signs in next.
+  const sendLink = ({ user, token }: { readonly user: { readonly email: string }; readonly token: string }) => options.sendEmail({
+    to: user.email,
+    subject: 'Confirm your email address',
+    text: `Confirm your email address to finish signing up:\n${options.baseURL}${paths.verifyEmail}?${new URLSearchParams({ token })}\n\n` +
+      'If you did not sign up, ignore this email and do not follow the link: ' +
+      'whoever signed up with your address chose its password, and confirming it would let them sign in as you.',
+  })
+
   return betterAuth({
     database: drizzleAdapter(options.db, { provider: 'pg', schema }),
     secret: options.secret,
@@ -73,17 +83,16 @@ export function createAuth(options: CreateAuthOptions) {
     // A password signs in only once its address is proven, so an account
     // registered with someone else's address holds no session, password or
     // two-factor challenge when its owner signs in by a link or a provider.
-    emailAndPassword: { enabled: true, requireEmailVerification: true },
-    // The link proves the address and signs nobody in: the member signs in next.
-    emailVerification: {
-      sendVerificationEmail: ({ user, token }) => options.sendEmail({
-        to: user.email,
-        subject: 'Confirm your email address',
-        text: `Confirm your email address to finish signing up:\n${options.baseURL}${paths.verifyEmail}?${new URLSearchParams({ token })}\n\n` +
-          'If you did not sign up, ignore this email and do not follow the link: ' +
-          'whoever signed up with your address chose its password, and confirming it would let them sign in as you.',
-      }),
+    // An address not yet proven gets a new link when it signs up again or
+    // signs in with its password, so it always has a way to one.
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: true,
+      onExistingUserSignUp: async ({ user }) => {
+        if (!user.emailVerified) await sendLink({ user, token: await createEmailVerificationToken(options.secret, user.email, undefined, undefined, { userId: user.id }) })
+      },
     },
+    emailVerification: { sendOnSignIn: true, sendVerificationEmail: sendLink },
     // setupWeb's auth.signInLimits limits signing in, up and every password
     // call by address and account. Better Auth's own limits stay on too, in
     // each isolate's memory (its 'database' storage deletes the accounts'
@@ -129,70 +138,9 @@ can recognise without importing it: its `name` is `'APIError'`, its
 
 ## Proving an address
 
-`createAuth` signs no one in by a password whose address nobody has proven.
-Signing up sets no session: Better Auth emails the link `sendEmail` delivers,
-to `paths.verifyEmail`, and the sign-up action redirects to a page asking the
-visitor to check their inbox; a password sign-in before then is refused as
-`Email not verified`. A sign-up for a registered address is answered as a new
-one is, and sends nothing, so the form tells no one who has an account. The
-mailer is the application's own: `src/email.ts` exports `sendEmail(env, { to,
-subject, text })`, which calls its mail provider's API. The link opens a page
-whose button posts its token back, so a mail scanner that fetches the link
-proves nothing. The post proves the address and signs nobody in; the member
-signs in with a password next:
-
-```ts
-// src/actions/verify-email.ts
-import { Effect, Schema as S } from 'effect'
-import { action, prefersJson, redirect, render, validateRequest, type ValidationError } from '@popcomputer/web/effect'
-import { betterAuthRedirect } from '@popcomputer/web/auth'
-import { href } from '@popcomputer/web/paths'
-import { requiredString } from '@popcomputer/web/schema'
-import { paths } from '../paths'
-
-const Link = S.Struct({ token: requiredString })
-const expired = (error: ValidationError) =>
-  Effect.flatMap(prefersJson, (json) => (json ? Effect.fail(error) : redirect(href(paths.login, {}, { error: 'link_expired' }))))
-
-export const showVerifyEmail = action(
-  Effect.gen(function* () {
-    const input = yield* validateRequest(Link)
-
-    return yield* render('Auth/VerifyEmail', input)
-  }).pipe(Effect.catchTag('ValidationError', expired))
-)
-
-export const verifyEmail = action(
-  Effect.gen(function* () {
-    const input = yield* validateRequest(Link)
-
-    return yield* betterAuthRedirect('verifyEmail', { query: input }, { redirectTo: paths.login })
-  }).pipe(Effect.catchTag('ValidationError', expired))
-)
-```
-
-Register both for everyone, `routes.get(paths.verifyEmail, showVerifyEmail)`
-and `.post(paths.verifyEmail, verifyEmail)`, beside the page
-`'Auth/VerifyEmail': S.Struct({ token: S.String })`; a link that expired, after
-an hour, lands on the sign-in page with `?error=`, and a [JSON client](json.md)
-gets the 422, never a redirect to sign in. Email this page's link, not Better
-Auth's own `url`, which proves the address on any fetch. A link Better Auth's
-`user.changeEmail` sends to a new address completes only signed in to the
-account that asked: signed out, Better Auth would move that account to the
-address of whoever follows it, so the framework sends them to sign in.
-
-Without `requireEmailVerification`, someone who registers another person's
-address first is signed in, and keeps what the owner's magic-link or provider
-sign-in does not revoke: a two-factor challenge or a password sign-in under
-way. Leave `autoSignInAfterVerification` off, or an owner who follows a link
-for an account someone else registered is signed in to it.
-
-One risk remains, and the email warns of it: an owner who follows the link
-for an account they never created proves the address for whoever chose its
-password, which then signs in, and a later magic-link sign-in revokes
-nothing. A password reset takes the account back: an application that adds
-one sets `emailAndPassword.revokeSessionsOnPasswordReset: true`, so a reset
-also ends the sessions the old password began.
+`createAuth` signs no one in by a password whose address nobody has proven: a
+sign-up emails a link whose page proves it, as [Proving an
+address](proving-addresses.md) shows, with the risk that remains.
 
 ## Limiting password guessing
 

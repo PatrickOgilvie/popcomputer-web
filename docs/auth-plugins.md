@@ -17,7 +17,7 @@ other, typed from the registered client. Where they meet the application:
   [Signing in with an OAuth provider](#signing-in-with-an-oauth-provider).
 - A magic link, or another link Better Auth emails: email a link to a page
   whose button posts its token, as the verify-email link does ([Proving an
-  address](auth.md#proving-an-address)), never Better Auth's own `url`. Its
+  address](proving-addresses.md)), never Better Auth's own `url`. Its
   token signs in once, whoever sends it, so a mail scanner's or a link
   preview's fetch would hold the member's session and leave their click an
   expired link. The post's action, `betterAuthRedirect('magicLinkVerify',
@@ -27,7 +27,7 @@ other, typed from the registered client. Where they meet the application:
   Beside password sign-up, keep `createAuth`'s `requireEmailVerification`: a
   link's first sign-in revokes the password and sessions of an account someone
   else registered with that address, not a two-factor challenge they hold or a
-  password sign-in under way, as [Proving an address](auth.md#proving-an-address) says.
+  password sign-in under way, as [Proving an address](proving-addresses.md) says.
 - Phone numbers: `requireEmailVerification` gates passwords only. The
   phone-number plugin's verify signs in whoever holds a number's code, whether
   or not anyone has proven the address, and the owner's first sign-in by a

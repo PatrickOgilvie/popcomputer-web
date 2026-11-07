@@ -59,6 +59,7 @@ and the lint rules name it where an action reaches for something else.
 | Call Better Auth for a result | `betterAuthCall('enableTwoFactor', { body }, { errors })` | [Signing in and out](sign-in.md) |
 | Sign out | `betterAuthLogoutAction({ redirectTo, clear })` | [Signing in and out](sign-in.md) |
 | Limit password guessing | `auth.signInLimits`, `sweepSignInFailures` | [Limiting password guessing](auth.md#limiting-password-guessing) |
+| Prove a member's address | `requireEmailVerification`, and a page whose button posts the link's token | [Proving an address](proving-addresses.md) |
 | Use a Better Auth plugin: organizations, two-factor, magic links | its endpoints by name with `betterAuthRedirect` and `betterAuthCall` | [Better Auth's plugins](auth-plugins.md) |
 | Sign in through an OAuth provider, a company's own or GitHub's | `betterAuthRedirect('signInSocial', ...)`, and `betterAuthHandler()` on the callback alone | [Signing in with an OAuth provider](auth-plugins.md#signing-in-with-an-oauth-provider) |
 | Add a field to the user | a column on the user table, with `betterAuthFields` | [Auth](auth.md) |

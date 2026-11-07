@@ -94,6 +94,7 @@ Auth:
 - [Better Auth's tables](docs/auth-tables.md): on Postgres and on Cloudflare D1
 - [Signing in and out](docs/sign-in.md): sign-in and sign-up actions, guest and auth guards, `betterAuthHandler`
 - [The session cookie cache](docs/session-cookie-cache.md): what `session.cookieCache` costs, and how to keep it
+- [Proving an address](docs/proving-addresses.md): the emailed link, and the way back to one
 - [Better Auth's plugins](docs/auth-plugins.md): two-factor, magic links, organizations and OAuth providers
 - [Guards and roles](docs/guards.md): layers that guard routes, and roles on memberships
 

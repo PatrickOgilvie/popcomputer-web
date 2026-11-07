@@ -10,6 +10,7 @@
 import { Database } from 'bun:sqlite'
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
+import { createEmailVerificationToken } from 'better-auth/api'
 import { admin, bearer, emailOTP, genericOAuth, magicLink, organization, phoneNumber, twoFactor } from 'better-auth/plugins'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { betterAuthFields } from '../../src/auth.js'
@@ -213,18 +214,25 @@ export interface CreateAuthOptions {
 export const SECRET = 'better-auth-seam-test-secret-with-enough-entropy-0123'
 
 export function createAuth(options: CreateAuthOptions) {
+  const sendLink = async ({ user, token }: { readonly user: { readonly email: string }; readonly token: string }) => {
+    options.outbox.verifications.push({ email: user.email, token })
+  }
+
   return betterAuth({
     database: drizzleAdapter(options.db, { provider: 'sqlite', schema }),
     baseURL: options.baseURL ?? 'http://localhost',
     secret: SECRET,
     // docs/auth.md's createAuth: a password signs in only once its address is
-    // proven, and following the link signs nobody in.
-    emailAndPassword: { enabled: true, requireEmailVerification: true },
-    emailVerification: {
-      sendVerificationEmail: async ({ user, token }) => {
-        options.outbox.verifications.push({ email: user.email, token })
+    // proven, and following the link signs nobody in. An address not yet
+    // proven gets a new link when it signs up again or its password is right.
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: true,
+      onExistingUserSignUp: async ({ user }) => {
+        if (!user.emailVerified) await sendLink({ user, token: await createEmailVerificationToken(SECRET, user.email, undefined, undefined, { userId: user.id }) })
       },
     },
+    emailVerification: { sendOnSignIn: true, sendVerificationEmail: sendLink },
     // A member may move their account to another address, which its emailed link proves.
     user: { additionalFields: betterAuthFields(user, { timeZone: { input: true } }), changeEmail: { enabled: true } },
     session: options.session,

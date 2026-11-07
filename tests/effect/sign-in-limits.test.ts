@@ -16,7 +16,7 @@ import { drizzle as drizzlePostgres } from 'drizzle-orm/pglite'
 import { bigint as mysqlBigint, int, mysqlTable, varchar } from 'drizzle-orm/mysql-core'
 import { bigint, integer as pgInteger, pgTable, text as pgText } from 'drizzle-orm/pg-core'
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
-import { Effect, Exit, Schema as S } from 'effect'
+import { Cause, Effect, Exit, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { setupWeb } from '../../src/setup.js'
 import { action } from '../../src/effect/action.js'
@@ -26,6 +26,8 @@ import { validateRequest } from '../../src/effect/validation.js'
 import { currentPassword, email, requiredString } from '../../src/effect/schema.js'
 import { accountOf, activeSignInLimits, addressRange, SignInLimits, sweepSignInFailures, withinSignInLimits } from '../../src/effect/sign-in-limits.js'
 import { DatabaseService } from '../../src/effect/services.js'
+import { dbTransaction, type TransactionSupport } from '../../src/effect/database.js'
+import { EffectErrorObserverService } from '../../src/effect/error-observer.js'
 import { testBrowser, testClock, testEnv, testRateLimiter, type TestRateLimiter } from '../../src/testing.js'
 import type { WebDeclaration } from '../../src/effect/register.js'
 
@@ -704,6 +706,68 @@ describe('the counts on Postgres', () => {
       Effect.provideService(DatabaseService, db as never)
     ))
     expect(await rows()).toEqual([])
+    await client.close()
+  })
+
+  /** A Postgres database with the counts' table, and the sign-in limits over it. */
+  const postgres = async () => {
+    const client = new PGlite()
+    await client.exec('CREATE TABLE rate_limit (id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, count INTEGER NOT NULL, last_request BIGINT NOT NULL)')
+    const db = drizzlePostgres(client)
+    const limits = activeSignInLimits(
+      { limiter: 'SIGN_IN_LIMITER', table: pgRateLimit, failures: { max: 2, window: '15 minutes', cooldown: '1 minute' } },
+      { SIGN_IN_LIMITER: testRateLimiter({ limit: 100 }) }
+    )
+
+    return { client, db, limits }
+  }
+
+  test("M1.T23: a success whose count fails to clear keeps its answer, and the session it carries, and is reported", async () => {
+    const { client, db, limits } = await postgres()
+    const observed: unknown[] = []
+
+    await client.exec(`
+      CREATE FUNCTION refuse_delete() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'the delete was refused'; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER refuse_delete BEFORE DELETE ON rate_limit FOR EACH ROW EXECUTE FUNCTION refuse_delete();
+    `)
+
+    const signedIn = new Response(null, { status: 200, headers: { 'Set-Cookie': 'better-auth.session_token=token; Path=/' } })
+    const exit = await Effect.runPromiseExit(
+      withinSignInLimits({ path: '/sign-in/email', address: '192.0.2.1', account: 'ada@example.com' }, Effect.succeed(signedIn), {}).pipe(
+        Effect.provideService(SignInLimits, limits),
+        Effect.provideService(EffectErrorObserverService, { observe: (event) => Effect.sync(() => void observed.push(event.error)) }),
+        // SAFETY: the counts need only Drizzle's query builder, which PGlite's client has.
+        Effect.provideService(DatabaseService, db as never)
+      )
+    )
+
+    expect(Exit.isSuccess(exit) && exit.value.headers.getSetCookie()).toEqual(['better-auth.session_token=token; Path=/'])
+    expect(observed).toHaveLength(1)
+    expect(observed[0]).toMatchObject({ _tag: 'DatabaseError' })
+    expect(String(Reflect.get(Object(observed[0]), 'cause'))).toContain('delete from "rate_limit"')
+    await client.close()
+  })
+
+  test('M1.T24, M29.T31: a sign-in counted inside dbTransaction is refused before its password is checked, since a rollback would undo the count', async () => {
+    const { client, db, limits } = await postgres()
+    let checked = 0
+    const wrong = Effect.sync(() => {
+      checked += 1
+
+      return new Response(null, { status: 401 })
+    })
+    const counted = withinSignInLimits({ path: '/sign-in/email', address: '192.0.2.1', account: 'ada@example.com' }, wrong, {})
+    const exit = await Effect.runPromiseExit(
+      // SAFETY: PGlite's Drizzle client has asynchronous transactions, which TransactionSupport admits only by the registered type, this file's auth alone.
+      dbTransaction(counted as typeof counted & TransactionSupport).pipe(
+        Effect.provideService(SignInLimits, limits),
+        // SAFETY: as above.
+        Effect.provideService(DatabaseService, db as never)
+      )
+    )
+
+    expect(Exit.isFailure(exit) && String(Cause.squash(exit.cause))).toContain('dbTransaction')
+    expect(checked).toBe(0)
     await client.close()
   })
 })

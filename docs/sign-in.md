@@ -73,7 +73,7 @@ address not yet proven, goes back to the form with the field errors `errors` ret
 failures stay separate typed errors. Sign-up works the same way with
 `'signUpEmail'`, after whatever else the action does with the input, and
 signs nobody in until the emailed link proves the address, as
-[Proving an address](auth.md#proving-an-address) shows.
+[Proving an address](proving-addresses.md) shows.
 
 Signing out expires the session cookie, and the page `betterAuthLogoutAction`
 redirects to clears Inertia's history (a [JSON client](json.md) gets a 204
@@ -227,7 +227,7 @@ export default Login
 
 ## The page that proves an address
 
-The link a sign-up emails opens this page ([Proving an address](auth.md#proving-an-address)).
+The link a sign-up emails opens this page ([Proving an address](proving-addresses.md)).
 Only its button proves the address, so a mail scanner's fetch proves nothing:
 
 ```tsx

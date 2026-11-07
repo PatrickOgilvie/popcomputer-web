@@ -574,6 +574,111 @@ describe('two-factor', () => {
   })
 })
 
+describe('an address and the way to its proof', () => {
+  test('M9.T3: two sign-ups for a new address at once are each answered as a new one is', async () => {
+    const { browser, outbox } = setup()
+    const [first, second] = await Promise.all([signUp(browser(), 'ada@example.com'), signUp(browser(), 'ada@example.com')])
+
+    expect([first.status, second.status]).toEqual([303, 303])
+    expect([first.headers.get('Location'), second.headers.get('Location')]).toEqual(['/check-email', '/check-email'])
+    expect(outbox.verifications.filter((sent) => sent.email === 'ada@example.com').length).toBeGreaterThan(0)
+  })
+
+  test("M9.T3: two sign-ups through Better Auth's API at once are each answered as a new one is", async () => {
+    const { browser } = setup()
+    const viaApi = () => browser().request('/api/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+      body: JSON.stringify({ name: 'Ada Lovelace', email: 'ada@example.com', password: 'correct horse battery' }),
+    })
+    const [first, second] = await Promise.all([viaApi(), viaApi()])
+
+    expect([first.status, second.status]).toEqual([200, 200])
+  })
+
+  test("M9.T21: a sign-up through Better Auth's API that failed after making its user leaves no user behind", async () => {
+    const { browser, db } = setup()
+    const sqlite = db.$client
+    const viaApi = () => browser().request('/api/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+      body: JSON.stringify({ name: 'Ada Lovelace', email: 'ada@example.com', password: 'correct horse battery' }),
+    })
+
+    sqlite.run("CREATE TRIGGER refuse_account BEFORE INSERT ON account BEGIN SELECT RAISE(ABORT, 'the account was refused'); END")
+    expect((await viaApi()).status).toBeGreaterThanOrEqual(500)
+    sqlite.run('DROP TRIGGER refuse_account')
+
+    expect(sqlite.query("SELECT count(*) AS users FROM user WHERE email = 'ada@example.com'").get()).toEqual({ users: 0 })
+  })
+
+  test('M9.T21: a sign-in that fails as a sign-up did removes no user: only a sign-up is mended', async () => {
+    const { browser, db, join } = setup()
+    const sqlite = db.$client
+
+    await join(browser(), 'ada@example.com')
+    sqlite.run("CREATE TRIGGER refuse_session BEFORE INSERT ON session BEGIN SELECT RAISE(ABORT, 'the session was refused'); END")
+    expect((await signIn(browser(), 'ada@example.com')).status).toBeGreaterThanOrEqual(500)
+    sqlite.run('DROP TRIGGER refuse_session')
+
+    expect(setsSession(await signIn(browser(), 'ada@example.com'))).toBe(true)
+  })
+
+  test('M9.T19: signing up again for an address not yet proven sends it a new link, answered as a new sign-up is', async () => {
+    const { browser, outbox } = setup()
+
+    await signUp(browser(), 'ada@example.com')
+
+    const again = await signUp(browser(), 'ada@example.com')
+
+    expect(again.headers.get('Location')).toBe('/check-email')
+    expect(outbox.verifications.filter((sent) => sent.email === 'ada@example.com')).toHaveLength(2)
+  })
+
+  test('M9.T19: signing up again for a proven address sends nothing', async () => {
+    const { browser, outbox, join } = setup()
+
+    await join(browser(), 'ada@example.com')
+    await signUp(browser(), 'ada@example.com')
+
+    expect(outbox.verifications.filter((sent) => sent.email === 'ada@example.com')).toHaveLength(1)
+  })
+
+  test('M9.T20: the right password for an address not yet proven is refused, and sends it a new link', async () => {
+    const { browser, outbox } = setup()
+    const visitor = browser()
+
+    await signUp(visitor, 'ada@example.com')
+
+    const refused = await signIn(visitor, 'ada@example.com')
+
+    expect(setsSession(refused)).toBe(false)
+    expect(outbox.verifications.filter((sent) => sent.email === 'ada@example.com')).toHaveLength(2)
+  })
+
+  test('M9.T21: a sign-up that failed after making its user leaves no user behind, so signing up again works', async () => {
+    const { browser, db, outbox, verifyEmail } = setup()
+    const sqlite = db.$client
+
+    sqlite.run("CREATE TRIGGER refuse_account BEFORE INSERT ON account BEGIN SELECT RAISE(ABORT, 'the account was refused'); END")
+
+    const failed = await signUp(browser(), 'ada@example.com')
+
+    expect(failed.status).toBeGreaterThanOrEqual(500)
+    sqlite.run('DROP TRIGGER refuse_account')
+
+    const visitor = browser()
+    const again = await signUp(visitor, 'ada@example.com')
+
+    expect(again.headers.get('Location')).toBe('/check-email')
+    expect(outbox.verifications.filter((sent) => sent.email === 'ada@example.com')).toHaveLength(1)
+
+    await verifyEmail(visitor, 'ada@example.com')
+
+    expect(setsSession(await signIn(visitor, 'ada@example.com'))).toBe(true)
+  })
+})
+
 describe('magic links', () => {
   test("a fetch of the emailed link, as a mail scanner or a link preview makes, signs no one in: only its page's button does", async () => {
     const { browser, outbox } = setup()

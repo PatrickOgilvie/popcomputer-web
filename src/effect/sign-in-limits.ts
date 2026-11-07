@@ -33,11 +33,13 @@
  */
 
 import type { Column, SQL, Table } from 'drizzle-orm'
-import { Clock, Context, Duration, Effect, Option } from 'effect'
+import { Cause, Clock, Context, Duration, Effect, Option } from 'effect'
 import { AuthRateLimitError, HttpError } from './errors.js'
 import { loadDrizzle } from './binding.js'
 import { DatabaseService, type DatabaseType } from './services.js'
 import { dbMutation, dbQuery, type DatabaseResult } from './database.js'
+import { inTransaction } from './commit.js'
+import { observeOrLog } from './error-observer.js'
 
 // Drizzle is an optional peer: it loads when an application limits sign-ins.
 const drizzle = Effect.promise(loadDrizzle)
@@ -552,6 +554,15 @@ export function withinSignInLimits<E, R>(
 
     if (attempt.account === undefined || !isPasswordSignIn(attempt.path)) return yield* call
 
+    // A rollback would undo the count, and the guess would go uncounted: a
+    // sign-in the limits count runs outside any transaction.
+    if (yield* inTransaction) {
+      return yield* Effect.die(new Error(
+        'A password sign-in is counted against its account, and a rollback would undo the count, so it cannot run inside dbTransaction: ' +
+          'call Better Auth before the transaction or after it. Better Auth writes its own rows outside the transaction anyway.'
+      ))
+    }
+
     const key = yield* accountKey(attempt.account)
 
     yield* limit(limits, key)
@@ -583,7 +594,20 @@ export function withinSignInLimits<E, R>(
 
     const response = yield* call
 
-    if (response.ok) yield* writeCounts(db, (counts) => counts.delete(table).where(eq(table.key, key)))
+    // The sign-in stands, with the session its response carries, though its
+    // count fails to clear: the count stays until the next success or the
+    // sweep, and the failure is reported.
+    if (response.ok) {
+      yield* writeCounts(db, (counts) => counts.delete(table).where(eq(table.key, key))).pipe(
+        Effect.catchCause((cause) => observeOrLog({
+          source: 'framework',
+          handling: 'unhandled',
+          kind: 'defect',
+          error: Cause.squash(cause),
+          metadata: { operation: 'sign-in-limits.clear' },
+        }, 'Clearing a sign-in count failed; the sign-in stands'))
+      )
+    }
 
     return response
   })
