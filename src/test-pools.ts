@@ -11,28 +11,48 @@ import { Predicate } from 'effect'
 
 export const POOL_DIRECTORY = 'popweb-test-d1-'
 
-/** The process that made a pool's directory, whose name records it: none in a directory an older version made. */
-const POOL_OWNER = new RegExp(`^${POOL_DIRECTORY}(\\d+)-`)
+/**
+ * The process that made a pool's directory, and the host it ran on, which its
+ * name records: no host in a directory an older version made, and neither in
+ * one older still.
+ */
+const POOL_OWNER = new RegExp(`^${POOL_DIRECTORY}(\\d+)-(?:h([0-9a-f]{8})-)?`)
+
+/**
+ * This host's tag in a pool directory's name: a process id means nothing to a
+ * sweep on another host, such as another container sharing the temporary
+ * directory, where its own processes have other ids.
+ */
+export async function hostTag(): Promise<string> {
+  const { hostname } = await import('node:os')
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(hostname())))
+
+  return `h${Array.from(digest.slice(0, 4), (byte) => byte.toString(16).padStart(2, '0')).join('')}`
+}
 
 /** How old a pool's directory with no owner in its name must be to count as abandoned. */
 const OWNERLESS_POOL_MILLIS = 24 * 60 * 60 * 1000
 
 /**
- * Remove the pool's directory, resolving once it is gone. Miniflare is still
- * removing its own directory inside it, unawaited, and a removal that finds
- * entries vanishing under it can resolve leaving their parent: try again until
- * nothing is left.
+ * Remove the pool's directory, resolving once it is gone, and still gone a
+ * moment later. Miniflare is still removing its own directory inside it,
+ * unawaited, and a removal that finds entries vanishing under it can resolve
+ * leaving their parent: try again until nothing is left. Something that keeps
+ * writing there rejects it, rather than leaving the directory behind.
  */
 export async function removePoolDirectory(path: string): Promise<void> {
   const { rm, stat } = await import('node:fs/promises')
+  const present = () => stat(path).then(() => true, () => false)
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 50))
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await rm(path, { recursive: true, force: true })
+    await pause()
 
-    if (!(await stat(path).then(() => true, () => false))) return
-
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    if (!(await present())) return
   }
+
+  throw new Error(`${path} could not be removed: something is still writing there.`)
 }
 
 /** Whether a process is running: one that only refuses the signal is. */
@@ -80,12 +100,16 @@ export async function sweepAbandonedPools(root: string): Promise<void> {
   const { readdir, stat } = await import('node:fs/promises')
   const { join } = await import('node:path')
   const abandoned = new Set<string>()
+  const ownHost = (await hostTag()).slice(1)
 
   for (const name of await readdir(root)) {
     if (!name.startsWith(POOL_DIRECTORY)) continue
 
-    const owner = POOL_OWNER.exec(name)?.[1]
-    // One another sweep has just removed has no age, and is gone from the list.
+    const [, pid, host] = POOL_OWNER.exec(name) ?? []
+    // A process of this host's is checked by its id; one of another host's,
+    // or of no recorded host, goes by age. One another sweep has just
+    // removed has no age, and is gone from the list.
+    const owner = host === undefined || host === ownHost ? pid : undefined
     const modified = owner === undefined ? (await stat(join(root, name)).catch(() => undefined))?.mtimeMs : undefined
     const gone = owner === undefined
       ? modified !== undefined && Date.now() - modified > OWNERLESS_POOL_MILLIS

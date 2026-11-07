@@ -161,7 +161,7 @@ describe("a signed-in user's pages, after the session ends out of the tab's sigh
     await visit(browser, '/dashboard')
 
     // The browser stops sending its cookies, as once they expire.
-    for (const name of browser.cookies.keys()) browser.setCookie(name, '', '/expired')
+    for (const name of browser.cookies.keys()) browser.clearCookie(name)
 
     expect(await historyOf(await visit(browser, '/'))).toEqual({ component: 'Home', clearHistory: true })
   })

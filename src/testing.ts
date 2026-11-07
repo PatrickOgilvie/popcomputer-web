@@ -17,7 +17,8 @@ import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser
 import type { Registered } from './effect/register.js'
 import { attachTestDatabase, attachTestLayer } from './effect/test-env.js'
 import { whenTestCaseEnds } from './test-case.js'
-import { POOL_DIRECTORY, removePoolDirectory, sweepAbandonedPools } from './test-pools.js'
+import { held, receive, sent, type CookieJar } from './cookie-jar.js'
+import { hostTag, POOL_DIRECTORY, removePoolDirectory, sweepAbandonedPools } from './test-pools.js'
 import type { PageName } from './effect/pages.js'
 import type { ErrorPageProps, FlashData, PagePropsFor } from './react.js'
 import { ErrorResponse, errorResponseWith, type ErrorResponseBody } from './effect/error-response.js'
@@ -239,14 +240,17 @@ async function poolDirectory(): Promise<string> {
 
   sweeping ??= sweepAbandonedPools(tmpdir()).catch(() => undefined)
 
-  return mkdtemp(join(tmpdir(), `${POOL_DIRECTORY}${process.pid}-`))
+  return mkdtemp(join(tmpdir(), `${POOL_DIRECTORY}${process.pid}-${await hostTag()}-`))
 }
 
 /** How long, in milliseconds, Miniflare's read waits for a reply that has not landed. */
 const LATE_REPLY_MILLIS = 30_000
 
-/** A stack frame of Miniflare's own. */
-const MINIFLARE_FRAME = /[\\/]miniflare[\\/]/
+/** A stack frame in Miniflare's own built module, `miniflare/dist`. */
+const MINIFLARE_FRAME = /[\\/]miniflare[\\/]dist[\\/]/
+
+/** Whether the code that called the patched read is Miniflare's own: the frame after the read's. */
+const calledByMiniflare = (stack: string): boolean => MINIFLARE_FRAME.test(stack.split('\n').filter((line) => line.trim().startsWith('at '))[1] ?? '')
 
 /** Whether this process's Miniflare reads wait yet. */
 let waitingForLateReplies = false
@@ -280,7 +284,7 @@ async function waitForLateReplies(): Promise<void> {
   threads.receiveMessageOnPort = (port) => {
     let received = receive(port)
 
-    if (received !== undefined || !MINIFLARE_FRAME.test(new Error().stack ?? '')) return received
+    if (received !== undefined || !calledByMiniflare(new Error().stack ?? '')) return received
 
     for (let waited = 0; received === undefined && waited < LATE_REPLY_MILLIS; waited += 1) {
       Atomics.wait(pause, 0, 0, 1)
@@ -308,9 +312,11 @@ async function loadMiniflare(): Promise<new (options: object) => MiniflareLike> 
  * in process. Starting Miniflare takes a moment, so one holds many databases,
  * and another starts when they run out. Stop them once, after every test file,
  * from a file `bunfig.toml`'s `[test] preload` names: a Miniflare left running
- * keeps its `workerd` process alive after `bun test` exits. A `fuzz` property
- * that takes a database per case needs nothing more: each Miniflare stops once
- * its cases have ended. The first database removes what a killed run left.
+ * keeps its `workerd` process alive after `bun test` exits. In a `fuzz`
+ * property that takes a database per case, each Miniflare stops once it has
+ * handed out all its databases and their cases have ended, so a run holds one
+ * at a time; the last stops at `dispose()`. The first database removes what a
+ * killed run left.
  *
  * @example
  * // src/test-support.ts
@@ -322,57 +328,115 @@ async function loadMiniflare(): Promise<new (options: object) => MiniflareLike> 
  */
 export function testD1(options: TestD1Options): TestD1 {
   const names = Array.from({ length: options.perMiniflare ?? 64 }, (_, index) => `TEST_D1_${index}`)
+  // What the pool holds: each Miniflare it started and has not stopped, each
+  // stop under way, and each fresh() under way, all of which dispose() waits
+  // for, so nothing the pool started outlives it.
   const started = new Set<StartedMiniflare>()
+  const stopping = new Set<Promise<void>>()
+  const starting = new Set<Promise<unknown>>()
   let current: StartedMiniflare | undefined
+  let disposing: Promise<void> | undefined
+  // Read once, and again after a dispose() or a failure: a memo that failed is not kept.
   let miniflare: Promise<new (options: object) => MiniflareLike> | undefined
   let statements: Promise<ReadonlyArray<string>> | undefined
   let directory: Promise<string> | undefined
+  const kept = <A>(memo: Promise<A>, forget: () => void): Promise<A> => {
+    memo.catch(forget)
+
+    return memo
+  }
+
+  /** Stop a Miniflare, which dispose() waits for until it has. */
+  const stop = (running: StartedMiniflare): Promise<void> => {
+    started.delete(running)
+
+    const stopped = running.miniflare.dispose()
+    const tracked = stopped.finally(() => {
+      stopping.delete(tracked)
+    })
+
+    stopping.add(tracked)
+
+    return tracked
+  }
 
   /** One of a Miniflare's databases is finished with: stop it once they all are, unless `dispose()` already has. */
   const finish = async (running: StartedMiniflare): Promise<void> => {
     running.finished += 1
 
-    if (running.finished === names.length && started.delete(running)) await running.miniflare.dispose()
+    if (running.finished === names.length && started.has(running)) await stop(running)
+  }
+
+  const open = async (): Promise<RegisteredD1> => {
+    const Miniflare = await (miniflare ??= kept(loadMiniflare(), () => {
+      miniflare = undefined
+    }))
+    const files = await (directory ??= kept(poolDirectory(), () => {
+      directory = undefined
+    }))
+
+    // From here to the next await nothing else runs, so each call takes its own database.
+    if (current === undefined || current.next >= names.length) {
+      current = {
+        miniflare: constructIn(files, () => new Miniflare({ modules: true, script: 'export default {}', d1Databases: names })),
+        next: 0,
+        finished: 0,
+      }
+      started.add(current)
+    }
+
+    const running = current
+    const name = names[running.next] ?? names[0] ?? 'TEST_D1_0'
+    running.next += 1
+
+    whenTestCaseEnds(() => finish(running))
+
+    const database = await running.miniflare.getD1Database(name)
+    const migrations = await (statements ??= kept(readMigrations(options.migrations), () => {
+      statements = undefined
+    }))
+
+    if (migrations.length > 0) await database.batch(migrations.map((sql) => database.prepare(sql)))
+
+    // SAFETY: Miniflare's D1 is Cloudflare's, which the application's D1 binding declares.
+    return database as RegisteredD1
   }
 
   return {
-    async fresh() {
-      const Miniflare = await (miniflare ??= loadMiniflare())
-      const files = await (directory ??= poolDirectory())
+    fresh() {
+      // One asked for while the pool stops starts once it has stopped.
+      const opening = (disposing ?? Promise.resolve()).then(open)
+      const tracked = opening.then(() => undefined, () => undefined).then(() => {
+        starting.delete(tracked)
+      })
 
-      // From here to the next await nothing else runs, so each call takes its own database.
-      if (current === undefined || current.next >= names.length) {
-        current = {
-          miniflare: constructIn(files, () => new Miniflare({ modules: true, script: 'export default {}', d1Databases: names })),
-          next: 0,
-          finished: 0,
-        }
-        started.add(current)
-      }
+      starting.add(tracked)
 
-      const running = current
-      const name = names[running.next] ?? names[0] ?? 'TEST_D1_0'
-      running.next += 1
-
-      whenTestCaseEnds(() => finish(running))
-
-      const database = await running.miniflare.getD1Database(name)
-      const migrations = await (statements ??= readMigrations(options.migrations))
-
-      if (migrations.length > 0) await database.batch(migrations.map((sql) => database.prepare(sql)))
-
-      // SAFETY: Miniflare's D1 is Cloudflare's, which the application's D1 binding declares.
-      return database as RegisteredD1
+      return opening
     },
-    async dispose() {
-      const stopping = [...started]
-      const files = directory
-      started.clear()
-      current = undefined
-      directory = undefined
-      await Promise.all(stopping.map((running) => running.miniflare.dispose()))
+    dispose() {
+      // oxlint-disable-next-line effecttsgo/async-function -- The pool stops Miniflare and removes files, outside any Effect, for a test's afterAll.
+      disposing ??= (async () => {
+        // What fresh() is starting finishes first, so this stops it too.
+        await Promise.all(starting)
 
-      if (files !== undefined) await removePoolDirectory(await files)
+        const files = directory
+
+        current = undefined
+        directory = undefined
+        statements = undefined
+        await Promise.all([...started].map(stop))
+
+        while (stopping.size > 0) await Promise.allSettled(stopping)
+
+        const path = await files?.catch(() => undefined)
+
+        if (path !== undefined) await removePoolDirectory(path)
+      })().finally(() => {
+        disposing = undefined
+      })
+
+      return disposing
     },
   }
 }
@@ -634,55 +698,45 @@ export interface TestBrowser {
   readonly cookies: ReadonlyMap<string, string>
   /** Give the browser a cookie, as another browser's or one a test makes up. */
   setCookie(name: string, value: string, path?: string): void
+  /** Drop the cookie of this name at this path, as the browser does once it expires. */
+  clearCookie(name: string, path?: string): void
 }
 
 /** How many browsers tests have made, each a client at its own address. */
 let browsers = 0
 
 export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
-  const jar = new Map<string, { readonly value: string; readonly path: string }>()
+  // The browser's cookies, as RFC 6265 keeps them, and when it reads them: a
+  // browser expires cookies by its wall clock, outside Effect's clock.
+  let jar: CookieJar = []
+  // oxlint-disable-next-line effecttsgo/global-date -- A browser expires cookies by its wall clock, outside Effect's clock.
+  const now = () => Date.now()
   // Each browser is its own client, at its own address, as Cloudflare and
   // a proxy report it, so per-client rate limits treat browsers apart.
   browsers += 1
   const address = `198.18.${Math.floor(browsers / 250) % 250}.${(browsers % 250) + 1}`
 
-  const keep = (response: Response): Response => {
-    for (const header of response.headers.getSetCookie()) {
-      const [pair = '', ...attributes] = header.split(';')
-      const separator = pair.indexOf('=')
-      const name = pair.slice(0, separator).trim()
-      const path = attributes.map((part) => part.trim()).find((part) => /^path=/i.test(part))?.slice(5) ?? '/'
-
-      if (separator < 0 || name === '') continue
-
-      // A browser drops a cookie whose Max-Age is 0, or whose Expires has passed.
-      const expires = attributes.map((part) => part.trim()).find((part) => /^expires=/i.test(part))?.slice(8)
-      // oxlint-disable-next-line effecttsgo/global-date -- A browser expires cookies by its wall clock, outside Effect's clock.
-      const expired = expires !== undefined && Date.parse(expires) <= Date.now()
-
-      if (expired || attributes.some((part) => /^\s*max-age=0\s*$/i.test(part))) {
-        jar.delete(name)
-      } else {
-        jar.set(name, { value: pair.slice(separator + 1).trim(), path })
-      }
-    }
+  /** Keep the cookies a response to a request at `url` set. */
+  const keep = (response: Response, url: URL): Response => {
+    jar = receive(jar, response.headers.getSetCookie(), url.pathname, now())
 
     return response
   }
 
   // The page the browser shows, which a form posted from it names as its Referer.
   let page: string | undefined
-  // The responses this browser received, whose cookies it holds.
-  const received = new WeakSet<Response>()
+  // The requests that answered with the responses this browser received:
+  // a 307 or 308 repeats one, and a relative Location resolves against it.
+  const requests = new WeakMap<Response, { readonly url: URL; readonly init: RequestInit }>()
 
   const request = async (path: string, init: RequestInit = {}): Promise<Response> => {
     const headers = new Headers(init.headers)
     const url = new URL(path, 'http://localhost')
-    const sent = [...jar].filter(([, cookie]) => url.pathname.startsWith(cookie.path)).map(([name, cookie]) => `${name}=${cookie.value}`)
+    const cookies = sent(jar, url.pathname, now()).map((cookie) => `${cookie.name}=${cookie.value}`)
     const given = headers.get('Cookie')
     const method = (init.method ?? 'GET').toUpperCase()
 
-    if (sent.length > 0) headers.set('Cookie', [given, ...sent].filter(Boolean).join('; '))
+    if (cookies.length > 0) headers.set('Cookie', [given, ...cookies].filter(Boolean).join('; '))
     if (!headers.has('CF-Connecting-IP')) headers.set('CF-Connecting-IP', address)
     if (!headers.has('X-Forwarded-For')) headers.set('X-Forwarded-For', address)
     if (page !== undefined && !headers.has('Referer')) headers.set('Referer', page)
@@ -690,8 +744,8 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
     // something, a same-origin form's included.
     if (!['GET', 'HEAD'].includes(method) && !headers.has('Origin')) headers.set('Origin', new URL(page ?? url.href).origin)
 
-    const response = keep(await app.request(path, { ...init, headers }, env))
-    received.add(response)
+    const response = keep(await app.request(path, { ...init, headers }, env), url)
+    requests.set(response, { url, init })
 
     if (method === 'GET' && response.status < 300) page = url.href
 
@@ -708,25 +762,44 @@ export function testBrowser(app: TestApp, env?: TestBindings): TestBrowser {
       return request(`${url.pathname}${url.search}`, { method, headers: sent.headers, body })
     },
     follow: async (response, init = {}) => {
-      // A redirect requested another way hands its cookies to this browser first.
-      if (!received.has(response)) keep(response)
-
       const location = response.headers.get('Location')
 
       if (location === null || response.status < 300 || response.status >= 400) {
         throw new Error(`Expected a redirect, but the response is ${response.status} without a Location.`)
       }
 
-      const headers = new Headers(init.headers)
+      const origin = requests.get(response)
+      const from = origin?.url ?? new URL(page ?? '/', 'http://localhost')
+
+      // A redirect requested another way hands its cookies to this browser first.
+      if (origin === undefined) keep(response, from)
+
+      // A 307 or 308 repeats the request, its method and body; any other
+      // redirect is followed with a GET.
+      const repeats = response.status === 307 || response.status === 308
+
+      if (repeats && origin === undefined && init.method === undefined) {
+        throw new Error(`A ${response.status} repeats the request it answers, which this browser did not send: pass its method and body to follow.`)
+      }
+
+      const repeated: RequestInit = repeats && origin !== undefined ? origin.init : {}
+      const headers = new Headers(init.headers ?? repeated.headers)
       if (!headers.has('X-Inertia')) headers.set('X-Inertia', 'true')
 
-      return request(location, { ...init, headers })
+      // A relative Location resolves against the URL it answered, as a browser's does.
+      const target = new URL(location, from)
+
+      return request(`${target.pathname}${target.search}`, { ...repeated, ...init, headers })
     },
+    // The cookies it holds that have not expired, by name.
     get cookies() {
-      return new Map([...jar].map(([name, cookie]) => [name, cookie.value]))
+      return new Map(held(jar, now()).map((cookie) => [cookie.name, cookie.value]))
     },
     setCookie: (name, value, path = '/') => {
-      jar.set(name, { value, path })
+      jar = receive(jar, [`${name}=${value}; Path=${path}`], path, now())
+    },
+    clearCookie: (name, path = '/') => {
+      jar = receive(jar, [`${name}=; Path=${path}; Max-Age=0`], path, now())
     },
   }
 }
@@ -790,6 +863,9 @@ export async function readPage<Component extends PageName>(
   return page as TestPage<Component>
 }
 
+/** The real time `settle` waits with no sleep starting or ending before it moves the clock. */
+const SETTLE_QUIET_MILLIS = 50
+
 /** One clock a test moves, which every request the test makes reads. */
 export interface TestTime {
   /** The clock, for `testEnv`: `testEnv(Layer.merge(signedIn(user), time.layer))`. */
@@ -804,8 +880,11 @@ export interface TestTime {
    * Run `work` that waits on the clock, such as a request whose retries wait
    * on `Schedule.exponential`, to the end: each time it waits, move the clock
    * to the end of the earliest pending sleep, so the waits take exactly their
-   * durations. Rejects after `maxTurns` turns of the event loop without
-   * settling (default 10,000).
+   * durations. Work is taken to wait on the clock once no sleep has started or
+   * ended for 50 milliseconds, so a read that takes less finishes before the
+   * clock moves; a slower one sees it move. Two settles at once move it once.
+   * Rejects after `maxTurns` turns of the event loop without settling
+   * (default 10,000).
    */
   settle<A>(work: A | PromiseLike<A>, maxTurns?: number): Promise<A>
 }
@@ -832,17 +911,22 @@ export async function testClock(start: Date | number = Date.UTC(2026, 0, 1)): Pr
   const set = (time: Date | number) =>
     Effect.runPromise(clock.setTime(time instanceof Date ? time.getTime() : time))
 
-  // When each pending sleep ends, so settle can move the clock to the next.
+  // When each pending sleep ends, so settle can move the clock to the next,
+  // and a count of the sleeps that started or ended and of the clock's moves,
+  // which settle watches for the work to go quiet.
   const wakeTimes: number[] = []
+  let activity = 0
   const tracked: Clock.Clock = {
     ...clock,
     sleep: (duration) => Effect.suspend(() => {
       const wake = clock.currentTimeMillisUnsafe() + Duration.toMillis(duration)
       wakeTimes.push(wake)
+      activity += 1
 
       return clock.sleep(duration).pipe(
         Effect.ensuring(Effect.sync(() => {
           wakeTimes.splice(wakeTimes.indexOf(wake), 1)
+          activity += 1
         }))
       )
     }),
@@ -855,6 +939,10 @@ export async function testClock(start: Date | number = Date.UTC(2026, 0, 1)): Pr
     now: () => new Date(clock.currentTimeMillisUnsafe()),
     set,
     advance: (duration) => Effect.runPromise(clock.adjust(duration)),
+    // A turn of the event loop at a time, and once no sleep on the clock has
+    // started or ended for SETTLE_QUIET_MILLIS, the earliest sleep ends. Two settles at once each see the other's moves
+    // as activity, so the clock moves once for both.
+    // oxlint-disable-next-line effecttsgo/async-function -- settle drives the clock from outside Effect, between turns of the event loop that the work's promises run in.
     settle: async (work, maxTurns = 10_000) => {
       let settled = false
       const observed = Promise.resolve(work).then(
@@ -869,6 +957,8 @@ export async function testClock(start: Date | number = Date.UTC(2026, 0, 1)): Pr
           throw error
         }
       )
+      // oxlint-disable-next-line effecttsgo/global-date -- How long the work has been quiet is real time, which a read waits through.
+      let quiet = { activity, at: Date.now() }
 
       for (let turns = 0; !settled; turns += 1) {
         if (turns >= maxTurns) {
@@ -879,14 +969,19 @@ export async function testClock(start: Date | number = Date.UTC(2026, 0, 1)): Pr
           throw new Error(`The work did not settle within ${maxTurns} turns of the event loop.`)
         }
 
-        // Let the work run until it waits, then end the earliest sleep. Work
-        // waiting on anything else, such as a database, gets another turn.
         await new Promise((resolve) => setTimeout(resolve, 0))
+
+        // oxlint-disable-next-line effecttsgo/global-date -- As above.
+        if (activity !== quiet.activity) quiet = { activity, at: Date.now() }
+
+        // oxlint-disable-next-line effecttsgo/global-date -- As above.
+        if (settled || Date.now() - quiet.at < SETTLE_QUIET_MILLIS) continue
 
         const next = Math.min(...wakeTimes)
 
-        if (!settled && Number.isFinite(next)) {
+        if (Number.isFinite(next)) {
           await Effect.runPromise(clock.setTime(Math.max(next, clock.currentTimeMillisUnsafe())))
+          activity += 1
         }
       }
 

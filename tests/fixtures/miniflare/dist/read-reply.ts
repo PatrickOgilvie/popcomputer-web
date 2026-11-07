@@ -1,7 +1,7 @@
 /**
  * Reads a reply as Miniflare's proxy reads one: through the module's own
- * `receiveMessageOnPort`, from a file in a folder named miniflare, which is
- * the only caller `testD1` waits for.
+ * `receiveMessageOnPort`, from a file under `miniflare/dist`, where its built
+ * module lives, which is the only caller `testD1` waits for.
  */
 import { createRequire } from 'node:module'
 

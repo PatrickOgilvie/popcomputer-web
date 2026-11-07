@@ -109,11 +109,13 @@ value a response set for a declared cookie.
 
 A test that makes several requests as one visitor, such as adding to a cart
 and then checking out, uses `testBrowser(app, env)`. It keeps the cookies
-responses set, sends them to the paths they cover, names the page it last
+responses set, by name and path until their `Max-Age` or `Expires` passes,
+sends them to the paths they cover, names the page it last
 showed as the `Referer` of a form it posts and that page's origin as its
 `Origin`, as a browser does for any request but a `GET` or `HEAD`, and follows
-redirects with `browser.follow(res)`; `browser.setCookie(name, value, path)`
-gives it a cookie.
+redirects with `browser.follow(res)`, repeating the request for a 307 or 308
+and resolving a relative `Location`; `browser.setCookie(name, value, path)`
+gives it a cookie, and `browser.clearCookie(name, path)` drops one.
 
 A form's next page receives its `flash` values and field errors through a
 cookie the redirect sets. `testBrowser(app, env).follow(res)` requests the
@@ -204,7 +206,8 @@ await time.advance('8 days')
 const expired = await app.request('/invites/abc', {}, env)
 
 // A request that waits on the clock, such as a delivery retrying with
-// Schedule.exponential: settle moves the clock until it answers.
+// Schedule.exponential: settle moves the clock until it answers, once no
+// sleep has started or ended for 50 milliseconds, so a slower read sees it move.
 const delivered = await time.settle(app.request('/webhooks/deliver', { method: 'POST' }, env))
 ```
 

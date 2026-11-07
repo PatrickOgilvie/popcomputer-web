@@ -152,7 +152,7 @@ async function runSteps(encrypt: 'signed-in' | true, sequence: readonly Step[]):
     }
     if (sent.act === 'expire') {
       // The browser stops sending the session's cookies, as once they expire; the flash cookie stays.
-      for (const name of browser.cookies.keys()) if (name.startsWith('better-auth.')) browser.setCookie(name, '', '/expired')
+      for (const name of browser.cookies.keys()) if (name.startsWith('better-auth.')) browser.clearCookie(name)
       continue
     }
 

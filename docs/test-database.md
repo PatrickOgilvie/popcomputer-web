@@ -31,8 +31,9 @@ and constraint errors behave the same:
   files, so an `afterAll` in the module that creates the databases stops them
   while other files still use them. A `fuzz` property that takes a database
   per case needs nothing more: a database a case asked for is finished when
-  the case ends, and a Miniflare stops once all of its are, so a run of
-  thousands holds one `workerd`. A case must keep none for a later one; a
+  the case ends, and a Miniflare stops once it has handed out all of its and
+  they are finished, so a run of thousands holds one `workerd` at a time, and
+  the last stops at `dispose()`. A case must keep none for a later one; a
   database made outside a case, as in `beforeAll`, stays until `dispose()`. A
   loop of your own that makes thousands may call `dispose()` between rounds:
   the next `fresh()` starts again. A run killed before it could `dispose()`
