@@ -447,25 +447,27 @@ export function setupWeb<
   }
 }
 
-/** Each bindings object's check, so an isolate checks its bindings once. */
-const checkedBindings = new WeakMap<object, EnvInvalid | null>()
+/** What one application has checked: each bindings object once, and each different failure logged once. */
+interface EnvChecks {
+  readonly checked: WeakMap<object, EnvInvalid | null>
+  readonly logged: Set<string>
+}
 
 /**
  * The failure for bindings the env declaration refuses, checked once per
  * bindings object. Each different failure is logged once, naming the vars
- * and secrets, since a production error page and its log line name none;
- * `logged` holds the ones this application has logged.
+ * and secrets, since a production error page and its log line name none.
  */
-function checkBindings(env: EnvDeclaration, bindings: unknown, logged: Set<string>): EnvInvalid | undefined {
+function checkBindings(env: EnvDeclaration, bindings: unknown, { checked, logged }: EnvChecks): EnvInvalid | undefined {
   const values = typeof bindings === 'object' && bindings !== null ? bindings : {}
-  const known = checkedBindings.get(values)
+  const known = checked.get(values)
 
   if (known !== undefined) return known ?? undefined
 
   const problems = checkEnv(env, values)
   const result = problems.length === 0 ? null : EnvInvalid.of(problems)
 
-  checkedBindings.set(values, result)
+  checked.set(values, result)
   if (result !== null && !logged.has(result.message)) {
     logged.add(result.message)
     Effect.runSync(Effect.logError(result.message))
@@ -508,14 +510,16 @@ function createSetupMiddleware<
     render: config.render,
     history: config.history,
   }
-  // The env failures this application has logged, so an isolate logs each once.
-  const loggedEnvFailures = new Set<string>()
+  // Each application checks bindings against its own declaration, so another
+  // application on the same bindings neither passes nor refuses them for it.
+  const envChecks: EnvChecks = { checked: new WeakMap(), logged: new Set() }
+  const envRefusal = (bindings: unknown): EnvInvalid | undefined =>
+    config.env === undefined ? undefined : checkBindings(config.env, bindings, envChecks)
 
   /**
    * Give a request, or a job, its database, auth and sign-in limits, or the
-   * failure that refuses every one: bindings the env declaration refuses,
-   * or a Better Auth whose rate-limit storage would delete the sign-in
-   * counts.
+   * failure that refuses every one: a Better Auth whose rate-limit storage
+   * would delete the sign-in counts.
    */
   const prepareServices = (c: Context<E>): Error | undefined => {
     const requestCtx = openWebContext(c)
@@ -525,12 +529,6 @@ function createSetupMiddleware<
 
     const backgroundTasks: AuthBackgroundTasks = {
       handler: executionContext.waitUntil,
-    }
-
-    if (config.env !== undefined) {
-      const invalid = checkBindings(config.env, c.env, loggedEnvFailures)
-
-      if (invalid !== undefined) return invalid
     }
 
     // Set up database first (auth may depend on it). A test request may
@@ -633,6 +631,20 @@ function createSetupMiddleware<
     // Outermost, so they see every response, including the page cache's own.
     ...(config.security?.headers === false ? [] : [securityHeaders<E>(config.security?.headers ?? {})]),
     privateByDefault<E>(),
+    // Before the page cache, whose copy of the bindings is new on every
+    // request and whose hit would answer without them: a refused env fails
+    // every request, a cached page's too.
+    ...(config.env === undefined
+      ? []
+      : [
+          ((c, next) => {
+            const invalid = envRefusal(c.env)
+
+            if (invalid !== undefined) throw invalid
+
+            return next()
+          }) satisfies MiddlewareHandler<E>,
+        ]),
     // A cached page is served before db/auth setup, session lookup or rendering.
     ...(!cachesPages
       ? []
@@ -671,7 +683,7 @@ function createSetupMiddleware<
   const prepareJob = (c: Context<E>): Promise<JobPreparation> => {
     useSetup(c, setup)
 
-    const failure = prepareServices(c)
+    const failure = envRefusal(c.env) ?? prepareServices(c)
 
     if (failure !== undefined) return Promise.resolve({ failure })
 

@@ -797,9 +797,10 @@ function requestServicesFactory<E extends Env, CustomServices>(
 
     return Layer.merge(
       Layer.effectContext(requestAppRuntime.contextEffect.pipe(
-        // A failed build is not kept: the next request builds the
-        // application services again.
-        Effect.tapError(() => Effect.sync(() => {
+        // A failed build is not kept, whatever ended it: the next request
+        // builds the application services again. Their type admits only a
+        // ConfigError, so a transient failure can only be a defect.
+        Effect.tapCause(() => Effect.sync(() => {
           if (appRuntime === requestAppRuntime) appRuntime = undefined
         }))
       )),
