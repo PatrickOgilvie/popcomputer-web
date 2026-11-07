@@ -1320,6 +1320,10 @@ export class EffectRouteBuilder<
         )
       )
 
+      // A guarded record no guard has decided stops the action before it
+      // runs, though it reads nothing: nothing said who may reach it.
+      handlerEffect = Effect.andThen(Effect.flatMap(RouteRecords, (records) => records.decided), handlerEffect)
+
       // A cacheable page is tagged with the records its route read, so a
       // write to any of them purges it.
       let recordTags: readonly string[] = []

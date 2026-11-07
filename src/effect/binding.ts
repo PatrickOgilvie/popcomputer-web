@@ -330,7 +330,13 @@ function tableNameOf(table: RouteBindingTable): string {
  * binding, or a column a table does not have, fails at startup, naming the
  * fix, instead of failing every request to the routes that use it.
  */
-export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: object, users?: object): void {
+export function assertBindingsConfig(
+  bindings: RouteBindingsConfig,
+  schema: object | undefined,
+  users: object | undefined,
+  /** Whether `auth.session` was given, and names no table setupWeb can find. */
+  sessionLostTable: boolean
+): void {
   const names = Object.keys(bindings)
 
   for (const [name, config] of Object.entries(bindings)) {
@@ -344,6 +350,20 @@ export function assertBindingsConfig(bindings: RouteBindingsConfig, schema?: obj
     const checked = bindingAccess(name, config, isBindingTable(source) ? { columns: source, name: tableNameOf(source) } : undefined)
 
     if (checked instanceof RouteConfigurationError) throw checked.atStartup()
+
+    // A schema tableSchema did not build, such as one its mapFields made,
+    // names no table: loading from the binding's plural would read another.
+    if (config.table === undefined && !isBindingTable(source)) {
+      throw RouteConfigurationError.bindingNamesNoTable(name).atStartup()
+    }
+
+    // The column an owner's record is found by must reference the users
+    // table's id. A session schema given whose table cannot be found, as
+    // one wrapped after betterAuthSession, refuses it rather than skip the
+    // check; with no session and no users table there is none to check.
+    if (config.ownedBy !== undefined && isBindingTable(source) && !isBindingTable(users) && sessionLostTable) {
+      throw RouteConfigurationError.ownedByWithoutUsersTable(name, config.ownedBy).atStartup()
+    }
 
     if (config.ownedBy !== undefined && isBindingTable(source) && isBindingTable(users)) {
       const referenced = referencedTable(source, config.ownedBy)

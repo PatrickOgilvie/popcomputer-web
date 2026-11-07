@@ -425,7 +425,9 @@ export function setupWeb<
   assertSetupConfig(config)
   if (config.auth?.signInLimits !== undefined) assertSignInLimitsConfig(config.auth.signInLimits)
   if (config.bindings !== undefined) {
-    assertBindingsConfig(config.bindings, config.schema, usersTableOf(config.auth?.session, config.schema))
+    const users = usersTableOf(config.auth?.session, config.schema)
+
+    assertBindingsConfig(config.bindings, config.schema, users, config.auth?.session !== undefined && users === undefined)
   }
 
   // The application's own services, which `web.services(...)` gives after

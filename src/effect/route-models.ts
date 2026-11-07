@@ -33,10 +33,16 @@ import { formatRecordTag } from './response-cache.js'
 import { AuthUserService, DatabaseService } from './services.js'
 import { setupOf } from '../web-setup.js'
 
-/** The Cache-Tag of each record a route's bindings name. */
+/**
+ * The Cache-Tag of each record a route's bindings name, and whether every
+ * guarded one has a guard's decision, which the action waits for.
+ */
 export class RouteRecords extends Context.Service<
   RouteRecords,
-  { readonly tags: Effect.Effect<readonly string[], BoundModelError> }
+  {
+    readonly tags: Effect.Effect<readonly string[], BoundModelError>
+    readonly decided: Effect.Effect<void, RouteConfigurationError>
+  }
 >()('@popcomputer/web/RouteRecords') {}
 
 /** What a route's path names, as the application's settings read it: the same for every request. */
@@ -52,6 +58,9 @@ export interface RouteModels {
   readonly plan: Effect.Effect<readonly CompiledRouteBinding[], RouteConfigurationError>
 }
 
+/** The settings of a request with no bindings, as `routeModelsOnce` keeps its models by. */
+const NO_BINDINGS = {}
+
 /**
  * What a route's path names, worked out by its first request for every later
  * one: it depends only on the application's settings. Registration can't
@@ -63,13 +72,16 @@ export function routeModelsOnce<E extends Env>(
   params: S.Codec<unknown, unknown, never, never> | undefined,
   bridgeConfig: { readonly schema?: object; readonly bindings?: RouteBindingsConfig } | undefined
 ): (c: HonoContext<E>) => RouteModels {
-  let routeModels: RouteModels | undefined
+  // Kept by the settings they were worked out from: a path-scoped bridge
+  // gives its own, which a request outside it does not have.
+  const bySettings = new WeakMap<object, RouteModels>()
 
   return (c) => {
-    if (routeModels !== undefined) return routeModels
-
     const schema = bridgeConfig?.schema ?? setupOf(c).schema
     const configuredBindings = bridgeConfig?.bindings ?? setupOf(c).bindings
+    const kept = bySettings.get(configuredBindings ?? NO_BINDINGS)
+
+    if (kept !== undefined && kept.schema === schema) return kept
     // A {param} with a binding parser names a model; any other is a plain
     // parameter the action reads with validateRequest.
     const modelBindings = configuredBindings
@@ -77,7 +89,7 @@ export function routeModelsOnce<E extends Env>(
       : []
     let compiled: Promise<readonly CompiledRouteBinding[]> | undefined
 
-    routeModels = {
+    const routeModels: RouteModels = {
       schema,
       configuredBindings,
       modelBindings,
@@ -98,6 +110,8 @@ export function routeModelsOnce<E extends Env>(
         Effect.catch((cause) => cause instanceof RouteConfigurationError ? Effect.fail(cause) : Effect.die(cause))
       ),
     }
+
+    bySettings.set(configuredBindings ?? NO_BINDINGS, routeModels)
 
     return routeModels
   }
@@ -127,12 +141,12 @@ export function routeModelsLayer(request: RouteModelsRequest) {
   return Effect.gen(function* () {
     const database = yield* Effect.serviceOption(DatabaseService)
     // The guarded records a guard has let the visitor in to.
-    const decided = new Set<string>()
-    const undecided = (): string | undefined => guarded.find((name) => !decided.has(name))
+    const letIn = new Set<string>()
+    const undecided = (): string | undefined => guarded.find((name) => !letIn.has(name))
     const positionOf = (key: string): number => modelBindings.findIndex((binding) => binding.param === key)
     // The models this request has loaded, which each later load goes on from,
     // one load at a time.
-    const loading: LoadingModels = { models: new Map(), rows: new Map(), recordTags: [] }
+    const loading: LoadingModels = { models: new Map(), rows: new Map(), recordTags: [], failed: undefined }
     const lock = Semaphore.makeUnsafe(1)
 
     // The first `count` of the route's models, after any loaded already. They
@@ -146,6 +160,9 @@ export function routeModelsLayer(request: RouteModelsRequest) {
       lock.withPermits(1)(Effect.gen(function* () {
         if (route.configuredBindings === undefined || modelBindings.length === 0) return { models: new Map(), recordTags: [] }
         if (loading.rows.size >= count) return { models: loading.models, recordTags: [...loading.recordTags] }
+        // A load that failed fails the same for the rest of the request.
+        if (loading.failed !== undefined) return yield* Effect.fail(loading.failed)
+
         const current = Option.orElse(yield* Effect.serviceOption(DatabaseService), () => database)
 
         if (Option.isNone(current)) return yield* ConfigurationError.databaseNotConfigured()
@@ -154,7 +171,10 @@ export function routeModelsLayer(request: RouteModelsRequest) {
         const plan = yield* route.plan
 
         yield* loadRecords(plan.slice(0, count), param, userIdOf(signedIn), loading).pipe(
-          Effect.provideService(DatabaseService, current.value)
+          Effect.provideService(DatabaseService, current.value),
+          Effect.tapError((failure) => Effect.sync(() => {
+            loading.failed = failure
+          }))
         )
 
         return { models: loading.models, recordTags: [...loading.recordTags] }
@@ -174,7 +194,7 @@ export function routeModelsLayer(request: RouteModelsRequest) {
             // first: a guard that read a record under it would load both, and
             // answer from them, for a visitor that guard turns away.
             const earlier = guarded.find((name) =>
-              positionOf(name) < position && !decided.has(name) && !decision.value.reads.has(name)
+              positionOf(name) < position && !letIn.has(name) && !decision.value.reads.has(name)
             )
 
             if (earlier !== undefined) return Effect.fail(RouteConfigurationError.guardedWithoutGuard(earlier))
@@ -202,23 +222,28 @@ export function routeModelsLayer(request: RouteModelsRequest) {
     // names no cached page. Purging the records a route names reads them
     // too, so a guarded one no guard read purges nothing for a visitor the
     // guard would have turned away.
-    const records = RouteRecords.of({
-      tags: Effect.suspend(() => {
-        const unguarded = undecided()
+    const decided = Effect.suspend(() => {
+      const unguarded = undecided()
 
-        return unguarded === undefined ? Effect.void : Effect.fail(RouteConfigurationError.guardedWithoutGuard(unguarded))
-      }).pipe(
+      return unguarded === undefined ? Effect.void : Effect.fail(RouteConfigurationError.guardedWithoutGuard(unguarded))
+    })
+    // A record that is gone keeps the tags of the records above it that
+    // loaded, such as the organization of a project the action deleted.
+    const loadedTags = () => Effect.succeed([...loading.recordTags])
+    const records = RouteRecords.of({
+      tags: decided.pipe(
         Effect.andThen(load),
         Effect.map((loaded) => loaded.recordTags),
-        Effect.catchTag('NotFoundError', () => Effect.succeed([])),
-        Effect.catchTag('UnauthorizedError', () => Effect.succeed([]))
+        Effect.catchTag('NotFoundError', loadedTags),
+        Effect.catchTag('UnauthorizedError', loadedTags)
       ),
+      decided,
     })
 
     const verdicts = GuardVerdicts.of({
       start: onGuard,
       confirm: (reads) => Effect.sync(() => {
-        for (const key of reads) decided.add(key)
+        for (const key of reads) letIn.add(key)
       }),
     })
 
@@ -242,6 +267,8 @@ interface LoadingModels {
   /** Each loaded binding's row, which scopes the bindings under it. */
   readonly rows: Map<string, object>
   readonly recordTags: string[]
+  /** Why a load failed, which every later one in the request answers with. */
+  failed: BoundModelError | undefined
 }
 
 /** A signed-in user's id: Better Auth's are strings, or numbers when it generates serial ids. */
@@ -312,9 +339,9 @@ interface RecordLookUp {
 
 /**
  * Load these bindings' records, parents first, each scoped to its parent and
- * narrowed by who may load it, going on from those `loading` holds. The
- * first binding without a record fails with its 404, and a record only its
- * owner may load fails a signed-out visitor with a 401, before any query.
+ * narrowed by who may load it, going on from those `loading` holds. A record
+ * only its owner may load fails a signed-out visitor with a 401 before any
+ * query, and the first binding without a record fails with its 404.
  * Every record goes to the database at once: each statement carries its
  * parents' conditions, so none waits for another's rows.
  */
@@ -329,10 +356,16 @@ function loadRecords(
 
     if (pending.length === 0) return
 
+    // A record only its owner may load asks a signed-out visitor to sign in
+    // before the database is asked for any record, as routes.access() says.
+    if (userId === undefined && pending.some((binding) => binding.access !== undefined && 'ownedBy' in binding.access)) {
+      return yield* new UnauthorizedError({ message: 'Authentication required' })
+    }
+
     // The records to look up, up to the first refused before any query: a
-    // placeholder its column can't hold, a record only its owner may load
-    // for a signed-out visitor, or a loaded parent without the value its
-    // child references. Those before it are looked up, and answer first.
+    // placeholder its column can't hold, or a loaded parent without the
+    // value its child references. Those before it are looked up, and answer
+    // first.
     const lookUps: RecordLookUp[] = []
     let refused: RouteConfigurationError | NotFoundError | UnauthorizedError | undefined
 
@@ -342,12 +375,6 @@ function loadRecords(
 
       if (Option.isNone(value)) {
         refused = new NotFoundError({ resource: binding.param })
-        break
-      }
-
-      // A record only its owner may load is never looked up for anyone else.
-      if (binding.access !== undefined && 'ownedBy' in binding.access && userId === undefined) {
-        refused = new UnauthorizedError({ message: 'Authentication required' })
         break
       }
 

@@ -726,6 +726,26 @@ export class RouteConfigurationError extends Schema.TaggedError<RouteConfigurati
     })
   }
 
+  /** Create an error for a routeBinding given a schema that names no table. */
+  static bindingNamesNoTable(binding: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" is given a schema that names no table: tableSchema(table) names its table, but a schema built from it, as by .mapFields(...), names none, so its records would load from whichever table "${binding}"'s plural names.`,
+      hint: `Give routeBinding the table, routeBinding(schema.yourTable, ...), or the schema tableSchema built, or name the table with the table option.`,
+      binding,
+      code: ErrorCodes.CFG_305_INVALID_CONFIG,
+    })
+  }
+
+  /** Create an error for an ownedBy binding when the users table it must reference cannot be found. */
+  static ownedByWithoutUsersTable(binding: string, column: string): RouteConfigurationError {
+    return new RouteConfigurationError({
+      message: `Route binding "${binding}" is ownedBy "${column}", which must reference the users table's id, but setupWeb cannot find the users table: auth.session names none, and the schema has no user or users table.`,
+      hint: 'Give auth.session betterAuthSession(tableSchema(schema.yourUsers)) as it is, not wrapped in another schema, which loses its table, or export the users table as user or users.',
+      binding,
+      code: ErrorCodes.RTE_607_BINDING_OWNER_NOT_USER,
+    })
+  }
+
   /** Create an error for a path registered twice for one method. */
   static routeRegisteredTwice(method: string, path: string): RouteConfigurationError {
     const verb = method === 'all' ? 'ALL' : method.toUpperCase()
