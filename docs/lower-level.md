@@ -59,6 +59,11 @@ Add `pageCache({ version })` after `webDefaults()` and before `webServices()`
 to keep the default page cache; on a hit it answers before database and auth
 setup.
 
+What a middleware gives the request reaches the action whether it runs before
+`effectBridge()` or after it: the signed-in user `loadUser()` finds, and the
+flash cookie `web()` opens. An action that flashes on a stack with no `web()`
+fails where it flashes, rather than losing the value.
+
 Register routes with `effectRoutes(app)`. It cannot see which services the
 hand-written middleware provides, so it accepts actions that use any framework
 service and reports an unconfigured one at runtime, as a configuration error.

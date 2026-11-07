@@ -621,10 +621,24 @@ export class PageSharing extends Context.Service<
 >()('@popcomputer/web/PageSharing') {}
 
 /**
+ * The shared-prop computations a route's request was given, in the order
+ * their layers were built: a route gives each request a list of its own,
+ * which every `shareProps` adds to, however its layers were composed, as
+ * two in one Layer.merge are built side by side.
+ *
+ * @internal
+ */
+export const SharedComputations = Context.Reference<Array<Effect.Effect<void>> | undefined>(
+  '@popcomputer/web/SharedComputations',
+  { defaultValue: () => undefined }
+)
+
+/**
  * Compute props every page shares, such as a header's unread count, when a
  * page renders: redirects and JSON responses never run it. Provide it on the
  * routes whose pages show them; each `shareProps` a route is given runs, in
- * order. A failure, such as the database being unavailable, is reported to
+ * order, however its layers were composed, two in one `Layer.merge` among
+ * them. A failure, such as the database being unavailable, is reported to
  * `EffectErrorObserverService` and the page renders without the props it
  * computes: shared props are optional on the page, so it shows its defaults.
  *
@@ -670,6 +684,16 @@ export function shareProps<E, R>(
         Effect.provideContext(context)
       )
 
+      const computations = yield* SharedComputations
+
+      // In a route, every one the route was given runs, in order.
+      if (computations !== undefined) {
+        computations.push(own)
+
+        return PageSharing.of({ share: Effect.suspend(() => computations.reduce((earlier, compute) => Effect.andThen(earlier, compute), Effect.void)) })
+      }
+
+      // Elsewhere, each runs after the one it was built on.
       return PageSharing.of({
         share: Option.match(earlier, {
           onNone: () => own,

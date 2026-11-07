@@ -9,6 +9,7 @@ import { Context as HonoRequestContext } from 'hono'
 import type { Context as HonoContext, ExecutionContext, Hono, MiddlewareHandler, Env } from 'hono'
 import { renderErrorResponse, runEffectWithRuntime } from './handler.js'
 import { observeOrLog } from './error-observer.js'
+import { SharedComputations } from './responses.js'
 import {
   bindingsConfiguration,
   buildContextLayer,
@@ -1277,7 +1278,8 @@ export class EffectRouteBuilder<
         Layer.mergeAll(
           contextLayer,
           Layer.succeed(PendingPurges, makePendingPurges()),
-          Layer.succeed(PendingCacheTags, makePendingCacheTags())
+          Layer.succeed(PendingCacheTags, makePendingCacheTags()),
+          Layer.succeed(SharedComputations, [])
         )
       )
 

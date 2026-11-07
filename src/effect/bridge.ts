@@ -573,26 +573,32 @@ function createPageRenderer<E extends Env>(
   declared: { readonly pages?: PageSchemas; readonly shared?: DeclaredFields; readonly flash?: DeclaredFields } = {}
 ): PageRenderer {
   const requestContext = openWebContext(c)
-  const page = requestContext.web
 
-  if (!page) {
-    return {
-      // oxlint-disable-next-line effecttsgo/async-function -- PageRenderer.render is a Promise-returning Hono adapter contract, including this missing-configuration response.
-      render: async () => c.text('@popcomputer/web is not configured', 500),
-      share: () => {},
-      flash: () => {},
-    }
-  }
-
+  // web() is read when the action renders, shares or flashes, not when the
+  // request's services are readied: on a stack composed by hand it may run
+  // after effectBridge.
   return {
     pages: declared.pages,
     shared: declared.shared,
     flashed: declared.flash,
-    render: (component, props, options) => Promise.resolve(page.render(component, props, options)),
-    share: (key, value) => page.share(key, value),
+    render: (component, props, options) => {
+      const page = requestContext.web
+
+      return page === undefined
+        ? Promise.resolve(c.text('@popcomputer/web is not configured', 500))
+        : Promise.resolve(page.render(component, props, options))
+    },
+    share: (key, value) => requestContext.web?.share(key, value),
     flash: (key, value) => {
       refuseAfterFinish(c, `The flash value ${key}`)
-      requestContext.flash?.set(key, value)
+
+      const store = requestContext.flash
+
+      if (store === undefined) {
+        throw new Error(`The flash value ${key} has no flash cookie to go in: web() opens it, and it has not run for this request. Register web() on the app before the routes, as setupWeb does.`)
+      }
+
+      store.set(key, value)
     },
   }
 }
@@ -697,12 +703,13 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     baseLayer = Layer.merge(baseLayer, Layer.succeed(SignInLimits, requestCtx.signInLimits))
   }
 
-  if (requestCtx.authUser !== undefined) {
-    baseLayer = Layer.merge(
-      baseLayer,
-      Layer.succeed(AuthUserService, requestCtx.authUser)
-    )
-  }
+  // The signed-in user as the request has them when its runtime is built,
+  // after every middleware before the route: on a stack composed by hand,
+  // loadUser may run after effectBridge.
+  baseLayer = Layer.merge(
+    baseLayer,
+    Layer.unwrap(Effect.sync(() => requestCtx.authUser === undefined ? Layer.empty : Layer.succeed(AuthUserService, requestCtx.authUser)))
+  )
 
   // The application's request services, built only when an action's runtime
   // is: a request that runs no action, such as a plain Hono route, never calls
