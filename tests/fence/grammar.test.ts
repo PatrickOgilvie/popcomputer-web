@@ -1,7 +1,7 @@
 /**
  * The bash grammar the fence ships is tree-sitter-bash's, the devDependency
- * it is copied from: the package depends on web-tree-sitter alone, so an
- * install compiles nothing. Upgrading tree-sitter-bash means copying its
+ * it is copied from: tree-sitter-bash compiles on install, and no dependency
+ * of the package does. Upgrading tree-sitter-bash means copying its
  * `tree-sitter-bash.wasm` into src/fence/grammar/ and its version into the
  * LICENSE beside it.
  */
@@ -21,9 +21,16 @@ test("the shipped grammar is tree-sitter-bash's, with its licence and version be
   expect(readFileSync(join(grammar, 'LICENSE'), 'utf8')).toContain(`tree-sitter-bash ${manifest.version}`)
 })
 
-test('the package depends on web-tree-sitter alone, which builds nothing on install', () => {
+test('no dependency of the package runs a script on install, and tree-sitter-bash is only a devDependency', () => {
   const pkg = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', 'package.json'), 'utf8')) as { dependencies: Record<string, string>; devDependencies: Record<string, string> }
+  const installScripts = (name: string) => {
+    const { scripts = {} } = require(`${name}/package.json`) as { scripts?: Record<string, string> }
 
-  expect(Object.keys(pkg.dependencies)).toEqual(['web-tree-sitter'])
+    return ['preinstall', 'install', 'postinstall'].filter((script) => Object.hasOwn(scripts, script))
+  }
+
+  expect(Object.keys(pkg.dependencies).sort()).toEqual(['oxc-parser', 'web-tree-sitter'])
+  expect(Object.keys(pkg.dependencies).flatMap(installScripts)).toEqual([])
+  expect(installScripts('tree-sitter-bash')).not.toEqual([])
   expect(pkg.devDependencies).toHaveProperty('tree-sitter-bash')
 })

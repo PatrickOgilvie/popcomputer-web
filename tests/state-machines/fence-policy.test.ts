@@ -231,9 +231,14 @@ describe('machine 61: the policy walkers', () => {
     expect(decision(`python3 -Bc 'import os; os.system("git commit -n -m x")'`)).toBe('deny')
   })
 
-  test("M61.T58: the fence's own CLI by another path", () => {
+  test("M61.T58, M48.T8: the fence's own CLI by another path", () => {
     expect(decision('bun src/fence/cli.ts debt --update --allow-increase')).toBe('ask')
     expect(decision('node dist/fence/cli.js debt --update --allow-increase')).toBe('ask')
+  })
+
+  test('M48.T9: raising the ledger with the flag in a substitution asks, as the flag itself does', () => {
+    expect(decision('popweb-fence debt --update $(echo --allow-increase)')).toBe('ask')
+    expect(decision('bunx popweb-fence debt --update "$(printf -- --allow-increase)"')).toBe('ask')
   })
 
   test('M61.T60 (a stated limit): code that names a process call asks, however it builds the command', () => {

@@ -94,14 +94,12 @@ it reads paths and scripts from; it compares paths without `.`, `..` or case.
 
 It never reads a word holding a `$` expansion, a substitution or a glob,
 not even a variable the line sets: it tries each as `git`, `commit` and
-commit's `-n`, and refuses a command one of those makes a way around the
-gate, as `git $(echo commit) -n`, so write such a command out in full. A
-quoted substitution is one word, so `git commit -m "$(cat <<'EOF' ... EOF)"`
-runs. Where such a word, or a wrapper's option it does not know, decides
-what runs, it asks the owner, as it does before a script it cannot open or
-over 256 KiB, and before code that can start a process (`child_process`,
-`Bun.spawn`, `` $` ``, `subprocess`), since a program builds its command
-at run time. A program's strings it reads as command lines.
+`-n`, and refuses `git $(echo commit) -n`, so write such a command out in
+full; `git commit -m "$(cat <<'EOF' ... EOF)"`, one quoted word, runs. Where
+such a word, or a wrapper's option it does not know, decides what runs, it
+asks, as before a script it cannot open or over 256 KiB, and before code
+that can start a process (`child_process`, `Bun.spawn`, `` $` ``,
+`subprocess`), whose command is built at run time.
 
 ### Claude Code
 
@@ -125,11 +123,10 @@ Commit `.claude/settings.json`:
 }
 ```
 
-Claude Code shows a refusal's reason to the agent. It puts a question to
+Claude Code shows a refusal's reason to the agent, and puts a question to
 you in its permission prompt, auto mode included: approve the one command,
-or decline it and run it yourself. In a `claude -p` run, where nobody can
-answer, it refuses the command. The `Edit` and
-`Write` matchers send file edits through the same policy, so an edit of
+or decline it and run it yourself; a `claude -p` run refuses it. The `Edit`
+and `Write` matchers send file edits through the same policy, so an edit of
 `.git/hooks/` is refused and an edit of a fence file asks. `node` runs the
 hook as well as `bun`.
 
@@ -151,9 +148,8 @@ Commit `.cursor/hooks.json`; a project's hooks run from its root:
 }
 ```
 
-`failClosed` refuses a command when the hook itself fails, and until `bun
-install` has run, it fails: run the first install yourself. Claude Code has
-no such setting and lets the command through.
+`failClosed` refuses a command when the hook itself fails, as it does until
+`bun install` has run: run the first install yourself. Claude Code lets it through.
 
 ### Other agents
 
@@ -244,13 +240,11 @@ records it with `--update --allow-increase`:
 { "count": 0, "ignore": ["worker-configuration.d.ts"], "directives": [] }
 ```
 
-`--json` prints the directives with their lines, and `--ledger <path>` names
-another ledger.
+`--json` prints the directives with their lines; `--ledger <path>` names another.
 
 ## Boundaries and sign-off
 
 The hook enforces the steps it can see. `AGENTS.md`'s "Boundaries and
-sign-off" section lists all of them: what an agent changes alone, and what
-needs the owner. Copy it into the application's own `AGENTS.md`, add the
-application's own steps, and keep the hook's list and the section's in
-step.
+sign-off" lists all of them, what an agent changes alone and what needs the
+owner: copy it into the application's `AGENTS.md`, add its own steps, and
+keep the hook's list and the section's in step.

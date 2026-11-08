@@ -12,8 +12,9 @@
  *                                      Write it with a higher count: the owner's step
  *   --ledger <path>                    Another ledger file
  *
- * It imports only Node's built-ins, so it runs under Node and Bun alike; the
- * debt report loads Oxc's parser when it reads source.
+ * It runs under Node and Bun alike: the hook reads a command with tree-sitter's
+ * bash grammar, in WebAssembly, and the debt report loads Oxc's parser when it
+ * reads source.
  */
 import { readFileSync, statSync } from 'node:fs'
 import { debtCommand } from './debt.js'
