@@ -5,12 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.15.0] - 2026-11-08
 
-### Added
-
-- `testBrowser`'s `clearCookie(name, path)` drops a cookie, as the browser does once it expires. Setting one at another path no longer stands in for it: the browser holds a cookie by its name and its path.
-- The `no-dropped-route-builder` lint rule reports `routes.provide(...)`, `.middleware(...)`, `.prefix(...)` or `.jsonApi()` written as a statement, whose new builder is dropped, so the routes registered after it have none of what it adds.
+This release finishes fixing what the walk of every implicit state machine found, on the 1.x line. It fixes three security bugs: the default page cache could keep a page streamed with one visitor's data for the next, a `guarded` binding that no guard decided ran its action for anyone, and a route builder whose result was dropped, such as `routes.provide(RequireAuthLayer)` written as a statement, left the routes after it open. It makes the mistakes that went unnoticed fail where they are made, holds what a request or job holds until its work has settled, mends the Better Auth seam, rebuilds the test tools and the agent fence, and reports every failure no answer shows. `UPGRADING.md`'s "From 1.14 to 1.15" lists what to check.
 
 What an application with password sign-up may need to change: copy `docs/auth.md`'s `createAuth`, whose `emailVerification.sendOnSignIn` and `emailAndPassword.onExistingUserSignUp` send an address not yet proven a new link when its password is right or it signs up again. Without them, an address whose link expired or never arrived had no way to another. And a password sign-in counted by `auth.signInLimits` inside `dbTransaction` is now refused: call Better Auth before the transaction or after it.
 
@@ -20,22 +17,30 @@ What a test may need to change: `testBrowser` keeps cookies as a browser does, s
 
 What an application may need to change: one with a test that expects no purge when an action fails after a write it made outside a transaction. That write committed, so its purges now run. And one whose `background()` work, run in a test without an execution context, sets a cookie, header or flash value on the response: that work ran before the response, and now runs after it, as in a Worker, so the write is refused. Set it in the action instead.
 
+### Added
+
+- `testBrowser`'s `clearCookie(name, path)` drops a cookie, as the browser does once it expires. Setting one at another path no longer stands in for it: the browser holds a cookie by its name and its path.
+- The `no-dropped-route-builder` lint rule reports `routes.provide(...)`, `.middleware(...)`, `.prefix(...)` or `.jsonApi()` written as a statement, whose new builder is dropped, so the routes registered after it have none of what it adds.
+
+### Security
+
+- The default page cache keeps no page a binding was read for while it streamed, and settles when the body fails or a store throws as it is called. A streamed page could reach the next visitor with the first one's data.
+- A route builder whose result was dropped is refused. `routes.provide(RequireAuthLayer)` as a statement, or a dropped `middleware`, `prefix` or `jsonApi`, left the routes registered after it open, at the wrong path or answering pages, with no error. Now the first request answers a configuration error naming the call. A dropped `provide` of a layer that gives a service stays a type error at any action that needs it, and a builder kept for a job's services may run it later.
+- A `guarded` binding that no guard decided stops the action before it runs, though the action reads nothing. It ran for anyone while `routes.access()` said a guard decides.
+
 ### Fixed
 
 - A cached value a purge or an invalidation replaced is no longer read back or stored again. `cache` read with fewer tags than the entry was stored with returned an entry a purge of the others had ended. `cacheInvalidate` during a computation let the computation store the value it read before the write. A purge at a location KV had not yet shown the tag to wrote nothing, so the entry stayed until its `ttl`. A purge now writes each tag's generation whether or not one is stored, which costs a KV write per tag where it cost none.
 - A data cache purge that KV refuses fails the run, as a refused Workers Cache purge does, so a job's queue retries it. It was reported and dropped. A refused write is tried three times first, since KV takes one write a second to a key.
 - A purge of more than 100 tags goes to Workers Cache in batches, after the data cache. It failed before either, after the write had committed.
-- The default page cache keeps no page a binding was read for while it streamed, and settles when the body fails or a store throws as it is called. A streamed page could reach the next visitor with the first one's data.
 - A route's own `cache` option keeps private a page whose header an application middleware read after the route answered. Only a read before `next()` counted.
 - `ResponseCacheService.purge` reaches Workers Cache alone, and `recordCacheTag`'s example now uses `purgeCache`, which reaches the data cache too.
 - A write that committed is purged whatever the request then answers. A route purged only when its action succeeded, so a write followed by a failure, such as a 422 from validation that came after it or a 409 the action answered, left the cached pages that show the record stale until their `maxAge`. A failure before any write still purges nothing.
-- A route builder whose result was dropped is refused. `routes.provide(RequireAuthLayer)` as a statement, or a dropped `middleware`, `prefix` or `jsonApi`, left the routes registered after it open, at the wrong path or answering pages, with no error. Now the first request answers a configuration error naming the call. A dropped `provide` of a layer that gives a service stays a type error at any action that needs it, and a builder kept for a job's services may run it later.
 - A route registered after the application's first request is refused before it changes anything. Hono refused it after the route table had listed it, so the table, and a failed form's page, named a route that answered 404. A path registered twice is refused across registries too, `prefixMiddleware` after a route under its prefix is refused rather than skipping it, and a route with no form page looks it up once rather than on every request.
 - `setupWeb` refuses an app set up already, whose second setup's `render` and jobs replaced the first's, and one with routes registered before it, which were never checked against its bindings.
 - What a request to a route needs known is set before the route's own middleware runs, and before setupWeb's: a route middleware that refused a `jsonApi()` route's visitor redirected to sign in rather than answering 401, the origin check answered such a route in HTML when the request sent no `Accept`, and a route middleware's failed form went to `/` rather than the form's page.
 - A request's body is read once within its route's limit, the one its form declares, whoever reads it first, and each read is held to its own limit. A second read was held to the first's, so a guard reading first at the default refused a body the action's raised limit allowed, and a smaller limit after a larger one was not applied. A body application middleware read first is held to the route's limit too; it was taken as it was.
 - A signed-out visitor to a route whose record only its owner may load is asked to sign in before the database is asked for any of its records, as `routes.access()` says. A record above it, such as a private list over a book, was looked up first and answered 404.
-- A `guarded` binding that no guard decided stops the action before it runs, though the action reads nothing. It ran for anyone while `routes.access()` said a guard decides.
 - A record that failed to load fails the same for the rest of the request, with no second query, and a route that purges its records after the action removed one still purges the records above it, such as its organization. They were dropped with it.
 - `routeBinding` given a schema that names no table, as one `.mapFields(...)` built from `tableSchema(table)`, is refused when `setupWeb` is called, and so is an `ownedBy` binding when `auth.session` names no table setupWeb can find. The first loaded from whichever table the binding's plural named, and the second skipped the check that its column references the users table. A path-scoped `effectBridge` no longer loses its bindings to a request outside its path that came first.
 - Every `shareProps` a route is given runs, however its layers were composed. Two in one `Layer.merge` ran only the second.
