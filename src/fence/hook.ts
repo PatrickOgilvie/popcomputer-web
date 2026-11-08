@@ -5,8 +5,8 @@
  * command that must not run then exits with status 2 and the reason on
  * stderr.
  */
-import { isAbsolute, join } from 'node:path'
-import { commandPolicy, filePolicy, type CommandPolicyOptions } from './command-policy.js'
+import { isAbsolute, join, resolve } from 'node:path'
+import { commandPolicy, filePolicy, packageScripts, type CommandPolicyOptions } from './command-policy.js'
 
 /** What the hook prints, and the status it exits with. */
 export interface HookAnswer {
@@ -45,7 +45,7 @@ export function answerHook(input: string, environment: HookEnvironment): HookAns
     const fileInput = typeof payload.tool_name === 'string' && Object.hasOwn(FILE_TOOLS, payload.tool_name) ? toolInput[FILE_TOOLS[payload.tool_name]] : undefined
 
     if (typeof command === 'string') return claudeCode(decide(() => commandPolicy(command, policyOptions(cwd, environment))))
-    if (typeof fileInput === 'string') return claudeCode(decide(() => filePolicy(fileInput)))
+    if (typeof fileInput === 'string') return claudeCode(decide(() => filePolicy(fileInput, { hooksPath: hooksPath(cwd, environment.readFile) })))
     return claudeCode({ decision: 'allow' })
   }
 
@@ -53,12 +53,38 @@ export function answerHook(input: string, environment: HookEnvironment): HookAns
 }
 
 function policyOptions(cwd: string, environment: HookEnvironment): CommandPolicyOptions {
-  const resolve = (path: string) => (isAbsolute(path) ? path : join(cwd, path))
+  const manifest = environment.readFile(join(cwd, 'package.json'))
 
   return {
-    scripts: packageScripts(environment.readFile(join(cwd, 'package.json'))),
-    readFile: (path) => environment.readFile(resolve(path)),
+    scripts: manifest === undefined ? undefined : packageScripts(manifest),
+    readFile: (path) => environment.readFile(isAbsolute(path) ? path : join(cwd, path)),
+    hooksPath: hooksPath(cwd, environment.readFile),
   }
+}
+
+/**
+ * The directory `core.hooksPath` names in the repository's own config, as
+ * the hook's directory reads it, or in a worktree's common directory.
+ */
+function hooksPath(cwd: string, readFile: HookEnvironment['readFile']): string | undefined {
+  const gitFile = readFile(join(cwd, '.git'))?.match(/^gitdir:\s*(.+)$/m)?.[1]?.trim()
+  const gitDir = gitFile === undefined ? join(cwd, '.git') : resolve(cwd, gitFile)
+  const common = gitFile === undefined ? undefined : readFile(join(gitDir, 'commondir'))?.trim()
+  const config = readFile(join(common === undefined ? gitDir : resolve(gitDir, common), 'config'))
+  if (config === undefined) return undefined
+
+  let section = ''
+  for (const line of config.split('\n')) {
+    const header = /^\s*\[([^\]\s"]+)/.exec(line)
+    if (header !== null) section = header[1].toLowerCase()
+    const setting = /^\s*hookspath\s*=\s*(.*?)\s*$/i.exec(line)
+    if (section === 'core' && setting !== null) {
+      const value = setting[1].replace(/^"(.*)"$/, '$1')
+      // A relative path is the worktree's, where the hook runs.
+      return value
+    }
+  }
+  return undefined
 }
 
 /** Fails closed: a command the policy cannot read goes to the owner. */
@@ -107,12 +133,6 @@ function parse(input: string): Record<string, unknown> | undefined {
   } catch {
     return undefined
   }
-}
-
-function packageScripts(text: string | undefined): Record<string, string> | undefined {
-  const manifest = text === undefined ? undefined : parse(text)
-  if (manifest === undefined || !isRecord(manifest.scripts)) return undefined
-  return Object.fromEntries(Object.entries(manifest.scripts).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

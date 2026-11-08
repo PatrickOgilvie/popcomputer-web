@@ -7,8 +7,9 @@
  * only shrinks. `popweb-fence hook` runs the policy for Claude Code and
  * Cursor, and `popweb-fence debt` the report, as docs/agent-fence.md shows.
  *
- * This entrypoint imports only Node's built-ins, so an agent's hook loads
- * it in a few milliseconds.
+ * This entrypoint imports Node's built-ins and web-tree-sitter, whose bash
+ * grammar it loads once, as WebAssembly, so an agent's hook starts in some
+ * tens of milliseconds and an install compiles nothing.
  */
 export { commandPolicy, filePolicy, type CommandPolicyOptions, type FenceRule, type FenceVerdict } from './command-policy.js'
 export { compareDebt, debtLedger, describeDirective, disableDirectives, parseLedger, scanDebt, type DebtComparison, type DebtLedger, type DisableDirective } from './debt.js'

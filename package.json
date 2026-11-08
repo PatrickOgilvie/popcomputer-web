@@ -98,7 +98,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc",
+    "build": "rm -rf dist && tsc && cp -R src/fence/grammar dist/fence/grammar",
     "dev": "tsc --watch",
     "test": "bun run build && bun test && bun run test:types && bun run test:package",
     "test:package": "bun run build && node tests/package-imports.mjs",
@@ -148,7 +148,8 @@
     "sharp": "^0.35.5"
   },
   "dependencies": {
-    "oxc-parser": "^0.157.0"
+    "oxc-parser": "^0.157.0",
+    "web-tree-sitter": "0.27.2"
   },
   "peerDependencies": {
     "effect": "^4.0.0",
@@ -196,6 +197,7 @@
     "miniflare": "4.20260730.0",
     "oxlint": "1.82.0",
     "postgres": "^3.4.9",
+    "tree-sitter-bash": "0.25.1",
     "typescript": "^7.0.2",
     "vite": "^6.4.4"
   }

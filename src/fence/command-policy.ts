@@ -2,92 +2,147 @@
  * The command policy: what an agent's shell command may run without the
  * owner. It refuses a command that skips the commit gate, and asks the owner
  * before one that deploys, touches remote data, changes secrets, publishes a
- * package or pushes. It reads the whole command line as a shell would:
- * through quotes, `&&` chains, `sh -c`, `eval`, `npx` and `bunx`, env
- * prefixes, the package.json scripts a runner names, and the shell scripts
- * a command runs.
+ * package or pushes. It reads the command line as bash does, with
+ * tree-sitter's bash grammar, and judges every command the tree holds:
+ * lists, pipelines, subshells, substitutions, heredocs, `sh -c`, `eval` and
+ * `trap` strings, wrappers such as `env`, `sudo`, `npx` and `xargs`, the
+ * package.json scripts a runner names, and the scripts and programs a
+ * command runs. It fails closed: what it cannot read where it matters, such
+ * as a command name an expansion gives or a script it cannot open, goes to
+ * the owner.
  */
-import { readCommands, splitWords, UNREAD, UNREAD_WORDS, type SimpleCommand } from './shell.js'
+import { codeKind, commandsInCode, startsProcess, type CodeKind } from './code.js'
+import { pathFindings, protectedFileFindings, writeFindings } from './file-policy.js'
+import { joinPath, parentPath } from './path.js'
+import { GLOB_ANY, GLOB_ONE, UNREAD, UNREAD_WORDS, display, isDynamic, known, readScript, splitWords, wordParts, type SimpleCommand } from './shell.js'
+import { strongest, type FenceRule, type FenceVerdict, type Finding } from './verdict.js'
 
-/** What a command or a file change breaks: the fence's own rule, or a step that needs the owner. */
-export type FenceRule =
-  /** It skips or switches off the git hooks that run the commit gate. Always refused. */
-  | 'hook-bypass'
-  /** It changes the fence: the gate, the lint configuration, the agent's hooks or the debt ledger. */
-  | 'fence-change'
-  /** It deploys, rolls back or deletes a Worker on Cloudflare. */
-  | 'deploy'
-  /** It reads or changes data on Cloudflare (remote D1, KV, R2) rather than the local copy. */
-  | 'remote-data'
-  /** It changes the Worker's secrets on Cloudflare. */
-  | 'secret'
-  /** It publishes a package to a registry. */
-  | 'publish'
-  /** It pushes commits to a remote. */
-  | 'push'
-
-/**
- * The policy's answer. `deny` refuses: the agent fixes what the reason
- * says. `ask` needs the owner, who approves this one command or runs it
- * themselves.
- */
-export type FenceVerdict =
-  | { readonly decision: 'allow' }
-  | {
-      readonly decision: 'ask' | 'deny'
-      readonly rule: FenceRule
-      /** The command, or the file, the rule is about. */
-      readonly subject: string
-      readonly reason: string
-    }
+export type { FenceRule, FenceVerdict } from './verdict.js'
 
 /** What the policy reads besides the command line. */
 export interface CommandPolicyOptions {
   /** The application's package.json scripts, so `bun run deploy` is read as the commands it runs. */
   readonly scripts?: Readonly<Record<string, string>>
-  /** A file a command runs, such as `sh scripts/release.sh`, or undefined when it cannot be read. */
+  /**
+   * A file a command runs or reads, such as `sh scripts/release.sh` or
+   * another directory's package.json, by its path from where the command
+   * line starts; undefined when it is missing or too large to read.
+   */
   readonly readFile?: (path: string) => string | undefined
+  /** The directory git's `core.hooksPath` names, whose files are the gate itself. */
+  readonly hooksPath?: string
 }
 
-type Finding = Exclude<FenceVerdict, { readonly decision: 'allow' }>
-
-/** Scripts, substitutions and wrappers are followed this deep. */
+/** Scripts, substitutions and wrappers are followed this deep; deeper asks the owner. */
 const MAX_DEPTH = 12
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'fish', 'yash'])
-/** Options of a shell that take a value, before its script. */
-const SHELL_VALUE_OPTIONS = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file'])
 
-/** Commands that run the command after their own options, and those options that take a value. */
-const WRAPPERS: Readonly<Record<string, { readonly values: ReadonlyArray<string>; readonly positionals?: number }>> = {
-  builtin: { values: [] },
-  command: { values: [] },
-  exec: { values: ['-a'] },
-  nohup: { values: [] },
-  time: { values: ['-f', '-o', '--format', '--output'] },
-  nice: { values: ['-n', '--adjustment'] },
-  ionice: { values: ['-c', '-n', '-p', '-P', '-u', '--class', '--classdata'] },
-  stdbuf: { values: ['-i', '-o', '-e', '--input', '--output', '--error'] },
-  timeout: { values: ['-s', '-k', '--signal', '--kill-after'], positionals: 1 },
-  sudo: { values: ['-u', '-g', '-h', '-p', '-C', '-D', '-r', '-t', '-T', '-U', '--user', '--group', '--host', '--prompt', '--chdir', '--role', '--type', '--other-user'] },
-  doas: { values: ['-u', '-C'] },
-  chronic: { values: [] },
-  unbuffer: { values: [] },
-  caffeinate: { values: ['-t', '-w'] },
+/** A command's options: short ones as letters, long ones by name, each taking a value or not. */
+interface OptionSpec {
+  readonly flags?: string
+  readonly values?: string
+  readonly longFlags?: ReadonlyArray<string>
+  readonly longValues?: ReadonlyArray<string>
+  /** Words it reads before the command it runs, as `timeout`'s duration. */
+  readonly positionals?: number
+  /** `nice -5`: a number as an option. */
+  readonly numeric?: boolean
 }
-const XARGS_VALUE_OPTIONS = ['-I', '-L', '-n', '-P', '-s', '-E', '-d', '-a', '--replace', '--max-lines', '--max-args', '--max-procs', '--max-chars', '--eof', '--delimiter', '--arg-file']
+
+/** Commands that run the command after their options. An option not listed asks the owner. */
+const WRAPPERS: Readonly<Record<string, OptionSpec>> = {
+  builtin: {},
+  command: { flags: 'p' },
+  exec: { flags: 'cl', values: 'a' },
+  nohup: {},
+  noglob: {},
+  nocorrect: {},
+  // zsh runs `- command` as a login command.
+  '-': {},
+  time: { flags: 'pqvalh', values: 'fo', longFlags: ['--verbose', '--quiet', '--append', '--portability'], longValues: ['--format', '--output'] },
+  nice: { values: 'n', longValues: ['--adjustment'], numeric: true },
+  ionice: { flags: 't', values: 'cnpPu', longValues: ['--class', '--classdata', '--pid', '--pgid', '--uid'] },
+  stdbuf: { values: 'ioe', longValues: ['--input', '--output', '--error'] },
+  timeout: { flags: 'fpv', values: 'sk', longFlags: ['--foreground', '--preserve-status', '--verbose'], longValues: ['--signal', '--kill-after'], positionals: 1 },
+  sudo: {
+    flags: 'AbEHKknPSBN',
+    values: 'ugpCrtTU',
+    longFlags: ['--askpass', '--background', '--preserve-env', '--set-home', '--non-interactive', '--preserve-groups', '--stdin', '--bell', '--reset-timestamp'],
+    longValues: ['--user', '--group', '--prompt', '--close-from', '--role', '--type', '--command-timeout', '--other-user'],
+  },
+  doas: { flags: 'n', values: 'u' },
+  chronic: { flags: 'dev' },
+  unbuffer: { flags: 'p' },
+  caffeinate: { flags: 'dimsu', values: 'tw' },
+  setsid: { flags: 'cfw', longFlags: ['--ctty', '--fork', '--wait'] },
+  repeat: { positionals: 1 },
+}
+const ENV_OPTIONS: OptionSpec = { flags: 'i0v', values: 'uP', longFlags: ['--ignore-environment', '--null', '--debug'], longValues: ['--unset'] }
+const XARGS_OPTIONS: OptionSpec = {
+  flags: '0rtpxoile',
+  values: 'nLPsEdaIJ',
+  longFlags: ['--null', '--no-run-if-empty', '--verbose', '--interactive', '--exit', '--open-tty', '--replace'],
+  longValues: ['--max-args', '--max-lines', '--max-procs', '--max-chars', '--eof', '--delimiter', '--arg-file', '--process-slot-var'],
+}
+/** `npx`, `bunx`, `pnpx`, `npm exec`, `pnpm dlx`, `yarn dlx` and `bun x`. */
+const RUNNER_OPTIONS: OptionSpec = {
+  flags: 'yqs',
+  values: 'pcw',
+  longFlags: ['--yes', '--no', '--quiet', '--silent', '--no-install', '--ignore-existing', '--prefer-offline', '--prefer-online', '--offline', '--workspaces', '--include-workspace-root', '--bun', '--verbose', '--no-color', '--shell-mode'],
+  longValues: ['--package', '--call', '--cache', '--registry', '--userconfig', '--prefix', '--workspace', '--node-options', '--shell', '--script-shell', '--loglevel'],
+}
+const SHELL_OPTIONS: OptionSpec = {
+  flags: 'abcefhiklmnprstuvxBCEHPT',
+  values: 'oO',
+  longFlags: ['--login', '--norc', '--noprofile', '--posix', '--restricted', '--verbose', '--noediting', '--no-config', '--private', '--interactive', '--no-execute', '--help', '--version'],
+  longValues: ['--rcfile', '--init-file', '--command', '--init-command'],
+}
+const FISH_OPTIONS: OptionSpec = {
+  flags: 'ilnPNvh',
+  values: 'cCdofp',
+  longFlags: ['--login', '--interactive', '--no-execute', '--no-config', '--private', '--print-rusage-self', '--help', '--version'],
+  longValues: ['--command', '--init-command', '--debug', '--debug-output', '--features', '--profile', '--profile-startup'],
+}
 /** Builtins that set variables, whose `NAME=value` arguments the commands after them see. */
 const DECLARATIONS = new Set(['export', 'declare', 'typeset', 'readonly', 'local'])
 
-/** Interpreters, and the options that give them code inline. */
-const INLINE_CODE: Readonly<Record<string, ReadonlyArray<string>>> = {
-  node: ['-e', '--eval', '-p', '--print'],
-  bun: ['-e', '--eval', '-p', '--print'],
-  python: ['-c'],
-  python3: ['-c'],
-  perl: ['-e', '-E'],
-  ruby: ['-e'],
-  php: ['-r'],
+/** Interpreters: the language they run, and their options that give code inline or take a value. */
+interface Interpreter {
+  readonly kind: CodeKind
+  /** Short options whose value is code: the rest of the cluster, or the next word. */
+  readonly inline: string
+  readonly inlineLong?: ReadonlyArray<string>
+  /** Short options that take a value, attached or the next word. */
+  readonly values?: string
+  /** Short options whose value, if any, is the rest of the cluster, as perl's `-i.bak`. */
+  readonly attached?: string
+  readonly longValues?: ReadonlyArray<string>
+  /** An option after which the next word is a module, not a file, as python's `-m`. */
+  readonly module?: string
+  /** An option whose value is the script file, as php's `-f`. */
+  readonly file?: string
+}
+const NODE: Interpreter = {
+  kind: 'js',
+  inline: 'ep',
+  inlineLong: ['--eval', '--print'],
+  values: 'rC',
+  longValues: ['--require', '--import', '--loader', '--experimental-loader', '--env-file', '--conditions', '--input-type', '--title', '--watch-path', '--test-name-pattern', '--test-reporter', '--test-reporter-destination'],
+}
+const INTERPRETERS: Readonly<Record<string, Interpreter>> = {
+  node: NODE,
+  tsx: NODE,
+  'ts-node': { ...NODE, values: 'rPOCI', longValues: ['--require', '--project', '--compiler-options', '--compiler', '--ignore', '--cwd', '--scope-dir'] },
+  'ts-node-esm': { ...NODE, values: 'rPOCI' },
+  esno: NODE,
+  esrun: NODE,
+  'vite-node': { kind: 'js', inline: '', values: 'r', longValues: ['--root', '--config', '--mode'] },
+  jiti: { kind: 'js', inline: '' },
+  python: { kind: 'python', inline: 'c', values: 'WX', module: 'm' },
+  perl: { kind: 'perl', inline: 'eE', values: 'IMmF', attached: 'il0xdC' },
+  ruby: { kind: 'ruby', inline: 'e', values: 'IrCEF', attached: 'ilx0W' },
+  php: { kind: 'php', inline: 'r', values: 'dc', file: 'f' },
 }
 
 const BUN_BUILTINS = new Set([
@@ -103,15 +158,15 @@ const YARN_BUILTINS = new Set([
   'add', 'install', 'remove', 'up', 'upgrade', 'info', 'why', 'init', 'set', 'config', 'cache', 'constraints', 'pack', 'patch',
   'plugin', 'version', 'link', 'unlink', 'explain', 'search', 'stage', 'help', 'bin',
 ])
-const NPM_VALUE_OPTIONS = new Set(['--prefix', '-w', '--workspace', '--userconfig', '--registry', '--cache', '--loglevel', '--tag', '--otp', '--access'])
-const BUN_VALUE_OPTIONS = new Set(['--cwd', '--filter', '-F', '--config', '-c', '--env-file', '--preload', '-r', '--require', '--import', '--elide-lines', '--shell', '--tsconfig-override'])
-const PNPM_VALUE_OPTIONS = new Set(['-C', '--dir', '--filter', '-F', '--filter-prod', '--reporter', '--loglevel', '--workspace-concurrency'])
-const YARN_VALUE_OPTIONS = new Set(['--cwd'])
-const NODE_VALUE_OPTIONS = new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '--env-file', '--conditions', '-C', '--input-type'])
-/** `popweb-fence`, run by its bin or by its file in the package. */
-const FENCE_CLI = /(^|\/)popweb-fence$|(^|\/)@popcomputer\/web\/dist\/fence\/cli\.js$/
+/** Each package manager's options before its command that take a value, and those that name the package's directory. */
+const NPM_VALUES = { values: ['--prefix', '-C', '-w', '--workspace', '--userconfig', '--registry', '--cache', '--loglevel', '--tag', '--otp', '--access'], directory: ['--prefix', '-C'] }
+const BUN_VALUES = { values: ['--cwd', '--filter', '-F', '--config', '-c', '--env-file', '--preload', '-r', '--require', '--import', '--elide-lines', '--shell', '--tsconfig-override'], directory: ['--cwd'] }
+const PNPM_VALUES = { values: ['-C', '--dir', '--prefix', '--filter', '-F', '--filter-prod', '--reporter', '--loglevel', '--workspace-concurrency'], directory: ['-C', '--dir', '--prefix'] }
+const YARN_VALUES = { values: ['--cwd'], directory: ['--cwd'] }
 
-const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--super-prefix'])
+/** `popweb-fence`, run by its bin or by its file, in the package or in its own repository. */
+const FENCE_CLI = /(^|\/)popweb-fence$|(^|\/)fence\/cli\.[cm]?[jt]s$/
+
 /** `--no-verify`, and the abbreviations git accepts for it. */
 const NO_VERIFY = /^--no-veri(?:f|fy)?$/
 /** Short options of `git commit` that take a value, which `-n` cannot follow in a cluster. */
@@ -121,8 +176,54 @@ const COMMIT_VALUE_LONG = new Set([
   '--squash', '--trailer', '--pathspec-from-file',
 ])
 const CONFIG_VALUE_OPTIONS = new Set(['-f', '--file', '--blob', '--type', '--default', '--comment', '--value'])
-/** git's commands that write a commit by hand, which runs none of its hooks. */
-const COMMIT_WRITERS = new Set(['commit-tree', 'fast-import'])
+
+/** git's global options that take a value. */
+const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--super-prefix', '--list-cmds', '--attr-source'])
+
+/**
+ * git's dangerous surface, as data: each way a git command can get past the
+ * commit gate, with what the policy answers.
+ */
+const GIT_SURFACE = {
+  /** Global options that point git at another repository or program, whose hooks are not the gate. */
+  elsewhere: new Set(['--git-dir', '--work-tree', '--exec-path', '--super-prefix']),
+  /** Settings, for one command (`-c`, `--config-env`, `GIT_CONFIG_*`) or for good (`git config`). */
+  settings: [
+    { key: /^core\.hookspath$/, finding: 'deny', reason: 'changes which git hooks run, which can switch off the commit gate. Only the owner changes the gate.' },
+    { key: /^alias\./, finding: 'alias', reason: '' },
+    { key: /^include\.path$|^includeif\..+\.path$/, finding: 'ask', reason: 'includes another git config file, which can move the hooks or switch them off. Approve it only if you expected it.' },
+    {
+      key: /^(user\.|color\.|advice\.|column\.|log\.|maintenance\.)|^(init\.defaultbranch|core\.quotepath|core\.autocrlf|core\.safecrlf|commit\.gpgsign|tag\.gpgsign|pull\.rebase|pull\.ff|push\.default|push\.autosetupremote|merge\.conflictstyle|diff\.noprefix|diff\.renames|protocol\.version|safe\.directory)$/,
+      finding: 'none',
+      reason: '',
+    },
+  ],
+  /** Any other setting, for one command. */
+  otherSetting: { finding: 'ask', reason: 'sets a git setting for this command, which can move the hooks or name a program git runs. Approve it only if you expected it.' },
+  /** Settings `git config` may write for good that name a program git runs. */
+  programs: /^(core\.(fsmonitor|pager|editor|sshcommand|askpass|worktree)|sequence\.editor|diff\.external|credential\.helper|gpg\.program|uploadpack\.packobjectshook|init\.templatedir)$|^(filter|diff|merge|pager)\./,
+  /** Commands that commit without the pre-commit hook, and their options with which they make no commit. */
+  commitsWithoutHook: {
+    pull: [],
+    merge: ['--abort', '--quit', '--no-commit'],
+    'cherry-pick': ['--abort', '--quit', '--no-commit', '-n'],
+    revert: ['--abort', '--quit', '--no-commit', '-n'],
+    am: ['--abort', '--quit', '--show-current-patch'],
+    rebase: ['--abort', '--quit', '--show-current-patch', '--edit-todo'],
+  } as Readonly<Record<string, ReadonlyArray<string>>>,
+  /** Commands that send commits to a remote. */
+  pushes: new Set(['push', 'send-pack', 'http-push']),
+  /** Commands that write a commit by hand, which runs none of the hooks. */
+  commitWriters: new Set(['commit-tree', 'fast-import']),
+  /** Commands that change the files they name, and their options that take a value. */
+  writesPaths: {
+    rm: ['--pathspec-from-file'],
+    mv: [],
+    checkout: ['-b', '-B', '--orphan', '--conflict', '--pathspec-from-file'],
+    restore: ['-s', '--source', '--conflict', '--pathspec-from-file'],
+    clean: ['-e', '--exclude'],
+  } as Readonly<Record<string, ReadonlyArray<string>>>,
+} as const
 
 /** The setting that moves git's hooks, as `-c` names it before its value. */
 const HOOKS_PATH = 'core.hooksPath'
@@ -134,6 +235,8 @@ const HOOKS_PATH = 'core.hooksPath'
 const GATE_WORDS: ReadonlyArray<string> = ['git', 'commit', '-n', HOOKS_PATH]
 /** The same, for an unquoted expansion, which the shell may split into several words, as `$(echo git commit)`. */
 const GATE_RUNS: ReadonlyArray<ReadonlyArray<string>> = [['git', 'commit'], ['commit', '-n'], ['git', 'commit', '-n']]
+/** The words that, in place of one the fence cannot read, would make a command one the owner approves. */
+const OWNER_WORDS: ReadonlyArray<string> = ['wrangler', 'deploy', 'push', 'publish', 'secret', '--remote', '--allow-increase']
 /** Whether a word is one of those, or names the hooks setting, as `-c core.hooksPath=` does. */
 const namesGate = (word: string) => GATE_WORDS.includes(word) || word.toLowerCase().includes(HOOKS_PATH.toLowerCase())
 /** How many unread words of one command take another reading at once: git, its commit and the flag. */
@@ -141,80 +244,53 @@ const MAX_REREAD = 3
 /** How many unread words of one command are read otherwise; the rest are read as the shell's own expansion. */
 const MAX_UNREAD_WORDS = 6
 
-const WRANGLER_VALUE_OPTIONS = new Set(['-c', '--config', '-e', '--env', '--env-file', '--cwd'])
+const WRANGLER_VALUE_OPTIONS = new Set([
+  '-c', '--config', '-e', '--env', '--env-file', '--cwd', '--name', '--compatibility-date', '--compatibility-flag', '--compatibility-flags',
+  '--main', '--outdir', '--outfile', '--route', '--routes', '--var', '--define', '--alias', '--triggers', '--schedule', '--schedules',
+  '--assets', '--site', '--tsconfig', '--message', '--tag', '--account-id', '--log-level', '--persist-to', '--port', '--ip',
+  '--inspector-port', '--binding', '--namespace-id', '--database', '--command', '--file', '--output', '--timestamp', '--bookmark',
+  '--version-id', '--percentage', '--branch', '--project-name', '--commit-hash', '--commit-message', '--metafile', '--host',
+  '--local-protocol', '--upstream-protocol', '--jurisdiction', '--ttl', '--expiration', '--expiration-ttl', '--metadata', '--prefix',
+  '--limit', '--cursor', '--batch-size', '--table', '--location',
+])
+const WRANGLER_FLAGS = new Set([
+  '--dry-run', '--dryRun', '--remote', '--local', '--preview', '--json', '--yes', '-y', '--force', '--help', '-h', '--version', '-v',
+  '--minify', '--keep-vars', '--latest', '--no-bundle', '--node-compat', '--legacy-env', '--persist', '--live-reload', '--test-scheduled',
+])
 const SECRET_WRITES = new Set(['put', 'bulk', 'delete'])
 
 /** Commands that change the files their arguments name. */
 const WRITERS = new Set(['rm', 'rmdir', 'mv', 'chmod', 'chown', 'chgrp', 'truncate', 'tee', 'unlink', 'shred', 'touch'])
-/** Commands that change only the file their last argument names. */
+/** Commands that change only the file their last argument names, or the directory `-t` names. */
 const COPIERS = new Set(['cp', 'ln', 'install', 'rsync'])
 
-/** Files nobody reviews, whose change switches the gate or the agent's hook off. */
-const UNREVIEWED_FILES = [
-  /(^|\/)\.git\/hooks(\/|$)/,
-  /(^|\/)\.?lefthook-local\.ya?ml$/,
-  /(^|\/)node_modules\/@popcomputer\/web\/dist\/fence(\/|$)/,
-]
-/** The fence's own files, which the owner signs off. */
-const FENCE_FILES = [
-  /(^|\/)\.?lefthook\.ya?ml$/,
-  /(^|\/)\.githooks(\/|$)/,
-  // The hook managers whose switches the policy refuses: husky, pre-commit, simple-git-hooks.
-  /(^|\/)\.husky(\/|$)/,
-  /(^|\/)\.pre-commit-config\.ya?ml$/,
-  /(^|\/)\.?simple-git-hooks\.(?:json|[cm]?js)$/,
-  /(^|\/)oxlint\.config\.[cm]?[jt]s$/,
-  /(^|\/)\.?oxlintrc\.json$/,
-  /(^|\/)\.claude\/settings(\.local)?\.json$/,
-  /(^|\/)\.cursor\/hooks\.json$/,
-  /(^|\/)lint-debt\.json$/,
-]
+/** Directories whose files the path policy protects, which `find` may reach below its start path. */
+const PROTECTED_DIRECTORIES = ['.git/hooks', '.git', '.githooks', '.husky', '.claude', '.cursor']
+
+/** Command names the policy reads by name, which a path to them, as `"$ROOT"/node_modules/.bin/git`, is read as. */
+const READ_BY_NAME = new Set([
+  ...Object.keys(WRAPPERS), ...Object.keys(INTERPRETERS), ...SHELLS, ...DECLARATIONS, ...WRITERS, ...COPIERS,
+  'env', 'xargs', 'eval', 'source', '.', 'trap', 'coproc', 'alias', 'shopt', 'su', 'watch', 'find', 'sed', 'deno', 'bun', 'bunx',
+  'npx', 'pnpx', 'npm', 'pnpm', 'yarn', 'git', 'wrangler', 'lefthook', 'husky', 'dd', 'curl', 'wget', 'tar', 'unzip', 'popweb-fence',
+])
 
 /** The policy's answer for one shell command line, as an agent's hook passes it. */
 export function commandPolicy(command: string, options: CommandPolicyOptions = {}): FenceVerdict {
   const inspection = new Inspection(options)
-  inspection.script(command, 0)
+  inspection.script(command, { depth: 0, via: undefined, inCode: false, cwd: '' })
   return strongest(inspection.findings)
 }
 
 /**
  * The policy's answer for a change to one file, as an agent's edit tool
- * passes its path: refused for git's hooks, which nobody reviews, and asked
- * of the owner for the fence's own files.
+ * passes its path: refused for git's hooks and config, which nobody
+ * reviews, and asked of the owner for the fence's own files.
  */
-export function filePolicy(path: string): FenceVerdict {
-  return strongest(fileFindings(path, undefined))
+export function filePolicy(path: string, options: Pick<CommandPolicyOptions, 'hooksPath'> = {}): FenceVerdict {
+  return strongest(pathFindings(path, undefined, options.hooksPath))
 }
 
-function strongest(findings: ReadonlyArray<Finding>): FenceVerdict {
-  return findings.find((finding) => finding.decision === 'deny') ?? findings[0] ?? { decision: 'allow' }
-}
-
-/** A change to one file, by an edit (no command) or by a shell command. */
-function fileFindings(path: string, command: string | undefined): Finding[] {
-  const file = path.replaceAll('\\', '/')
-  const change = command === undefined ? `Changing ${file}` : `\`${command}\` changes ${file}, which`
-
-  if (UNREVIEWED_FILES.some((pattern) => pattern.test(file))) {
-    return [{
-      decision: 'deny',
-      rule: 'hook-bypass',
-      subject: command ?? file,
-      reason: `${change} switches off the commit gate or the agent's hook, and nobody reviews it. Fix what the gate reports instead; only the owner changes the gate.`,
-    }]
-  }
-  if (FENCE_FILES.some((pattern) => pattern.test(file))) {
-    return [{
-      decision: 'ask',
-      rule: 'fence-change',
-      subject: command ?? file,
-      reason: `${command === undefined ? `${file} is` : `\`${command}\` changes ${file},`} part of the fence: the commit gate, the lint configuration, the agent's hooks or the debt ledger. Approve it only if you asked for this change.`,
-    }]
-  }
-  return []
-}
-
-const REASONS: Readonly<Record<Exclude<FenceRule, 'hook-bypass' | 'fence-change'>, string>> = {
+const REASONS: Readonly<Record<Exclude<FenceRule, 'hook-bypass' | 'fence-change' | 'unreadable'>, string>> = {
   deploy: 'deploys to Cloudflare. Approve it only if you asked for this deploy.',
   'remote-data': 'reads or changes data on Cloudflare (remote D1, KV or R2), not the local copy. Approve it only if you asked for it.',
   secret: "changes the Worker's secrets on Cloudflare. Approve it only if you asked for it.",
@@ -222,8 +298,29 @@ const REASONS: Readonly<Record<Exclude<FenceRule, 'hook-bypass' | 'fence-change'
   push: 'pushes commits to the remote. Approve it only if you asked for a push.',
 }
 
+/** Where a command is read: how deep, on the way from which script, and in which directory. */
+interface Context {
+  readonly depth: number
+  readonly via: string | undefined
+  /** A program's string, read as a command line: only the rules' own findings count, not what the fence cannot read. */
+  readonly inCode: boolean
+  /** Where the command runs, from where the line starts; undefined after a `cd` the fence cannot follow. */
+  readonly cwd: string | undefined
+  /** `find`'s matches, which `{}` stands for in the command its `-exec` runs. */
+  readonly found?: FindMatches
+}
+
+interface FindMatches {
+  readonly starts: ReadonlyArray<string>
+  readonly names: ReadonlyArray<string>
+}
+
+const deeper = (context: Context, via = context.via): Context => ({ ...context, depth: context.depth + 1, via })
+
 class Inspection {
   readonly findings: Finding[] = []
+  /** Aliases the line defines, by name, which bash with `expand_aliases` and zsh run in place of the command. */
+  private readonly aliases = new Map<string, string>()
 
   /**
    * @param reading The files and package scripts being read on the way to
@@ -232,23 +329,28 @@ class Inspection {
    */
   constructor(private readonly options: CommandPolicyOptions, private readonly reading = new Set<string>()) {}
 
-  /** A command line; `inCode` when it is a program's string, whose placeholders are its own. */
-  script(text: string, depth: number, via?: string, inCode = false): void {
-    if (depth > MAX_DEPTH) return
-    for (const command of readCommands(text)) this.command(command, depth, via, inCode)
+  /** A command line; `context.inCode` when it is a program's string, whose placeholders are its own. */
+  script(text: string, context: Context): void {
+    const { commands, unreadable } = readScript(text)
+
+    for (const what of unreadable) this.unreadable(firstLine(text), what, context)
+    for (const command of commands) {
+      this.command(command, { ...context, cwd: command.cwd === undefined ? undefined : joinPath(context.cwd, command.cwd) })
+    }
   }
 
-  private command(command: SimpleCommand, depth: number, via: string | undefined, inCode: boolean): void {
-    const text = shown([...command.assignments.map(({ name, value }) => `${name}=${value}`), ...command.words])
+  private command(command: SimpleCommand, context: Context): void {
+    const words = command.words
+    const text = shown([...command.assignments.map(({ name, value }) => `${name}=${display(value)}`), ...words.map(display)])
 
-    for (const { name, value } of command.assignments) this.environment(name, value, text, via, basename(command.words[0] ?? ''))
-    for (const target of command.writes) this.findings.push(...fileFindings(target, from(`${text} > ${target}`, via)))
-    this.words(command.words, command, depth, via)
+    for (const { name, value } of command.assignments) this.environment(name, value, text, context, words[0] ?? '')
+    for (const target of command.writes) this.write(target, `${text} > ${display(target)}`, context)
+    this.words(words, command, context)
     // A program's string that names neither git, its commit, `-n` nor the
     // hooks setting is a message, as a deploy script's `${name} isn't set
     // yet`, or a command built at run time, which the fence cannot read: its
     // placeholders are not read as the gate's words.
-    if (command.marked !== undefined && (!inCode || command.words.some(namesGate))) this.unread(command, command.marked, depth, via)
+    if (words.some(isDynamic) && (!context.inCode || words.some((word) => namesGate(known(word))))) this.readings(words, command, context)
   }
 
   /** Read `key` (a file, or a package script) unless it is already being read on the way here. */
@@ -263,438 +365,708 @@ class Inspection {
   }
 
   /**
-   * A command some of whose words come from a substitution or a variable the
-   * fence cannot read, as `git $(echo commit) -n`'s subcommand does. Each
-   * such word is read as each of the words that would make the command skip
-   * the commit gate in its place, a few at once, and a command one of those
-   * readings refuses is refused: it may be that command.
+   * A command some of whose words come from what the fence cannot read, as
+   * `git $(echo commit) -n`'s subcommand does. Each such word is read as each
+   * of the words that would make the command skip the commit gate in its
+   * place, a few at once, and a command one of those readings refuses is
+   * refused: it may be that command. Then each is read, one at a time, as
+   * each word that would make it one the owner approves.
    */
-  private unread(command: SimpleCommand, marked: ReadonlyArray<string>, depth: number, via: string | undefined): void {
+  private readings(words: ReadonlyArray<string>, command: SimpleCommand, context: Context): void {
     let unread = 0
-    const choices = marked.map((word): ReadonlyArray<ReadonlyArray<string>> => {
+    const choices = words.map((word): ReadonlyArray<ReadonlyArray<string>> => {
       const read = known(word) === '' ? [] : [known(word)]
-
-      if (word === known(word) || unread++ >= MAX_UNREAD_WORDS) return [read]
+      if (!isDynamic(word) || unread++ >= MAX_UNREAD_WORDS) return [read]
 
       return [
         read,
         ...GATE_WORDS.filter((target) => couldRead(word, target)).map((target) => [target]),
-        ...(word === UNREAD_WORDS ? GATE_RUNS : []),
+        ...(wordParts(word).every((part) => part === UNREAD_WORDS || part === GLOB_ANY || part === GLOB_ONE) ? GATE_RUNS : []),
         ...clusterReading(word),
         ...hooksPathReading(word),
       ]
     })
+    const subject = shown(words.map(display))
     const tried = new Set<string>()
 
-    for (const reading of readings(choices, 0, 0)) {
+    for (const reading of readings(choices)) {
       const key = reading.join(UNREAD)
       if (tried.has(key)) continue
       tried.add(key)
 
-      const probe = new Inspection(this.options, this.reading)
-      probe.words(reading, command, depth, via)
-
-      if (probe.findings.some((finding) => finding.decision === 'deny')) {
-        const subject = shown(marked.map((word) => unreadParts(word).join('$(…)')))
-        this.deny(subject, `may run \`${shown(reading)}\`, which skips the git hooks that run the commit gate: the fence cannot read what a substitution or a variable in it gives. Write the command out in full.`, via)
+      const probe = this.probe(reading, command, context)
+      if (probe.some((finding) => finding.decision === 'deny')) {
+        this.deny(subject, `may run \`${shown(reading)}\`, which skips the git hooks that run the commit gate: the fence cannot read what a substitution or a variable in it gives. Write the command out in full.`, context)
         return
+      }
+    }
+    if (context.inCode) return
+
+    for (const index of words.flatMap((word, at) => (isDynamic(word) ? [at] : []))) {
+      for (const target of OWNER_WORDS.filter((candidate) => couldRead(words[index], candidate))) {
+        const reading = words.flatMap((other, at) => (at === index ? [target] : known(other) === '' ? [] : [known(other)]))
+        const found = this.probe(reading, command, context).find((finding) => finding.rule !== 'unreadable')
+        if (found !== undefined) {
+          this.findings.push({
+            decision: found.decision,
+            rule: found.rule,
+            subject: from(subject, context.via),
+            reason: `\`${from(subject, context.via)}\` may run \`${shown(reading)}\`, which needs the owner: the fence cannot read what a substitution or a variable in it gives. Approve it only if you expected it.`,
+          })
+          return
+        }
       }
     }
   }
 
-  private deny(subject: string, reason: string, via: string | undefined): void {
-    this.findings.push({ decision: 'deny', rule: 'hook-bypass', subject: from(subject, via), reason: `\`${from(subject, via)}\` ${reason}` })
+  /** What one reading of a command's words would be answered with. */
+  private probe(words: ReadonlyArray<string>, command: SimpleCommand, context: Context): ReadonlyArray<Finding> {
+    const probe = new Inspection(this.options, this.reading)
+    probe.words(words, command, context)
+    return probe.findings
   }
 
-  private ask(rule: FenceRule, subject: string, via: string | undefined, reason?: string): void {
-    const text = from(subject, via)
+  private deny(subject: string, reason: string, context: Context): void {
+    this.findings.push({ decision: 'deny', rule: 'hook-bypass', subject: from(subject, context.via), reason: `\`${from(subject, context.via)}\` ${reason}` })
+  }
+
+  private ask(rule: FenceRule, subject: string, context: Context, reason?: string): void {
+    const text = from(subject, context.via)
     this.findings.push({ decision: 'ask', rule, subject: text, reason: `\`${text}\` ${reason ?? REASONS[rule as keyof typeof REASONS]}` })
   }
 
-  /** An env var that switches git hooks off, before a command or exported for the ones after it. */
-  private environment(name: string, value: string, subject: string, via: string | undefined, command: string): void {
-    const switchesHooksOff =
-      ((name === 'HUSKY' || name === 'LEFTHOOK') && /^(0|false|no|off)$/i.test(value)) ||
-      ((name === 'HUSKY_SKIP_HOOKS' || name === 'SKIP_SIMPLE_GIT_HOOKS' || name === 'LEFTHOOK_EXCLUDE') && value !== '') ||
-      (name === 'SKIP' && command === 'git' && value !== '') ||
-      (name === 'GIT_CONFIG_PARAMETERS' && /core\.hookspath/i.test(value)) ||
-      (/^GIT_CONFIG_KEY_\d+$/.test(name) && value.toLowerCase() === 'core.hookspath')
-
-    if (switchesHooksOff) {
-      this.deny(subject, `sets ${name}, which switches off the git hooks that run the commit gate. Fix what the gate reports and commit again; only the owner changes the gate.`, via)
-    }
+  /** Something the fence cannot read where it matters: the owner reads it. A program's string is no command the fence must read. */
+  private unreadable(subject: string, what: string, context: Context): void {
+    if (context.inCode) return
+    this.ask('unreadable', subject, context, `holds ${what}; the fence cannot read it, so the owner decides. Approve it only if you expected it.`)
   }
 
-  private words(words: ReadonlyArray<string>, command: SimpleCommand, depth: number, via: string | undefined): void {
-    if (depth > MAX_DEPTH || words.length === 0) return
+  private tooDeep(subject: string, context: Context): void {
+    this.unreadable(subject, `commands nested more than ${MAX_DEPTH} levels deep`, context)
+  }
+
+  /** An env var that switches git hooks off or points git elsewhere, before a command or exported for the ones after it. */
+  private environment(name: string, value: string, subject: string, context: Context, command: string): void {
+    const dynamic = isDynamic(value)
+    const switchesHooksOff =
+      ((name === 'HUSKY' || name === 'LEFTHOOK') && (dynamic || /^(0|false|no|off)$/i.test(value))) ||
+      ((name === 'HUSKY_SKIP_HOOKS' || name === 'SKIP_SIMPLE_GIT_HOOKS' || name === 'LEFTHOOK_EXCLUDE') && value !== '') ||
+      (name === 'SKIP' && basename(command) === 'git' && value !== '') ||
+      (name === 'GIT_CONFIG_PARAMETERS' && (dynamic || /core\.hookspath/i.test(value))) ||
+      (/^GIT_CONFIG_KEY_\d+$/.test(name) && (dynamic || value.toLowerCase() === 'core.hookspath'))
+
+    if (switchesHooksOff) {
+      return this.deny(subject, `sets ${name}, which switches off the git hooks that run the commit gate. Fix what the gate reports and commit again; only the owner changes the gate.`, context)
+    }
+    // The alias a GIT_CONFIG_KEY names is used, if at all, by a command the fence does not pair with its value.
+    if (/^GIT_CONFIG_KEY_\d+$/.test(name)) {
+      if (!value.toLowerCase().startsWith('alias.')) return this.gitSetting(value.toLowerCase(), undefined, undefined, [], subject, context)
+      return this.ask('hook-bypass', subject, context, `sets the git alias ${value}, which the fence does not follow. Approve it only if you expected it.`)
+    }
+    if (name === 'GIT_CONFIG_PARAMETERS' && value !== '') {
+      return this.ask('hook-bypass', subject, context, `sets ${name}, which gives git settings that can move the hooks or name a program git runs. Approve it only if you expected it.`)
+    }
+    if (['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG'].includes(name) && value !== '/dev/null') {
+      return this.ask('hook-bypass', subject, context, `sets ${name}, which points git at another config file, one that can move the hooks or switch them off. Approve it only if you expected it.`)
+    }
+    if (['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_EXEC_PATH'].includes(name)) {
+      return this.ask('hook-bypass', subject, context, `sets ${name}, which points git at another repository or program, whose hooks are not the commit gate. Approve it only if you expected it.`)
+    }
+    // A shell runs BASH_ENV's script before its own, node the modules NODE_OPTIONS requires, and every program a preloaded library.
+    const loads =
+      (['BASH_ENV', 'ENV', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES'].includes(name) && value !== '') ||
+      (name === 'NODE_OPTIONS' && /(^|\s)(-r|--require|--import|--loader|--experimental-loader)\b/.test(value))
+    if (loads) this.unreadable(subject, `${name}, which runs code the fence does not read before the command`, context)
+  }
+
+  private words(words: ReadonlyArray<string>, command: SimpleCommand, context: Context): void {
+    if (words.length === 0) return
+    if (context.depth > MAX_DEPTH) return this.tooDeep(shown(words.map(display)), context)
 
     const [head, ...args] = words
-    const name = basename(head)
-    const next = (rest: ReadonlyArray<string>) => this.words(rest, command, depth + 1, via)
+    if (isDynamic(head)) return this.dynamicCommand(words, command, context)
 
-    if (FENCE_CLI.test(head)) return this.fenceCli(args, words, via)
-    if (name === 'env') return this.env(args, command, depth, via)
-    if (name === 'command' && (args[0] === '-v' || args[0] === '-V')) return
-    if (name === 'xargs') return next([...afterOptions(args, XARGS_VALUE_OPTIONS), ...splitWords(producedText(command.pipedFrom) ?? '')])
+    const name = basename(head)
+    const subject = shown(words.map(display))
+    const next = (rest: ReadonlyArray<string>) => this.words(rest, command, deeper(context))
+
+    if (FENCE_CLI.test(head)) return this.fenceCli(args, words, context)
+    if (this.aliases.has(head)) this.script(`${this.aliases.get(head)} ${scriptOf(args)}`, deeper(context))
+    if (Object.hasOwn(INTERPRETERS, interpreterName(name))) {
+      // perl -pi and ruby -i edit the files they name; their code is read too.
+      if (['perl', 'ruby'].includes(name) && args.some((arg) => /^-[a-zA-Z]*i/.test(arg))) this.writes(positionals(args), subject, context)
+      return this.interpreter(interpreterName(name), args, command, subject, context)
+    }
     if (Object.hasOwn(WRAPPERS, name)) {
-      const wrapper = WRAPPERS[name]
-      return next(this.leadingAssignments(afterOptions(args, wrapper.values).slice(wrapper.positionals ?? 0), via))
+      if (name === 'command' && (args[0] === '-v' || args[0] === '-V')) return
+      const parsed = parseOptions(args, WRAPPERS[name])
+      if ('unknown' in parsed) return this.unreadable(subject, unknownOption(name, parsed.unknown), context)
+      return next(this.leadingAssignments(parsed.rest, subject, context))
     }
     if (DECLARATIONS.has(name)) {
-      for (const arg of args) this.assignmentWord(arg, shown(words), '', via)
+      for (const arg of args) this.assignmentWord(arg, subject, '', context)
       return
     }
-    if (name === 'watch') return this.script(afterOptions(args, ['-n', '--interval']).join(' '), depth + 1, via)
-    if (name === 'eval') return this.script(args.join(' '), depth + 1, via)
-    if (name === 'source' || name === '.') return this.file(args[0], depth, via)
-    if (SHELLS.has(name)) return this.shell(args, command, depth, via)
-    if (name === 'find') return this.find(args, command, depth, via)
-    if (name === 'deno' && args[0] === 'eval') return this.code(args[1] ?? '', depth, via)
-    // sed -i and perl -pi edit the files they name; perl's code is read below too.
-    if ((name === 'sed' || name === 'perl') && args.some((arg) => /^-[a-zA-Z]*i/.test(arg) || arg.startsWith('--in-place'))) {
-      this.writes(positionals(args), words, via)
-    }
-    if (Object.hasOwn(INLINE_CODE, name) && name !== 'bun') return this.interpreter(name, args, depth, via)
+    if (SHELLS.has(name)) return this.shell(name, args, command, subject, context)
+    if (WRITERS.has(name)) return this.writes(positionals(args), subject, context)
+    if (COPIERS.has(name)) return this.copier(args, subject, context)
 
     switch (name) {
+      case 'env':
+        return this.env(args, command, subject, context)
+      case 'xargs':
+        return this.xargs(args, command, subject, context)
+      case 'eval':
+        if (args.some(isDynamic)) this.unreadable(subject, 'a string to evaluate that an expansion gives', context)
+        return this.script(args.map(evalText).join(' '), deeper(context))
+      case 'trap':
+        return this.trap(args, subject, context)
+      case 'coproc':
+        return next(args[1] === '{' || args[1] === '(' ? args.slice(2) : args[0] === '{' || args[0] === '(' ? args.slice(1) : args)
+      case 'alias':
+        return this.alias(args, subject, context)
+      case 'shopt':
+        if (args.includes('expand_aliases')) this.unreadable(subject, "`expand_aliases`, which runs aliases the fence does not follow", context)
+        return
+      case 'watch':
+        return this.script(afterOptions(args, ['-n', '--interval']).map(evalText).join(' '), deeper(context))
+      case 'source':
+      case '.':
+        return this.file(args[0], 'shell', context, args.slice(1))
+      case 'su':
+        return this.su(args, subject, context)
+      case 'find':
+        return this.find(args, command, subject, context)
+      case 'sed':
+        if (args.some((arg) => /^-[a-zA-Z]*i/.test(arg) || arg.startsWith('--in-place'))) this.writes(positionals(args), subject, context)
+        return
+      case 'deno':
+        return this.deno(args, command, subject, context)
       case 'git':
-        return this.git(args, words, depth, via)
+        return this.git(args, words, context)
       case 'wrangler':
-        return this.wrangler(args, words, via)
+        return this.wrangler(args, words, context)
       case 'npx':
       case 'pnpx':
       case 'bunx':
-        return this.runner(args, command, depth, via)
+        return this.runner(args, command, subject, context)
       case 'npm':
-        return this.npm(args, words, command, depth, via)
+        return this.npm(args, words, command, context)
       case 'bun':
-        return this.bun(args, words, command, depth, via)
+        return this.bun(args, words, command, subject, context)
       case 'pnpm':
-        return this.pnpm(args, words, command, depth, via)
+        return this.pnpm(args, words, command, context)
       case 'yarn':
-        return this.yarn(args, words, command, depth, via)
+        return this.yarn(args, words, command, subject, context)
       case 'lefthook':
       case 'husky':
-        if (args.includes('uninstall')) this.deny(shown(words), 'removes the git hooks that run the commit gate. Only the owner changes the gate.', via)
+        if (args.includes('uninstall')) this.deny(subject, 'removes the git hooks that run the commit gate. Only the owner changes the gate.', context)
         return
       case 'dd':
-        return this.writes(args.filter((arg) => arg.startsWith('of=')).map((arg) => arg.slice(3)), words, via)
+        return this.writes(args.filter((arg) => arg.startsWith('of=')).map((arg) => arg.slice(3)), subject, context)
+      case 'curl':
+        return this.writes(curlOutputs(args), subject, context)
+      case 'wget':
+        return this.writes(wgetOutputs(args), subject, context)
+      case 'tar':
+        return this.writes(tarWrites(args), subject, context)
+      case 'unzip':
+        return this.writes(unzipWrites(args), subject, context)
     }
 
-    if (WRITERS.has(name)) return this.writes(positionals(args), words, via)
-    if (COPIERS.has(name)) return this.writes(positionals(args).slice(-1), words, via)
-    if (head.includes('/') || head.endsWith('.sh')) this.file(head, depth, via, args)
+    if (head.includes('/') || head.endsWith('.sh')) this.file(head, undefined, context, args)
   }
 
-  /** The words after the `NAME=value` assignments `sudo` and `doas` take before a command, each checked. */
-  private leadingAssignments(words: ReadonlyArray<string>, via: string | undefined): ReadonlyArray<string> {
+  /**
+   * A command whose name holds what the fence cannot read. A path whose
+   * last part it can read, as `"$ROOT"/node_modules/.bin/git`, is read by that
+   * name when the policy reads the name; any other asks the owner.
+   */
+  private dynamicCommand(words: ReadonlyArray<string>, command: SimpleCommand, context: Context): void {
+    const [head, ...args] = words
+    const tail = head.slice(Math.max(...[UNREAD, UNREAD_WORDS, GLOB_ANY, GLOB_ONE].map((mark) => head.lastIndexOf(mark))) + 1)
+    const name = tail.includes('/') ? basename(tail) : ''
+
+    if (READ_BY_NAME.has(name)) return this.words([name, ...args], command, context)
+    if (name !== '' && /(^|\/)node_modules\//.test(known(head))) return
+    this.unreadable(shown(words.map(display)), 'a command name that an expansion or a glob gives', context)
+  }
+
+  /** The words after the `NAME=value` assignments `env`, `sudo` and `doas` take before a command, each checked. */
+  private leadingAssignments(words: ReadonlyArray<string>, subject: string, context: Context): ReadonlyArray<string> {
     const start = words.findIndex((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word))
     const rest = start === -1 ? [] : words.slice(start)
-    for (const word of start === -1 ? words : words.slice(0, start)) this.assignmentWord(word, shown(words), basename(rest[0] ?? ''), via)
+    for (const word of start === -1 ? words : words.slice(0, start)) this.assignmentWord(word, subject, basename(rest[0] ?? ''), context)
     return rest
   }
 
-  private assignmentWord(word: string, subject: string, command: string, via: string | undefined): void {
+  private assignmentWord(word: string, subject: string, command: string, context: Context): void {
     const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(word)
-    if (assignment) this.environment(assignment[1], assignment[2], subject, via, command)
+    if (assignment) this.environment(assignment[1], assignment[2], subject, context, command)
   }
 
-  private writes(paths: ReadonlyArray<string>, words: ReadonlyArray<string>, via: string | undefined): void {
-    for (const path of paths) this.findings.push(...fileFindings(path, from(shown(words), via)))
+  private writes(paths: ReadonlyArray<string>, subject: string, context: Context): void {
+    for (const path of paths) this.write(path, subject, context)
   }
 
-  private fenceCli(args: ReadonlyArray<string>, words: ReadonlyArray<string>, via: string | undefined): void {
-    if (args.includes('--allow-increase')) {
-      this.ask('fence-change', shown(words), via, 'raises the lint debt baseline, which only shrinks without the owner. Approve it only if you accept the new disable directives.')
+  /** A file a command writes; `{}` in what `find -exec` runs stands for each file it finds. */
+  private write(path: string, subject: string, context: Context): void {
+    if (context.found !== undefined && path.includes('{}')) return this.findWrites(context.found, subject, context)
+    this.findings.push(...writeFindings(path, context.cwd, from(subject, context.via), this.options.hooksPath))
+  }
+
+  /** `cp`, `ln`, `install` and `rsync` change their last argument, or the files they put in the directory `-t` names. */
+  private copier(args: ReadonlyArray<string>, subject: string, context: Context): void {
+    const files = positionals(args)
+    const target = args.flatMap((arg, index) => (arg === '-t' ? [args[index + 1] ?? ''] : arg.startsWith('--target-directory=') ? [arg.slice(19)] : []))[0]
+    if (target === undefined) return this.writes(files.slice(-1), subject, context)
+    this.writes([target, ...files.filter((file) => file !== target).map((file) => `${target}/${basename(file)}`)], subject, context)
+  }
+
+  private fenceCli(args: ReadonlyArray<string>, words: ReadonlyArray<string>, context: Context): void {
+    if (args.some((arg) => arg.startsWith('--allow-increase'))) {
+      this.ask('fence-change', shown(words), context, 'raises the lint debt baseline, which only shrinks without the owner. Approve it only if you accept the new disable directives.')
     }
   }
 
-  private env(args: ReadonlyArray<string>, command: SimpleCommand, depth: number, via: string | undefined): void {
-    let rest = [...args]
-
-    while (rest.length > 0) {
-      const [arg] = rest
-      if (arg === '--') {
-        rest = rest.slice(1)
-        break
-      }
-      if (arg === '-S' || arg === '--split-string') {
-        rest = [...splitWords(rest[1] ?? ''), ...rest.slice(2)]
-      } else if (arg.startsWith('--split-string=') || (arg.startsWith('-S') && arg.length > 2)) {
-        rest = [...splitWords(arg.startsWith('-S') ? arg.slice(2) : arg.slice('--split-string='.length)), ...rest.slice(1)]
-      } else if (['-u', '--unset', '-C', '--chdir', '-P'].includes(arg)) {
-        rest = rest.slice(2)
-      } else if (arg.startsWith('-')) {
-        rest = rest.slice(1)
-      } else {
-        break
-      }
-    }
-
-    this.words(this.leadingAssignments(rest, via), command, depth + 1, via)
+  private env(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const parsed = parseOptions(args[0] === '-' ? args.slice(1) : args, ENV_OPTIONS)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption('env', parsed.unknown), context)
+    this.words(this.leadingAssignments(parsed.rest, subject, context), command, deeper(context))
   }
 
-  private shell(args: ReadonlyArray<string>, command: SimpleCommand, depth: number, via: string | undefined): void {
-    let script: string | undefined
-    let fromString = false
+  /** `xargs`: the command it runs with the words its input gives, or with what the fence cannot read in their place. */
+  private xargs(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const parsed = parseOptions(args, XARGS_OPTIONS)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption('xargs', parsed.unknown), context)
 
-    for (let k = 0; k < args.length; k++) {
-      const arg = args[k]
-      if (arg === '--' || arg === '-') {
-        script = args[k + 1]
-        break
-      }
-      if (SHELL_VALUE_OPTIONS.has(arg)) {
-        k++
-        continue
-      }
-      if (/^-[a-zA-Z]+$/.test(arg) && arg.includes('c')) fromString = true
-      if (/^[-+]/.test(arg)) continue
-      script = arg
-      break
+    const replace = parsed.values.get('-I') ?? parsed.values.get('-J') ?? (parsed.flags.has('-i') || parsed.flags.has('--replace') ? '{}' : undefined)
+    // Input from a file (`-a`), split other than at blanks (`-0`, `-d`), or with quotes xargs reads its own way, is input the fence cannot read.
+    const elsewhere = ['-a', '--arg-file', '-0', '--null', '-d', '--delimiter'].some((option) => parsed.flags.has(option) || parsed.values.has(option))
+    const text = elsewhere ? null : this.stdinText(command, context)
+    const input = text === undefined ? '' : text !== null && !/['"\\]/.test(text) ? text : null
+    const run = parsed.rest.length > 0 ? parsed.rest : ['echo']
+    const runs: string[][] =
+      typeof replace === 'string'
+        ? (input === null ? [UNREAD] : input.split('\n').filter((line) => line.trim() !== '')).map((line) => run.map((word) => word.replaceAll(replace, line)))
+        : [[...run, ...(input === null ? [UNREAD_WORDS] : input.split(/\s+/).filter((word) => word !== ''))]]
+
+    for (const words of runs) {
+      this.words(words, command, deeper(context))
+      if (words.some(isDynamic)) this.readings(words, command, deeper(context))
     }
-
-    if (fromString && script !== undefined) return this.script(script, depth + 1, via)
-    if (script !== undefined) return this.file(script, depth, via)
-
-    const input = command.input ?? producedText(command.pipedFrom)
-    if (input !== undefined) this.script(input, depth + 1, via)
   }
 
-  private find(args: ReadonlyArray<string>, command: SimpleCommand, depth: number, via: string | undefined): void {
+  private trap(args: ReadonlyArray<string>, subject: string, context: Context): void {
+    const rest = args[0] === '--' ? args.slice(1) : args
+    const [action] = rest
+    // One word is a signal to reset; `-` resets, `-p` and `-l` list.
+    if (action === undefined || rest.length < 2 || action.startsWith('-')) return
+    this.script(evalText(action), deeper(context))
+  }
+
+  private alias(args: ReadonlyArray<string>, subject: string, context: Context): void {
+    const definitions = args.map((arg) => /^([^=\s]+)=(.*)$/s.exec(arg)).filter((match) => match !== null)
+    if (definitions.length === 0) return
+
+    this.unreadable(subject, 'an alias, which bash runs after `shopt -s expand_aliases` and zsh on the lines after it', context)
+    for (const [, name, value] of definitions) {
+      if (!isDynamic(value)) this.aliases.set(name, value)
+    }
+  }
+
+  private su(args: ReadonlyArray<string>, subject: string, context: Context): void {
+    const index = args.findIndex((arg) => arg === '-c' || arg === '--command' || arg.startsWith('--command='))
+    if (index === -1) return
+    const script = args[index].startsWith('--command=') ? args[index].slice(10) : args[index + 1]
+    if (script !== undefined) this.script(evalText(script), deeper(context))
+  }
+
+  /** A shell: the string `-c` gives, the script it reads from its input, or the file it runs. */
+  private shell(name: string, args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    // `+o name`, `+O name` and `+x` turn options off; they run nothing.
+    const options = args.filter((arg, index) => !/^\+[a-zA-Z]+$/.test(arg) && !/^\+[oO]$/.test(args[index - 1] ?? ''))
+    const parsed = parseOptions(options, name === 'fish' ? FISH_OPTIONS : SHELL_OPTIONS)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption(name, parsed.unknown), context)
+
+    const option = (key: string) => parsed.values.get(key) ?? (parsed.flags.has(key) ? '' : undefined)
+    if (option('-O') === 'expand_aliases' || option('-o') === 'expand_aliases') this.unreadable(subject, '`expand_aliases`, which runs aliases the fence does not follow', context)
+    if (option('-n') !== undefined && name !== 'fish') return
+
+    // fish's `-c` and `-C` take the command as their value; the other shells' `-c` reads it from the first word.
+    const fromString = name !== 'fish' && option('-c') !== undefined
+    const scripts = [parsed.values.get('--command'), parsed.values.get('--init-command'), parsed.values.get('-c'), parsed.values.get('-C'), fromString ? parsed.rest[0] : undefined]
+      .filter((script) => script !== undefined)
+
+    for (const script of scripts) {
+      if (isDynamic(script)) this.unreadable(subject, `a script for ${name} that an expansion gives`, context)
+      else this.script(script, deeper(context))
+    }
+    if (fromString || scripts.length > 0) return
+
+    const [file, ...rest] = parsed.rest
+    if (option('-s') !== undefined || file === undefined || file === '-') return this.stdinScript(command, 'shell', subject, context)
+    this.file(file, 'shell', context, rest)
+  }
+
+  /** The text a command reads on its input: undefined for none, null when the fence cannot read it. */
+  private stdinText(command: SimpleCommand, context: Context): string | undefined | null {
+    const stdin = command.stdin
+    if (stdin === undefined) return undefined
+    if (stdin.kind === 'text') return isDynamic(stdin.text) ? null : stdin.text
+    if (stdin.kind === 'pipe') return producedText(stdin.from, (from) => this.stdinText(from, context))
+    if (stdin.kind === 'file') return this.readPath(stdin.path, context) ?? null
+    return null
+  }
+
+  /** A script a shell or an interpreter reads on its input. */
+  private stdinScript(command: SimpleCommand, kind: CodeKind | 'shell', subject: string, context: Context): void {
+    const text = this.stdinText(command, context)
+    if (text === undefined) return
+    if (text === null) return this.unreadable(subject, 'a script it reads from a pipe or a file', context)
+    if (kind === 'shell') this.script(text, deeper(context))
+    else this.code(text, kind, subject, context)
+  }
+
+  private find(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    let k = 0
+    while (/^-[HLP]$|^-O\d$/.test(args[k] ?? '')) k++
+    if (args[k] === '-D') k += 2
+    const starts: string[] = []
+    for (; k < args.length && !/^[-(!)]/.test(args[k]); k++) starts.push(args[k])
+
+    const found: FindMatches = {
+      starts: starts.length > 0 ? starts : ['.'],
+      names: args.flatMap((arg, index) => (/^-i?(name|path|wholename)$/.test(arg) ? [args[index + 1] ?? ''] : [])),
+    }
+
     args.forEach((arg, index) => {
-      if (!['-exec', '-execdir', '-ok', '-okdir'].includes(arg)) return
-      const rest = args.slice(index + 1)
-      const end = rest.findIndex((word) => word === ';' || word === '+')
-      this.words(end === -1 ? rest : rest.slice(0, end), command, depth + 1, via)
+      if (['-exec', '-execdir', '-ok', '-okdir'].includes(arg)) {
+        const rest = args.slice(index + 1)
+        const end = rest.findIndex((word) => word === ';' || word === '+')
+        const words = end === -1 ? rest : rest.slice(0, end)
+        this.words(words, command, { ...deeper(context), found })
+      }
+      if (['-fprint', '-fprint0', '-fprintf', '-fls'].includes(arg)) this.write(args[index + 1] ?? '', subject, context)
     })
+    if (args.includes('-delete')) this.findWrites(found, subject, context)
   }
 
-  private interpreter(name: string, args: ReadonlyArray<string>, depth: number, via: string | undefined): void {
-    const options = INLINE_CODE[name]
-    const index = args.findIndex((arg) => options.includes(arg))
+  /**
+   * The files `find` deletes or hands its `-exec`: those under its start
+   * paths whose names its tests match, tried in the start path itself and in
+   * each directory the fence protects files in.
+   */
+  private findWrites(found: FindMatches, subject: string, context: Context): void {
+    const at = { ...context, found: undefined }
 
-    if (index !== -1) return this.code(args[index + 1] ?? '', depth, via)
-
-    const [script, ...rest] = afterOptions(args, NODE_VALUE_OPTIONS)
-    if (script !== undefined) this.program(script, rest, depth, via)
-  }
-
-  /** A program a runtime runs: Wrangler's own entry, or a script whose strings are read as commands. */
-  private program(path: string, args: ReadonlyArray<string>, depth: number, via: string | undefined): void {
-    if (/(^|\/)wrangler(\.[cm]?js)?$|(^|\/)wrangler\/bin\/wrangler\.js$/.test(path)) {
-      return this.wrangler(args, ['wrangler', ...args], via)
+    for (const start of found.starts) {
+      if (found.names.length === 0) this.write(start, subject, at)
+      for (const name of found.names) {
+        const glob = name.replace(/\[[^\]]+\]/g, GLOB_ONE).replaceAll('*', GLOB_ANY).replaceAll('?', GLOB_ONE)
+        this.write(`${start}/${glob}`, subject, at)
+        for (const directory of PROTECTED_DIRECTORIES) {
+          const path = joinPath(context.cwd, `${start}/${directory}/${glob}`)
+          if (path !== undefined) this.findings.push(...protectedFileFindings(path, from(subject, context.via), this.options.hooksPath))
+        }
+      }
     }
-    if (FENCE_CLI.test(path)) return this.fenceCli(args, ['popweb-fence', ...args], via)
-    this.file(path, depth, via, args)
   }
 
-  /** Inline code: each string literal, and each run of literals an argument list holds, read as a command line. */
-  private code(source: string, depth: number, via: string | undefined): void {
-    for (const line of commandsInCode(source)) this.script(line, depth + 1, via, true)
+  /** An interpreter: its inline code, the script file it runs, or the program it reads on its input. */
+  private interpreter(name: string, args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const spec = INTERPRETERS[name]
+    const parsed = interpreterArgs(args, spec)
+
+    for (const code of parsed.code) {
+      if (isDynamic(code)) this.unreadable(subject, `code for ${name} that an expansion gives`, context)
+      else this.code(code, spec.kind, subject, context)
+    }
+    if (parsed.code.length > 0 || parsed.module) return
+    if (parsed.runScript !== undefined) return this.target(name, parsed.runScript, parsed.rest, command, context.cwd, context)
+    if (parsed.file !== undefined) return this.program(parsed.file, parsed.rest, context, spec.kind)
+    this.stdinScript(command, spec.kind, subject, context)
   }
 
-  /** A file a command runs: a shell script read as one, a JavaScript or TypeScript program by its strings. */
-  private file(path: string | undefined, depth: number, via: string | undefined, args: ReadonlyArray<string> = []): void {
+  /** A program a runtime runs: Wrangler's own entry, the fence's CLI, or a script read for its strings. */
+  private program(path: string, args: ReadonlyArray<string>, context: Context, kind?: CodeKind): void {
+    if (/(^|\/)wrangler(\.[cm]?js)?$|(^|\/)wrangler\/bin\/wrangler\.js$/.test(path)) return this.wrangler(args, ['wrangler', ...args], context)
+    if (FENCE_CLI.test(path)) return this.fenceCli(args, ['popweb-fence', ...args], context)
+    this.file(path, kind, context, args)
+  }
+
+  /**
+   * Code: each string and each run of strings an argument list holds, read
+   * as a command line, and any call that starts a process. A file's strings
+   * are named by the file they come from.
+   */
+  private code(source: string, kind: CodeKind, subject: string, context: Context, inFile = false): void {
+    const strings = { ...deeper(context, inFile ? from(subject, context.via) : context.via), inCode: true }
+    for (const line of commandsInCode(source, kind)) this.script(line, strings)
+    if (startsProcess(source, kind)) {
+      this.ask('unreadable', subject, context, 'runs code that starts a process, whose command a program can build at run time where the fence cannot read it. Approve it only if you expected it.')
+    }
+  }
+
+  /** A file's text by its path from where the line starts, or undefined. */
+  private readPath(path: string, context: Context): string | undefined {
+    if (isDynamic(path)) return undefined
+    const resolved = joinPath(context.cwd, path)
+    return resolved === undefined ? undefined : this.options.readFile?.(resolved === '' ? '.' : resolved)
+  }
+
+  /** A file a command runs: a shell script read as one, a program by its strings and calls. */
+  private file(path: string | undefined, kind: CodeKind | 'shell' | undefined, context: Context, args: ReadonlyArray<string> = []): void {
+    if (path === undefined) return
+    const subject = shown([path, ...args].map(display))
     // A package's own files are its business, and large.
-    if (path === undefined || depth >= MAX_DEPTH || /(^|\/)node_modules\//.test(path)) return
-    const source = this.options.readFile?.(path)
-    if (source === undefined) return
+    if (/(^|\/)node_modules\//.test(known(path))) return
 
-    const shebang = /^#!.*\b(node|bun|deno|tsx|ts-node)\b/.test(source) || /\.[cm]?[jt]sx?$/.test(path)
-    const subject = shown([path, ...args])
-    this.once(`file:${path}`, () => {
-      if (shebang) this.code(source, depth, from(subject, via))
-      else this.script(source, depth + 1, from(subject, via))
+    const resolved = joinPath(context.cwd, path)
+    const source = this.readPath(path, context)
+    if (source === undefined) {
+      return this.unreadable(subject, `\`${display(path)}\`, a script the fence cannot open: its path holds an expansion, or it is missing, not a file, too large, or in a directory a \`cd\` it cannot follow names`, context)
+    }
+
+    const language = kind ?? codeKind(path, source)
+    const via = from(subject, context.via)
+    this.once(`file:${resolved}`, () => {
+      if (language === 'shell') this.script(source, { ...deeper(context, via), inCode: false })
+      else this.code(source, language, subject, context, true)
     })
   }
 
   /** `npx`, `bunx`, `pnpx`, `npm exec`, `pnpm dlx`, `yarn dlx`: the package's bin, with its version dropped. */
-  private runner(args: ReadonlyArray<string>, command: SimpleCommand, depth: number, via: string | undefined): void {
-    let k = 0
-    for (; k < args.length; k++) {
-      const arg = args[k]
-      if (arg === '--') {
-        k++
-        break
-      }
-      if (arg === '-c' || arg === '--call') return this.script(args[k + 1] ?? '', depth + 1, via)
-      if (arg.startsWith('--call=')) return this.script(arg.slice('--call='.length), depth + 1, via)
-      if (arg === '-p' || arg === '--package') {
-        k++
-        continue
-      }
-      if (!arg.startsWith('-')) break
-    }
+  private runner(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const parsed = parseOptions(args, RUNNER_OPTIONS)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption('the runner', parsed.unknown), context)
 
-    const [bin, ...rest] = args.slice(k)
-    if (bin !== undefined) this.words([packageBin(bin), ...rest], command, depth + 1, via)
+    const call = parsed.values.get('-c') ?? parsed.values.get('--call')
+    if (call !== undefined) return isDynamic(call) ? this.unreadable(subject, 'a command to call that an expansion gives', context) : this.script(call, deeper(context))
+    if (parsed.flags.has('--shell-mode')) return this.script(parsed.rest.map(evalText).join(' '), deeper(context))
+
+    const [bin, ...rest] = parsed.rest
+    if (bin !== undefined) this.words([isDynamic(bin) ? bin : packageBin(bin), ...rest], command, deeper(context))
   }
 
-  /** A package.json script a runner names, with its `pre` and `post` scripts; false when there is none. */
-  private runScript(runner: string, name: string, args: ReadonlyArray<string>, depth: number, via: string | undefined): boolean {
-    const scripts = this.options.scripts
+  /** The package.json scripts of a directory: its own, or the nearest above it, as the runners find them. */
+  private scriptsAt(directory: string): Readonly<Record<string, string>> | undefined {
+    let at: string | undefined = directory
+    for (let step = 0; at !== undefined && step < 16; step++, at = parentPath(at)) {
+      if (at === '') return this.options.scripts
+      const manifest = this.options.readFile?.(`${at}/package.json`)
+      if (manifest !== undefined) return packageScripts(manifest) ?? {}
+    }
+    return undefined
+  }
+
+  /** A package.json script a runner names, with its `pre` and `post` scripts, run in its package's directory; false when there is none. */
+  private runScript(runner: string, name: string, args: ReadonlyArray<string>, directory: string, context: Context): boolean {
+    const scripts = this.scriptsAt(directory)
     if (scripts === undefined || typeof scripts[name] !== 'string') return false
 
     const extra = args[0] === '--' ? args.slice(1) : args
-    const label = from(shown([runner, 'run', name, ...args]), via)
+    const label = from(shown([runner, 'run', name, ...args.map(display)]), context.via)
+    const inPackage: Context = { ...deeper(context, label), cwd: directory }
 
-    this.once(`script:${name}`, () => {
-      this.script(scripts[`pre${name}`] ?? '', depth + 1, label)
-      this.script([scripts[name], ...extra.map(quote)].join(' '), depth + 1, label)
-      this.script(scripts[`post${name}`] ?? '', depth + 1, label)
+    this.once(`script:${directory}:${name}`, () => {
+      this.script(scripts[`pre${name}`] ?? '', inPackage)
+      this.script([scripts[name], scriptOf(extra)].join(' '), inPackage)
+      this.script(scripts[`post${name}`] ?? '', inPackage)
     })
     return true
   }
 
-  private npm(args: ReadonlyArray<string>, words: ReadonlyArray<string>, command: SimpleCommand, depth: number, via: string | undefined): void {
-    const [sub, ...rest] = afterOptions(args, NPM_VALUE_OPTIONS)
+  /** What `bun run x`, `pnpm x` and `node --run x` name: a package.json script, a file, or a package's bin. */
+  private target(runner: string, name: string, args: ReadonlyArray<string>, command: SimpleCommand, directory: string | undefined, context: Context): void {
+    const subject = shown([runner, name, ...args].map(display))
+    if (directory === undefined) return this.unreadable(subject, "a package.json script, in a directory a `cd` the fence cannot follow names", context)
+    if (this.runScript(runner, name, args, directory, context)) return
+    if (/\.[cm]?[jt]sx?$|\.sh$/.test(name) || name.includes('/')) return this.program(name, args, context)
+    this.words([name, ...args], command, deeper(context))
+  }
+
+  private npm(args: ReadonlyArray<string>, words: ReadonlyArray<string>, command: SimpleCommand, context: Context): void {
+    const { sub, rest, directory } = packageCommand(args, NPM_VALUES, context.cwd)
 
     switch (sub) {
       case 'run':
       case 'run-script':
       case 'rum':
       case 'urn': {
-        const [name, ...scriptArgs] = afterOptions(rest, NPM_VALUE_OPTIONS)
-        if (name !== undefined) this.runScript('npm', name, scriptArgs, depth, via)
+        const [name, ...scriptArgs] = afterOptions(rest, NPM_VALUES.values)
+        if (name !== undefined) this.target('npm', name, scriptArgs, command, directory, context)
         return
       }
       case 'test':
       case 't':
       case 'tst':
-        this.runScript('npm', 'test', rest, depth, via)
-        return
       case 'start':
       case 'stop':
       case 'restart':
-        this.runScript('npm', sub, rest, depth, via)
+        if (directory === undefined) return this.target('npm', sub, rest, command, directory, context)
+        this.runScript('npm', sub.startsWith('t') ? 'test' : sub, rest, directory, context)
         return
       case 'exec':
       case 'x':
-        return this.runner(rest, command, depth, via)
+        return this.runner(rest, command, shown(words.map(display)), context)
       case 'publish':
-        return this.publish(words, via)
+        return this.publish(words, context)
     }
   }
 
-  private bun(args: ReadonlyArray<string>, words: ReadonlyArray<string>, command: SimpleCommand, depth: number, via: string | undefined): void {
-    const [sub, ...rest] = afterOptions(args, BUN_VALUE_OPTIONS)
-    const options = args.slice(0, args.length - rest.length - (sub === undefined ? 0 : 1))
-    const eval_ = options.findIndex((arg) => INLINE_CODE.bun.includes(arg))
+  private bun(args: ReadonlyArray<string>, words: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const inline = interpreterArgs(args, { kind: 'js', inline: 'ep', inlineLong: ['--eval', '--print'], values: 'Fcr', longValues: BUN_VALUES.values }).code
+    for (const code of inline) {
+      if (isDynamic(code)) this.unreadable(subject, 'code for bun that an expansion gives', context)
+      else this.code(code, 'js', subject, context)
+    }
+    if (inline.length > 0) return
 
-    if (eval_ !== -1) return this.code(args[eval_ + 1] ?? '', depth, via)
+    const { sub, rest, directory } = packageCommand(args, BUN_VALUES, context.cwd)
     if (sub === undefined) return
-    if (sub === 'x') return this.runner(rest, command, depth, via)
-    if (sub === 'publish') return this.publish(words, via)
+    if (sub === 'x') return this.runner(rest, command, subject, context)
+    if (sub === 'publish') return this.publish(words, context)
     if (sub === 'run') {
-      const [name, ...scriptArgs] = afterOptions(rest, BUN_VALUE_OPTIONS)
-      if (name !== undefined) this.target('bun', name, scriptArgs, command, depth, via)
+      const run = packageCommand(rest, BUN_VALUES, directory)
+      if (run.sub !== undefined) this.target('bun', run.sub, run.rest, command, run.directory, context)
       return
     }
-    if (!BUN_BUILTINS.has(sub)) this.target('bun', sub, rest, command, depth, via)
+    if (!BUN_BUILTINS.has(sub)) this.target('bun', sub, rest, command, directory, context)
   }
 
-  private pnpm(args: ReadonlyArray<string>, words: ReadonlyArray<string>, command: SimpleCommand, depth: number, via: string | undefined): void {
-    const [sub, ...rest] = afterOptions(args, PNPM_VALUE_OPTIONS)
+  private pnpm(args: ReadonlyArray<string>, words: ReadonlyArray<string>, command: SimpleCommand, context: Context): void {
+    const { sub, rest, directory } = packageCommand(args, PNPM_VALUES, context.cwd)
     if (sub === undefined) return
 
-    if (sub === 'dlx') return this.runner(rest, command, depth, via)
-    if (sub === 'exec') return this.words(afterOptions(rest, PNPM_VALUE_OPTIONS), command, depth + 1, via)
-    if (sub === 'publish') return this.publish(words, via)
+    if (sub === 'dlx') return this.runner(rest, command, shown(words.map(display)), context)
+    if (sub === 'publish') return this.publish(words, context)
     if (sub === 'run') {
-      const [name, ...scriptArgs] = afterOptions(rest, PNPM_VALUE_OPTIONS)
-      if (name !== undefined) this.target('pnpm', name, scriptArgs, command, depth, via)
+      const run = packageCommand(rest, PNPM_VALUES, directory)
+      if (run.sub !== undefined) this.target('pnpm', run.sub, run.rest, command, run.directory, context)
       return
     }
-    if (['test', 't', 'start', 'stop', 'restart'].includes(sub)) {
-      this.runScript('pnpm', sub === 't' ? 'test' : sub, rest, depth, via)
-      return
-    }
-    if (!PNPM_BUILTINS.has(sub)) this.target('pnpm', sub, rest, command, depth, via)
+    if (['test', 't', 'start', 'stop', 'restart'].includes(sub)) return this.target('pnpm', sub === 't' ? 'test' : sub, rest, command, directory, context)
+    if (!PNPM_BUILTINS.has(sub)) this.target('pnpm', sub, rest, command, directory, context)
   }
 
-  private yarn(args: ReadonlyArray<string>, words: ReadonlyArray<string>, command: SimpleCommand, depth: number, via: string | undefined): void {
-    const [sub, ...rest] = afterOptions(args, YARN_VALUE_OPTIONS)
+  private yarn(args: ReadonlyArray<string>, words: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const { sub, rest, directory } = packageCommand(args, YARN_VALUES, context.cwd)
     if (sub === undefined) return
 
-    if (sub === 'dlx') return this.runner(rest, command, depth, via)
-    if (sub === 'exec') return this.words(rest, command, depth + 1, via)
-    if (sub === 'publish' || (sub === 'npm' && rest[0] === 'publish')) return this.publish(words, via)
-    if (sub === 'workspace') return this.yarn(rest.slice(1), words, command, depth + 1, via)
-    if (sub === 'node') return this.interpreter('node', rest, depth, via)
+    if (sub === 'dlx') return this.runner(rest, command, subject, context)
+    if (sub === 'publish' || (sub === 'npm' && rest[0] === 'publish')) return this.publish(words, context)
+    if (sub === 'workspace') return this.yarn(rest.slice(1), words, command, subject, deeper(context))
     if (sub === 'run') {
       const [name, ...scriptArgs] = rest
-      if (name !== undefined) this.target('yarn', name, scriptArgs, command, depth, via)
+      if (name !== undefined) this.target('yarn', name, scriptArgs, command, directory, context)
       return
     }
-    if (!YARN_BUILTINS.has(sub)) this.target('yarn', sub, rest, command, depth, via)
+    if (!YARN_BUILTINS.has(sub)) this.target('yarn', sub, rest, command, directory, context)
   }
 
-  /** What `bun run x` and `pnpm x` name: a package.json script, a file, or a package's bin. */
-  private target(runner: string, name: string, args: ReadonlyArray<string>, command: SimpleCommand, depth: number, via: string | undefined): void {
-    if (this.runScript(runner, name, args, depth, via)) return
-    if (/\.[cm]?[jt]sx?$|\.sh$/.test(name) || name.includes('/')) return this.program(name, args, depth, via)
-    this.words([name, ...args], command, depth + 1, via)
+  /** `deno run`, `deno eval` and `deno task`, whose tasks in deno.json the fence does not read. */
+  private deno(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const [sub, ...rest] = args
+    if (sub === 'eval') {
+      const [code] = afterOptions(rest, ['--ext', '--config', '-c', '--import-map', '--location'])
+      if (code === undefined) return
+      return isDynamic(code) ? this.unreadable(subject, 'code for deno that an expansion gives', context) : this.code(code, 'js', subject, context)
+    }
+    if (sub === 'task') return this.unreadable(subject, 'a deno task, which runs a command from deno.json the fence does not read', context)
+    if (sub === 'run' || (sub !== undefined && /\.[cm]?[jt]sx?$/.test(sub))) {
+      const [file, ...scriptArgs] = sub === 'run' ? afterOptions(rest, ['-c', '--config', '--import-map', '--lock', '--cert', '--location', '--seed', '--ext', '-L', '--log-level']) : args
+      if (file !== undefined) this.program(file, scriptArgs, context, 'js')
+    }
   }
 
-  private publish(words: ReadonlyArray<string>, via: string | undefined): void {
-    if (!words.includes('--dry-run')) this.ask('publish', shown(words), via)
+  private publish(words: ReadonlyArray<string>, context: Context): void {
+    if (!words.includes('--dry-run')) this.ask('publish', shown(words.map(display)), context)
   }
 
-  private git(args: ReadonlyArray<string>, words: ReadonlyArray<string>, depth: number, via: string | undefined): void {
-    const subject = shown(words)
+  private git(args: ReadonlyArray<string>, words: ReadonlyArray<string>, context: Context): void {
+    const subject = shown(words.map(display))
+    const settings: Array<readonly [string, string | undefined]> = []
+    let cwd = context.cwd
     let k = 0
 
     for (; k < args.length; k++) {
       const arg = args[k]
       const [option, attached] = splitOption(arg)
+      if (GIT_SURFACE.elsewhere.has(option) && (attached !== undefined || option !== '--exec-path')) {
+        this.ask('hook-bypass', subject, context, `points git at another repository or program with \`${option}\`, whose hooks are not the commit gate. Approve it only if you expected it.`)
+      }
       if (!GIT_VALUE_OPTIONS.has(option)) {
         if (arg.startsWith('-')) continue
         break
       }
       const value = attached ?? args[++k] ?? ''
-      if (option === '-c') this.config(value.split('=')[0] ?? '', value.includes('=') ? value.slice(value.indexOf('=') + 1) : undefined, subject, depth, via)
-      if (option === '--config-env') this.config(value.split('=')[0] ?? '', undefined, subject, depth, via)
+      if (option === '-C') cwd = isDynamic(value) ? undefined : joinPath(cwd, value)
+      if (option === '-c') settings.push([value.split('=')[0] ?? '', value.includes('=') ? value.slice(value.indexOf('=') + 1) : ''])
+      if (option === '--config-env') settings.push([value.split('=')[0] ?? '', UNREAD])
     }
 
     const [sub, ...rest] = args.slice(k)
+    const at = { ...context, cwd }
+    for (const [key, value] of settings) this.gitSetting(key.toLowerCase(), value, sub, rest, subject, at)
     if (sub === undefined) return
 
     const end = rest.indexOf('--')
     const options = end === -1 ? rest : rest.slice(0, end)
 
     if (options.some((arg) => NO_VERIFY.test(arg)) || (sub === 'commit' && commitSkipsHooks(options))) {
-      this.deny(subject, 'skips the git hooks that run the commit gate. Fix what the gate reports and commit again; only the owner changes the gate.', via)
+      return this.deny(subject, 'skips the git hooks that run the commit gate. Fix what the gate reports and commit again; only the owner changes the gate.', context)
+    }
+    if (GIT_SURFACE.commitWriters.has(sub) || (sub === 'hash-object' && writesCommitObject(options))) {
+      return this.deny(subject, 'writes a commit by hand, which runs none of the git hooks that run the commit gate. Commit with `git commit`, which runs them.', context)
+    }
+    if (Object.hasOwn(GIT_SURFACE.commitsWithoutHook, sub) && !options.some((arg) => GIT_SURFACE.commitsWithoutHook[sub].includes(arg))) {
+      this.ask('hook-bypass', subject, context, `makes or brings in commits without the pre-commit hook that runs the commit gate. Approve it only if you expected it.`)
+    }
+    if (GIT_SURFACE.pushes.has(sub)) {
+      if (!options.includes('--dry-run') && !(sub === 'push' && options.includes('-n'))) this.ask('push', subject, context)
       return
     }
-
-    if (COMMIT_WRITERS.has(sub) || (sub === 'hash-object' && writesCommitObject(options))) {
-      this.deny(subject, 'writes a commit by hand, which runs none of the git hooks that run the commit gate. Commit with `git commit`, which runs them.', via)
-      return
+    if (Object.hasOwn(GIT_SURFACE.writesPaths, sub)) {
+      return this.writes(positionals(afterValues(rest, GIT_SURFACE.writesPaths[sub])), subject, at)
     }
 
     switch (sub) {
-      case 'push':
-        if (!options.includes('--dry-run') && !options.includes('-n')) this.ask('push', subject, via)
-        return
       case 'config':
-        return this.gitConfig(rest, subject, depth, via)
+        return this.gitConfig(rest, subject, at)
       case 'rebase':
         options.forEach((arg, index) => {
-          if (arg === '-x' || arg === '--exec') this.script(options[index + 1] ?? '', depth + 1, via)
-          if (arg.startsWith('--exec=')) this.script(arg.slice('--exec='.length), depth + 1, via)
+          if (arg === '-x' || arg === '--exec') this.script(options[index + 1] ?? '', deeper(context))
+          if (arg.startsWith('--exec=')) this.script(arg.slice('--exec='.length), deeper(context))
         })
         return
       case 'bisect':
-        if (rest[0] === 'run') this.script(rest.slice(1).map(quote).join(' '), depth + 1, via)
+        if (rest[0] === 'run') this.script(scriptOf(rest.slice(1)), deeper(context))
         return
       case 'submodule':
-        if (rest.includes('foreach')) this.script(rest.slice(rest.indexOf('foreach') + 1).join(' '), depth + 1, via)
+        if (rest.includes('foreach')) this.script(rest.slice(rest.indexOf('foreach') + 1).map(evalText).join(' '), deeper(context))
         return
     }
   }
 
-  private gitConfig(args: ReadonlyArray<string>, subject: string, depth: number, via: string | undefined): void {
+  /** A git setting given for one command, by `-c`, `--config-env` or `GIT_CONFIG_KEY_n`; an alias is read where the command uses it. */
+  private gitSetting(key: string, value: string | undefined, sub: string | undefined, args: ReadonlyArray<string>, subject: string, context: Context): void {
+    const setting = GIT_SURFACE.settings.find((entry) => entry.key.test(key)) ?? GIT_SURFACE.otherSetting
+    if (setting.finding === 'none') return
+    if (setting.finding === 'deny') return this.deny(subject, setting.reason, context)
+    if (setting.finding === 'ask') return this.ask('hook-bypass', subject, context, setting.reason)
+    if (value !== undefined && sub === key.slice('alias.'.length)) this.gitAlias(value, args, subject, context)
+  }
+
+  /** An alias's command, with the arguments it is used with: a `!` alias is a shell command, any other a git command. */
+  private gitAlias(value: string, args: ReadonlyArray<string>, subject: string, context: Context): void {
+    if (isDynamic(value)) return this.unreadable(subject, 'a git alias whose command an expansion gives', context)
+    if (value.startsWith('!')) return this.script(`${value.slice(1)} ${scriptOf(args)}`, deeper(context))
+    const words = [...splitWords(value), ...args]
+    this.git(words, ['git', ...words], deeper(context))
+  }
+
+  private gitConfig(args: ReadonlyArray<string>, subject: string, context: Context): void {
     const flags: string[] = []
     const positional: string[] = []
 
@@ -708,105 +1080,331 @@ class Inspection {
       }
     }
 
-    const verb = ['set', 'unset', 'get', 'list', 'rename-section', 'remove-section'].includes(positional[0] ?? '') ? positional.shift() : undefined
-    const [key, value] = positional
-    const writes =
-      verb === 'set' || verb === 'unset' || value !== undefined ||
-      flags.some((flag) => /^--(unset|unset-all|add|replace-all)$/.test(flag))
-
-    if (key !== undefined && writes) this.config(key, value, subject, depth, via)
-  }
-
-  /** A git config value set for one command or for good: the hooks path, or an alias that bypasses the hooks. */
-  private config(key: string, value: string | undefined, subject: string, depth: number, via: string | undefined): void {
+    const verb = ['set', 'unset', 'get', 'list', 'rename-section', 'remove-section', 'edit'].includes(positional[0] ?? '') ? positional.shift() : undefined
+    const [key = '', value] = positional
     const name = key.toLowerCase()
 
-    if (name === 'core.hookspath') {
-      this.deny(subject, 'changes which git hooks run, which can switch off the commit gate. Only the owner changes the gate.', via)
-    } else if (name.startsWith('alias.') && value !== undefined) {
-      if (value.startsWith('!')) this.script(value.slice(1), depth + 1, via)
-      else this.git(splitWords(value), ['git', ...splitWords(value)], depth + 1, via)
+    if (verb === 'edit' || flags.includes('--edit') || flags.includes('-e')) {
+      return this.ask('hook-bypass', subject, context, 'opens the git config in an editor, where a change can move the hooks or switch them off. Approve it only if you expected it.')
+    }
+    if (verb === 'remove-section' || verb === 'rename-section' || flags.includes('--remove-section') || flags.includes('--rename-section')) {
+      if (name === 'core' || name.startsWith('core.')) this.deny(subject, 'removes or renames git\'s core section, which holds core.hooksPath and so the commit gate. Only the owner changes the gate.', context)
+      return
+    }
+
+    const unsets = verb === 'unset' || flags.some((flag) => /^--unset(-all)?$/.test(flag))
+    const writes = unsets || verb === 'set' || value !== undefined || flags.some((flag) => /^--(add|replace-all)$/.test(flag))
+    if (key === '' || !writes) return
+
+    const setting = GIT_SURFACE.settings.find((entry) => entry.key.test(name))
+    if (setting?.finding === 'deny') return this.deny(subject, setting.reason, context)
+    if (setting?.finding === 'alias' && value !== undefined) return this.gitAlias(value, [], subject, context)
+    if (setting?.finding === 'ask') return this.ask('hook-bypass', subject, context, setting.reason)
+    if (GIT_SURFACE.programs.test(name) && !unsets) {
+      this.ask('hook-bypass', subject, context, 'writes a git setting that names a program git runs, which can do anything a command can. Approve it only if you expected it.')
     }
   }
 
-  private wrangler(args: ReadonlyArray<string>, words: ReadonlyArray<string>, via: string | undefined): void {
-    const subject = shown(words)
-    const path: string[] = []
-
-    for (let k = 0; k < args.length && path.length < 3; k++) {
-      const arg = args[k]
-      if (arg.startsWith('-')) {
-        if (WRANGLER_VALUE_OPTIONS.has(arg)) k++
-        continue
-      }
-      path.push(...arg.split(':'))
-    }
-
+  private wrangler(args: ReadonlyArray<string>, words: ReadonlyArray<string>, context: Context): void {
+    const subject = shown(words.map(display))
     const flag = (name: string) =>
       args.some((arg) => arg === name || (arg.startsWith(`${name}=`) && !/^(false|0)$/i.test(arg.slice(name.length + 1))))
     const dryRun = flag('--dry-run') || flag('--dryRun')
-    const [a, b, c] = path
 
-    const deploys = (a === 'deploy' || a === 'publish') || (a === 'versions' && (b === 'deploy' || b === 'upload')) ||
-      (a === 'triggers' && b === 'deploy') || (a === 'pages' && (b === 'deploy' || b === 'publish'))
+    // An option the fence does not know is read both as a flag and as taking the next word.
+    for (const [a, b, c] of wranglerPaths(args, 0, [], [], { budget: 32 })) {
+      const deploys = (a === 'deploy' || a === 'publish') || (a === 'versions' && (b === 'deploy' || b === 'upload')) ||
+        (a === 'triggers' && b === 'deploy') || (a === 'pages' && (b === 'deploy' || b === 'publish'))
 
-    if ((a === 'secret' && SECRET_WRITES.has(b ?? '')) || ((a === 'versions' || a === 'pages') && b === 'secret' && SECRET_WRITES.has(c ?? ''))) {
-      this.ask('secret', subject, via)
-    } else if (a === 'rollback' || a === 'delete' || (a === 'pages' && b === 'project' && c === 'delete')) {
-      this.ask('deploy', subject, via, 'rolls back or deletes a Worker on Cloudflare. Approve it only if you asked for it.')
-    } else if (deploys) {
-      if (!dryRun) this.ask('deploy', subject, via)
-    } else if (flag('--remote') || (a === 'd1' && b === 'time-travel' && c === 'restore') || (path.includes('delete') && !flag('--local'))) {
-      // A resource's delete, such as `wrangler d1 delete`, acts on Cloudflare unless it says --local.
-      this.ask('remote-data', subject, via)
+      if ((a === 'secret' && SECRET_WRITES.has(b ?? '')) || ((a === 'versions' || a === 'pages') && b === 'secret' && SECRET_WRITES.has(c ?? ''))) {
+        return this.ask('secret', subject, context)
+      } else if (a === 'rollback' || a === 'delete' || (a === 'pages' && b === 'project' && c === 'delete')) {
+        return this.ask('deploy', subject, context, 'rolls back or deletes a Worker on Cloudflare. Approve it only if you asked for it.')
+      } else if (deploys) {
+        if (!dryRun) return this.ask('deploy', subject, context)
+      } else if (flag('--remote') || (a === 'd1' && b === 'time-travel' && c === 'restore') || ([a, b, c].includes('delete') && !flag('--local'))) {
+        // A resource's delete, such as `wrangler d1 delete`, acts on Cloudflare unless it says --local.
+        return this.ask('remote-data', subject, context)
+      }
     }
   }
 }
 
-/** The text an `echo`, `printf` or `cat <<EOF` gives the next command of a pipeline. */
-function producedText(command: SimpleCommand | undefined): string | undefined {
-  if (command === undefined) return undefined
+/** The command paths `wrangler`'s arguments may name, up to three parts each. */
+function wranglerPaths(args: ReadonlyArray<string>, start: number, path: ReadonlyArray<string>, out: string[][], limit: { budget: number }): string[][] {
+  let parts = [...path]
+  for (let k = start; k < args.length && parts.length < 3; k++) {
+    const arg = args[k]
+    if (!arg.startsWith('-')) {
+      parts = [...parts, ...arg.split(':')]
+      continue
+    }
+    const [name, value] = splitOption(arg)
+    if (value !== undefined || WRANGLER_FLAGS.has(name)) continue
+    if (WRANGLER_VALUE_OPTIONS.has(name)) {
+      k++
+      continue
+    }
+    if (limit.budget-- > 0 && args[k + 1] !== undefined && !args[k + 1].startsWith('-')) wranglerPaths(args, k + 2, parts, out, limit)
+  }
+  out.push(parts)
+  return out
+}
+
+/** Options a command reads, and the words after them; or the first one it does not know. */
+type ParsedOptions =
+  | { readonly rest: ReadonlyArray<string>; readonly flags: ReadonlySet<string>; readonly values: ReadonlyMap<string, string> }
+  | { readonly unknown: string }
+
+function parseOptions(args: ReadonlyArray<string>, spec: OptionSpec): ParsedOptions {
+  const flags = new Set<string>()
+  const values = new Map<string, string>()
+  let k = 0
+
+  while (k < args.length) {
+    const arg = args[k]
+    if (arg === '--') {
+      k++
+      break
+    }
+    if (arg === '-' || !arg.startsWith('-')) break
+    if (spec.numeric === true && /^-\d+$/.test(arg)) {
+      k++
+      continue
+    }
+    if (arg.startsWith('--')) {
+      const [name, value] = splitOption(arg)
+      if (spec.longFlags?.includes(name)) {
+        flags.add(name)
+        k++
+      } else if (spec.longValues?.includes(name) && (value !== undefined || args[k + 1] !== undefined)) {
+        values.set(name, value ?? args[k + 1])
+        k += value === undefined ? 2 : 1
+      } else {
+        return { unknown: arg }
+      }
+      continue
+    }
+
+    let consumed = 1
+    for (let p = 1; p < arg.length; p++) {
+      const letter = arg[p]
+      if (spec.flags?.includes(letter)) {
+        flags.add(`-${letter}`)
+        continue
+      }
+      if (!spec.values?.includes(letter)) return { unknown: arg }
+      const attached = arg.slice(p + 1)
+      const value = attached === '' ? args[k + 1] : attached
+      if (value === undefined) return { unknown: arg }
+      values.set(`-${letter}`, value)
+      if (attached === '') consumed = 2
+      break
+    }
+    k += consumed
+  }
+
+  return { rest: args.slice(Math.min(args.length, k + (spec.positionals ?? 0))), flags, values }
+}
+
+/** An interpreter's arguments: the code its options give, the module it runs, the file, or none of them (its input). */
+function interpreterArgs(args: ReadonlyArray<string>, spec: Interpreter): { code: string[]; module: boolean; file?: string; runScript?: string; rest: ReadonlyArray<string> } {
+  const code: string[] = []
+
+  for (let k = 0; k < args.length; k++) {
+    const arg = args[k]
+    if (arg === '-') return { code, module: false, rest: args.slice(k + 1) }
+    if (!arg.startsWith('-')) return { code, module: false, file: arg, rest: args.slice(k + 1) }
+    if (arg.startsWith('--')) {
+      const [name, value] = splitOption(arg)
+      if (spec.inlineLong?.includes(name)) code.push(value ?? args[++k] ?? '')
+      else if (spec.kind === 'js' && name === '--run') return { code, module: false, runScript: value ?? args[k + 1], rest: args.slice(value === undefined ? k + 2 : k + 1) }
+      else if (spec.longValues?.includes(name) && value === undefined) k++
+      continue
+    }
+    for (let p = 1; p < arg.length; p++) {
+      const letter = arg[p]
+      const attached = arg.slice(p + 1)
+      if (spec.inline.includes(letter)) {
+        // `node -pe code`: the letters after it give code too, from the next word.
+        const own = attached !== '' && ![...attached].every((other) => spec.inline.includes(other))
+        code.push(own ? attached : args[++k] ?? '')
+        // python's -c ends its options: the words after it are the code's arguments.
+        if (spec.kind === 'python') return { code, module: false, rest: args.slice(k + 1) }
+        break
+      }
+      if (spec.module === letter) return { code, module: true, rest: [] }
+      if (spec.file === letter) return { code, module: false, file: attached !== '' ? attached : args[k + 1], rest: args.slice(attached !== '' ? k + 1 : k + 2) }
+      if (spec.values?.includes(letter)) {
+        if (attached === '') k++
+        break
+      }
+      if (spec.attached?.includes(letter)) break
+    }
+  }
+  return { code, module: false, rest: [] }
+}
+
+/** A package manager's command after its own options, and the package directory `--cwd`, `--prefix` or `-C` names. */
+function packageCommand(
+  args: ReadonlyArray<string>,
+  spec: { readonly values: ReadonlyArray<string>; readonly directory: ReadonlyArray<string> },
+  cwd: string | undefined
+): { sub: string | undefined; rest: ReadonlyArray<string>; directory: string | undefined } {
+  let directory = cwd
+  let k = 0
+
+  for (; k < args.length; k++) {
+    const arg = args[k]
+    if (!arg.startsWith('-') || arg === '-') break
+    const [name, attached] = splitOption(arg)
+    if (!spec.values.includes(name)) continue
+    const value = attached ?? args[++k] ?? ''
+    if (spec.directory.includes(name)) directory = isDynamic(value) ? undefined : joinPath(directory, value)
+  }
+
+  return { sub: args[k], rest: args.slice(k + 1), directory }
+}
+
+/** The text an `echo`, `printf` or `cat` gives the next command of a pipeline: null when the fence cannot know it. */
+function producedText(command: SimpleCommand, stdinOf: (command: SimpleCommand) => string | undefined | null): string | null {
+  if (command.words.some(isDynamic) || command.writes.length > 0) return null
   const [head, ...args] = command.words
   const name = basename(head ?? '')
 
-  if (name === 'echo') return args.filter((arg) => !/^-[neE]+$/.test(arg)).join(' ')
-  if (name === 'printf') {
-    const [format = '', ...values] = args
-    let index = 0
-    return format.replace(/\\n/g, '\n').replace(/%[sdb]/g, () => values[index++] ?? '')
+  if (name === 'echo') {
+    let k = 0
+    for (; k < args.length && /^-[neE]+$/.test(args[k]); k++) if (args[k].includes('e')) return null
+    const words = args.slice(k)
+    // zsh's echo reads backslash escapes, as bash's does with xpg_echo.
+    if (words.some((word) => word.includes('\\'))) return null
+    return `${words.join(' ')}\n`
   }
-  if (name === 'cat' && args.length === 0) return command.input
-  return undefined
+  if (name === 'printf') {
+    const [format, ...values] = args
+    // Only `%s`, `%%` and `\n` are read; any other format or escape gives text the fence does not work out.
+    if (format === undefined || format.startsWith('-') || /[%\\]/.test(format.replace(/%%|%s|\\n/g, ''))) return null
+    const fields = (format.match(/%s/g) ?? []).length
+    let text = ''
+    let index = 0
+    do {
+      text += format.replace(/%[s%]|\\n/g, (spec) => (spec === '%s' ? values[index++] ?? '' : spec === '%%' ? '%' : '\n'))
+    } while (fields > 0 && index < values.length)
+    return text
+  }
+  if (name === 'cat' && (args.length === 0 || (args.length === 1 && args[0] === '-'))) {
+    const input = stdinOf(command)
+    return input === undefined ? '' : input
+  }
+  return null
 }
 
-/** A word without the text the shell reader could not know. */
-function known(word: string): string {
-  return word.replaceAll(UNREAD, '').replaceAll(UNREAD_WORDS, '')
+/** A package.json's scripts. */
+export function packageScripts(text: string): Record<string, string> | undefined {
+  try {
+    const manifest: unknown = JSON.parse(text)
+    const scripts = typeof manifest === 'object' && manifest !== null ? (manifest as { scripts?: unknown }).scripts : undefined
+    if (typeof scripts !== 'object' || scripts === null || Array.isArray(scripts)) return undefined
+    return Object.fromEntries(Object.entries(scripts).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+  } catch {
+    return undefined
+  }
 }
 
-/** A word's parts the shell reader could read, between those it could not, quoted or not. */
-function unreadParts(word: string): string[] {
-  return word.split(UNREAD).flatMap((part) => part.split(UNREAD_WORDS))
+/** curl's short options that take a value, which ends a cluster of them. */
+const CURL_VALUES = 'AbcCdDeEFHKmPQrtTuUwxXyYz'
+
+/** The files curl writes: `-o`'s, and with `-O` each URL's last part. */
+function curlOutputs(args: ReadonlyArray<string>): string[] {
+  const outputs: string[] = []
+  let remote = false
+  args.forEach((arg, index) => {
+    const [name, value] = splitOption(arg)
+    if (name === '--output') outputs.push(value ?? args[index + 1] ?? '')
+    else if (name === '--remote-name' || name === '--remote-name-all') remote = true
+    else if (/^-[a-zA-Z]/.test(arg)) {
+      for (const [p, letter] of Array.from(arg.slice(1)).entries()) {
+        if (letter === 'O') remote = true
+        if (letter === 'o') outputs.push(arg.slice(p + 2) || (args[index + 1] ?? ''))
+        if (letter === 'o' || CURL_VALUES.includes(letter)) break
+      }
+    }
+  })
+  return remote ? [...outputs, ...args.filter((arg) => /^[a-z]+:\/\//i.test(arg)).map((url) => basename(url.replace(/[?#].*$/, '')))] : outputs
+}
+
+function wgetOutputs(args: ReadonlyArray<string>): string[] {
+  let document: string | undefined
+  let prefix = ''
+  args.forEach((arg, index) => {
+    const [name, value] = splitOption(arg)
+    if (arg === '-O' || name === '--output-document') document = value ?? args[index + 1]
+    else if (arg.startsWith('-O') && arg.length > 2) document = arg.slice(2)
+    if (arg === '-P' || name === '--directory-prefix') prefix = `${value ?? args[index + 1] ?? ''}/`
+  })
+  if (document !== undefined) return [document]
+  return args.filter((arg) => /^[a-z]+:\/\//i.test(arg)).map((url) => `${prefix}${basename(url.replace(/[?#].*$/, '')) || 'index.html'}`)
+}
+
+/** The files `tar` extracts by name, in the directory `-C` names, and the archive it creates. */
+function tarWrites(args: ReadonlyArray<string>): string[] {
+  const [first = ''] = args
+  const mode = /^-?[A-Za-z]+$/.test(first) ? first.replace(/^-/, '') : ''
+  const extract = mode.includes('x') || args.includes('--extract') || args.includes('--get')
+  const create = /[cru]/.test(mode) || args.some((arg) => /^--(create|append|update)$/.test(arg))
+  let archive: string | undefined
+  let directory = ''
+  const members: string[] = []
+
+  for (let k = mode === '' ? 0 : 1; k < args.length; k++) {
+    const arg = args[k]
+    const [name, value] = splitOption(arg)
+    if (arg === '-C' || name === '--directory') directory = `${value ?? args[++k] ?? ''}/`
+    else if (arg === '-f' || name === '--file') archive = value ?? args[++k]
+    else if (/^-[A-Za-z]*f$/.test(arg)) archive = args[++k]
+    else if (!arg.startsWith('-')) members.push(arg)
+  }
+  if (archive === undefined && mode.includes('f')) archive = members.shift()
+  return [...(extract ? members.map((member) => `${directory}${member}`) : []), ...(create && archive !== undefined ? [archive] : [])]
+}
+
+function unzipWrites(args: ReadonlyArray<string>): string[] {
+  let directory = ''
+  const files: string[] = []
+  for (let k = 0; k < args.length; k++) {
+    if (args[k] === '-d') directory = `${args[++k] ?? ''}/`
+    else if (args[k] === '-x') break
+    else if (!args[k].startsWith('-')) files.push(args[k])
+  }
+  return files.slice(1).map((member) => `${directory}${member}`)
+}
+
+/** What the fence says of an option it does not read, or a word an expansion gives where a command reads its options. */
+function unknownOption(command: string, word: string): string {
+  return isDynamic(word) ? `\`${display(word)}\`, a word an expansion gives where ${command} reads its options` : `\`${word}\`, an option of ${command} the fence does not read`
+}
+
+/** A python, perl or ruby by its versioned name. */
+function interpreterName(name: string): string {
+  return /^python[\d.]*$/.test(name) ? 'python' : name
 }
 
 /** Whether a word with unread parts could be `target`, its unread parts giving whatever text it needs. */
 function couldRead(word: string, target: string): boolean {
-  const pattern = unreadParts(word).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^]*')
-
+  const pattern = wordParts(word).map((part) => (isDynamic(part) ? '[^]*' : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')
   return new RegExp(`^${pattern}$`).test(target)
 }
 
 /** A short-option cluster an unread part ends, `-a$(...)` as `-an`: `git commit`'s `-n` among them. */
 function clusterReading(word: string): ReadonlyArray<ReadonlyArray<string>> {
-  const [before = ''] = unreadParts(word)
-
+  const [first = ''] = wordParts(word)
+  const before = isDynamic(first) ? '' : first
   return /^-[A-Za-z]*$/.test(before) ? [[`${before}n`]] : []
 }
 
 /** `-c`'s `name=value` whose unread name could be `core.hooksPath`, as `"$(...)"=/dev/null`. */
 function hooksPathReading(word: string): ReadonlyArray<ReadonlyArray<string>> {
   const equals = word.indexOf('=')
-
   return equals !== -1 && couldRead(word.slice(0, equals), HOOKS_PATH) ? [[`${HOOKS_PATH}${known(word.slice(equals))}`]] : []
 }
 
@@ -814,16 +1412,21 @@ function hooksPathReading(word: string): ReadonlyArray<ReadonlyArray<string>> {
  * Each reading of a command's words, the first choice of each word being
  * how the shell reader read it: at most `MAX_REREAD` words read otherwise.
  */
-function* readings(choices: ReadonlyArray<ReadonlyArray<ReadonlyArray<string>>>, at: number, reread: number): Generator<ReadonlyArray<string>> {
-  if (at === choices.length) {
-    yield []
-    return
+function* readings(choices: ReadonlyArray<ReadonlyArray<ReadonlyArray<string>>>): Generator<ReadonlyArray<string>> {
+  const open = choices.flatMap((options, at) => (options.length > 1 ? [at] : []))
+
+  function* pick(from: number, picked: ReadonlyArray<readonly [number, ReadonlyArray<string>]>): Generator<ReadonlyArray<readonly [number, ReadonlyArray<string>]>> {
+    yield picked
+    if (picked.length === MAX_REREAD) return
+    for (let k = from; k < open.length; k++) {
+      for (const option of choices[open[k]].slice(1)) yield* pick(k + 1, [...picked, [open[k], option]])
+    }
   }
 
-  const [read = [], ...others] = choices[at] ?? []
-
-  for (const option of reread < MAX_REREAD ? [read, ...others] : [read]) {
-    for (const rest of readings(choices, at + 1, option === read ? reread : reread + 1)) yield [...option, ...rest]
+  for (const picked of pick(0, [])) {
+    const words = choices.map((options) => options[0])
+    for (const [at, option] of picked) words[at] = option
+    yield words.flat()
   }
 }
 
@@ -858,46 +1461,22 @@ function commitSkipsHooks(options: ReadonlyArray<string>): boolean {
   return false
 }
 
-/** Each string literal of a program, and each run of literals in one argument list, as a command line. */
-/**
- * What may sit between one string of a command a program runs and the next:
- * commas and brackets, as `spawnSync('git', ['commit', '-n'])` writes them,
- * or an object's `args`, `argv` or `cmd` key, as
- * `new Deno.Command('git', { args: ['commit', '-n'] })` does.
- */
-const ARGUMENT_SEPARATOR = /^[\s,[\]]*(?:\{\s*(?:args|argv|cmd)\s*:[\s[]*)?$/
-
-function commandsInCode(source: string): string[] {
-  const literal = /'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g
-  const runs: string[][] = []
-  let run: string[] = []
-  let last = 0
-
-  for (const match of source.matchAll(literal)) {
-    if (run.length > 0 && !ARGUMENT_SEPARATOR.test(source.slice(last, match.index))) {
-      runs.push(run)
-      run = []
-    }
-    run.push((match[1] ?? match[2] ?? match[3]).replace(/\\(.)/g, '$1'))
-    last = match.index + match[0].length
-  }
-  if (run.length > 0) runs.push(run)
-
-  return runs.flatMap((strings) => (strings.length === 1 ? strings : [...strings, strings.map(quote).join(' ')]))
-}
-
 /** The words after a command's options, past the value of each option that takes one. */
-function afterOptions(args: ReadonlyArray<string>, values: ReadonlyArray<string> | ReadonlySet<string>): ReadonlyArray<string> {
-  const takesValue = (arg: string) => (values instanceof Set ? values.has(arg) : (values as ReadonlyArray<string>).includes(arg))
+function afterOptions(args: ReadonlyArray<string>, values: ReadonlyArray<string>): ReadonlyArray<string> {
   let k = 0
 
   while (k < args.length) {
     const arg = args[k]
     if (arg === '--') return args.slice(k + 1)
     if (!arg.startsWith('-') || arg === '-') break
-    k += takesValue(arg) ? 2 : 1
+    k += values.includes(arg) ? 2 : 1
   }
   return args.slice(k)
+}
+
+/** A command's arguments without the values of the options that take one. */
+function afterValues(args: ReadonlyArray<string>, values: ReadonlyArray<string>): ReadonlyArray<string> {
+  return args.filter((arg, index) => !values.includes(args[index - 1] ?? ''))
 }
 
 function positionals(args: ReadonlyArray<string>): ReadonlyArray<string> {
@@ -924,8 +1503,31 @@ function quote(word: string): string {
   return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`
 }
 
+/** Words as a command line the reader reads back as them, an unread part as an expansion. */
+function scriptOf(words: ReadonlyArray<string>): string {
+  return words
+    .map((word) =>
+      wordParts(word)
+        .map((part) => (part === UNREAD ? '"$_"' : part === UNREAD_WORDS ? '$_' : part === GLOB_ANY ? '*' : part === GLOB_ONE ? '?' : quote(part)))
+        .join('') || "''"
+    )
+    .join(' ')
+}
+
+/** A word as `eval` and `git submodule foreach` read it: its text, joined to the others and read again. */
+function evalText(word: string): string {
+  return wordParts(word)
+    .map((part) => (part === UNREAD || part === UNREAD_WORDS ? '$_' : part === GLOB_ANY ? '*' : part === GLOB_ONE ? '?' : part))
+    .join('')
+}
+
 function shown(words: ReadonlyArray<string>): string {
   return words.map(quote).join(' ')
+}
+
+function firstLine(text: string): string {
+  const line = text.trim().split('\n')[0] ?? ''
+  return line.length > 80 ? `${line.slice(0, 77)}...` : line
 }
 
 function from(subject: string, via: string | undefined): string {

@@ -14,8 +14,7 @@ fence turns those rules into three checks:
 
 When an enforced check and a paragraph disagree, the check wins and the
 paragraph gets fixed. The checks ship in the package as the `popweb-fence`
-command and the `@popcomputer/web/fence` entrypoint, which import only
-Node's built-ins.
+command and the `@popcomputer/web/fence` entrypoint, for Node and Bun alike.
 
 ## The commit gate
 
@@ -72,34 +71,37 @@ agent's hook passes it, and answers in that agent's format.
 
 | It finds | For example | It |
 | --- | --- | --- |
-| A way around the commit gate | `git commit --no-verify`, `-n`, `HUSKY=0`, `LEFTHOOK=0`, `-c core.hooksPath=...`, `lefthook uninstall`, a write into `.git/hooks/`, a commit written by hand with `git commit-tree`, `git fast-import` or `git hash-object -t commit` | refuses it |
+| A way around the commit gate | `git commit --no-verify`, `-n`, `HUSKY=0`, `LEFTHOOK=0`, `-c core.hooksPath=...`, `lefthook uninstall`, a write into `.git/hooks/` or `.git/config`, a commit written by hand with `git commit-tree`, `git fast-import` or `git hash-object -t commit` | refuses it |
+| A commit the gate did not check | `git pull`, `merge`, `rebase`, `cherry-pick`, `revert` and `am`; settings given by `git -c` or `GIT_CONFIG_*`, and `GIT_DIR` | asks the owner |
 | A deploy | `wrangler deploy`, `wrangler versions deploy`, `wrangler rollback` | asks the owner |
 | Remote data | `wrangler d1 migrations apply --remote`, `wrangler d1 execute --remote`, any `wrangler ... --remote` | asks the owner |
 | A secret | `wrangler secret put`, `bulk` or `delete` | asks the owner |
 | A release | `npm publish`, `bun publish`, `pnpm publish` | asks the owner |
-| A push | `git push` | asks the owner |
-| A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/`, `.husky/`, `.pre-commit-config.yaml`, `.simple-git-hooks.json`, `.claude/settings.json`, `lint-debt.json`, `popweb-fence debt --allow-increase` | asks the owner |
+| A push | `git push`, `git send-pack` | asks the owner |
+| A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/` or the directory `core.hooksPath` names, `.husky/`, `.pre-commit-config.yaml`, `.simple-git-hooks.json`, `.claude/settings.json`, `lint-debt.json`, `popweb-fence debt --allow-increase` | asks the owner |
+| What it cannot read | a command name a variable gives, `bash -c "$CMD"`, an alias, a script it cannot open, code that can start a process, a pipe into a shell from a command whose output it cannot know | asks the owner |
 
 `wrangler deploy --dry-run`, `npm publish --dry-run`, `git push --dry-run`
 and D1's local database (`--local`, the default) need no one.
 
-The hook reads a command line as the shell would: through quotes and
-escapes, `&&`, `||`, `;` and pipes, `sh -c` and `bash -lc`, `eval`,
-`$(...)`, heredocs, env prefixes and `env`, `npx`, `bunx`, `pnpm exec` and
-`node_modules/.bin`, the variables the line sets itself, and the
-`package.json` scripts a runner names, so `bun run deploy` asks when its
-script deploys. It also reads a shell script the command runs, and the
-strings of a JavaScript or TypeScript one. What a substitution gives, or a
-variable the line does not set, it cannot read: it tries each such word as
-`git`, `commit` and commit's `-n`, and refuses a command one of those makes
-a way around the gate, as `git $(echo commit) -n`, so write such a command
-out in full. A quoted substitution is one word, so `git commit -m
-"$(cat <<'EOF' ... EOF)"` runs. In a program's strings it tries a
-placeholder so only where the string names `git`, `commit`, `-n` or
-`core.hooksPath`, as `` `git commit ${flags}` `` does: one that names none,
-as a message's `` `${name} isn't set` ``, is no way around the gate it can
-read. It reads each script once on the way to a command, so a deploy script
-whose message says to run `bun run deploy` again is read once.
+The hook parses a command line with tree-sitter's bash grammar and judges
+every command the tree holds: in lists, pipes, subshells, `$(...)`,
+heredocs and arithmetic, in `sh -c`, `eval` and `trap` strings, behind
+`env`, `sudo`, `xargs`, `npx` and `bunx`, in the `package.json` scripts a
+runner names, so `bun run deploy` asks when its script deploys, and in the
+scripts and programs a command runs. A `cd` on the line moves the directory
+it reads paths and scripts from; it compares paths without `.`, `..` or case.
+
+It never reads a word holding a `$` expansion, a substitution or a glob,
+not even a variable the line sets: it tries each as `git`, `commit` and
+commit's `-n`, and refuses a command one of those makes a way around the
+gate, as `git $(echo commit) -n`, so write such a command out in full. A
+quoted substitution is one word, so `git commit -m "$(cat <<'EOF' ... EOF)"`
+runs. Where such a word, or a wrapper's option it does not know, decides
+what runs, it asks the owner, as it does before a script it cannot open or
+over 256 KiB, and before code that can start a process (`child_process`,
+`Bun.spawn`, `` $` ``, `subprocess`), since a program builds its command
+at run time. A program's strings it reads as command lines.
 
 ### Claude Code
 
@@ -169,25 +171,29 @@ itself:
 
 ```ts
 // scripts/agent-policy.ts
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { commandPolicy, filePolicy } from '@popcomputer/web/fence'
 
 const { scripts } = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts?: Record<string, string> }
+const readFile = (path: string) => (statSync(path, { throwIfNoEntry: false })?.isFile() ? readFileSync(path, 'utf8') : undefined)
 
-export const beforeCommand = (command: string) => commandPolicy(command, { scripts })
+export const beforeCommand = (command: string) => commandPolicy(command, { scripts, readFile })
 export const beforeEdit = (path: string) => filePolicy(path)
 ```
 
 Each returns `{ decision: 'allow' }`, or a `decision` of `'deny'` or `'ask'`
-with the `rule`, the `subject` and the `reason`.
+with the `rule`, the `subject` and the `reason`. Without `readFile`, a
+script a command runs is one the policy cannot open, so it asks.
 
 ### What it cannot see
 
-The hook reads the command line, not the system it runs on. It cannot see a
-git alias or a shell alias set outside the line, a `make` or `just` target,
-a program in another language, or a command a program builds at run time.
-When a spelling gets past it, add the case to the policy's tests before
-anything else, as the gardener rule in `AGENTS.md` says.
+The hook is a guard that keeps an agent to the rules, not a security
+boundary: it reads the command line, not the system it runs on. It cannot
+see an alias set outside the line, a `make` or `just` target, a command a
+program builds without a call that starts a process, or a fence file in a
+directory a command removes whole. What cannot be skipped is a required CI
+check that runs the gate on every pull request. When a spelling gets past
+the hook, add the case to the policy's tests first, as `AGENTS.md` says.
 
 ## The debt report
 

@@ -135,6 +135,7 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ["deno eval \"await new Deno.Command('git', { args: ['commit', '--no-verify'] }).output()\"", ['deny', 'hook-bypass']],
   ["node -e \"require('child_process').spawnSync('git', ['commit', '-n'], { stdio: 'inherit' })\"", ['deny', 'hook-bypass']],
   ['nohup nice -n 5 git commit -n', ['deny', 'hook-bypass']],
+  ['noglob - nocorrect git commit -n', ['deny', 'hook-bypass']],
   ['node -e "require(\'child_process\').execSync(\'git commit --no-verify\')"', ['deny', 'hook-bypass']],
   ['python3 -c "import subprocess; subprocess.run([\'git\', \'commit\', \'--no-verify\'])"', ['deny', 'hook-bypass']],
   ['bun scripts/commit.ts', ['deny', 'hook-bypass']],
@@ -173,6 +174,9 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['git commit -a$(echo n) -m wip', ['deny', 'hook-bypass']],
   ['SUB=$(echo commit); git $SUB -n', ['deny', 'hook-bypass']],
   ['timeout 5 $(echo git) commit -n', ['deny', 'hook-bypass']],
+  // The fence tracks no variable's value: an unquoted one may be several words, `git commit -n` among them.
+  ['W=wrangler; $W deploy', ['deny', 'hook-bypass']],
+  ['${WRANGLER:-wrangler} deploy', ['deny', 'hook-bypass']],
   ['git -c "$(echo core.hooksPath)=/dev/null" commit', ['deny', 'hook-bypass']],
   // Writing a commit by hand, which runs no hook.
   ['git update-ref refs/heads/main $(git commit-tree HEAD^{tree} -p HEAD -m wip)', ['deny', 'hook-bypass']],
@@ -193,8 +197,8 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['env -i PATH=/usr/bin wrangler deploy', ['ask', 'deploy']],
   ['bun run build && wrangler deploy', ['ask', 'deploy']],
   ['sh -c "bunx wrangler deploy"', ['ask', 'deploy']],
-  ['W=wrangler; $W deploy', ['ask', 'deploy']],
-  ['${WRANGLER:-wrangler} deploy', ['ask', 'deploy']],
+  ['W=wrangler; "$W" deploy', ['ask', 'deploy']],
+  ['"${WRANGLER:-wrangler}" deploy', ['ask', 'deploy']],
   ['wrangler -e production deploy', ['ask', 'deploy']],
   ['wrangler deploy --dry-run=false', ['ask', 'deploy']],
   ['wrangler versions deploy', ['ask', 'deploy']],

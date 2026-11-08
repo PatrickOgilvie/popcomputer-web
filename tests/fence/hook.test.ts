@@ -50,6 +50,20 @@ describe('Claude Code', () => {
     expect(decision(lint.stdout)).toMatchObject({ permissionDecision: 'ask' })
     expect(page.stdout).toBe('')
   })
+
+  test("asks about a change to the directory core.hooksPath names, read through a worktree's common directory", () => {
+    const repository: Readonly<Record<string, string>> = {
+      '/app/.git': 'gitdir: /repo/.git/worktrees/app\n',
+      '/repo/.git/worktrees/app/commondir': '../..\n',
+      '/repo/.git/config': '[core]\n\tbare = false\n\thooksPath = "gate"\n[remote "origin"]\n\thooksPath = elsewhere\n',
+    }
+    const worktree: HookEnvironment = { cwd: '/app', readFile: (path) => repository[path] }
+
+    expect(decision(answerHook(claudeCode('Write', { file_path: '/app/gate/pre-commit', content: 'exit 0' }), worktree).stdout)).toMatchObject({ permissionDecision: 'ask' })
+    expect(answerHook('rm gate/pre-commit', worktree).exitCode).toBe(2)
+    expect(answerHook('rm elsewhere/pre-commit', worktree).exitCode).toBe(0)
+    expect(answerHook(claudeCode('Write', { file_path: '/app/gate/pre-commit', content: 'exit 0' }), environment).stdout).toBe('')
+  })
 })
 
 describe('Cursor', () => {

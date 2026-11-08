@@ -124,5 +124,5 @@ and the lint rules name it where an action reaches for something else.
 | --- | --- | --- |
 | Run the checks before every commit | `.githooks/pre-commit`, installed with `git config core.hooksPath .githooks` | [The commit gate](agent-fence.md#the-commit-gate) |
 | Refuse a command that skips the gate, and ask the owner before a deploy | `popweb-fence hook` in `.claude/settings.json` or `.cursor/hooks.json` | [The command hook](agent-fence.md#the-command-hook) |
-| Check a command or an edit from an agent's own code | `commandPolicy(command, { scripts })`, `filePolicy(path)` | [Other agents](agent-fence.md#other-agents) |
+| Check a command or an edit from an agent's own code | `commandPolicy(command, { scripts, readFile })`, `filePolicy(path)` | [Other agents](agent-fence.md#other-agents) |
 | List every disable directive, and keep the count from rising | `popweb-fence debt`, and `--check` against `lint-debt.json` | [The debt report](agent-fence.md#the-debt-report) |
