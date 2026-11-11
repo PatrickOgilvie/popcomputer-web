@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `popweb-mutate` runs each test file `package.json` declares under `"popweb-mutate": { "reachedBy": { "<glob>": ["<test file>"] } }` against every mutant of the files the glob matches. A test that runs `src/` files in a process of its own, as the lint test runs the rules in Oxlint, reaches lines Bun's coverage shows as never run, so their mutants were reported as survivors no test reaches. The framework declares its lint test: of the 17 mutants of `no-dropped-route-builder`, all reported unreached, it now kills 14. A declared path that is not a test file stops the run. `docs/mutation.md` says why the tool does not guess these tests.
+
 ### Fixed
 
 - A computation that finished while its key was being invalidated could store the value the write had replaced, which the next read returned until its `ttl`: `cacheInvalidate` deleted the value before it wrote the mark that tells a computation in flight not to store, so one that looked for the mark between the two found none. It writes the mark first. Extending `DataCache.tla` to `cacheInvalidate`, on the way to 2.0, found it.

@@ -56,7 +56,9 @@ bunx popweb-mutate src/actions/projects.ts
 Each test file, any `*.test.ts` or `*.test.tsx` outside `node_modules` and
 `dist`, that imports a mutated file runs once with coverage; none of them is
 mutated, even under `src/`. Each mutant then runs against the test files
-whose coverage reaches its line, in copies of a snapshot of the working tree
+whose coverage reaches its line, and those `package.json` declares reach its
+file ([below](#tests-that-run-the-code-in-another-process)). Its tests run in
+copies of a snapshot of the working tree
 taken when the run starts, so the checkout is never edited, and an edit to it
 during the run reaches none of the run. Each copy is put back as the snapshot
 has it before every test run, so no mutant's tests read what another's left. A
@@ -82,6 +84,38 @@ for it.
 | `--workers <n>` | copies of the tree run at once; by default one for each 4 GiB of memory, leaving a core free |
 | `--timeout <seconds>` | how long a mutant's tests may take; twice their unmutated time, plus 10 seconds, by default |
 
+## Tests that run the code in another process
+
+Coverage sees only what runs in the test's own process. A test that runs
+`src/` files somewhere else, as the framework's lint test bundles its rules
+and runs them inside Oxlint, or as a test that spawns a script or starts the
+Worker in `workerd`, reaches lines its coverage shows as never run. Their
+mutants would show as survivors no test reaches. Declare such a test in
+`package.json`, under a glob of the files it runs:
+
+```json
+{
+  "popweb-mutate": {
+    "reachedBy": {
+      "src/lint/**": ["tests/lint/lint.test.ts"]
+    }
+  }
+}
+```
+
+Each declared test runs against every mutant of the files its glob matches,
+beside the tests coverage finds, so each of those mutants is killed or
+survives. A path that is not a test file in the repository stops the run, so
+a declaration a moved test left behind cannot quietly leave those mutants
+unreached again.
+
+The tool does not guess these tests. The lint test imports
+`src/lint/index.ts`, so Bun counts every line of the rules and sees none of
+their bodies run, which is what it also says of a line no test reaches.
+Running every test that imports a file against each of its unrun lines would
+run unrelated test files against every such mutant, and hide the lines no
+test reaches, which the report is there to show.
+
 ## Reading the report
 
 ```text
@@ -96,7 +130,8 @@ Each survivor is a change no test notices. Write the test that fails with
 it, as rule 12 asks, then run again. Some survivors change nothing a caller
 can see, such as a guard the next line repeats; leave those, and say so
 where the change is reviewed. A survivor that no test reaches says so:
-start with a test that loads its line.
+start with a test that loads its line, or, when a test runs it in another
+process, declare that test as the section above shows.
 
 A mutant whose tests gave no answer is `crashed`, listed apart with the
 reason and not counted as caught: a signal not its timeout ended them, as the

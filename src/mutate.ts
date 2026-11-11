@@ -21,10 +21,11 @@
  * With no files it mutates the src/ lines changed since --base (HEAD by
  * default), committed or not; with files, every line of them. Each test file
  * that imports a mutated file runs once alone with coverage, and each mutant
- * then runs against those that reach its line, in copies of a snapshot of the
- * working tree, each put back before every test run, so the checkout itself
- * is never edited and no run reads what another left. A mutant whose tests
- * fail is killed only when the files that failed pass without it. Exits
+ * then runs against those that reach its line, and any that package.json
+ * declares reach its file where coverage cannot see, in copies of a snapshot
+ * of the working tree, each put back before every test run, so the checkout
+ * itself is never edited and no run reads what another left. A mutant whose
+ * tests fail is killed only when the files that failed pass without it. Exits
  * non-zero only when the score is below --fail-under.
  */
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
@@ -46,7 +47,7 @@ import {
 import { availableParallelism, constants as system, tmpdir, totalmem } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { Data, Effect } from 'effect'
+import { Data, Effect, Schema as S } from 'effect'
 import {
   isArrowFunction,
   isBinaryExpression,
@@ -121,7 +122,7 @@ export interface Result extends Mutant {
 
 export interface Run {
   readonly results: readonly Result[]
-  /** Test files whose coverage reaches a mutated file. */
+  /** Test files that import a mutated file, or that package.json declares reach one. */
   readonly testFiles: number
   /** Test files left out because they fail with no mutant planted. */
   readonly failing: readonly string[]
@@ -497,6 +498,38 @@ function importClosure(root: string, file: string, memo: Map<string, readonly st
   return closure
 }
 
+/** What the tool reads from package.json. */
+const Manifest = S.Struct({
+  'popweb-mutate': S.optional(S.Struct({ reachedBy: S.Record(S.String, S.Array(S.String)) })),
+})
+
+/**
+ * The test files package.json declares reach the src/ files a glob names
+ * where Bun's coverage cannot see them run, as a test that bundles them and
+ * runs them in a process of its own does:
+ * `"popweb-mutate": { "reachedBy": { "src/lint/**": ["tests/lint/lint.test.ts"] } }`.
+ * Each runs against every mutant of those files. A test file the repository
+ * does not have is refused, so a stale declaration cannot quietly leave
+ * those mutants unreached again.
+ */
+function declaredReach(root: string, listed: readonly string[]): (file: string) => readonly string[] {
+  const path = join(root, 'package.json')
+  if (!existsSync(path)) return () => []
+
+  let reachedBy: { readonly [glob: string]: readonly string[] }
+  try {
+    reachedBy = S.decodeUnknownSync(Manifest)(JSON.parse(readFileSync(path, 'utf8')))['popweb-mutate']?.reachedBy ?? {}
+  } catch (error) {
+    throw new Error(`package.json's "popweb-mutate" takes { "reachedBy": { "<glob of src/ files>": ["<test file>"] } }: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
+  }
+  for (const test of Object.values(reachedBy).flat()) {
+    if (!isTest(test) || !listed.includes(test)) throw new Error(`package.json's "popweb-mutate" reachedBy names ${test}, which is no test file in the repository.`)
+  }
+
+  const globs = Object.entries(reachedBy).map(([glob, tests]) => ({ glob: new Bun.Glob(glob), tests }))
+  return (file) => [...new Set(globs.flatMap(({ glob, tests }) => (glob.match(file) ? tests : [])))]
+}
+
 /** The src/ files to mutate, each with the lines to mutate in it, or undefined for every line. */
 function targetsOf(root: string, files: readonly string[], base: string | undefined): Map<string, Set<number> | undefined> {
   if (files.length > 0 && base === undefined) return new Map(files.map((file) => [file, undefined]))
@@ -830,6 +863,12 @@ const runMutants = (options: Options) =>
 
     // Which lines to mutate: every line of the named files, or the changed ones.
     const targets = targetsOf(root, files, options.base)
+    const listed = git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'])
+      .split('\0')
+      .filter((file) => file !== '' && existsSync(join(root, file)))
+    // Read before the code is, so a declaration that names no test file stops the run at once.
+    const reach = declaredReach(root, listed)
+
     const read = yield* Effect.promise(() => readMutants(root, [...targets.keys()]))
     const mutants = read.mutants.filter((mutant) => {
       const lines = targets.get(mutant.file)
@@ -839,15 +878,14 @@ const runMutants = (options: Options) =>
     })
     if (mutants.length === 0) return { results: [], testFiles: 0, failing: [] }
 
-    const listed = git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'])
-      .split('\0')
-      .filter((file) => file !== '' && existsSync(join(root, file)))
-
-    // Only a test file that imports a mutated file can reach it.
+    // Only a test file that imports a mutated file can reach it, or one
+    // package.json declares reaches it.
     const mutated = new Set(mutants.map((mutant) => mutant.file))
+    const declared = new Set([...mutated].flatMap(reach))
     const memo = new Map<string, readonly string[]>()
     const candidates = listed.filter((file) => {
       if (!isTest(file)) return false
+      if (declared.has(file)) return true
       const closure = importClosure(root, file, memo)
       return [...mutated].some((each) => closure.has(each))
     })
@@ -928,7 +966,7 @@ const runMutants = (options: Options) =>
         for (const [file, byLine] of reaching) for (const line of entry.hits.get(file) ?? []) push(byLine, line, test)
       }
 
-      /** The passing test files that reach a mutant's lines, fastest first. */
+      /** The passing test files that reach a mutant's lines, with those declared to reach its file, fastest first. */
       const testsFor = (mutant: Mutant): string[] => {
         const byLine = reaching.get(mutant.file) ?? new Map<number, string[]>()
         const lines = counted.get(mutant.file) ?? new Set<number>()
@@ -936,7 +974,8 @@ const runMutants = (options: Options) =>
         const take = (line: number) => {
           for (const test of byLine.get(line) ?? []) found.add(test)
         }
-        const fastestFirst = () => [...found].sort((a, b) => (msOf.get(a) ?? 0) - (msOf.get(b) ?? 0))
+        const fastestFirst = () =>
+          [...new Set([...found, ...reach(mutant.file).filter((test) => msOf.has(test))])].sort((a, b) => (msOf.get(a) ?? 0) - (msOf.get(b) ?? 0))
 
         let anyCounted = false
         for (let line = mutant.line; line <= mutant.lastLine; line++) {

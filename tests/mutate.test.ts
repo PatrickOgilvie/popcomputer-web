@@ -70,6 +70,37 @@ test('takeTwice', async () => {
 })
 `
 
+// A script its test runs in a process of its own, as the lint test runs the
+// rules in Oxlint's, where Bun's coverage cannot see it: package.json declares
+// that the test reaches it. No test checks 100, so line 6's mutant survives.
+const SUBPROCESS = {
+  'src/check.ts': `export function positive(n: number) {
+  return n > 0
+}
+
+export function small(n: number) {
+  return n < 100
+}
+
+if (import.meta.main) {
+  const n = Number(process.argv[2])
+  process.exit(positive(n) && small(n) ? 0 : 1)
+}
+`,
+  'tests/check.test.ts': `import { expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
+
+const check = (n: number) => spawnSync(process.execPath, ['src/check.ts', String(n)]).status
+
+test('check', () => {
+  expect(check(5)).toBe(0)
+  expect(check(0)).toBe(1)
+  expect(check(-5)).toBe(1)
+})
+`,
+  'package.json': JSON.stringify({ 'popweb-mutate': { reachedBy: { 'src/check.ts': ['tests/check.test.ts'] } } }),
+}
+
 /** A repository of the given files, by default the fixture as src/tiny.ts and its tests. */
 function tinyRepo(files: Record<string, string> = {}, tiny = true): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'mutate-test-')))
@@ -338,6 +369,46 @@ test('mutate, given files and a base, mutates only the changed lines of those fi
     expect(run.results.map((result) => `${result.file}:${result.line} ${result.original}`)).toEqual(['src/a.ts:2 false'])
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+}, 60_000)
+
+test('a test file package.json declares reaches a file runs against its mutants, where coverage cannot see it', async () => {
+  const root = tinyRepo(SUBPROCESS, false)
+
+  try {
+    const run = await mutate({ root, files: ['src/check.ts'], workers: 2 })
+
+    expect(run.testFiles).toBe(1)
+    expect(run.results.map(outcome)).toEqual([
+      '2 boundary > → >=: killed',
+      '6 boundary < → <=: survived',
+      '11 logic && → ||: killed',
+    ])
+    expect(run.results.map((result) => result.tests)).toEqual([1, 1, 1])
+    expect(formatReport(run)).not.toContain('no test reaches')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 60_000)
+
+test('a declaration in package.json that names no test file, or is not a map of globs to test files, is refused', async () => {
+  const declaring = (reachedBy: { readonly [glob: string]: string | readonly string[] }) =>
+    tinyRepo({ 'package.json': JSON.stringify({ 'popweb-mutate': { reachedBy } }) })
+  const gone = declaring({ 'src/**': ['tests/gone.test.ts'] })
+  const source = declaring({ 'src/**': ['src/tiny.ts'] })
+  // One test file, not a list of them.
+  const bare = declaring({ 'src/**': 'tests/tiny.test.ts' })
+
+  try {
+    await expect(mutate({ root: gone, files: ['src/tiny.ts'], workers: 1 })).rejects.toThrow(
+      `package.json's "popweb-mutate" reachedBy names tests/gone.test.ts, which is no test file in the repository.`
+    )
+    await expect(mutate({ root: source, files: ['src/tiny.ts'], workers: 1 })).rejects.toThrow('reachedBy names src/tiny.ts, which is no test file')
+    await expect(mutate({ root: bare, files: ['src/tiny.ts'], workers: 1 })).rejects.toThrow(
+      `package.json's "popweb-mutate" takes { "reachedBy": { "<glob of src/ files>": ["<test file>"] } }`
+    )
+  } finally {
+    for (const root of [gone, source, bare]) rmSync(root, { recursive: true, force: true })
   }
 }, 60_000)
 

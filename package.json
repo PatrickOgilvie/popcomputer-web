@@ -109,6 +109,11 @@
     "test:coverage": "bun test --coverage",
     "prepublishOnly": "bun run test"
   },
+  "popweb-mutate": {
+    "reachedBy": {
+      "src/lint/**": ["tests/lint/lint.test.ts"]
+    }
+  },
   "keywords": [
     "framework",
     "full-stack",
