@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A computation that finished while its key was being invalidated could store the value the write had replaced, which the next read returned until its `ttl`: `cacheInvalidate` deleted the value before it wrote the mark that tells a computation in flight not to store, so one that looked for the mark between the two found none. It writes the mark first. Extending `DataCache.tla` to `cacheInvalidate`, on the way to 2.0, found it.
+
 ## [1.15.0] - 2026-11-08
 
 This release finishes fixing what the walk of every implicit state machine found, on the 1.x line. It fixes three security bugs: the default page cache could keep a page streamed with one visitor's data for the next, a `guarded` binding that no guard decided ran its action for anyone, and a route builder whose result was dropped, such as `routes.provide(RequireAuthLayer)` written as a statement, left the routes after it open. It makes the mistakes that went unnoticed fail where they are made, holds what a request or job holds until its work has settled, mends the Better Auth seam, rebuilds the test tools and the agent fence, and reports every failure no answer shows. `UPGRADING.md`'s "From 1.14 to 1.15" lists what to check.

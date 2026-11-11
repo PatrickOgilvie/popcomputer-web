@@ -617,10 +617,11 @@ export const cacheInvalidate = <V = unknown>(
       ? resolveKey(key, options.schema, options.version)
       : key
 
-    yield* cacheService.delete(effectiveKey)
     // A computation that started before this may yet store what the write
-    // behind it replaced: the mark tells it not to.
+    // behind it replaced: the mark tells it not to. It goes first, so one
+    // that looks for it after the delete finds it.
     yield* cacheService.put(invalidatedKey(effectiveKey), String(yield* Clock.currentTimeMillis), { expirationTtl: INVALIDATION_MARK_TTL_SECONDS })
+    yield* cacheService.delete(effectiveKey)
   }).pipe(
     Effect.catchTag('CacheError', reportInvalidationFailure('invalidate')),
     Effect.withSpan('Web.cacheInvalidate')

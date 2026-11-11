@@ -3,7 +3,7 @@
  * default page cache keep, and when they keep it.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { Effect, Layer, Option, Schema as S } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Option, Schema as S } from 'effect'
 import { Hono } from 'hono'
 import { CacheService, cache, cacheGet, cacheInvalidate, cacheSet, invalidateCacheTags, type CacheClient } from '../../src/cache.js'
 import { action } from '../../src/effect/action.js'
@@ -78,6 +78,31 @@ describe('the data cache', () => {
 
     expect(await run(cache('k', readBeforeTheWrite, S.String, { ttl: '1 hour' }), kv)).toBe('old')
     expect(await run(cacheGet('k', S.String), kv)).toEqual(Option.none())
+  })
+
+  test('M5.T56: a computation that stores while its key is being invalidated keeps nothing either', async () => {
+    const { client } = memoryStore()
+    const kv = client()
+
+    const program = Effect.gen(function* () {
+      const release = yield* Deferred.make<void>()
+      const computing = yield* Effect.forkChild(cache('k', Effect.as(Deferred.await(release), 'old'), S.String, { ttl: '1 hour' }))
+      yield* Effect.yieldNow
+      // The computation finishes, and stores if it will, between the
+      // invalidation's two writes.
+      const between = CacheService.of({
+        ...kv,
+        delete: (key) => Effect.andThen(
+          kv.delete(key),
+          key === 'k' ? Effect.andThen(Deferred.succeed(release, undefined), Fiber.join(computing)) : Effect.void
+        ),
+      })
+      yield* Effect.provideService(cacheInvalidate('k'), CacheService, between)
+
+      return yield* cacheGet('k', S.String)
+    })
+
+    expect(await run(program, kv)).toEqual(Option.none())
   })
 
   test('M5.T42: a purge where KV has not yet seen the tag still ends the entries stored under it', async () => {
