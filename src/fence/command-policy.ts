@@ -104,6 +104,46 @@ const FISH_OPTIONS: OptionSpec = {
   longFlags: ['--login', '--interactive', '--no-execute', '--no-config', '--private', '--print-rusage-self', '--help', '--version'],
   longValues: ['--command', '--init-command', '--debug', '--debug-output', '--features', '--profile', '--profile-startup'],
 }
+/** `script`, BSD's (`script [file [command...]]`) and util-linux's (`script -c command [file]`) alike. */
+const SCRIPT_OPTIONS: OptionSpec = {
+  flags: 'adeFfkpqrhV',
+  values: 'tTBIOmoEc',
+  longFlags: ['--append', '--return', '--flush', '--force', '--quiet', '--help', '--version'],
+  longValues: ['--command', '--echo', '--log-io', '--log-in', '--log-out', '--log-timing', '--logging-format', '--output-limit', '--timing'],
+}
+const FLOCK_OPTIONS: OptionSpec = {
+  flags: 'sxeunoFhV',
+  values: 'wEc',
+  longFlags: ['--shared', '--exclusive', '--unlock', '--nonblock', '--nb', '--close', '--no-fork', '--verbose', '--help', '--version'],
+  longValues: ['--wait', '--timeout', '--conflict-exit-code', '--command'],
+}
+const SSH_OPTIONS: OptionSpec = { flags: '46AaCfGgKkMNnqsTtVvXxYy', values: 'BbcDEeFIiJLlmOoPpQRSWw' }
+/** `-o` settings whose command ssh runs here, and the one it runs on the host. */
+const SSH_COMMANDS = /^(proxycommand|localcommand|knownhostscommand|remotecommand)\s*[=\s]\s*(.*)$/is
+const AWK_OPTIONS: OptionSpec = {
+  flags: 'bcCdDghLMnNoOpPrsStVY',
+  values: 'fFveEilW',
+  longFlags: [
+    '--posix', '--lint', '--traditional', '--sandbox', '--re-interval', '--characters-as-bytes', '--debug', '--dump-variables', '--profile',
+    '--pretty-print', '--optimize', '--no-optimize', '--bignum', '--use-lc-numeric', '--non-decimal-data', '--gen-pot', '--copyright',
+    '--version', '--help', '--csv',
+  ],
+  longValues: ['--file', '--exec', '--field-separator', '--assign', '--source', '--include', '--load'],
+}
+/** `xcrun`'s options, whole words; after one of `finds`, it names a tool rather than run it. */
+const XCRUN = {
+  flags: ['-l', '--log', '-v', '--verbose', '-n', '--no-cache', '-k', '--kill-cache', '-r', '--run'],
+  values: ['-sdk', '--sdk', '-toolchain', '--toolchain'],
+  finds: ['-f', '--find', '--show-sdk-path', '--show-sdk-version', '--show-sdk-build-version', '--show-sdk-platform-path', '--show-sdk-platform-version', '--version', '-h', '--help'],
+}
+const DOTENV_FLAGS = ['--no-expand', '--debug', '--quiet', '-o', '--override']
+/** concurrently's options that take a value; any other word is a command line. */
+const CONCURRENTLY_VALUES = [
+  '-n', '--names', '--name-separator', '-s', '--success', '-c', '--prefix-colors', '-p', '--prefix', '-l', '--prefix-length', '-t',
+  '--timestamp-format', '-m', '--max-processes', '--kill-signal', '--restart-tries', '--restart-after', '--default-input-target', '--hide',
+]
+/** Command lines parallel runs, or concurrently's `npm:` scripts it expands, read at most this many. */
+const MAX_RUNS = 64
 /** Builtins that set variables, whose `NAME=value` arguments the commands after them see. */
 const DECLARATIONS = new Set(['export', 'declare', 'typeset', 'readonly', 'local'])
 
@@ -130,11 +170,25 @@ const NODE: Interpreter = {
   values: 'rC',
   longValues: ['--require', '--import', '--loader', '--experimental-loader', '--env-file', '--conditions', '--input-type', '--title', '--watch-path', '--test-name-pattern', '--test-reporter', '--test-reporter-destination'],
 }
+const TS_NODE_VALUES = ['--require', '--project', '--compiler-options', '--compiler', '--ignore', '--cwd', '--scope-dir']
+const TS_NODE_DEV: Interpreter = {
+  ...NODE,
+  values: 'rPOCI',
+  longValues: [...TS_NODE_VALUES, '--watch', '--ignore-watch', '--debounce', '--interval', '--dir', '--cache-directory'],
+}
 const INTERPRETERS: Readonly<Record<string, Interpreter>> = {
   node: NODE,
+  'node-dev': NODE,
   tsx: NODE,
-  'ts-node': { ...NODE, values: 'rPOCI', longValues: ['--require', '--project', '--compiler-options', '--compiler', '--ignore', '--cwd', '--scope-dir'] },
+  'ts-node': { ...NODE, values: 'rPOCI', longValues: TS_NODE_VALUES },
   'ts-node-esm': { ...NODE, values: 'rPOCI' },
+  'ts-node-dev': TS_NODE_DEV,
+  tsnd: TS_NODE_DEV,
+  'babel-node': {
+    ...NODE,
+    values: 'rioxwb',
+    longValues: ['--require', '--ignore', '--only', '--extensions', '--plugins', '--presets', '--config-file', '--root-mode', '--env-name'],
+  },
   esno: NODE,
   esrun: NODE,
   'vite-node': { kind: 'js', inline: '', values: 'r', longValues: ['--root', '--config', '--mode'] },
@@ -143,6 +197,7 @@ const INTERPRETERS: Readonly<Record<string, Interpreter>> = {
   perl: { kind: 'perl', inline: 'eE', values: 'IMmF', attached: 'il0xdC' },
   ruby: { kind: 'ruby', inline: 'e', values: 'IrCEF', attached: 'ilx0W' },
   php: { kind: 'php', inline: 'r', values: 'dc', file: 'f' },
+  osascript: { kind: 'applescript', inline: 'e', values: 'ls' },
 }
 
 const BUN_BUILTINS = new Set([
@@ -166,6 +221,8 @@ const YARN_VALUES = { values: ['--cwd'], directory: ['--cwd'] }
 
 /** `popweb-fence`, run by its bin or by its file, in the package or in its own repository. */
 const FENCE_CLI = /(^|\/)popweb-fence$|(^|\/)fence\/cli\.[cm]?[jt]s$/
+/** Wrangler, run by its bin, by the file its bin is, or by the file its package's `main` names. */
+const WRANGLER_ENTRY = /(^|\/)wrangler(\.[cm]?js)?$|(^|\/)wrangler\/(?:bin|wrangler-dist)\/[^/]+\.[cm]?js$/
 
 /** `--no-verify`, and the abbreviations git accepts for it. */
 const NO_VERIFY = /^--no-veri(?:f|fy)?$/
@@ -272,6 +329,7 @@ const READ_BY_NAME = new Set([
   ...Object.keys(WRAPPERS), ...Object.keys(INTERPRETERS), ...SHELLS, ...DECLARATIONS, ...WRITERS, ...COPIERS,
   'env', 'xargs', 'eval', 'source', '.', 'trap', 'coproc', 'alias', 'shopt', 'su', 'watch', 'find', 'sed', 'deno', 'bun', 'bunx',
   'npx', 'pnpx', 'npm', 'pnpm', 'yarn', 'git', 'wrangler', 'lefthook', 'husky', 'dd', 'curl', 'wget', 'tar', 'unzip', 'popweb-fence',
+  'arch', 'xcrun', 'script', 'cross-env', 'cross-env-shell', 'dotenv', 'flock', 'concurrently', 'parallel', 'ssh', 'awk', 'gawk', 'mawk', 'nawk',
 ])
 
 /** The policy's answer for one shell command line, as an agent's hook passes it. */
@@ -572,9 +630,179 @@ class Inspection {
         return this.writes(tarWrites(args), subject, context)
       case 'unzip':
         return this.writes(unzipWrites(args), subject, context)
+      case 'arch':
+        return this.arch(args, command, subject, context)
+      case 'xcrun':
+        return this.xcrun(args, command, subject, context)
+      case 'script':
+        return this.typescript(args, command, subject, context)
+      case 'cross-env':
+        return next(this.leadingAssignments(args[0] === '--' ? args.slice(1) : args, subject, context))
+      case 'cross-env-shell':
+        return this.script(this.leadingAssignments(args, subject, context).map(evalText).join(' '), deeper(context))
+      case 'dotenv':
+        return this.dotenv(args, command, subject, context)
+      case 'flock':
+        return this.flock(args, command, subject, context)
+      case 'concurrently':
+        return this.concurrently(args, subject, context)
+      case 'parallel':
+        return this.parallel(args, command, subject, context)
+      case 'ssh':
+        return this.ssh(args, subject, context)
+      case 'awk':
+      case 'gawk':
+      case 'mawk':
+      case 'nawk':
+        return this.awk(args, subject, context)
     }
 
-    if (head.includes('/') || head.endsWith('.sh')) this.file(head, undefined, context, args)
+    if (head.includes('/') || head.endsWith('.sh')) this.program(head, args, command, context)
+  }
+
+  /** macOS's `arch`: its `-arm64`-style names, `-arch name`, `-d name` and `-e NAME=value`, then the command. */
+  private arch(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const assignments: string[] = []
+    let k = 0
+    for (; k < args.length && args[k].startsWith('-'); k++) {
+      if (args[k] === '-arch' || args[k] === '-d') k++
+      else if (args[k] === '-e') assignments.push(args[++k] ?? '')
+    }
+    for (const word of assignments) this.assignmentWord(word, subject, basename(args[k] ?? ''), context)
+    this.words(args.slice(k), command, deeper(context))
+  }
+
+  private xcrun(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const parsed = wordOptions(args, [...XCRUN.flags, ...XCRUN.finds], XCRUN.values)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption('xcrun', parsed.unknown), context)
+    if (parsed.seen.some((option) => XCRUN.finds.includes(option))) return
+    this.words(parsed.rest, command, deeper(context))
+  }
+
+  /** `script`: the file it writes what the command prints to, and the command, after the file or as `-c`'s string. */
+  private typescript(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const parsed = parseOptions(args, SCRIPT_OPTIONS)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption('script', parsed.unknown), context)
+
+    const [file, ...run] = parsed.rest
+    if (file !== undefined) this.write(file, subject, context)
+    const string = parsed.values.get('-c') ?? parsed.values.get('--command')
+    if (string === undefined) return this.words(run, command, deeper(context))
+    if (isDynamic(string)) return this.unreadable(subject, 'a command for script that an expansion gives', context)
+    this.script(string, deeper(context))
+  }
+
+  /** dotenv-cli: its `-v NAME=value` assignments, then the command, after `--` or its options. */
+  private dotenv(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const end = args.indexOf('--')
+    const options = end === -1 ? args : args.slice(0, end)
+    let k = 0
+
+    for (; k < options.length && options[k].startsWith('-'); k++) {
+      const option = options[k]
+      if (option === '-v') this.assignmentWord(options[++k] ?? '', subject, '', context)
+      else if (option === '-e' || option === '-p') k++
+      else if (option === '-c') {
+        // `-c` takes an environment's name when a word follows it, which before `--` may be the command's.
+        if (end === -1) return this.unreadable(subject, "`-c`, which may take the command's first word as an environment's name", context)
+        if (!(options[k + 1] ?? '-').startsWith('-')) k++
+      } else if (!DOTENV_FLAGS.includes(option)) {
+        return this.unreadable(subject, unknownOption('dotenv', option), context)
+      }
+    }
+    this.words([...options.slice(k), ...(end === -1 ? [] : args.slice(end + 1))], command, deeper(context))
+  }
+
+  /** `flock`: the lock file, then the command, or `-c`'s string. */
+  private flock(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const parsed = parseOptions(args, FLOCK_OPTIONS)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption('flock', parsed.unknown), context)
+
+    const [, ...run] = parsed.rest
+    const [option, value] = splitOption(run[0] ?? '')
+    const string = parsed.values.get('-c') ?? parsed.values.get('--command') ?? (option === '-c' || option === '--command' ? value ?? run[1] : undefined)
+    if (string === undefined) return this.words(run, command, deeper(context))
+    if (isDynamic(string)) return this.unreadable(subject, 'a command for flock that an expansion gives', context)
+    this.script(string, deeper(context))
+  }
+
+  /** concurrently: each word that is not an option or its value is a command line, and `npm:name` a package.json script. */
+  private concurrently(args: ReadonlyArray<string>, subject: string, context: Context): void {
+    for (let k = 0; k < args.length; k++) {
+      const [name, value] = splitOption(args[k])
+      if (CONCURRENTLY_VALUES.includes(name)) {
+        if (value === undefined) k++
+      } else if (!args[k].startsWith('-')) {
+        const shorthand = /^(npm|yarn|pnpm|bun):(.+)$/.exec(args[k])
+        if (shorthand !== null && shorthand[2].includes('*')) this.unreadable(subject, `\`${args[k]}\`, whose wildcard names scripts the fence does not list`, context)
+        else this.script(shorthand === null ? evalText(args[k]) : `${shorthand[1]} run ${shorthand[2]}`, deeper(context))
+      }
+    }
+  }
+
+  /**
+   * GNU parallel: its command with each input after it, or in place of `{}`,
+   * or each input alone when it names no command. Its options are many, and
+   * the fence reads none: the command may start at any word before `:::`.
+   */
+  private parallel(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const separator = /^:{3,4}\+?$/
+    const first = args.findIndex((arg) => separator.test(arg))
+    const head = first === -1 ? args : args.slice(0, first)
+    const groups: string[][] = []
+
+    for (const arg of first === -1 ? [] : args.slice(first)) {
+      if (arg.startsWith('::::')) return this.unreadable(subject, 'the files `::::` names, whose lines parallel runs', context)
+      if (separator.test(arg)) groups.push([])
+      else groups[groups.length - 1].push(evalText(arg))
+    }
+    if (first === -1) {
+      const text = this.stdinText(command, context)
+      if (text === null) return this.unreadable(subject, 'the lines it reads from a pipe or a file, which parallel runs', context)
+      groups.push((text ?? '').split('\n').filter((line) => line.trim() !== ''))
+    }
+
+    const starts = [...head.flatMap((word, at) => (word.startsWith('-') ? [] : [at])), head.length]
+    const inputs = product(groups, Math.floor(MAX_RUNS / starts.length))
+    if (inputs === undefined) return this.unreadable(subject, `more than ${MAX_RUNS} command lines parallel runs`, context)
+    for (const input of inputs) {
+      for (const start of starts) {
+        const words = head.slice(start).map(evalText)
+        const line = words.some((word) => word.includes('{}')) ? words.map((word) => word.replaceAll('{}', input.join(' '))) : [...words, ...input]
+        this.script(line.join(' '), deeper(context))
+      }
+    }
+  }
+
+  /** ssh: the commands its `-o` settings run here, and the command it runs on the host, whose words only the rules read. */
+  private ssh(args: ReadonlyArray<string>, subject: string, context: Context): void {
+    const parsed = parseOptions(args, SSH_OPTIONS)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption('ssh', parsed.unknown), context)
+
+    const remote = { ...deeper(context), inCode: true }
+    for (const [option, value] of parsed.all) {
+      const setting = option === '-o' ? SSH_COMMANDS.exec(value) : null
+      if (setting !== null) this.script(evalText(setting[2]), setting[1].toLowerCase() === 'remotecommand' ? remote : deeper(context))
+    }
+    const [, ...run] = parsed.rest
+    this.script(run.map(evalText).join(' '), remote)
+  }
+
+  /** awk: its program, inline or in the files `-f` names, read as code. */
+  private awk(args: ReadonlyArray<string>, subject: string, context: Context): void {
+    const parsed = parseOptions(args, AWK_OPTIONS)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption('awk', parsed.unknown), context)
+
+    const given = (...options: string[]) => parsed.all.filter(([option]) => options.includes(option)).map(([, value]) => value)
+    const files = given('-f', '--file', '-E', '--exec')
+    const inline = given('-e', '--source')
+    const programs = files.length + inline.length === 0 ? parsed.rest.slice(0, 1) : inline
+
+    for (const program of programs) {
+      if (isDynamic(program)) this.unreadable(subject, 'a program for awk that an expansion gives', context)
+      else this.code(program, 'awk', subject, context)
+    }
+    for (const file of files) this.file(file, 'awk', context)
   }
 
   /**
@@ -784,14 +1012,16 @@ class Inspection {
     }
     if (parsed.code.length > 0 || parsed.module) return
     if (parsed.runScript !== undefined) return this.target(name, parsed.runScript, parsed.rest, command, context.cwd, context)
-    if (parsed.file !== undefined) return this.program(parsed.file, parsed.rest, context, spec.kind)
+    if (parsed.file !== undefined) return this.program(parsed.file, parsed.rest, command, context, spec.kind)
     this.stdinScript(command, spec.kind, subject, context)
   }
 
-  /** A program a runtime runs: Wrangler's own entry, the fence's CLI, or a script read for its strings. */
-  private program(path: string, args: ReadonlyArray<string>, context: Context, kind?: CodeKind): void {
-    if (/(^|\/)wrangler(\.[cm]?js)?$|(^|\/)wrangler\/bin\/wrangler\.js$/.test(path)) return this.wrangler(args, ['wrangler', ...args], context)
+  /** A program a command runs by its path: Wrangler's own entry, the fence's CLI, a bin the policy reads by name, or a script read for its strings. */
+  private program(path: string, args: ReadonlyArray<string>, command: SimpleCommand, context: Context, kind?: CodeKind): void {
+    if (WRANGLER_ENTRY.test(path)) return this.wrangler(args, ['wrangler', ...args], context)
     if (FENCE_CLI.test(path)) return this.fenceCli(args, ['popweb-fence', ...args], context)
+    const bin = /(?:^|\/)node_modules\/\.bin\/([^/]+)$/.exec(path)?.[1] ?? ''
+    if (READ_BY_NAME.has(bin)) return this.words([bin, ...args], command, deeper(context))
     this.file(path, kind, context, args)
   }
 
@@ -882,7 +1112,7 @@ class Inspection {
     const subject = shown([runner, name, ...args].map(display))
     if (directory === undefined) return this.unreadable(subject, "a package.json script, in a directory a `cd` the fence cannot follow names", context)
     if (this.runScript(runner, name, args, directory, context)) return
-    if (/\.[cm]?[jt]sx?$|\.sh$/.test(name) || name.includes('/')) return this.program(name, args, context)
+    if (/\.[cm]?[jt]sx?$|\.sh$/.test(name) || name.includes('/')) return this.program(name, args, command, context)
     this.words([name, ...args], command, deeper(context))
   }
 
@@ -976,7 +1206,7 @@ class Inspection {
     if (sub === 'task') return this.unreadable(subject, 'a deno task, which runs a command from deno.json the fence does not read', context)
     if (sub === 'run' || (sub !== undefined && /\.[cm]?[jt]sx?$/.test(sub))) {
       const [file, ...scriptArgs] = sub === 'run' ? afterOptions(rest, ['-c', '--config', '--import-map', '--lock', '--cert', '--location', '--seed', '--ext', '-L', '--log-level']) : args
-      if (file !== undefined) this.program(file, scriptArgs, context, 'js')
+      if (file !== undefined) this.program(file, scriptArgs, command, context, 'js')
     }
   }
 
@@ -1153,12 +1383,19 @@ function wranglerPaths(args: ReadonlyArray<string>, start: number, path: Readonl
 
 /** Options a command reads, and the words after them; or the first one it does not know. */
 type ParsedOptions =
-  | { readonly rest: ReadonlyArray<string>; readonly flags: ReadonlySet<string>; readonly values: ReadonlyMap<string, string> }
+  | {
+      readonly rest: ReadonlyArray<string>
+      readonly flags: ReadonlySet<string>
+      /** The last value each option was given. */
+      readonly values: ReadonlyMap<string, string>
+      /** Every value each option was given, in order. */
+      readonly all: ReadonlyArray<readonly [string, string]>
+    }
   | { readonly unknown: string }
 
 function parseOptions(args: ReadonlyArray<string>, spec: OptionSpec): ParsedOptions {
   const flags = new Set<string>()
-  const values = new Map<string, string>()
+  const all: Array<readonly [string, string]> = []
   let k = 0
 
   while (k < args.length) {
@@ -1178,7 +1415,7 @@ function parseOptions(args: ReadonlyArray<string>, spec: OptionSpec): ParsedOpti
         flags.add(name)
         k++
       } else if (spec.longValues?.includes(name) && (value !== undefined || args[k + 1] !== undefined)) {
-        values.set(name, value ?? args[k + 1])
+        all.push([name, value ?? args[k + 1]])
         k += value === undefined ? 2 : 1
       } else {
         return { unknown: arg }
@@ -1197,14 +1434,42 @@ function parseOptions(args: ReadonlyArray<string>, spec: OptionSpec): ParsedOpti
       const attached = arg.slice(p + 1)
       const value = attached === '' ? args[k + 1] : attached
       if (value === undefined) return { unknown: arg }
-      values.set(`-${letter}`, value)
+      all.push([`-${letter}`, value])
       if (attached === '') consumed = 2
       break
     }
     k += consumed
   }
 
-  return { rest: args.slice(Math.min(args.length, k + (spec.positionals ?? 0))), flags, values }
+  return { rest: args.slice(Math.min(args.length, k + (spec.positionals ?? 0))), flags, values: new Map(all), all }
+}
+
+/** Options spelled as whole words, as `xcrun -sdk macosx`: the words after them, and the options seen; or the first one it does not know. */
+function wordOptions(
+  args: ReadonlyArray<string>,
+  flags: ReadonlyArray<string>,
+  values: ReadonlyArray<string>
+): { readonly rest: ReadonlyArray<string>; readonly seen: ReadonlyArray<string> } | { readonly unknown: string } {
+  const seen: string[] = []
+  let k = 0
+  for (; k < args.length && args[k].startsWith('-'); k++) {
+    if (args[k] === '--') return { rest: args.slice(k + 1), seen }
+    const [name, value] = splitOption(args[k])
+    if (!flags.includes(name) && !values.includes(name)) return { unknown: args[k] }
+    seen.push(name)
+    if (values.includes(name) && value === undefined) k++
+  }
+  return { rest: args.slice(k), seen }
+}
+
+/** Each way to take one word from each group, or undefined when there are more than `limit`. */
+function product(groups: ReadonlyArray<ReadonlyArray<string>>, limit: number): string[][] | undefined {
+  let combinations: string[][] = [[]]
+  for (const group of groups) {
+    combinations = combinations.flatMap((combination) => group.map((word) => [...combination, word]))
+    if (combinations.length > limit) return undefined
+  }
+  return combinations
 }
 
 /** An interpreter's arguments: the code its options give, the module it runs, the file, or none of them (its input). */

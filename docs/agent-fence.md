@@ -87,8 +87,8 @@ and D1's local database (`--local`, the default) need no one.
 The hook parses a command line with tree-sitter's bash grammar and judges
 every command the tree holds: in lists, pipes, subshells, `$(...)`,
 heredocs and arithmetic, in `sh -c`, `eval` and `trap` strings, behind
-`env`, `sudo`, `xargs`, `npx` and `bunx`, in the `package.json` scripts a
-runner names, so `bun run deploy` asks when its script deploys, and in the
+`env`, `sudo`, `xargs`, `npx`, `cross-env` and `parallel`, in awk and
+AppleScript, in the `package.json` scripts a runner names, so `bun run deploy` asks when its script deploys, and in the
 scripts and programs a command runs. A `cd` on the line moves the directory
 it reads paths and scripts from; it compares paths without `.`, `..` or case.
 

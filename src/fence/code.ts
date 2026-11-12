@@ -5,7 +5,7 @@
  */
 
 /** The languages whose code the fence reads, and the shell. */
-export type CodeKind = 'js' | 'python' | 'perl' | 'ruby' | 'php'
+export type CodeKind = 'js' | 'python' | 'perl' | 'ruby' | 'php' | 'awk' | 'applescript'
 
 /**
  * Calls that start a process, in each language. Code that names one may run
@@ -17,6 +17,10 @@ const STARTS_PROCESS: Readonly<Record<CodeKind, RegExp>> = {
   perl: /\bsystem\b|\bexec\b|`|\bqx\b|\bopen\s*\(?[^;]*\||\bfork\b|IPC::/,
   ruby: /\bsystem\b|\bexec\b|`|%x|\bspawn\b|IO\s*\.\s*popen|Open3|PTY|\bfork\b/,
   php: /\b(?:exec|shell_exec|system|passthru|popen|proc_open|pcntl_exec)\s*\(|`/,
+  // `system(...)`, `cmd | getline`, `print | cmd` and gawk's `|&`.
+  awk: /\bsystem\s*\(|\|\s*getline|\|&|\bprintf?\b[^;{}\n]*?(?<!\|)\|(?!\|)/,
+  // `do shell script`, Terminal's `do script` and JavaScript's `doShellScript`.
+  applescript: /\bdo\s+(?:shell\s+)?script\b|\bdo(?:Shell)?Script\b/i,
 }
 
 /** Whether a program's code can start a process. */
@@ -26,14 +30,16 @@ export function startsProcess(source: string, kind: CodeKind): boolean {
 
 /** The language a file runs in: by its `#!` line, then by its extension; a shell script otherwise. */
 export function codeKind(path: string, source: string): CodeKind | 'shell' {
-  const shebang = /^#!.*?\b(node|bun|deno|tsx|ts-node|python[\d.]*|perl|ruby|php|sh|bash|zsh|dash|ksh)\b/.exec(source)?.[1]
-  const name = shebang ?? /\.([cm]?[jt]sx?|py|pl|rb|php)$/i.exec(path)?.[1]?.toLowerCase() ?? ''
+  const shebang = /^#!.*?\b(node|bun|deno|tsx|ts-node|python[\d.]*|perl|ruby|php|[gmn]?awk|osascript|sh|bash|zsh|dash|ksh)\b/.exec(source)?.[1]
+  const name = shebang ?? /\.([cm]?[jt]sx?|py|pl|rb|php|awk|applescript)$/i.exec(path)?.[1]?.toLowerCase() ?? ''
 
   if (/^(node|bun|deno|tsx|ts-node|[cm]?[jt]sx?)$/.test(name)) return 'js'
   if (/^(python[\d.]*|py)$/.test(name)) return 'python'
   if (name === 'perl' || name === 'pl') return 'perl'
   if (name === 'ruby' || name === 'rb') return 'ruby'
   if (name === 'php') return 'php'
+  if (name.endsWith('awk')) return 'awk'
+  if (name === 'osascript' || name === 'applescript') return 'applescript'
   return 'shell'
 }
 

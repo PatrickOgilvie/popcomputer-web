@@ -224,8 +224,77 @@ describe('machine 61: the policy walkers', () => {
     expect(decision('coproc NAME { git commit -n -m x; }')).toBe('deny')
   })
 
+  test('M61.T17: commands that run the command their arguments give', () => {
+    for (const command of [
+      'arch -arm64 git commit -n -m x',
+      'arch -arch x86_64 -e HUSKY=0 git commit -m x',
+      'xcrun git commit -n -m x',
+      'xcrun -sdk macosx git commit -n -m x',
+      'script -q /dev/null git commit -n -m x',
+      "script -qc 'git commit -n -m x' /dev/null",
+      'cross-env HUSKY=0 git commit -m x',
+      'npx cross-env HUSKY=0 git commit -m x',
+      "cross-env-shell 'git commit -n -m x'",
+      'npx dotenv -- git commit -n -m x',
+      'dotenv -e .env git commit -n -m x',
+      'dotenv -v HUSKY=0 -- git commit -m x',
+      "npx concurrently 'git commit -n -m x'",
+      "concurrently -n a,b 'bun test' 'git commit -n -m x'",
+      'flock /tmp/l git commit -n -m x',
+      "flock -w 5 /tmp/l -c 'git commit -n -m x'",
+      "parallel ::: 'git commit -n -m x'",
+      'parallel git ::: commit ::: -n',
+      "parallel -j 4 ::: 'git commit -n -m x'",
+      "echo 'git commit -n -m x' | parallel",
+      "ssh -o ProxyCommand='git commit -n -m x' x",
+      "ssh -o 'ProxyCommand git commit -n -m x' x",
+      "ssh -oLocalCommand='git commit -n -m x' x",
+    ]) {
+      expect(decision(command)).toBe('deny')
+    }
+    expect(commandPolicy("concurrently 'npm:deploy'", { scripts: { deploy: 'wrangler deploy' } })).toMatchObject({ decision: 'ask', rule: 'deploy' })
+    expect(commandPolicy("concurrently 'npm:watch-*'")).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('parallel :::: commands.txt')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('cat commands.txt | parallel')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('xcrun --bogus git status')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('dotenv -c git status')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('script .git/hooks/pre-commit true')).toMatchObject({ decision: 'deny', rule: 'hook-bypass' })
+    for (const command of ['xcrun -- git commit -n -m x', 'xcrun -v git commit -n -m x', 'dotenv -c prod -- git commit -n -m x']) expect(decision(command)).toBe('deny')
+    // `xcrun -f` names the tool's path, and runs nothing.
+    expect(decision('xcrun -f git commit -n -m x')).toBe('allow')
+    for (const command of [
+      'script --bogus x',
+      'script -c "$CMD" /dev/null',
+      'flock --bogus /tmp/l true',
+      'flock /tmp/l -c "$CMD"',
+      'ssh -Z host',
+      "awk --bogus '{}'",
+      'dotenv --bogus -- bun test',
+      `parallel echo ::: ${Array.from({ length: 33 }, (_, at) => `a${at}`).join(' ')}`,
+      'ssh -o ProxyCommand=./proxy.sh host',
+    ]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    }
+    expect(commandPolicy('script -c "$CMD" /dev/null')).toMatchObject({ reason: expect.stringContaining('a command for script that an expansion gives') })
+    expect(commandPolicy('flock /tmp/l -c "$CMD"')).toMatchObject({ reason: expect.stringContaining('a command for flock that an expansion gives') })
+    // What ssh runs on the host is read for the rules only: a script there is no file the fence opens here.
+    for (const command of ['ssh host ./scripts/run.sh', 'ssh -o RemoteCommand=./scripts/run.sh host']) expect(decision(command)).toBe('allow')
+    expect(decision(`parallel echo ::: ${Array.from({ length: 32 }, (_, at) => `a${at}`).join(' ')}`)).toBe('allow')
+  })
+
+  test('M61.T17: programs whose code runs a command', () => {
+    expect(decision(`awk 'BEGIN{system("git commit -n -m x")}'`)).toBe('deny')
+    expect(decision(`gawk -v x=1 'BEGIN{system("git commit -n -m x")}'`)).toBe('deny')
+    expect(decision(`osascript -e 'do shell script "git commit -n -m x"'`)).toBe('deny')
+    expect(commandPolicy(`awk 'BEGIN{system("date")}'`)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy(`awk -f prog.awk notes.txt`)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy(`osascript -e 'tell app "Terminal" to do script "date"'`)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision("awk -F, '{print $1}' notes.txt")).toBe('allow')
+    expect(decision(`osascript -e 'display notification "done"'`)).toBe('allow')
+  })
+
   test('M61.T18: runners of JavaScript and TypeScript', () => {
-    for (const runner of ['tsx', 'ts-node', 'deno run']) expect(decision(`${runner} scripts/x.ts`, { readFile })).toBe('deny')
+    for (const runner of ['tsx', 'ts-node', 'deno run', 'babel-node', 'ts-node-dev', 'ts-node-dev --respawn', 'tsnd']) expect(decision(`${runner} scripts/x.ts`, { readFile })).toBe('deny')
   })
 
   test('M61.T22: HUSKY set to what the fence cannot read', () => {
