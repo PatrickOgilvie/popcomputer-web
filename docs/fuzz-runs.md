@@ -38,6 +38,15 @@ case left, reads the same way, so a failure that comes back on a quiet machine
 is the application's. Each case should start from fresh state, or an earlier
 case can always be the cause.
 
+## On PGlite
+
+Share one database between the cases and empty it as each starts, with
+`reusableDatabase()` from [A database for tests](test-database.md), rather
+than starting one per case. Starting PGlite takes about a fifth of a second,
+many times what a case's requests take, so a run of thousands with a database
+per case spends nearly all of it starting databases. Emptying one takes a few
+milliseconds and starts each case from the same rows.
+
 ## On D1
 
 Give each case a database of its own, `await databases.fresh()` from `testD1`,

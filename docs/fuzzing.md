@@ -68,7 +68,7 @@ reach their actions; the rest send every part any way.
 
 ```ts
 // src/requests.test.ts
-import { test } from 'bun:test'
+import { afterAll, test } from 'bun:test'
 import { brokenPromises, fuzz, fuzzRequest, fuzzTimeout, leaks, ownership, refusedWrites, sendFuzzRequest, strangerWrites } from '@popcomputer/web/fuzz'
 import { signedIn, testEnv } from '@popcomputer/web/testing'
 import app, { routes } from './app'
@@ -76,7 +76,7 @@ import { paths } from './paths'
 import './routes'
 import { projects, user } from './schema'
 import { testBindings } from './test-bindings'
-import { freshDatabase } from './test-databases'
+import { reusableDatabase } from './test-databases'
 
 // Text only each person's private project holds: an answer that shows it to anyone else leaked it.
 const canaries = { ada: 'canary-ada-7f3a', grace: 'canary-grace-91c2' }
@@ -97,43 +97,43 @@ const requests = fuzzRequest({
   people: ['ada', 'grace'],
 })
 
+// One database for every case, emptied as each starts: a new one takes many times what a request does.
+const { db, empty, close } = reusableDatabase()
+
+afterAll(close)
+
 test('any request keeps the rules', () => fuzz(requests, async (sent) => {
-  const { db, close } = freshDatabase()
+  await empty()
+  await db.insert(user).values([
+    { id: 'ada', name: 'Ada', email: 'ada@example.com' },
+    { id: 'grace', name: 'Grace', email: 'grace@example.com' },
+  ])
+  await db.insert(projects).values([
+    { id: 'p-ada', userId: 'ada', name: canaries.ada, slug: 'secret' },
+    { id: 'p-grace', userId: 'grace', name: canaries.grace, slug: 'secret-too' },
+    { id: 'p-public', userId: 'ada', name: 'Apollo', slug: 'apollo', isPublic: true },
+  ])
 
-  try {
-    await db.insert(user).values([
-      { id: 'ada', name: 'Ada', email: 'ada@example.com' },
-      { id: 'grace', name: 'Grace', email: 'grace@example.com' },
-    ])
-    await db.insert(projects).values([
-      { id: 'p-ada', userId: 'ada', name: canaries.ada, slug: 'secret' },
-      { id: 'p-grace', userId: 'grace', name: canaries.grace, slug: 'secret-too' },
-      { id: 'p-public', userId: 'ada', name: 'Apollo', slug: 'apollo', isPublic: true },
-    ])
+  // Whole rows: the rules see only the columns they are given.
+  const rows = () => db.select().from(projects).orderBy(projects.id)
+  const env = sent.person === null
+    ? testEnv(testBindings, { database: db })
+    : testEnv(signedIn({ id: sent.person }), testBindings, { database: db })
+  const before = await rows()
+  const answer = await sendFuzzRequest(app, sent, env)
 
-    // Whole rows: the rules see only the columns they are given.
-    const rows = () => db.select().from(projects).orderBy(projects.id)
-    const env = sent.person === null
-      ? testEnv(testBindings, { database: db })
-      : testEnv(signedIn({ id: sent.person }), testBindings, { database: db })
-    const before = await rows()
-    const answer = await sendFuzzRequest(app, sent, env)
+  // A request fetch refuses to make never reaches the Worker.
+  if (answer === undefined) return undefined
 
-    // A request fetch refuses to make never reaches the Worker.
-    if (answer === undefined) return undefined
+  const change = { before, after: await rows() }
 
-    const change = { before, after: await rows() }
-
-    return [
-      ...brokenPromises(sent, answer),
-      ...leaks(sent, answer, canaries),
-      ...strangerWrites(sent, change, ownership(routes, 'projects')),
-      ...refusedWrites(answer, change),
-    ]
-  } finally {
-    await close()
-  }
-}, { runs: 200 }), fuzzTimeout)
+  return [
+    ...brokenPromises(sent, answer),
+    ...leaks(sent, answer, canaries),
+    ...strangerWrites(sent, change, ownership(routes, 'projects')),
+    ...refusedWrites(answer, change),
+  ]
+}), fuzzTimeout)
 ```
 
 `params` is typed by the paths, so a new placeholder is a type error here
@@ -165,9 +165,9 @@ The rules each answer keeps:
   every rule, so also show that each write happens, as
   [Reaching every write](fuzz-writes.md) does.
 
-Each request starts from the database the test seeded. To send sequences of
-them, each naming the records earlier ones created, see
-[Fuzzing sessions](fuzz-sessions.md).
+Each request starts from the seed: the cases share one database, emptied as
+each starts ([A database for tests](test-database.md)). For sequences naming
+records earlier requests created, see [Fuzzing sessions](fuzz-sessions.md).
 
 ## Building on it
 

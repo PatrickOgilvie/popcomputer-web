@@ -110,10 +110,31 @@ export function freshDatabase() {
 
   return { db: drizzle(client, { schema }), close: () => client.close() }
 }
+
+// Every table the migrations made, in any schema, emptied with its ids counting from 1 again.
+const tables = await migrated.query<{ name: string }>(
+  `select format('%I.%I', schemaname, tablename) as name from pg_tables where schemaname not in ('pg_catalog', 'information_schema')`
+)
+const emptyAll = `truncate ${tables.rows.map((table) => table.name).join(', ')} restart identity cascade`
+
+// One database for a fuzz property's cases, how to empty it as each starts, and how to close it.
+export function reusableDatabase() {
+  const client = new PGlite({ loadDataDir: snapshot })
+
+  return { db: drizzle(client, { schema }), empty: () => client.exec(emptyAll), close: () => client.close() }
+}
 ```
 
 A test opens one in `beforeEach`, passes `db` as `testEnv`'s `database`, and
 calls `close()` in `afterEach`.
+
+A `fuzz` property runs hundreds of cases, and starting PGlite takes about a
+fifth of a second, many times what a case's requests take. Its cases share
+one database from `reusableDatabase()`, and each calls `empty()` before it
+seeds: that empties every table, those no rule watches too, and restarts
+their ids, in a few milliseconds, so each case starts as a new copy would.
+Empty it as a case starts, not as it ends, so a case that throws leaves the
+next nothing. [Fuzzing](fuzzing.md#requests-to-the-application) shows one.
 
 A test whose visitors sign in through the application, as a `testBrowser`
 does, needs no layer: `testEnv(testBindings, { database: testDb })`.

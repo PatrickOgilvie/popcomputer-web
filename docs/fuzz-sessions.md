@@ -44,7 +44,7 @@ model:
 
 ```ts
 // src/sessions.test.ts
-import { test } from 'bun:test'
+import { afterAll, test } from 'bun:test'
 import {
   brokenPromises,
   fuzz,
@@ -63,7 +63,7 @@ import { paths } from './paths'
 import './routes'
 import { projects, user } from './schema'
 import { testBindings } from './test-bindings'
-import { freshDatabase } from './test-databases'
+import { reusableDatabase } from './test-databases'
 
 const canaries = { ada: 'canary-ada-7f3a', grace: 'canary-grace-91c2' }
 
@@ -94,53 +94,53 @@ function created(sent: FuzzRequest, answer: FuzzAnswer) {
   return sent.method.toUpperCase() === 'POST' && id !== undefined ? { project: id } : undefined
 }
 
+// One database for every session, emptied as each starts.
+const { db, empty, close } = reusableDatabase()
+
+afterAll(close)
+
 test('any session keeps the rules after each step', () => fuzz(sessions, async (steps) => {
-  const { db, close } = freshDatabase()
+  await empty()
+  await db.insert(user).values([
+    { id: 'ada', name: 'Ada', email: 'ada@example.com' },
+    { id: 'grace', name: 'Grace', email: 'grace@example.com' },
+  ])
+  await db.insert(projects).values([
+    { id: 'p-ada', userId: 'ada', name: canaries.ada, slug: 'secret' },
+    { id: 'p-grace', userId: 'grace', name: canaries.grace, slug: 'secret-too' },
+  ])
 
-  try {
-    await db.insert(user).values([
-      { id: 'ada', name: 'Ada', email: 'ada@example.com' },
-      { id: 'grace', name: 'Grace', email: 'grace@example.com' },
-    ])
-    await db.insert(projects).values([
-      { id: 'p-ada', userId: 'ada', name: canaries.ada, slug: 'secret' },
-      { id: 'p-grace', userId: 'grace', name: canaries.grace, slug: 'secret-too' },
-    ])
+  const session = startFuzzSession(app, {
+    paths,
+    env: (person: 'ada' | 'grace' | null) => person === null
+      ? testEnv(testBindings, { database: db })
+      : testEnv(signedIn({ id: person }), testBindings, { database: db }),
+    owners: { 'p-ada': 'ada', 'p-grace': 'grace' },
+    created,
+  })
+  // Whole rows: the rules see only the columns they are given.
+  const rows = () => db.select().from(projects).orderBy(projects.id)
 
-    const session = startFuzzSession(app, {
-      paths,
-      env: (person: 'ada' | 'grace' | null) => person === null
-        ? testEnv(testBindings, { database: db })
-        : testEnv(signedIn({ id: person }), testBindings, { database: db }),
-      owners: { 'p-ada': 'ada', 'p-grace': 'grace' },
-      created,
-    })
-    // Whole rows: the rules see only the columns they are given.
-    const rows = () => db.select().from(projects).orderBy(projects.id)
+  for (const step of steps) {
+    const before = await rows()
+    const result = await session.send(step)
 
-    for (const step of steps) {
-      const before = await rows()
-      const result = await session.send(step)
+    if (result === undefined) continue
 
-      if (result === undefined) continue
+    const { sent, answer } = result
+    const change = { before, after: await rows() }
+    const broken = [
+      ...brokenPromises(sent, answer),
+      ...leaks(sent, answer, session.canaries(sent.person, canaries)),
+      ...strangerWrites(sent, change, { id: (row) => row.id, owner: (row) => session.ownerOf(row.id) ?? 'no one' }),
+      ...refusedWrites(answer, change),
+    ]
 
-      const { sent, answer } = result
-      const change = { before, after: await rows() }
-      const broken = [
-        ...brokenPromises(sent, answer),
-        ...leaks(sent, answer, session.canaries(sent.person, canaries)),
-        ...strangerWrites(sent, change, { id: (row) => row.id, owner: (row) => session.ownerOf(row.id) ?? 'no one' }),
-        ...refusedWrites(answer, change),
-      ]
-
-      // The steps so far, with the ids they named, and what the last one broke.
-      if (broken.length > 0) return [...session.history, ...broken]
-    }
-
-    return undefined
-  } finally {
-    await close()
+    // The steps so far, with the ids they named, and what the last one broke.
+    if (broken.length > 0) return [...session.history, ...broken]
   }
+
+  return undefined
 }, { runs: 100 }), fuzzTimeout)
 ```
 
