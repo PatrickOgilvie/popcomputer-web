@@ -71,14 +71,14 @@ agent's hook passes it, and answers in that agent's format.
 
 | It finds | For example | It |
 | --- | --- | --- |
-| A way around the commit gate | `git commit --no-verify`, `-n`, `HUSKY=0`, `LEFTHOOK=0`, `-c core.hooksPath=...`, `lefthook uninstall`, a write into `.git/hooks/` or `.git/config`, a commit written by hand with `git commit-tree`, `git fast-import` or `git hash-object -t commit` | refuses it |
+| A way around the commit gate | `git commit --no-verify`, `-n`, `HUSKY=0`, `LEFTHOOK=0`, `-c core.hooksPath=...`, `lefthook uninstall`, a write into `.git/hooks/` or `.git/config`, by a redirect, a program's code, a patch or a link to one, a commit written by hand with `git commit-tree`, `git fast-import` or `git hash-object -t commit` | refuses it |
 | A commit the gate did not check | `git pull`, `merge`, `rebase`, `cherry-pick`, `revert` and `am`; settings given by `git -c` or `GIT_CONFIG_*`, and `GIT_DIR`, `HOME` or `XDG_CONFIG_HOME`; a program `GIT_PAGER`, `GIT_SSH_COMMAND` or `EDITOR` names, read as a command | asks the owner |
 | A deploy | `wrangler deploy`, `wrangler versions deploy`, `wrangler rollback` | asks the owner |
 | Remote data | `wrangler d1 migrations apply --remote`, `wrangler d1 execute --remote`, any `wrangler ... --remote` | asks the owner |
 | A secret | `wrangler secret put`, `bulk` or `delete` | asks the owner |
 | A release | `npm publish`, `bun publish`, `pnpm publish` | asks the owner |
 | A push | `git push`, `git send-pack` | asks the owner |
-| A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/` or the directory `core.hooksPath` names, `.husky/`, `.pre-commit-config.yaml`, `.simple-git-hooks.json`, `.claude/settings.json`, `lint-debt.json`, `popweb-fence debt --allow-increase` | asks the owner |
+| A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/` or the directory `core.hooksPath` names, `.husky/`, `.pre-commit-config.yaml`, `.simple-git-hooks.json`, `.claude/settings.json`, `lint-debt.json`, written as they are or by `git checkout <commit> -- .`, `git reset --hard <commit>` or `git apply`; `popweb-fence debt --allow-increase` | asks the owner |
 | What it cannot read | a command name a variable gives, `bash -c "$CMD"`, an alias, a script it cannot open, code that can start a process, a pipe into a shell from a command whose output it cannot know | asks the owner |
 
 `wrangler deploy --dry-run`, `npm publish --dry-run`, `git push --dry-run`

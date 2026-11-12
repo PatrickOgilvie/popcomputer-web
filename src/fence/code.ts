@@ -28,6 +28,32 @@ export function startsProcess(source: string, kind: CodeKind): boolean {
   return STARTS_PROCESS[kind].test(source)
 }
 
+/**
+ * Calls that write, move, link or remove a file, in each language: code that
+ * holds one may change any file its strings name. A call that only reads,
+ * as python's `open(path)`, is none.
+ */
+const WRITES_FILES: Readonly<Record<CodeKind, RegExp>> = {
+  js: /\b(?:writeFile|appendFile|createWriteStream|copyFile|cp|rename|unlink|rm|rmdir|symlink|link|chmod|truncate|open|outputFile|writeJson|move|remove)(?:Sync)?\s*\(|\bBun\s*\.\s*write\b|\bDeno\s*\.\s*(?:writeTextFile|writeFile|remove|rename|symlink|link|chmod|truncate|open|create|copyFile)\b/,
+  python:
+    /\bopen\s*\([^()]*,\s*(?:mode\s*=\s*)?['"][rbt]*[wax+]|\.open\s*\(\s*(?:mode\s*=\s*)?['"][rbt]*[wax+]|\.write_(?:text|bytes)\s*\(|\bshutil\b|\bos\s*\.\s*(?:rename|replace|remove|unlink|symlink|link|chmod|truncate)\b|\.(?:unlink|rename|symlink_to|hardlink_to|chmod|touch)\s*\(/,
+  perl: /\bopen\b[^;]*>|\b(?:unlink|rename|symlink|link|chmod|truncate)\b/,
+  ruby: /\bFile\s*\.\s*(?:write|rename|delete|unlink|symlink|link|chmod|truncate)\b|\bFile\s*\.\s*open\s*\([^)]*,\s*['"][rbt]*[wax+]|\bIO\s*\.\s*write\b|\bFileUtils\b/,
+  php: /\b(?:file_put_contents|fopen|rename|unlink|symlink|link|chmod|copy|touch)\s*\(/,
+  awk: /\bprintf?\b[^;{}\n]*>/,
+  applescript: /\bwrite\b|\bopen\s+for\s+access\b/i,
+}
+
+/** Whether a program's code can change a file a string of it names. */
+export function writesFiles(source: string, kind: CodeKind): boolean {
+  return WRITES_FILES[kind].test(source)
+}
+
+/** The text of each string literal of a program. */
+export function stringsInCode(source: string, kind: CodeKind): string[] {
+  return literals(source, kind).map((literal) => literal.text)
+}
+
 /** The language a file runs in: by its `#!` line, then by its extension; a shell script otherwise. */
 export function codeKind(path: string, source: string): CodeKind | 'shell' {
   const shebang = /^#!.*?\b(node|bun|deno|tsx|ts-node|python[\d.]*|perl|ruby|php|[gmn]?awk|osascript|sh|bash|zsh|dash|ksh)\b/.exec(source)?.[1]

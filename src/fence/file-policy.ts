@@ -5,7 +5,7 @@
  * regard to case, as macOS's file systems match it.
  */
 import { isAbsolutePath, joinPath, normalizePath } from './path.js'
-import { GLOB_ANY, GLOB_ONE, isDynamic, isGlob, known } from './shell.js'
+import { GLOB_ANY, GLOB_ONE, UNREAD, UNREAD_WORDS, isDynamic, isGlob, known } from './shell.js'
 import type { Finding } from './verdict.js'
 
 interface ProtectedPath {
@@ -76,6 +76,42 @@ export function writeFindings(word: string, cwd: string | undefined, command: st
 
   const text = known(word)
   return text === '' ? [] : pathFindings(joinPath(cwd, text) ?? text, command, hooksPath)
+}
+
+/**
+ * A link to `target`, as `ln` makes one: a change to the protected path it
+ * leads to, or to those below the directory it leads to, which a write
+ * through the link changes under a name the path policy does not know. A
+ * target the link's own directory resolves is matched by its last parts.
+ */
+export function linkFindings(target: string, command: string, hooksPath?: string): Finding[] {
+  const path = normalizePath(known(target)).toLowerCase()
+  const leadsTo = (example: string) => {
+    const parts = example.toLowerCase().split('/')
+    return parts.some((_, end) => {
+      const above = parts.slice(0, end + 1).join('/')
+      return path === above || path.endsWith(`/${above}`)
+    })
+  }
+  const led = protectedPaths(hooksPath).flatMap((entry) => entry.examples.filter(leadsTo).map((example) => finding(entry.decision, example, command)))
+  return [...pathFindings(known(target), command, hooksPath), ...led]
+}
+
+/**
+ * The fence's files a git pathspec, as `.`, `src` or `*.json`, covers from
+ * the directory `cwd`. Magic, as `:/`, an expansion, or a directory the fence
+ * cannot place covers the whole tree; git's own directory holds none.
+ */
+export function pathspecCovers(spec: string, cwd: string | undefined, hooksPath?: string): string[] {
+  const examples = protectedPaths(hooksPath).flatMap((entry) => entry.examples).filter((example) => !/^(\.git|node_modules)\//i.test(example))
+  const unknown = spec.startsWith(':') || spec.includes(UNREAD) || spec.includes(UNREAD_WORDS)
+  const path = unknown ? undefined : joinPath(cwd, spec)
+  if (path === undefined || path === '' || path.startsWith('..') || isAbsolutePath(path)) return examples
+
+  // git matches a pathspec's `*` across `/`, and the files below a directory it names.
+  const source = [...path].map((char) => (char === '*' || char === GLOB_ANY ? '.*' : char === '?' || char === GLOB_ONE ? '[^/]' : escapeRegExp(char))).join('')
+  const pattern = new RegExp(`^${source}(/.*)?$`, 'i')
+  return examples.filter((example) => pattern.test(example))
 }
 
 /** A path, or a glob, as each protected file it names: the files the path policy gives as examples. */

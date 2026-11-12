@@ -131,6 +131,14 @@ const allowed: ReadonlyArray<string> = [
   'git grep -n TODO src',
   'git shortlog -sn',
   'git config alias.lg "log --oneline" && git lg -n 5',
+  // Writes of files the fence does not protect, and reads of those it does.
+  'git checkout -- .',
+  'git restore --staged .',
+  'git reset --soft HEAD~1',
+  'git apply --check fix.patch',
+  'ln -s ../shared/config.ts src/config.ts',
+  `node -e 'console.log(require("./lint-debt.json").count)'`,
+  `node -e 'require("fs").writeFileSync("dist/out.json", "{}")'`,
 ]
 
 const refused: ReadonlyArray<readonly [string, Expected]> = [

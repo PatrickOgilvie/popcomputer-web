@@ -218,6 +218,61 @@ describe('machine 61: the policy walkers', () => {
     expect(decision('find . -name "*.tmp" -delete')).toBe('allow')
   })
 
+  test('M61.T16: code that writes the paths its strings name', () => {
+    for (const command of [
+      `node -e 'require("fs").writeFileSync(".git/hooks/pre-commit","exit 0")'`,
+      `python3 -c 'open(".git/hooks/pre-commit","w").write("exit 0")'`,
+      `perl -e 'open(F, ">.git/hooks/pre-commit"); print F "exit 0"'`,
+      `ruby -e 'File.write(".git/hooks/pre-commit", "exit 0")'`,
+      `php -r 'file_put_contents(".git/hooks/pre-commit", "exit 0");'`,
+      `awk 'BEGIN { print "exit 0" > ".git/hooks/pre-commit" }'`,
+      `bun -e 'await Bun.write(".git/config", "")'`,
+    ]) {
+      expect(decision(command)).toBe('deny')
+    }
+    expect(commandPolicy(`node -e 'require("fs").writeFileSync("lint-debt.json", "{}")'`)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    const hooks = 'import { writeFileSync } from "node:fs"\nwriteFileSync(".git/hooks/pre-commit", "exit 0")\n'
+    expect(decision('bun scripts/hooks.ts', { readFile: (path) => (path === 'scripts/hooks.ts' ? hooks : undefined) })).toBe('deny')
+    // Reading one changes nothing.
+    expect(decision(`node -e 'console.log(require("fs").readFileSync(".git/hooks/pre-commit", "utf8"))'`)).toBe('allow')
+    expect(decision(`python3 -c 'print(open("lint-debt.json").read())'`)).toBe('allow')
+  })
+
+  test('M61.T16: gawk -i inplace and patch change the files they name', () => {
+    expect(decision("awk -i inplace '{print}' .git/hooks/pre-commit")).toBe('deny')
+    expect(commandPolicy("gawk --include=inplace -f fix.awk lint-debt.json", { readFile: () => '{ print }' })).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(decision("awk '{print}' .git/hooks/pre-commit")).toBe('allow')
+
+    const patch = (path: string) => `--- a/${path}\t2026-01-01\n+++ b/${path}\n@@ -1 +1 @@\n-x\n+exit 0\n`
+    const patches: Readonly<Record<string, string>> = {
+      'hooks.patch': patch('.git/hooks/pre-commit'),
+      'debt.patch': patch('lint-debt.json'),
+      'src.patch': patch('src/app.ts'),
+      'renamed.patch': 'diff --git a/x.json b/lint-debt.json\nrename from x.json\nrename to lint-debt.json\n',
+      'lint-debt.json': '{}\n',
+    }
+    const withPatches = { readFile: (path: string) => patches[path] }
+    expect(commandPolicy('patch -p1 < x.patch')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision('patch -p1 < hooks.patch', withPatches)).toBe('deny')
+    expect(commandPolicy('patch -p1 -i debt.patch', withPatches)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(commandPolicy('cat debt.patch | patch -p1', withPatches)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('patch lint-debt.json src.patch', withPatches)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(commandPolicy('patch -o lint-debt.json -i src.patch', withPatches)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(decision('patch -d .git/hooks -p1 < src.patch', withPatches)).toBe('deny')
+    expect(commandPolicy('patch --bogus < src.patch', withPatches)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision('patch -p1 < src.patch', withPatches)).toBe('allow')
+    // The file a patch is read from is not one it writes.
+    expect(decision('patch -p1 -i lint-debt.json', withPatches)).toBe('allow')
+    expect(decision('patch --dry-run -p1 < hooks.patch', withPatches)).toBe('allow')
+    expect(commandPolicy('git apply renamed.patch', withPatches)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(decision('git apply --directory=.git/hooks src.patch', withPatches)).toBe('deny')
+    expect(decision('git apply < hooks.patch', withPatches)).toBe('deny')
+    expect(decision('git apply src.patch', withPatches)).toBe('allow')
+    expect(decision('git apply --stat hooks.patch', withPatches)).toBe('allow')
+    expect(decision('git apply --check --apply src.patch', withPatches)).toBe('allow')
+    expect(decision('git apply --check --apply hooks.patch', withPatches)).toBe('deny')
+  })
+
   test('M61.T17: commands that run a command', () => {
     expect(decision("trap 'git commit -n -m x' EXIT")).toBe('deny')
     expect(decision('coproc git commit -n -m x')).toBe('deny')
@@ -367,6 +422,71 @@ describe('machine 61: the policy walkers', () => {
     expect(decision(`bun -pe 'require("child_process").execSync("git commit -n -m x")'`)).toBe('deny')
     expect(decision(`bun --eval='require("child_process").execSync("git commit -n -m x")'`)).toBe('deny')
     expect(decision(`python3 -Bc 'import os; os.system("git commit -n -m x")'`)).toBe('deny')
+  })
+
+  test('M48: the ledger written from another commit, into the index, or by git from a patch', () => {
+    for (const command of [
+      'git apply x.patch',
+      'git apply --cached x.patch',
+      'git update-index --cacheinfo 100644,abc,lint-debt.json',
+      'git update-index --cacheinfo 100644 abc lint-debt.json',
+      'git update-index --force-remove lint-debt.json',
+      'git update-index --index-info < entries.txt',
+      'git checkout HEAD~1 -- .',
+      'git checkout HEAD~1 .',
+      'git checkout main -- "*.json"',
+      'git checkout HEAD~1 -- :/',
+      'git restore -s HEAD~1 -- .',
+      'git restore --source=main .',
+      'git restore --source main -- .',
+      'git reset HEAD~1 -- lint-debt.json',
+      'git reset main -- .',
+      'git reset --hard HEAD~1',
+      'git reset --keep HEAD~1',
+      'git read-tree HEAD~1',
+      'git checkout-index -f lint-debt.json',
+      'git checkout-index -a --prefix=.githooks/',
+    ]) {
+      expect(decision(command)).not.toBe('allow')
+    }
+    expect(decision('git checkout-index -a --prefix=.git/hooks/')).toBe('deny')
+    expect(commandPolicy('git update-index --index-info <<EOF\n100644 abc\tlint-debt.json\nEOF')).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    // A pathspec the fence cannot place covers the whole tree; a glob covers what it matches.
+    for (const command of [
+      'git checkout HEAD~1 -- "$DIR"',
+      'git checkout HEAD~1 -- $DIR',
+      'cd "$X" && git checkout HEAD~1 -- src',
+      'git checkout HEAD~1 -- ..',
+      'git checkout HEAD~1 -- /repo',
+      'git checkout main -- *.json',
+      'git checkout main -- "lint-debt.jso?"',
+      'git checkout main -- lint-debt.jso?',
+    ]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    }
+    // From the index or HEAD, whose ledger is the one the gate holds the count to; a switch of branch; or no change.
+    for (const command of [
+      'git checkout -- .',
+      'git checkout HEAD -- .',
+      'git restore .',
+      'git restore --staged .',
+      'git reset --hard',
+      'git reset --hard HEAD',
+      'git reset --soft HEAD~1',
+      'git reset HEAD~1',
+      'git checkout main',
+      'git checkout main -- src',
+      'git checkout -- src/app.ts',
+      'git -C app checkout HEAD~1 -- .',
+      'git read-tree -n HEAD~1',
+      'git checkout-index -a',
+      'git checkout-index --prefix=.git/hooks/',
+      'git update-index --stdin <<< src/app.ts',
+      'git checkout main -- "src/*.ts"',
+      'git checkout main -- "?.ts"',
+    ]) {
+      expect(decision(command)).toBe('allow')
+    }
   })
 
   test("M61.T58, M48.T8: the fence's own CLI by another path", () => {
@@ -526,6 +646,32 @@ describe('machine 61: the policy walkers', () => {
     expect(decision('cd .git && echo x > hooks/pre-commit')).toBe('deny')
     expect(decision('cd "$DIR" && echo x > pre-commit')).toBe('ask')
     expect(decision('(cd .git/hooks); echo x > pre-commit')).toBe('allow')
+  })
+
+  test('M61.T134: a link to a protected path, or to a directory above one, changes it', () => {
+    for (const command of [
+      "ln -s .git/hooks h && echo 'exit 0' > h/pre-commit",
+      "ln -s .git/hooks/pre-commit x; echo 'exit 0' > x",
+      'ln -s .git g',
+      'ln -sf ../.git/config sub/c',
+      'ln .git/hooks/pre-commit x',
+      'ln -s .git/hooks',
+      'ln -s /repo/.git/hooks h',
+      'ln -s -t links .git/hooks',
+      'ln -s "$ROOT/.git" g',
+      'cp -s .git/hooks/pre-commit x',
+      'cp -al .git/hooks h',
+      'cp --link .git/config c',
+      'ln -s ~/.gitconfig g',
+    ]) {
+      expect(decision(command)).toBe('deny')
+    }
+    expect(commandPolicy('ln -s lint-debt.json debt.json')).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(commandPolicy('ln -s .githooks h')).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    // A path through `.` still names the files below it; a copy is no link.
+    for (const command of ['ln -s ../shared/config.ts src/config.ts', 'ln -s . self', 'cp .git/hooks/pre-commit /tmp/pre-commit', 'cp -a .git/hooks /tmp/hooks']) {
+      expect(decision(command)).toBe('allow')
+    }
   })
 
   test("M61.T136: git's config, where core.hooksPath lives", () => {
