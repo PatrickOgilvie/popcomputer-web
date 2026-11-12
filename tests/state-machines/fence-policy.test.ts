@@ -710,13 +710,21 @@ describe('machine 61: the policy walkers', () => {
       'cp -al .git/hooks h',
       'cp --link .git/config c',
       'ln -s ~/.gitconfig g',
+      'ln -s ../app/node_modules/@popcomputer/web/dist w',
     ]) {
       expect(decision(command)).toBe('deny')
     }
     expect(commandPolicy('ln -s lint-debt.json debt.json')).toMatchObject({ decision: 'ask', rule: 'fence-change' })
     expect(commandPolicy('ln -s .githooks h')).toMatchObject({ decision: 'ask', rule: 'fence-change' })
     // A path through `.` still names the files below it; a copy is no link.
-    for (const command of ['ln -s ../shared/config.ts src/config.ts', 'ln -s . self', 'cp .git/hooks/pre-commit /tmp/pre-commit', 'cp -a .git/hooks /tmp/hooks']) {
+    for (const command of [
+      'ln -s ../shared/config.ts src/config.ts',
+      'ln -s . self',
+      'ln -s /repo/node_modules node_modules',
+      'ln -s ../app/node_modules nm',
+      'cp .git/hooks/pre-commit /tmp/pre-commit',
+      'cp -a .git/hooks /tmp/hooks',
+    ]) {
       expect(decision(command)).toBe('allow')
     }
   })

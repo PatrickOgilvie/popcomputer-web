@@ -90,9 +90,10 @@ export function linkFindings(target: string, command: string, hooksPath?: string
   const path = normalizePath(known(target)).toLowerCase()
   const leadsTo = (example: string) => {
     const parts = example.toLowerCase().split('/')
+    // A link to a whole `node_modules`, as a worktree shares its checkout's, is ordinary; one into the fence's package is not.
     return parts.some((_, end) => {
       const above = parts.slice(0, end + 1).join('/')
-      return path === above || path.endsWith(`/${above}`)
+      return above !== 'node_modules' && (path === above || path.endsWith(`/${above}`))
     })
   }
   const led = protectedPaths(hooksPath).flatMap((entry) => entry.examples.filter(leadsTo).map((example) => finding(entry.decision, example, command)))
