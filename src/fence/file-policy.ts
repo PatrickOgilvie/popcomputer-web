@@ -19,6 +19,8 @@ const PROTECTED_PATHS: ReadonlyArray<ProtectedPath> = [
   // Files nobody reviews, whose change switches the gate or the agent's hook off: git's hooks and its config.
   { pattern: /(^|\/)\.git\/hooks(\/|$)/i, examples: ['.git/hooks/pre-commit', '.git/hooks/commit-msg', '.git/hooks/pre-push'], decision: 'deny' },
   { pattern: /(^|\/)\.git\/config$/i, examples: ['.git/config'], decision: 'deny' },
+  // The mark of the owner's `--allow-increase`, by which the gate takes a raised debt ledger.
+  { pattern: /(^|\/)\.git\/(?:worktrees\/[^/]+\/)?popweb-fence(\/|$)/i, examples: ['.git/popweb-fence/lint-debt.json.json'], decision: 'deny' },
   { pattern: /(^|\/)\.gitconfig$|(^|\/)\.config\/git\/config$/i, examples: [], decision: 'deny' },
   { pattern: /(^|\/)\.?lefthook-local\.ya?ml$/i, examples: ['lefthook-local.yml', '.lefthook-local.yml', 'lefthook-local.yaml'], decision: 'deny' },
   { pattern: /(^|\/)node_modules\/@popcomputer\/web\/dist\/fence(\/|$)/i, examples: ['node_modules/@popcomputer/web/dist/fence/cli.js'], decision: 'deny' },

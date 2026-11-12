@@ -460,4 +460,58 @@ describe('machine 48: the debt ledger ratchet', () => {
     expect(repo.ledger().raisedFrom).toBeString()
     expect(repo.debt(['--check']).status).toBe(1)
   }, 30_000)
+
+  test('M48.T26: a ledger naming HEAD as raisedFrom that --allow-increase did not write, as a patch or a stash can, is refused', () => {
+    const repo = repository()
+    const mark = join(repo.root, '.git', 'popweb-fence', 'lint-debt.json.json')
+    repo.write('src/b.ts', ANOTHER)
+    // The ledger the owner's step writes, byte for byte, written without it.
+    expect(repo.debt(['--update', '--allow-increase']).status).toBe(0)
+    expect(existsSync(mark)).toBe(true)
+    rmSync(mark)
+    repo.git('add', '-A')
+
+    expect(repo.debt(['--check']).output).toContain('`--allow-increase` did not write it on HEAD')
+    expect(repo.debt(['--check']).status).toBe(1)
+    // --update holds it to HEAD's count rather than take it as the owner's.
+    expect(repo.debt(['--update']).status).toBe(1)
+  }, 30_000)
+
+  test("M48.T26: --update lowers a raised ledger under the owner's mark, and leaves the mark as the owner wrote it", () => {
+    const repo = repository()
+    const mark = join(repo.root, '.git', 'popweb-fence', 'lint-debt.json.json')
+    const head = repo.git('rev-parse', 'HEAD').output.trim()
+    repo.write('src/b.ts', ANOTHER)
+    expect(repo.debt(['--update', '--allow-increase']).status).toBe(0)
+    repo.write('src/c.ts', ANOTHER)
+    expect(repo.debt(['--update', '--allow-increase']).status).toBe(0)
+    const marked = readFileSync(mark, 'utf8')
+
+    rmSync(join(repo.root, 'src', 'c.ts'))
+    expect(repo.debt(['--update']).status).toBe(0)
+    expect(repo.ledger()).toMatchObject({ count: 2, raisedFrom: head })
+    expect(readFileSync(mark, 'utf8')).toBe(marked)
+    repo.git('add', '-A')
+    expect(repo.debt(['--check']).status).toBe(0)
+  }, 30_000)
+
+  test("M48.T26: the owner's raise covers the ledger it wrote and lower ones, not a higher one", () => {
+    const repo = repository()
+    repo.write('src/b.ts', ANOTHER)
+    expect(repo.debt(['--update', '--allow-increase']).status).toBe(0)
+    const raised = repo.ledger()
+
+    repo.write('src/c.ts', ANOTHER)
+    const second = raised.directives.find((entry: { readonly file: string }) => entry.file === 'src/b.ts')
+    repo.write('lint-debt.json', JSON.stringify({ ...raised, count: 3, directives: [...raised.directives, { ...second, file: 'src/c.ts' }] }))
+    repo.git('add', '-A')
+    expect(repo.debt(['--check']).status).toBe(1)
+
+    rmSync(join(repo.root, 'src', 'b.ts'))
+    rmSync(join(repo.root, 'src', 'c.ts'))
+    repo.write('src/b.ts', ANOTHER)
+    repo.write('lint-debt.json', JSON.stringify(raised))
+    repo.git('add', '-A')
+    expect(repo.debt(['--check']).status).toBe(0)
+  }, 30_000)
 })

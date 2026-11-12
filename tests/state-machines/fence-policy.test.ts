@@ -721,6 +721,13 @@ describe('machine 61: the policy walkers', () => {
     }
   })
 
+  test("M48.T26: the mark `--allow-increase` leaves in git's directory, which the gate trusts a raised ledger by", () => {
+    expect(decision("echo '{}' > .git/popweb-fence/lint-debt.json.json")).toBe('deny')
+    expect(decision('cp lint-debt.json .git/popweb-fence/lint-debt.json.json')).toBe('deny')
+    expect(filePolicy('/repo/.git/worktrees/app/popweb-fence/lint-debt.json.json').decision).toBe('deny')
+    expect(decision('cat .git/popweb-fence/lint-debt.json.json')).toBe('allow')
+  })
+
   test("M61.T136: git's config, where core.hooksPath lives", () => {
     expect(decision("printf '' > .git/config")).toBe('deny')
     expect(decision('rm .git/config')).toBe('deny')
