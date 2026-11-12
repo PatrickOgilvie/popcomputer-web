@@ -99,6 +99,8 @@ export interface ShellScript {
 const MAX_NESTING = 16
 /** A brace expansion gives at most this many words before it counts as unknown. */
 const MAX_BRACE_WORDS = 64
+/** `time` and `!` words before a compound command are left out this many times over. */
+const MAX_PREFIXES = 16
 
 /** Node types the reader walks as statements; any other is a word, or holds words. */
 const STATEMENTS = new Set([
@@ -159,19 +161,20 @@ class Reader {
   private source = ''
 
   read(text: string, shell: Shell): void {
-    this.walk(text, (root) => {
+    this.walk(text, (root, settled) => {
       if (root.hasError) this.unreadable.push(describeError(root))
+      if (!settled) this.unreadable.push(`more than ${MAX_PREFIXES} \`time\` or \`!\` words before a compound command`)
       this.block(root, shell, undefined)
     })
   }
 
   /** Parses `text` and walks its tree, with `source` its text while it does. */
-  private walk(text: string, read: (root: Node) => void): void {
-    withTree(text, (root, source) => {
+  private walk(text: string, read: (root: Node, settled: boolean) => void): void {
+    withTree(text, (root, source, settled) => {
       const outer = this.source
       this.source = source
       try {
-        read(root)
+        read(root, settled)
       } finally {
         this.source = outer
       }
@@ -630,8 +633,13 @@ class Reader {
   }
 }
 
-/** Parses `text`, with each line continuation outside quotes joined first, as the shell joins it before it splits words. */
-function withTree(text: string, read: (root: Node, source: string) => void): void {
+/**
+ * Parses `text`, with each line continuation outside quotes joined first, as
+ * the shell joins it before it splits words, and each `time` or `!` the
+ * grammar misreads before a compound command left out; `settled` is false
+ * when more of them were left than it leaves out.
+ */
+function withTree(text: string, read: (root: Node, source: string, settled: boolean) => void): void {
   let tree: Tree = parseBash(text)
   let source = text
 
@@ -642,10 +650,44 @@ function withTree(text: string, read: (root: Node, source: string) => void): voi
       tree = parseBash(joined)
       source = joined
     }
-    read(tree.rootNode, source)
+    for (let passes = 0; ; passes++) {
+      const next = withoutPrefixes(tree.rootNode, source)
+      if (next === source || passes === MAX_PREFIXES) return read(tree.rootNode, source, next === source)
+      tree.delete()
+      tree = parseBash(next)
+      source = next
+    }
   } finally {
     tree.delete()
   }
+}
+
+/** Reserved words that start a compound command, which the grammar reads as a command after `time`. */
+const COMPOUND_STARTS = new Set(['{', 'if', 'while', 'until', 'for', 'case', 'select', '[[', '((', 'function', '!', 'time'])
+
+/**
+ * `text` with each `!` blanked, and each `time` before a compound command:
+ * the grammar reads `time { ...; }` as a command named `time`, and the
+ * compound after a `!` as a command named `{` or `for`, splitting the
+ * compound. Neither word changes what runs. A `time` after an assignment or a
+ * redirect, or quoted, is a program, as `time` before a command is in `sh`.
+ */
+function withoutPrefixes(root: Node, text: string): string {
+  const blanks: Array<readonly [number, number]> = []
+
+  for (const command of root.descendantsOfType('command')) {
+    const name = command.childForFieldName('name')
+    if (name?.text !== 'time' || name.startIndex !== command.startIndex) continue
+    const args = command.childrenForFieldName('argument')
+    let k = 0
+    while (args[k]?.text === '-p' || args[k]?.text === '--') k++
+    if (COMPOUND_STARTS.has(args[k]?.text ?? '')) blanks.push([command.startIndex, args[k].startIndex])
+  }
+  for (const negated of root.descendantsOfType('negated_command')) blanks.push([negated.startIndex, negated.startIndex + 1])
+
+  let blanked = text
+  for (const [start, end] of blanks) blanked = blanked.slice(0, start) + ' '.repeat(end - start) + blanked.slice(end)
+  return blanked
 }
 
 /** `text` without the backslash-newlines the shell removes: those outside quotes, comments and heredoc bodies. */

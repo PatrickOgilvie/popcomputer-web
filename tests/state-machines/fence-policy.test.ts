@@ -31,6 +31,33 @@ describe('machine 60: the shell reader', () => {
     expect(decision("{ echo 'git commit -n -m x'; } | bash")).toBe('ask')
   })
 
+  test('M60.T15, M60.T20: a compound command after `!` or `time`', () => {
+    for (const command of [
+      'time { git commit -n -m x; }',
+      '! { git commit -n -m x; }',
+      'if ! { git commit -n -m x; }; then :; fi',
+      'time while true; do git commit -n -m x; done',
+      'time -p until false; do git commit -n -m x; done',
+      '! for x in a; do git commit -n -m x; done',
+      'time { HUSKY=0 git commit -m x; }',
+      '! ! git commit -n -m x',
+      'time ! git commit -n -m x',
+      '! time { git commit -n -m x; }',
+      'time time { git commit -n -m x; }',
+      'echo $(time if true; then git commit -n -m x; fi)',
+      `${'! '.repeat(16)}{ git commit -n -m x; }`,
+    ]) {
+      expect(decision(command)).toBe('deny')
+    }
+    for (const [command, rule] of [['time { wrangler deploy; }', 'deploy'], ['time { git push; }', 'push'], ['time { npm publish; }', 'publish']] as const) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule })
+    }
+    expect(commandPolicy(`${'! '.repeat(17)}{ git commit -n -m x; }`)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    // After an assignment `time` is a program, which runs a command named `{`, and `echo`'s `{` is a word.
+    expect(decision('X=1 time { git commit -n -m x; }')).toBe('allow')
+    expect(decision('echo { git commit -n -m x; }')).toBe('allow')
+  })
+
   test('M60.T19: an alias of two commands', () => {
     expect(decision("shopt -s expand_aliases\nalias g='true && git commit -n -m x'\ng")).toBe('deny')
     expect(decision("alias g='git status'\ng")).toBe('ask')

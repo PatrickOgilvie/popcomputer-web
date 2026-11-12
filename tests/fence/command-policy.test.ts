@@ -92,6 +92,15 @@ const allowed: ReadonlyArray<string> = [
   'echo `echo \\`git rev-parse HEAD\\``',
   'echo "${X:-`git rev-parse HEAD`}"',
   'echo ${X:-\\`git commit -n -m x\\`}',
+  // `time` and `!` before a command, or a compound one.
+  'time',
+  'time bun test',
+  'time -p bun test',
+  '! grep -q x notes.txt',
+  'time { bun test; bunx oxlint; }',
+  'if ! grep -q x notes.txt; then echo missing; fi',
+  '! { grep -q x notes.txt; }',
+  '"time" { git status; }',
 ]
 
 const refused: ReadonlyArray<readonly [string, Expected]> = [
