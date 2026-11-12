@@ -88,6 +88,10 @@ const allowed: ReadonlyArray<string> = [
   '"$(git rev-parse --show-toplevel)/node_modules/.bin/tsc" --noEmit',
   'echo -n $(date)',
   'git hash-object -w notes.txt',
+  // Backquotes inside backquotes and inside `${...}`, which run what the fence reads.
+  'echo `echo \\`git rev-parse HEAD\\``',
+  'echo "${X:-`git rev-parse HEAD`}"',
+  'echo ${X:-\\`git commit -n -m x\\`}',
 ]
 
 const refused: ReadonlyArray<readonly [string, Expected]> = [

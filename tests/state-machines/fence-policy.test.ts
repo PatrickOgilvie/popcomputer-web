@@ -94,6 +94,19 @@ describe('machine 60: the shell reader', () => {
     expect(decision('echo ${X:-$(git commit --no-verify -m x)}')).toBe('deny')
   })
 
+  test("M60.T62, M60.T77: a backquote or a substitution in any `${...}` operand runs", () => {
+    for (const operator of [':-', ':+', ':=', '?', '#', '%', '/a/']) {
+      expect(decision('echo ${X' + operator + '`git commit -n -m x`}')).toBe('deny')
+      expect(decision('echo "${X' + operator + '`git commit -n -m x`}"')).toBe('deny')
+    }
+    expect(decision('echo ${X#$(git commit -n -m x)}')).toBe('deny')
+    expect(decision('echo ${X%%$(git commit -n -m x)}')).toBe('deny')
+    expect(commandPolicy('echo ${X:-`wrangler deploy`}')).toMatchObject({ decision: 'ask', rule: 'deploy' })
+    expect(decision('cat <<EOF\n${X:-`git commit -n -m x`}\nEOF')).toBe('deny')
+    // Escaped, the backquotes are text.
+    expect(decision('echo ${X:-\\`git commit -n -m x\\`}')).toBe('allow')
+  })
+
   test("M60.T63: a default's variable is not empty", () => {
     expect(decision('Y=git; ${X:-$Y} commit -n -m x')).toBe('deny')
   })
@@ -101,6 +114,27 @@ describe('machine 60: the shell reader', () => {
   test("M60.T69: `$'...'`'s \\u escapes", () => {
     expect(decision("$'\\u0067it' commit -n -m x")).toBe('deny')
     expect(decision("$'\\U00000067it' commit -n -m x")).toBe('deny')
+  })
+
+  test('M60.T72: a backquote inside a backquote, its own backquotes escaped', () => {
+    const nested = (line: string) => ['echo `echo \\`' + line + '\\``', 'x=`echo \\`' + line + '\\``', 'echo "`echo \\`' + line + '\\``"']
+    for (const line of ['git commit -n -m x', 'HUSKY=0 git commit -m x', 'git -c core.hooksPath=/dev/null commit -m x']) {
+      for (const command of nested(line)) expect(decision(command)).toBe('deny')
+    }
+    for (const [line, rule] of [['wrangler deploy', 'deploy'], ['git push', 'push'], ['npm publish', 'publish']] as const) {
+      for (const command of nested(line)) expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule })
+    }
+    // Inside double quotes, a backquote's `\"` is a quote; inside `$(...)` or a heredoc it is text.
+    expect(decision('echo "`git commit \\"-n\\" -m x`"')).toBe('deny')
+    expect(decision('echo `git commit \\"-n\\" -m x`')).toBe('allow')
+    // zsh reads it so in arithmetic inside the quotes too, where bash keeps the backslash.
+    expect(decision('echo "$((`git commit \\"-n\\" -m x` + 1))"')).toBe('deny')
+    expect(decision('echo "$(echo `git commit \\"-n\\" -m x`)"')).toBe('allow')
+    expect(decision('cat <<EOF\n`git commit \\"-n\\" -m x`\nEOF')).toBe('allow')
+    // Each backquote counts toward the substitutions the reader follows.
+    const within = (levels: number) => `${'echo $('.repeat(levels)}echo \`echo \\\`echo hi\\\`\`${')'.repeat(levels)}`
+    expect(commandPolicy(within(15))).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision(within(14))).toBe('allow')
   })
 
   test("M60.T77: an unquoted heredoc's substitutions run", () => {

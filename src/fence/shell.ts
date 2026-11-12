@@ -422,7 +422,7 @@ class Reader {
         }
       } else if (c === '`') {
         const end = closingBacktick(body, i + 1)
-        this.nested(unescapeBackticks(body.slice(i + 1, end)), shell)
+        this.nested(unescapeBackticks(body.slice(i + 1, end), false), shell)
         text += UNREAD
         i = end + 1
       } else if (c === '$' && (next === '(' || next === '{' || next === '[')) {
@@ -458,7 +458,9 @@ class Reader {
 
   /** A backquoted command, read as its own line in a subshell. */
   private nested(text: string, shell: Shell): void {
+    if (!this.enter()) return
     this.read(text, { cwd: shell.cwd })
+    this.nesting--
   }
 
   private pipeline(node: Node, shell: Shell, stdin: Stdin | undefined): void {
@@ -496,12 +498,23 @@ class Reader {
         break
       case 'comment':
         return this.comment(node)
+      case 'word':
+      case 'regex':
+        // The grammar leaves a backquote, and `${X#...}`'s `$(...)`, in an operand's text; the shell runs them.
+        if (/`|\$[({[]/.test(node.text)) this.heredocBody(node.text, shell)
+        return
     }
     this.block(node, shell, undefined)
   }
 
-  /** `$(...)`, a backquote or `<(...)`: commands run in a subshell. */
+  /**
+   * `$(...)`, a backquote or `<(...)`: commands run in a subshell. A
+   * backquote's text is read as the shell reads it, with its `` \` ``, `\$`
+   * and `\\` (and inside `"..."` its `\"`) unescaped first.
+   */
   private substitution(node: Node, shell: Shell): void {
+    // A backquote the line leaves open makes the line unreadable, whatever its text.
+    if (node.firstChild?.type === '`') return this.nested(unescapeBackticks(node.text.slice(1, -1), inDoubleQuotes(node)), shell)
     if (!this.enter()) return
     this.block(node, { cwd: shell.cwd }, undefined)
     this.nesting--
@@ -750,8 +763,18 @@ function closingBacktick(text: string, from: number): number {
   return text.length
 }
 
-function unescapeBackticks(text: string): string {
-  return text.replace(/\\([`$\\])/g, '$1')
+/** A backquote's text as the shell runs it; inside `"..."`, `\"` is a quote too. */
+function unescapeBackticks(text: string, quoted: boolean): string {
+  return text.replace(quoted ? /\\([`$\\"])/g : /\\([`$\\])/g, '$1')
+}
+
+/** Whether a node is inside `"..."`, not counting quotes around a `$(...)` that holds it, whose text the shell reads afresh. */
+function inDoubleQuotes(node: Node): boolean {
+  for (let at = node.parent; at !== null; at = at.parent) {
+    if (at.type === 'string') return true
+    if (at.type === 'command_substitution') return false
+  }
+  return false
 }
 
 /**
