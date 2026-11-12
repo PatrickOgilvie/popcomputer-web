@@ -1354,6 +1354,14 @@ class Inspection {
       if (!options.includes('--dry-run') && !(sub === 'push' && options.includes('-n'))) this.ask('push', subject, context)
       return
     }
+    const moved = branchMove(sub, rest)
+    if (moved !== undefined) {
+      this.ask('hook-bypass', subject, context, `moves a branch to ${moved}, whose commits the commit gate may never have checked. Approve it only if you expected it.`)
+    }
+    // A commit in another repository runs its hooks, not this gate's, and a fetch brings it here.
+    if (sub === 'commit' && /^\.\.(\/|$)/.test(cwd ?? '')) {
+      this.ask('hook-bypass', subject, context, "commits in a directory outside this one, another repository's, whose hooks are not this commit gate. Approve it only if you expected it.")
+    }
     if (Object.hasOwn(GIT_SURFACE.writesPaths, sub)) {
       return this.gitWrites(sub, rest, positionals(afterValues(rest, GIT_SURFACE.writesPaths[sub])), command, subject, at)
     }
@@ -1834,6 +1842,49 @@ function* readings(choices: ReadonlyArray<ReadonlyArray<ReadonlyArray<string>>>)
     for (const [at, option] of picked) words[at] = option
     yield words.flat()
   }
+}
+
+/** Commits a branch already holds: HEAD, its ancestors, and where HEAD was before the last reset or merge. */
+const CHECKED_COMMIT = /^(?:HEAD|@)(?:[~^]\d*)*$|^ORIG_HEAD$/
+/** Words that name a commit rather than a path: `FETCH_HEAD`, `x~2`, `x^`, `x@{1}`, a hash, a remote's branch. */
+const COMMIT_NAME = /^[A-Z_]+_HEAD$|[~^]|@\{|^[0-9a-f]{7,40}$|^(?:refs|origin|upstream)\//
+
+/**
+ * The commit a git command moves a branch to, shown, when it may hold
+ * commits the gate never checked: `reset` to another commit than HEAD's own,
+ * `update-ref`, `branch -f`, `-M` or `-C`, `switch -C` and `checkout -B`.
+ */
+function branchMove(sub: string, args: ReadonlyArray<string>): string | undefined {
+  const end = args.indexOf('--')
+  const options = end === -1 ? args : args.slice(0, end)
+  const words = positionals(options)
+  const shown = (commit: string | undefined) => `\`${display(commit ?? 'HEAD')}\``
+
+  switch (sub) {
+    case 'reset': {
+      // With paths, reset changes the index and leaves the branch where it is.
+      const mode = options.some((arg) => /^--(?:soft|mixed|hard|keep|merge)$/.test(arg))
+      const [commit] = words
+      if (end !== -1 && args.length > end + 1) return undefined
+      if (commit === undefined || words.length > 1 || CHECKED_COMMIT.test(commit) || !(mode || COMMIT_NAME.test(commit))) return undefined
+      return shown(commit)
+    }
+    case 'update-ref': {
+      if (options.includes('-d')) return undefined
+      if (options.includes('--stdin')) return 'the commits its input names'
+      const refs = positionals(afterValues(options, ['-m']))
+      return refs.length < 2 ? undefined : shown(refs[1])
+    }
+    case 'branch':
+      if (options.some((arg) => arg === '-M' || arg === '-C')) return shown(words[0])
+      return options.some((arg) => arg === '-f' || arg === '--force') && words.length > 0 ? shown(words[1]) : undefined
+    case 'switch':
+    case 'checkout': {
+      const at = options.findIndex((arg) => arg === (sub === 'switch' ? '-C' : '-B') || arg === '--force-create')
+      return at === -1 ? undefined : shown(positionals(options.slice(at + 2))[0])
+    }
+  }
+  return undefined
 }
 
 /**

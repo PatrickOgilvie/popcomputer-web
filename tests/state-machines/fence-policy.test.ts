@@ -582,6 +582,53 @@ describe('machine 61: the policy walkers', () => {
     for (const command of ['git merge --abort', 'git cherry-pick -n FETCH_HEAD', 'git rebase --abort', 'git merge-base HEAD main']) expect(decision(command)).toBe('allow')
   })
 
+  test('M61.T99: commands that move a branch to commits this gate never checked', () => {
+    for (const command of [
+      'git fetch ../other main && git reset --hard FETCH_HEAD',
+      'git reset --soft origin/main',
+      'git reset FETCH_HEAD',
+      'git reset abc1234',
+      'git reset HEAD@{1}',
+      'git reset --soft main',
+      'git reset --hard FETCH_HEAD --',
+      'git update-ref refs/heads/main FETCH_HEAD',
+      'git update-ref -m sync HEAD abc1234',
+      'git update-ref --stdin < refs.txt',
+      'git branch -f main FETCH_HEAD',
+      'git branch --force main',
+      'git branch -M feature main',
+      'git branch -C feature main',
+      'git switch -C main FETCH_HEAD',
+      'git switch --force-create main',
+      'git checkout -B main --track origin/main',
+      'git -C ../other commit -m x',
+      'cd .. && git commit -m x',
+    ]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'hook-bypass' })
+    }
+    for (const command of [
+      'git reset --soft HEAD~1',
+      'git reset HEAD^',
+      'git reset --mixed @~2',
+      'git reset --soft ORIG_HEAD',
+      'git reset -- src/app.ts',
+      'git reset src/app.ts',
+      'git reset --soft origin/main -- src',
+      'git update-ref -d refs/heads/old abc1234',
+      'git update-ref refs/heads/main',
+      'git branch -f',
+      'git branch feature',
+      'git branch -D old',
+      'git branch -m old new',
+      'git switch -c feature origin/feature',
+      'git checkout -b feature',
+      'git -C app commit -m x',
+      'cd app && git commit -m x',
+    ]) {
+      expect(decision(command)).toBe('allow')
+    }
+  })
+
   test('M61.T100: `send-pack` pushes', () => {
     expect(commandPolicy('git send-pack ../remote main')).toMatchObject({ decision: 'ask', rule: 'push' })
     expect(decision('git send-pack --dry-run ../remote main')).toBe('allow')

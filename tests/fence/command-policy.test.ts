@@ -139,6 +139,12 @@ const allowed: ReadonlyArray<string> = [
   'ln -s ../shared/config.ts src/config.ts',
   `node -e 'console.log(require("./lint-debt.json").count)'`,
   `node -e 'require("fs").writeFileSync("dist/out.json", "{}")'`,
+  // Branches moved along their own history, or made new.
+  'git reset HEAD~1',
+  'git reset --soft ORIG_HEAD',
+  'git reset src/app.ts',
+  'git switch -c feature origin/feature',
+  'git branch -m old new',
 ]
 
 const refused: ReadonlyArray<readonly [string, Expected]> = [
