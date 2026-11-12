@@ -227,7 +227,7 @@ export function openFlash(c: Context, options: { readonly pages?: boolean } = {}
     take() {
       if (written) return empty()
 
-      shown = prefetch ? { ...pending } : merged(held, pending)
+      shown = prefetch ? merged(empty(), pending) : merged(held, pending)
 
       return shown
     },

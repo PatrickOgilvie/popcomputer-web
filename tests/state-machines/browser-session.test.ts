@@ -202,6 +202,28 @@ describe('the flash', () => {
     expect(next.flash).toEqual({ later: 'on the next' })
   })
 
+  test("M2.T10, T26: a value set after a prefetch's page was rendered waits for the next page too", async () => {
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    routes
+      .get('/late', action(Effect.gen(function* () {
+        const page = yield* render('Late', {})
+
+        yield* flash('later', 'on the next')
+
+        return page
+      })))
+      .get('/next', action(render('Next', {})))
+
+    const browser = testBrowser(app, testEnv({}))
+    const prefetched = await (await browser.request('/late', { headers: { ...inertia, Purpose: 'prefetch' } })).json()
+    const next = await (await browser.request('/next', { headers: inertia })).json()
+
+    expect(prefetched.flash).toEqual({})
+    expect(next.flash).toEqual({ later: 'on the next' })
+  })
+
   test('a value set before a page the action dropped goes with the redirect', async () => {
     const app = new Hono()
     const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
