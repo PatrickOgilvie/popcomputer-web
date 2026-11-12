@@ -663,7 +663,10 @@ interface BetterAuthInstance {
 
 /** The calls on Better Auth's internal adapter that mending a sign-up makes. */
 interface SignUpAdapter {
-  findUserByEmail(email: string): Promise<{ readonly user: { readonly id: string } } | null>
+  findUserByEmail(
+    email: string,
+    options?: { readonly includeAccounts: boolean }
+  ): Promise<{ readonly user: { readonly id: string }; readonly accounts: ReadonlyArray<unknown> } | null>
   deleteUser(id: string): Promise<unknown>
 }
 
@@ -804,25 +807,27 @@ async function errorCodeOf(response: Response): Promise<unknown> {
 async function mendSignUp(auth: BetterAuthInstance, path: string, email: unknown, send: () => Promise<Response>): Promise<Response> {
   if (path !== '/sign-up/email') return send()
 
+  const adapter = (auth.$context === undefined ? undefined : await auth.$context)?.internalAdapter
+  // Whether the address was free before: a sign-up that failed, as one does
+  // when a plugin's service is down, may remove only a user it made itself.
+  const free = adapter !== undefined && await adapter.findUserByEmail(String(email)) === null
   const response = await send()
 
   if (await errorCodeOf(response) === FAILED_TO_CREATE_USER) return send()
-  if (response.status >= 500) await undoPartialSignUp(auth, email)
+  if (response.status >= 500 && free && adapter !== undefined) await undoPartialSignUp(adapter, email)
 
   return response
 }
 
 /**
- * Remove the user a failed sign-up left. Better Auth answers a sign-up for a
- * registered address before it writes a user, and one that lost a race to
- * the address with a 422, so the user under the address after a 500 is the
- * failed sign-up's own; a failed email after it is logged, not a 500.
+ * Remove the user a failed sign-up for a free address left: one with no
+ * account, since its account's write is what failed. A user with an account
+ * is someone's, such as one who signed up at the same moment, and stays.
  */
-async function undoPartialSignUp(auth: BetterAuthInstance, email: unknown): Promise<void> {
-  const adapter = (auth.$context === undefined ? undefined : await auth.$context)?.internalAdapter
-  const found = await adapter?.findUserByEmail(String(email))
+async function undoPartialSignUp(adapter: SignUpAdapter, email: unknown): Promise<void> {
+  const found = await adapter.findUserByEmail(String(email), { includeAccounts: true })
 
-  if (found !== null && found !== undefined) await adapter?.deleteUser(found.user.id)
+  if (found !== null && found.accounts.length === 0) await adapter.deleteUser(found.user.id)
 }
 
 /** An endpoint's success as the action receives it: its JSON body, and the response carrying its cookies. */

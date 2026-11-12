@@ -11,7 +11,7 @@ import { Database } from 'bun:sqlite'
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { createEmailVerificationToken } from 'better-auth/api'
-import { admin, bearer, emailOTP, genericOAuth, magicLink, organization, phoneNumber, twoFactor } from 'better-auth/plugins'
+import { admin, bearer, emailOTP, genericOAuth, haveIBeenPwned, magicLink, organization, phoneNumber, twoFactor } from 'better-auth/plugins'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { betterAuthFields } from '../../src/auth.js'
 import { testOAuthProvider } from '../../src/testing.js'
@@ -208,6 +208,8 @@ export interface CreateAuthOptions {
   /** The origin emailed links name: the application's declared APP_URL, as docs/setup.md gives it. */
   readonly baseURL?: string
   readonly session?: { readonly updateAge?: number; readonly cookieCache?: { readonly enabled: boolean; readonly maxAge?: number } }
+  /** Check each sign-up's password against Have I Been Pwned, a plugin that calls another service on every sign-up. */
+  readonly checkPwned?: boolean
 }
 
 /** The application's Better Auth secret, which signs its session cookies whatever its template. */
@@ -267,6 +269,7 @@ export function createAuth(options: CreateAuthOptions) {
       }),
       bearer(),
       admin(),
+      ...(options.checkPwned === true ? [haveIBeenPwned()] : []),
       genericOAuth({
         config: [{
           providerId: 'acme',

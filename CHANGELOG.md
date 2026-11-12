@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A computation that finished while its key was being invalidated could store the value the write had replaced, which the next read returned until its `ttl`: `cacheInvalidate` deleted the value before it wrote the mark that tells a computation in flight not to store, so one that looked for the mark between the two found none. It writes the mark first. Extending `DataCache.tla` to `cacheInvalidate`, on the way to 2.0, found it.
+- A sign-up for a member's address no longer deletes the member when Better Auth answers it 500, as it does for every sign-up while a plugin's service is down, such as Have I Been Pwned's or a captcha provider's, or the database fails a read. 1.15.0's repair for a sign-up whose account's write failed, which removes the user it left so the address can sign up again, removed whichever user held the address. It now removes one only when the address was free before the sign-up was sent and the user it finds has no account, so a member who signed up meanwhile stays too. Through `betterAuthRedirect('signUpEmail', ...)` and `betterAuthHandler` alike.
 
 ## [1.15.0] - 2026-11-08
 

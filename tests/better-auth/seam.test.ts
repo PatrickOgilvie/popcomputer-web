@@ -624,6 +624,77 @@ describe('an address and the way to its proof', () => {
     expect(setsSession(await signIn(browser(), 'ada@example.com'))).toBe(true)
   })
 
+  test("M9.T24: a sign-up for a member's address that Better Auth fails on, as a plugin whose service is down makes it, leaves the member", async () => {
+    const { browser, db, join } = setup()
+    const sqlite = db.$client
+
+    await join(browser(), 'ada@example.com')
+
+    const outage = testBrowser(app, testEnv({ OUTBOX: newOutbox(), APP_URL: 'http://localhost', PWNED: true }, { database: db }))
+    const viaApi = () => outage.request('/api/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+      body: JSON.stringify({ name: 'Mallory', email: 'ada@example.com', password: 'correct horse battery' }),
+    })
+    const realFetch = globalThis.fetch
+
+    // Have I Been Pwned is unreachable, so Better Auth answers every sign-up 500.
+    globalThis.fetch = Object.assign(() => Promise.reject(new TypeError('network connection lost')), { preconnect: realFetch.preconnect })
+    try {
+      expect((await signUp(outage, 'ada@example.com', 'Mallory')).status).toBeGreaterThanOrEqual(500)
+      expect((await viaApi()).status).toBeGreaterThanOrEqual(500)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+
+    expect(sqlite.query("SELECT count(*) AS users FROM user WHERE email = 'ada@example.com'").get()).toEqual({ users: 1 })
+    expect(setsSession(await signIn(browser(), 'ada@example.com'))).toBe(true)
+  })
+
+  test('M9.T24: a sign-up Better Auth fails on for the address of a member a magic link made, who has no account, leaves the member', async () => {
+    const { browser, db, outbox } = setup()
+    const sqlite = db.$client
+    const member = browser()
+
+    await member.request('/magic-link', form({ email: 'grace@example.com' }))
+    await followMagicLink(member, outbox.magicLinks.at(-1)?.token ?? '')
+    expect(sqlite.query("SELECT count(*) AS accounts FROM account JOIN user ON user.id = account.user_id WHERE user.email = 'grace@example.com'").get()).toEqual({ accounts: 0 })
+
+    const outage = testBrowser(app, testEnv({ OUTBOX: newOutbox(), APP_URL: 'http://localhost', PWNED: true }, { database: db }))
+    const realFetch = globalThis.fetch
+
+    globalThis.fetch = Object.assign(() => Promise.reject(new TypeError('network connection lost')), { preconnect: realFetch.preconnect })
+    try {
+      expect((await signUp(outage, 'grace@example.com', 'Mallory')).status).toBeGreaterThanOrEqual(500)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+
+    expect(sqlite.query("SELECT count(*) AS users FROM user WHERE email = 'grace@example.com'").get()).toEqual({ users: 1 })
+    expect((await me(member)).body).toMatchObject({ email: 'grace@example.com' })
+  })
+
+  test('M9.T24: a failed sign-up for a free address leaves the member who took it meanwhile', async () => {
+    const { db } = setup()
+    const sqlite = db.$client
+    const outage = testBrowser(app, testEnv({ OUTBOX: newOutbox(), APP_URL: 'http://localhost', PWNED: true }, { database: db }))
+    const realFetch = globalThis.fetch
+
+    // While Better Auth checks the password, someone else signs up for the address; then the check fails.
+    globalThis.fetch = Object.assign(() => {
+      sqlite.run("INSERT INTO user (id, name, email, email_verified, created_at, updated_at) VALUES ('ada', 'Ada', 'ada@example.com', 1, 0, 0)")
+      sqlite.run("INSERT INTO account (id, account_id, provider_id, user_id, password, created_at, updated_at) VALUES ('ada-password', 'ada', 'credential', 'ada', 'x', 0, 0)")
+      return Promise.reject(new TypeError('network connection lost'))
+    }, { preconnect: realFetch.preconnect })
+    try {
+      expect((await signUp(outage, 'ada@example.com', 'Mallory')).status).toBeGreaterThanOrEqual(500)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+
+    expect(sqlite.query("SELECT id FROM user WHERE email = 'ada@example.com'").all()).toEqual([{ id: 'ada' }])
+  })
+
   test('M9.T19: signing up again for an address not yet proven sends it a new link, answered as a new sign-up is', async () => {
     const { browser, outbox } = setup()
 

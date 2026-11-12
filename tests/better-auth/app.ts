@@ -28,6 +28,8 @@ export interface Bindings {
   readonly APP_URL?: string
   /** Load Better Auth on first use, as an application keeping it out of Worker startup does; `'with-context'` forwards its `$context`. */
   readonly LAZY?: boolean | 'with-context'
+  /** Check sign-ups' passwords against Have I Been Pwned. */
+  readonly PWNED?: boolean
 }
 
 /** A site whose forms setupWeb's cross-site check accepts, and Better Auth's trusted origins leave out. */
@@ -71,7 +73,7 @@ export const web = setupWeb(new Hono<{ Bindings: Bindings }>(), {
   bindings: { organization: schema.organization },
   auth: {
     client: (c, { db }) => {
-      const create = () => createAuth({ db, outbox: c.env.OUTBOX, session: c.env.SESSION, baseURL: c.env.APP_URL })
+      const create = () => createAuth({ db, outbox: c.env.OUTBOX, session: c.env.SESSION, baseURL: c.env.APP_URL, checkPwned: c.env.PWNED === true })
 
       return c.env.LAZY === undefined || c.env.LAZY === false ? create() : loadedOnFirstUse(create, { context: c.env.LAZY === 'with-context' })
     },
