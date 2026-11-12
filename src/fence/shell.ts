@@ -677,6 +677,8 @@ const COMPOUND_STARTS = new Set(['{', 'if', 'while', 'until', 'for', 'case', 'se
  * redirect, or quoted, is a program, as `time` before a command is in `sh`.
  */
 function withoutPrefixes(root: Node, text: string): string {
+  // Most lines hold neither word: the tree need not be searched for them.
+  if (!/time|!/.test(text)) return text
   const blanks: Array<readonly [number, number]> = []
 
   for (const command of root.descendantsOfType('command')) {
