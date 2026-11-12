@@ -144,6 +144,11 @@ const CONCURRENTLY_VALUES = [
 ]
 /** Command lines parallel runs, or concurrently's `npm:` scripts it expands, read at most this many. */
 const MAX_RUNS = 64
+/** Variables naming a program git, or the pager and editor it starts, runs: each a command line, as `-c diff.external` is. */
+const GIT_PROGRAMS = new Set([
+  'GIT_EXTERNAL_DIFF', 'GIT_SSH_COMMAND', 'GIT_SSH', 'GIT_PROXY_COMMAND', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_PAGER', 'PAGER', 'MANPAGER',
+  'LESSOPEN', 'GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'EDITOR', 'VISUAL',
+])
 /** Builtins that set variables, whose `NAME=value` arguments the commands after them see. */
 const DECLARATIONS = new Set(['export', 'declare', 'typeset', 'readonly', 'local'])
 
@@ -526,6 +531,14 @@ class Inspection {
     }
     if (['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG'].includes(name) && value !== '/dev/null') {
       return this.ask('hook-bypass', subject, context, `sets ${name}, which points git at another config file, one that can move the hooks or switch them off. Approve it only if you expected it.`)
+    }
+    // git reads its global config from $XDG_CONFIG_HOME/git/config and $HOME/.gitconfig.
+    if ((name === 'HOME' || name === 'XDG_CONFIG_HOME') && value !== '') {
+      return this.ask('hook-bypass', subject, context, `sets ${name}, which points git at another global config file, one that can move the hooks or switch them off. Approve it only if you expected it.`)
+    }
+    if (GIT_PROGRAMS.has(name) && value !== '') {
+      if (isDynamic(value)) return this.unreadable(subject, `${name}, a program git runs, which an expansion gives`, context)
+      return this.script(value, deeper(context))
     }
     if (['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_EXEC_PATH'].includes(name)) {
       return this.ask('hook-bypass', subject, context, `sets ${name}, which points git at another repository or program, whose hooks are not the commit gate. Approve it only if you expected it.`)

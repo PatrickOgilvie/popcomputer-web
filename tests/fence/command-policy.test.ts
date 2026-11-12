@@ -120,6 +120,12 @@ const allowed: ReadonlyArray<string> = [
   "osascript -e 'display notification \"done\"'",
   'ssh host uptime',
   'node node_modules/wrangler/wrangler-dist/cli.js dev',
+  // Programs git reads from the environment, read as the command lines they are.
+  'GIT_PAGER=cat git log',
+  'PAGER="less -R" git diff',
+  'GIT_EDITOR=true git commit --amend --no-edit',
+  'GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key" git fetch',
+  'export EDITOR=vim',
 ]
 
 const refused: ReadonlyArray<readonly [string, Expected]> = [
@@ -180,6 +186,12 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['SKIP=tsc git commit -m wip', ['deny', 'hook-bypass']],
   ['export HUSKY=0; git commit -m wip', ['deny', 'hook-bypass']],
   ['GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit', ['deny', 'hook-bypass']],
+  // A program git runs that the environment names.
+  ['GIT_EXTERNAL_DIFF=\'sh -c "git commit -n -m y"\' git diff', ['deny', 'hook-bypass']],
+  ['GIT_SSH_COMMAND=\'sh -c "git commit -n -m y"\' git fetch', ['deny', 'hook-bypass']],
+  ['GIT_PAGER=\'sh -c "git commit -n -m y"\' git log', ['deny', 'hook-bypass']],
+  ['PAGER=\'sh -c "git commit -n -m y"\' git log', ['deny', 'hook-bypass']],
+  ['export GIT_EDITOR="git commit -n -m y"; git rebase -i HEAD~2', ['deny', 'hook-bypass']],
   ['git -c core.hooksPath=/dev/null commit -m wip', ['deny', 'hook-bypass']],
   ['git -c core.hookspath=/dev/null commit', ['deny', 'hook-bypass']],
   ['git --config-env=core.hooksPath=EMPTY commit', ['deny', 'hook-bypass']],
@@ -232,6 +244,7 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['CLOUDFLARE_ACCOUNT_ID=abc wrangler deploy', ['ask', 'deploy']],
   ['env -i PATH=/usr/bin wrangler deploy', ['ask', 'deploy']],
   ['bun run build && wrangler deploy', ['ask', 'deploy']],
+  ['GIT_EDITOR="wrangler deploy" git commit', ['ask', 'deploy']],
   ['sh -c "bunx wrangler deploy"', ['ask', 'deploy']],
   ['W=wrangler; "$W" deploy', ['ask', 'deploy']],
   ['"${WRANGLER:-wrangler}" deploy', ['ask', 'deploy']],
@@ -319,6 +332,10 @@ describe('commandPolicy', () => {
 
     expect(verdict).toMatchObject({ decision: 'deny', subject: "git '$(…)' -n" })
     expect(verdict.decision !== 'allow' && verdict.reason).toContain('may run `git commit -n`')
+  })
+
+  test('names a program git runs that an expansion gives', () => {
+    expect(commandPolicy('GIT_PAGER="$PAGER" git log')).toMatchObject({ decision: 'ask', rule: 'unreadable', reason: expect.stringContaining('GIT_PAGER, a program git runs') })
   })
 
   test('names the script a command came from', () => {

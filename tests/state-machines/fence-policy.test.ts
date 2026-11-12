@@ -308,6 +308,14 @@ describe('machine 61: the policy walkers', () => {
     expect(decision('GIT_DIR=elsewhere git commit -m x')).toBe('ask')
   })
 
+  test('M61.T23: HOME and XDG_CONFIG_HOME point git at another global config', () => {
+    for (const command of ['XDG_CONFIG_HOME=/tmp/x git commit -m x', 'HOME=/tmp/x git commit -m x', 'HOME=/tmp/x; git commit -m x', 'env HOME=/tmp/x git commit -m x']) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'hook-bypass' })
+    }
+    // Empty, git reads ~/.config/git/config, as it does without it.
+    expect(decision('XDG_CONFIG_HOME= git commit -m x')).toBe('allow')
+  })
+
   test("M61.T26: a wrapper's option the fence does not read", () => {
     expect(decision('sudo -iu root git commit -m x')).toBe('ask')
     expect(decision('sudo -u root git commit -n -m x')).toBe('deny')
