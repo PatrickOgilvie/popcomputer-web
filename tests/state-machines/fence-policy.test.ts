@@ -721,6 +721,11 @@ describe('machine 61: the policy walkers', () => {
     }
   })
 
+  test('M48 (a stated limit): `git stash pop` brings back files the fence cannot list, so it runs; the gate refuses a raised ledger it brings back', () => {
+    expect(decision('git stash pop')).toBe('allow')
+    expect(decision('git stash apply stash@{1}')).toBe('allow')
+  })
+
   test("M48.T26: the mark `--allow-increase` leaves in git's directory, which the gate trusts a raised ledger by", () => {
     expect(decision("echo '{}' > .git/popweb-fence/lint-debt.json.json")).toBe('deny')
     expect(decision('cp lint-debt.json .git/popweb-fence/lint-debt.json.json')).toBe('deny')
