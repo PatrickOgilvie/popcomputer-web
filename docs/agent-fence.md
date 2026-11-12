@@ -42,9 +42,8 @@ owner installs the gate, and every worktree of the repository shares it.
 The template does it on `bun install`: its `prepare` script runs
 `.githooks/install.ts`, which sets `core.hooksPath` to `.githooks` in a git
 repository where nothing else set it, so an install the agent runs only
-switches the gate on. A
-team on [Lefthook](https://lefthook.dev) commits the same checks as
-`lefthook.yml` instead, and runs `bunx lefthook install`:
+switches the gate on. A team on [Lefthook](https://lefthook.dev) commits
+the same checks as `lefthook.yml` instead, and runs `bunx lefthook install`:
 
 ```yaml
 pre-commit:
@@ -71,15 +70,15 @@ agent's hook passes it, and answers in that agent's format.
 
 | It finds | For example | It |
 | --- | --- | --- |
-| A way around the commit gate | `git commit --no-verify`, `-n`, `HUSKY=0`, `LEFTHOOK=0`, `-c core.hooksPath=...`, `lefthook uninstall`, a write into `.git/hooks/` or `.git/config`, a commit written by hand with `git commit-tree`, `git fast-import` or `git hash-object -t commit` | refuses it |
-| A commit the gate did not check | `git pull`, `merge`, `rebase`, `cherry-pick`, `revert` and `am`; settings given by `git -c` or `GIT_CONFIG_*`, and `GIT_DIR` | asks the owner |
+| A way around the commit gate | `git commit --no-verify`, `-n`, `HUSKY=0`, `LEFTHOOK=0`, `-c core.hooksPath=...`, `lefthook uninstall`, a write into `.git/hooks/` or `.git/config`, by a redirect, a program's code, a patch or a link to one, a commit written by hand with `git commit-tree`, `git fast-import` or `git hash-object -t commit` | refuses it |
+| A commit the gate did not check | `git pull`, `merge`, `rebase`, `cherry-pick`, `revert` and `am`; a branch moved to another commit than its own by `reset`, `branch -f`, `update-ref`, `switch -C` or `checkout -B`; a commit in a directory above this one; settings given by `git -c` or `GIT_CONFIG_*`, and `GIT_DIR`, `HOME` or `XDG_CONFIG_HOME`; a program `GIT_PAGER`, `GIT_SSH_COMMAND` or `EDITOR` names, read as a command | asks the owner |
 | A deploy | `wrangler deploy`, `wrangler versions deploy`, `wrangler rollback` | asks the owner |
 | Remote data | `wrangler d1 migrations apply --remote`, `wrangler d1 execute --remote`, any `wrangler ... --remote` | asks the owner |
 | A secret | `wrangler secret put`, `bulk` or `delete` | asks the owner |
 | A release | `npm publish`, `bun publish`, `pnpm publish` | asks the owner |
 | A push | `git push`, `git send-pack` | asks the owner |
-| A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/` or the directory `core.hooksPath` names, `.husky/`, `.pre-commit-config.yaml`, `.simple-git-hooks.json`, `.claude/settings.json`, `lint-debt.json`, `popweb-fence debt --allow-increase` | asks the owner |
-| What it cannot read | a command name a variable gives, `bash -c "$CMD"`, an alias, a script it cannot open, code that can start a process, a pipe into a shell from a command whose output it cannot know | asks the owner |
+| A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/` or the directory `core.hooksPath` names, `.husky/`, `.pre-commit-config.yaml`, `.simple-git-hooks.json`, `.claude/settings.json`, `lint-debt.json`, written as they are or by `git checkout <commit> -- .`, `git reset --hard <commit>` or `git apply`; `popweb-fence debt --allow-increase` | asks the owner |
+| What it cannot read | a command name a variable gives, `bash -c "$CMD"`, an alias, a script it cannot open, code that can start a process, a pipe into a shell from a command whose output it cannot know, a value holding a quoted `$(...)`, which bash runs where it evaluates the value as arithmetic | asks the owner |
 
 `wrangler deploy --dry-run`, `npm publish --dry-run`, `git push --dry-run`
 and D1's local database (`--local`, the default) need no one.
@@ -87,10 +86,11 @@ and D1's local database (`--local`, the default) need no one.
 The hook parses a command line with tree-sitter's bash grammar and judges
 every command the tree holds: in lists, pipes, subshells, `$(...)`,
 heredocs and arithmetic, in `sh -c`, `eval` and `trap` strings, behind
-`env`, `sudo`, `xargs`, `npx` and `bunx`, in the `package.json` scripts a
-runner names, so `bun run deploy` asks when its script deploys, and in the
-scripts and programs a command runs. A `cd` on the line moves the directory
-it reads paths and scripts from; it compares paths without `.`, `..` or case.
+`env`, `sudo`, `xargs`, `npx`, `cross-env` and `parallel`, in the
+`package.json` scripts a runner names, so `bun run deploy` asks when its
+script deploys, and in the scripts and programs, awk's among them, a command
+runs. A `cd` on the line moves the directory it reads paths and scripts
+from; it compares paths without `.`, `..` or case.
 
 It never reads a word holding a `$` expansion, a substitution or a glob,
 not even a variable the line sets: it tries each as `git`, `commit` and
@@ -98,8 +98,7 @@ not even a variable the line sets: it tries each as `git`, `commit` and
 full; `git commit -m "$(cat <<'EOF' ... EOF)"`, one quoted word, runs. Where
 such a word, or a wrapper's option it does not know, decides what runs, it
 asks, as before a script it cannot open or over 256 KiB, and before code
-that can start a process (`child_process`, `Bun.spawn`, `` $` ``,
-`subprocess`), whose command is built at run time.
+that can start a process, whose command is built at run time.
 
 ### Claude Code
 
@@ -185,11 +184,12 @@ script a command runs is one the policy cannot open, so it asks.
 
 The hook is a guard that keeps an agent to the rules, not a security
 boundary: it reads the command line, not the system it runs on. It cannot
-see an alias set outside the line, a `make` or `just` target, a command a
-program builds without a call that starts a process, or a fence file in a
-directory a command removes whole. What cannot be skipped is a required CI
-check that runs the gate on every pull request. When a spelling gets past
-the hook, add the case to the policy's tests first, as `AGENTS.md` says.
+see an alias set outside the line, a `make` or `just` target, a command or
+path a program builds at run time, what `git stash pop` brings back, or a
+fence file in a directory a command removes whole. What cannot be skipped
+is a required CI check that runs the gate on every pull request. When a
+spelling gets past the hook, add the case to the policy's tests first, as
+`AGENTS.md` says.
 
 ## The debt report
 
@@ -222,19 +222,19 @@ the index, the commit about to be made, and fails:
 - when the code holds more directives than the ledger, naming the new
   ones. Fix the code each rule reports. A directive the owner accepts goes
   in with `popweb-fence debt --update --allow-increase`, which the command
-  hook asks the owner about and which names HEAD as `raisedFrom`;
+  hook asks the owner about, and which marks the raise;
 - when the code holds fewer, or different ones, until `--update` records
   them, so the baseline follows the debt down and a later directive cannot
   take the freed place unnoticed;
-- when the ledger counts or ignores more than HEAD's without naming HEAD,
-  as one restored from an older commit or moved into place does.
+- when the ledger counts or ignores more than HEAD's without that mark, in
+  git's directory where the hook refuses an agent's write, as one restored
+  from an older commit, moved into place or forged does.
 
 `--update` never raises the count, and a deleted ledger keeps HEAD's,
 however `--ledger` spells the path and whatever `GIT_DIR` names. A generated
 file that turns rules off, such as Wrangler's `worker-configuration.d.ts`,
-goes in the ledger's `ignore`, a list of paths and globs
-(`src/generated/**`); a new entry leaves directives out, so the owner
-records it with `--update --allow-increase`:
+goes in the ledger's `ignore`, a list of paths and globs (`src/gen/**`);
+a new entry leaves directives out, so only `--allow-increase` records it:
 
 ```json
 { "count": 0, "ignore": ["worker-configuration.d.ts"], "directives": [] }

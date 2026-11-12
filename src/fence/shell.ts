@@ -99,6 +99,8 @@ export interface ShellScript {
 const MAX_NESTING = 16
 /** A brace expansion gives at most this many words before it counts as unknown. */
 const MAX_BRACE_WORDS = 64
+/** `time` and `!` words before a compound command are left out this many times over. */
+const MAX_PREFIXES = 16
 
 /** Node types the reader walks as statements; any other is a word, or holds words. */
 const STATEMENTS = new Set([
@@ -159,19 +161,20 @@ class Reader {
   private source = ''
 
   read(text: string, shell: Shell): void {
-    this.walk(text, (root) => {
+    this.walk(text, (root, settled) => {
       if (root.hasError) this.unreadable.push(describeError(root))
+      if (!settled) this.unreadable.push(`more than ${MAX_PREFIXES} \`time\` or \`!\` words before a compound command`)
       this.block(root, shell, undefined)
     })
   }
 
   /** Parses `text` and walks its tree, with `source` its text while it does. */
-  private walk(text: string, read: (root: Node) => void): void {
-    withTree(text, (root, source) => {
+  private walk(text: string, read: (root: Node, settled: boolean) => void): void {
+    withTree(text, (root, source, settled) => {
       const outer = this.source
       this.source = source
       try {
-        read(root)
+        read(root, settled)
       } finally {
         this.source = outer
       }
@@ -206,6 +209,10 @@ class Reader {
         this.comment(node)
         return undefined
       case 'test_command':
+        // bash evaluates `[[ x -eq y ]]`'s operands as arithmetic, and `-v`'s subscript: a substitution quoted in them runs there.
+        if (node.descendantsOfType(['raw_string', 'ansi_c_string', 'string_content', 'word']).some((part) => /\$\(|`/.test(part.text.replace(/\\(.)/g, '$1')))) {
+          this.unreadable.push(`\`${clip(node.text)}\`, whose quoted command substitution bash runs where it evaluates an operand`)
+        }
         for (const child of node.namedChildren) this.inner(child, shell)
         return undefined
       default:
@@ -422,7 +429,7 @@ class Reader {
         }
       } else if (c === '`') {
         const end = closingBacktick(body, i + 1)
-        this.nested(unescapeBackticks(body.slice(i + 1, end)), shell)
+        this.nested(unescapeBackticks(body.slice(i + 1, end), false), shell)
         text += UNREAD
         i = end + 1
       } else if (c === '$' && (next === '(' || next === '{' || next === '[')) {
@@ -458,7 +465,9 @@ class Reader {
 
   /** A backquoted command, read as its own line in a subshell. */
   private nested(text: string, shell: Shell): void {
+    if (!this.enter()) return
     this.read(text, { cwd: shell.cwd })
+    this.nesting--
   }
 
   private pipeline(node: Node, shell: Shell, stdin: Stdin | undefined): void {
@@ -496,12 +505,23 @@ class Reader {
         break
       case 'comment':
         return this.comment(node)
+      case 'word':
+      case 'regex':
+        // The grammar leaves a backquote, and `${X#...}`'s `$(...)`, in an operand's text; the shell runs them.
+        if (/`|\$[({[]/.test(node.text)) this.heredocBody(node.text, shell)
+        return
     }
     this.block(node, shell, undefined)
   }
 
-  /** `$(...)`, a backquote or `<(...)`: commands run in a subshell. */
+  /**
+   * `$(...)`, a backquote or `<(...)`: commands run in a subshell. A
+   * backquote's text is read as the shell reads it, with its `` \` ``, `\$`
+   * and `\\` (and inside `"..."` its `\"`) unescaped first.
+   */
   private substitution(node: Node, shell: Shell): void {
+    // A backquote the line leaves open makes the line unreadable, whatever its text.
+    if (node.firstChild?.type === '`') return this.nested(unescapeBackticks(node.text.slice(1, -1), inDoubleQuotes(node)), shell)
     if (!this.enter()) return
     this.block(node, { cwd: shell.cwd }, undefined)
     this.nesting--
@@ -617,8 +637,13 @@ class Reader {
   }
 }
 
-/** Parses `text`, with each line continuation outside quotes joined first, as the shell joins it before it splits words. */
-function withTree(text: string, read: (root: Node, source: string) => void): void {
+/**
+ * Parses `text`, with each line continuation outside quotes joined first, as
+ * the shell joins it before it splits words, and each `time` or `!` the
+ * grammar misreads before a compound command left out; `settled` is false
+ * when more of them were left than it leaves out.
+ */
+function withTree(text: string, read: (root: Node, source: string, settled: boolean) => void): void {
   let tree: Tree = parseBash(text)
   let source = text
 
@@ -629,10 +654,46 @@ function withTree(text: string, read: (root: Node, source: string) => void): voi
       tree = parseBash(joined)
       source = joined
     }
-    read(tree.rootNode, source)
+    for (let passes = 0; ; passes++) {
+      const next = withoutPrefixes(tree.rootNode, source)
+      if (next === source || passes === MAX_PREFIXES) return read(tree.rootNode, source, next === source)
+      tree.delete()
+      tree = parseBash(next)
+      source = next
+    }
   } finally {
     tree.delete()
   }
+}
+
+/** Reserved words that start a compound command, which the grammar reads as a command after `time`. */
+const COMPOUND_STARTS = new Set(['{', 'if', 'while', 'until', 'for', 'case', 'select', '[[', '((', 'function', '!', 'time'])
+
+/**
+ * `text` with each `!` blanked, and each `time` before a compound command:
+ * the grammar reads `time { ...; }` as a command named `time`, and the
+ * compound after a `!` as a command named `{` or `for`, splitting the
+ * compound. Neither word changes what runs. A `time` after an assignment or a
+ * redirect, or quoted, is a program, as `time` before a command is in `sh`.
+ */
+function withoutPrefixes(root: Node, text: string): string {
+  // Most lines hold neither word: the tree need not be searched for them.
+  if (!/time|!/.test(text)) return text
+  const blanks: Array<readonly [number, number]> = []
+
+  for (const command of root.descendantsOfType('command')) {
+    const name = command.childForFieldName('name')
+    if (name?.text !== 'time' || name.startIndex !== command.startIndex) continue
+    const args = command.childrenForFieldName('argument')
+    let k = 0
+    while (args[k]?.text === '-p' || args[k]?.text === '--') k++
+    if (COMPOUND_STARTS.has(args[k]?.text ?? '')) blanks.push([command.startIndex, args[k].startIndex])
+  }
+  for (const negated of root.descendantsOfType('negated_command')) blanks.push([negated.startIndex, negated.startIndex + 1])
+
+  let blanked = text
+  for (const [start, end] of blanks) blanked = blanked.slice(0, start) + ' '.repeat(end - start) + blanked.slice(end)
+  return blanked
 }
 
 /** `text` without the backslash-newlines the shell removes: those outside quotes, comments and heredoc bodies. */
@@ -750,8 +811,18 @@ function closingBacktick(text: string, from: number): number {
   return text.length
 }
 
-function unescapeBackticks(text: string): string {
-  return text.replace(/\\([`$\\])/g, '$1')
+/** A backquote's text as the shell runs it; inside `"..."`, `\"` is a quote too. */
+function unescapeBackticks(text: string, quoted: boolean): string {
+  return text.replace(quoted ? /\\([`$\\"])/g : /\\([`$\\])/g, '$1')
+}
+
+/** Whether a node is inside `"..."`, not counting quotes around a `$(...)` that holds it, whose text the shell reads afresh. */
+function inDoubleQuotes(node: Node): boolean {
+  for (let at = node.parent; at !== null; at = at.parent) {
+    if (at.type === 'string') return true
+    if (at.type === 'command_substitution') return false
+  }
+  return false
 }
 
 /**

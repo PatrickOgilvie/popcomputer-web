@@ -5,7 +5,7 @@
  */
 
 /** The languages whose code the fence reads, and the shell. */
-export type CodeKind = 'js' | 'python' | 'perl' | 'ruby' | 'php'
+export type CodeKind = 'js' | 'python' | 'perl' | 'ruby' | 'php' | 'awk' | 'applescript'
 
 /**
  * Calls that start a process, in each language. Code that names one may run
@@ -17,6 +17,10 @@ const STARTS_PROCESS: Readonly<Record<CodeKind, RegExp>> = {
   perl: /\bsystem\b|\bexec\b|`|\bqx\b|\bopen\s*\(?[^;]*\||\bfork\b|IPC::/,
   ruby: /\bsystem\b|\bexec\b|`|%x|\bspawn\b|IO\s*\.\s*popen|Open3|PTY|\bfork\b/,
   php: /\b(?:exec|shell_exec|system|passthru|popen|proc_open|pcntl_exec)\s*\(|`/,
+  // `system(...)`, `cmd | getline`, `print | cmd` and gawk's `|&`.
+  awk: /\bsystem\s*\(|\|\s*getline|\|&|\bprintf?\b[^;{}\n]*?(?<!\|)\|(?!\|)/,
+  // `do shell script`, Terminal's `do script` and JavaScript's `doShellScript`.
+  applescript: /\bdo\s+(?:shell\s+)?script\b|\bdo(?:Shell)?Script\b/i,
 }
 
 /** Whether a program's code can start a process. */
@@ -24,16 +28,44 @@ export function startsProcess(source: string, kind: CodeKind): boolean {
   return STARTS_PROCESS[kind].test(source)
 }
 
+/**
+ * Calls that write, move, link or remove a file, in each language: code that
+ * holds one may change any file its strings name. A call that only reads,
+ * as python's `open(path)`, is none.
+ */
+const WRITES_FILES: Readonly<Record<CodeKind, RegExp>> = {
+  js: /\b(?:writeFile|appendFile|createWriteStream|copyFile|cp|rename|unlink|rm|rmdir|symlink|link|chmod|truncate|open|outputFile|writeJson|move|remove)(?:Sync)?\s*\(|\bBun\s*\.\s*write\b|\bDeno\s*\.\s*(?:writeTextFile|writeFile|remove|rename|symlink|link|chmod|truncate|open|create|copyFile)\b/,
+  python:
+    /\bopen\s*\([^()]*,\s*(?:mode\s*=\s*)?['"][rbt]*[wax+]|\.open\s*\(\s*(?:mode\s*=\s*)?['"][rbt]*[wax+]|\.write_(?:text|bytes)\s*\(|\bshutil\b|\bos\s*\.\s*(?:rename|replace|remove|unlink|symlink|link|chmod|truncate)\b|\.(?:unlink|rename|symlink_to|hardlink_to|chmod|touch)\s*\(/,
+  perl: /\bopen\b[^;]*>|\b(?:unlink|rename|symlink|link|chmod|truncate)\b/,
+  ruby: /\bFile\s*\.\s*(?:write|rename|delete|unlink|symlink|link|chmod|truncate)\b|\bFile\s*\.\s*open\s*\([^)]*,\s*['"][rbt]*[wax+]|\bIO\s*\.\s*write\b|\bFileUtils\b/,
+  php: /\b(?:file_put_contents|fopen|rename|unlink|symlink|link|chmod|copy|touch)\s*\(/,
+  awk: /\bprintf?\b[^;{}\n]*>/,
+  applescript: /\bwrite\b|\bopen\s+for\s+access\b/i,
+}
+
+/** Whether a program's code can change a file a string of it names. */
+export function writesFiles(source: string, kind: CodeKind): boolean {
+  return WRITES_FILES[kind].test(source)
+}
+
+/** The text of each string literal of a program. */
+export function stringsInCode(source: string, kind: CodeKind): string[] {
+  return literals(source, kind).map((literal) => literal.text)
+}
+
 /** The language a file runs in: by its `#!` line, then by its extension; a shell script otherwise. */
 export function codeKind(path: string, source: string): CodeKind | 'shell' {
-  const shebang = /^#!.*?\b(node|bun|deno|tsx|ts-node|python[\d.]*|perl|ruby|php|sh|bash|zsh|dash|ksh)\b/.exec(source)?.[1]
-  const name = shebang ?? /\.([cm]?[jt]sx?|py|pl|rb|php)$/i.exec(path)?.[1]?.toLowerCase() ?? ''
+  const shebang = /^#!.*?\b(node|bun|deno|tsx|ts-node|python[\d.]*|perl|ruby|php|[gmn]?awk|osascript|sh|bash|zsh|dash|ksh)\b/.exec(source)?.[1]
+  const name = shebang ?? /\.([cm]?[jt]sx?|py|pl|rb|php|awk|applescript)$/i.exec(path)?.[1]?.toLowerCase() ?? ''
 
   if (/^(node|bun|deno|tsx|ts-node|[cm]?[jt]sx?)$/.test(name)) return 'js'
   if (/^(python[\d.]*|py)$/.test(name)) return 'python'
   if (name === 'perl' || name === 'pl') return 'perl'
   if (name === 'ruby' || name === 'rb') return 'ruby'
   if (name === 'php') return 'php'
+  if (name.endsWith('awk')) return 'awk'
+  if (name === 'osascript' || name === 'applescript') return 'applescript'
   return 'shell'
 }
 

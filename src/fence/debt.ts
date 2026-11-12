@@ -10,11 +10,12 @@
  * the parser cannot read is refused rather than counted as clean. The gate's
  * `--check` reads the index, the commit about to be made, and holds its ledger
  * to the one HEAD holds: a ledger counts or ignores more than HEAD's only when
- * `--allow-increase`, the owner's step, wrote it on that HEAD. Git runs in the
- * repository the working directory is in, whatever `GIT_DIR` names.
+ * `--allow-increase`, the owner's step, wrote it on that HEAD, as the mark it
+ * leaves in git's directory shows. Git runs in the repository the working
+ * directory is in, whatever `GIT_DIR` names.
  */
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import type { ParserOptions } from 'oxc-parser'
@@ -75,6 +76,20 @@ export interface Repository {
   readonly root: string
   /** HEAD's commit; undefined before the first one. */
   readonly head: string | undefined
+  /** Its git directory: this worktree's own, which no commit carries. */
+  readonly gitDir: string
+}
+
+/**
+ * Where `--allow-increase` marks its raise of the ledger at a path: a copy of
+ * the ledger it wrote, naming the HEAD it raised the count over, in the git
+ * directory, which no commit carries and the command hook refuses an agent's
+ * write to. A ledger's own `raisedFrom` is text anyone who writes it can forge.
+ */
+function markFile(repository: Repository | undefined, path: string): string | undefined {
+  if (repository === undefined) return undefined
+  const at = repositoryPath(repository, path)
+  return at === undefined ? undefined : join(repository.gitDir, 'popweb-fence', `${encodeURIComponent(at)}.json`)
 }
 
 /** One file the parser could not read in full, so the comments after the failure are unknown. */
@@ -277,9 +292,9 @@ export function raisesDebt(ledger: DebtLedger, committed: DebtLedger): boolean {
   return ledger.directives.length > committed.directives.length || ledger.ignore.some((pattern) => !committed.ignore.includes(pattern))
 }
 
-/** Whether `--allow-increase` wrote this ledger on this HEAD. */
-function raisedOn(ledger: DebtLedger, head: string | undefined): boolean {
-  return head !== undefined && ledger.raisedFrom === head
+/** Whether `--allow-increase` wrote this ledger on this HEAD: it names HEAD, as its mark does, and counts and ignores no more than the mark. */
+function raisedOn(ledger: DebtLedger, head: string | undefined, mark: DebtLedger | undefined): boolean {
+  return head !== undefined && ledger.raisedFrom === head && mark?.raisedFrom === head && !raisesDebt(ledger, mark)
 }
 
 /**
@@ -288,9 +303,9 @@ function raisedOn(ledger: DebtLedger, head: string | undefined): boolean {
  * written it on HEAD, as one restored from an older commit or moved into
  * place does; then HEAD's. Without a working ledger, HEAD's.
  */
-export function debtBaseline(working: DebtLedger | undefined, committed: DebtLedger | undefined, head: string | undefined): DebtLedger | undefined {
+export function debtBaseline(working: DebtLedger | undefined, committed: DebtLedger | undefined, head: string | undefined, mark?: DebtLedger): DebtLedger | undefined {
   if (working === undefined || committed === undefined) return working ?? committed
-  return raisesDebt(working, committed) && !raisedOn(working, head) ? committed : working
+  return raisesDebt(working, committed) && !raisedOn(working, head, mark) ? committed : working
 }
 
 /** The ledger `--update` writes for these directives, or its refusal when the count would rise without `allowIncrease`. */
@@ -314,10 +329,11 @@ export function checkDebt(
   directives: ReadonlyArray<DisableDirective>,
   ledger: DebtLedger | undefined,
   committed: DebtLedger | undefined,
-  head: string | undefined
+  head: string | undefined,
+  mark?: DebtLedger
 ): DebtCheck {
   if (ledger === undefined) return { _tag: 'Missing', count: directives.length }
-  if (committed !== undefined && raisesDebt(ledger, committed) && !raisedOn(ledger, head)) return { _tag: 'Raised', ledger, committed }
+  if (committed !== undefined && raisesDebt(ledger, committed) && !raisedOn(ledger, head, mark)) return { _tag: 'Raised', ledger, committed }
 
   const comparison = compareDebt(directives, ledger)
   if (comparison.count > comparison.baseline) return { _tag: 'Risen', comparison }
@@ -400,21 +416,32 @@ function runDebtCommand(args: ReadonlyArray<string>, cwd: string): DebtAnswer {
   const repository = findRepository(cwd)
   const head = repository?.head
   const committed = repository === undefined ? undefined : committedLedger(repository, path, cwd)
+  const marking = markFile(repository, path)
+  const mark = marking === undefined ? undefined : readLedger(marking)
 
   if (args.includes('--check')) {
     // The gate checks the commit about to be made: the index, not the working tree.
     const ledger = repository === undefined ? readLedger(path) : stagedLedger(repository, path, cwd)
     const directives = (repository === undefined ? scanDebt : scanStagedDebt)(cwd, ledger?.ignore ?? [])
-    return checkAnswer(checkDebt(directives, ledger, committed, head), name, repository !== undefined)
+    return checkAnswer(checkDebt(directives, ledger, committed, head, mark), name, repository !== undefined)
   }
 
   const working = readLedger(path)
   const allowIncrease = args.includes('--update') && args.includes('--allow-increase')
   // The owner's `--allow-increase` takes the working ledger as it stands; otherwise one restored or moved into place cannot lift the count over HEAD's.
-  const baseline = allowIncrease ? working ?? committed : debtBaseline(working, committed, head)
+  const baseline = allowIncrease ? working ?? committed : debtBaseline(working, committed, head, mark)
   const directives = scanDebt(cwd, baseline?.ignore ?? [])
 
-  if (args.includes('--update')) return updateAnswer(directives, updateDebt(directives, baseline, committed, head, allowIncrease), baseline, name, path)
+  if (args.includes('--update')) {
+    const update = updateDebt(directives, baseline, committed, head, allowIncrease)
+    const written = updateAnswer(directives, update, baseline, name, path)
+    // Only a raise over a committed ledger names HEAD, and only the owner's step marks one.
+    if (allowIncrease && update._tag === 'Written' && update.ledger.raisedFrom !== undefined && marking !== undefined) {
+      mkdirSync(dirname(marking), { recursive: true })
+      writeFileSync(marking, `${JSON.stringify(update.ledger, null, 2)}\n`)
+    }
+    return written
+  }
   if (args.includes('--json')) return answer(0, [JSON.stringify({ count: directives.length, directives }, null, 2)])
 
   const total = `${count(directives.length)}, ${directives.filter((directive) => directive.reason === null).length} without a reason`
@@ -502,8 +529,9 @@ export function findRepository(cwd: string = process.cwd()): Repository | undefi
   if (outsideRepository(toplevel)) return undefined
 
   const root = ok(toplevel, args).stdout.toString('utf8').trim()
+  const gitDir = runGit(cwd, ['rev-parse', '--absolute-git-dir']).stdout.toString('utf8').trim()
   const head = spawnSync('git', ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], gitOptions(cwd))
-  return { root, head: head.status === 0 ? head.stdout.toString('utf8').trim() : undefined }
+  return { root, gitDir, head: head.status === 0 ? head.stdout.toString('utf8').trim() : undefined }
 }
 
 /** The ledger HEAD holds at this path, however the path is spelled: relative, absolute, through a symbolic link, or in another case. */

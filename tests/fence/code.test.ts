@@ -27,6 +27,11 @@ describe('codeKind', () => {
     ['x.php', '', 'php'],
     ['x.sh', '', 'shell'],
     ['x', 'echo hi\n', 'shell'],
+    ['x', '#!/usr/bin/awk -f\n', 'awk'],
+    ['x', '#!/usr/bin/env gawk -f\n', 'awk'],
+    ['x.awk', '', 'awk'],
+    ['x', '#!/usr/bin/osascript\n', 'applescript'],
+    ['x.applescript', '', 'applescript'],
   ] as const)('%p holding %p is %p', (path, source, kind) => {
     expect(codeKind(path, source)).toBe(kind)
   })
@@ -52,6 +57,16 @@ describe('startsProcess', () => {
     ['ruby', 'puts "hi"', false],
     ['php', 'shell_exec("ls");', true],
     ['php', 'echo "hi";', false],
+    ['awk', 'BEGIN { system("ls") }', true],
+    ['awk', '"ls" | getline x', true],
+    ['awk', '{ print $1 | "sort" }', true],
+    ['awk', '{ print $1 |& "sort" }', true],
+    ['awk', '/a|b/ { print $1 }', false],
+    ['awk', '{ if (a || b) print $1 }', false],
+    ['applescript', 'do shell script "ls"', true],
+    ['applescript', 'tell app "Terminal" to do script "ls"', true],
+    ['applescript', 'app.doShellScript("ls")', true],
+    ['applescript', 'display notification "done"', false],
   ] as const)('%p: %p is %p', (kind, source, expected) => {
     expect(startsProcess(source, kind as CodeKind)).toBe(expected)
   })

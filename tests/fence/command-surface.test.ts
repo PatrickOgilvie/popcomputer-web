@@ -353,6 +353,8 @@ describe("git's dangerous surface", () => {
     ['NODE_OPTIONS="--require ./x.js" node -v', unreadable],
     ['NODE_OPTIONS=--import=./x.js node -v', unreadable],
     ['NODE_OPTIONS=--max-old-space-size=4096 bun test', 'allow'],
+    ['GIT_PAGER="$PAGER" git log', unreadable],
+    ['GIT_PAGER= git log', 'allow'],
   ])
 })
 

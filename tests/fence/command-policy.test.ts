@@ -88,6 +88,73 @@ const allowed: ReadonlyArray<string> = [
   '"$(git rev-parse --show-toplevel)/node_modules/.bin/tsc" --noEmit',
   'echo -n $(date)',
   'git hash-object -w notes.txt',
+  // Backquotes inside backquotes and inside `${...}`, which run what the fence reads.
+  'echo `echo \\`git rev-parse HEAD\\``',
+  'echo "${X:-`git rev-parse HEAD`}"',
+  'echo ${X:-\\`git commit -n -m x\\`}',
+  // `time` and `!` before a command, or a compound one.
+  'time',
+  'time bun test',
+  'time -p bun test',
+  '! grep -q x notes.txt',
+  'time { bun test; bunx oxlint; }',
+  'if ! grep -q x notes.txt; then echo missing; fi',
+  '! { grep -q x notes.txt; }',
+  '"time" { git status; }',
+  // Commands that run the command their arguments give.
+  'cross-env NODE_ENV=test bun test',
+  'npx cross-env NODE_ENV=test bun run build',
+  'arch -arm64 bun test',
+  'xcrun --find clang',
+  'xcrun --show-sdk-path',
+  'arch -arm64',
+  'dotenv -o bun test',
+  'dotenv -c production -- bun test',
+  'xcrun -sdk macosx swift --version',
+  'flock /tmp/build.lock bun run build',
+  'dotenv -e .env.test -- bun test',
+  'script -q /dev/null bun test',
+  "concurrently -n api,web --prefix '[{name}]' 'bun run build' 'bunx tsc --watch'",
+  'parallel bunx oxlint ::: src tests',
+  "awk -F, '{print $1}' notes.txt",
+  "osascript -e 'display notification \"done\"'",
+  'ssh host uptime',
+  'node node_modules/wrangler/wrangler-dist/cli.js dev',
+  // Programs git reads from the environment, read as the command lines they are.
+  'GIT_PAGER=cat git log',
+  'PAGER="less -R" git diff',
+  'GIT_EDITOR=true git commit --amend --no-edit',
+  'GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key" git fetch',
+  'export EDITOR=vim',
+  // git's own commands with an `-n` of their own, and an alias of one.
+  'git log -n 5',
+  'git grep -n TODO src',
+  'git shortlog -sn',
+  'git config alias.lg "log --oneline" && git lg -n 5',
+  // Writes of files the fence does not protect, and reads of those it does.
+  'git checkout -- .',
+  'git restore --staged .',
+  'git reset --soft HEAD~1',
+  'git apply --check fix.patch',
+  'ln -s ../shared/config.ts src/config.ts',
+  `node -e 'console.log(require("./lint-debt.json").count)'`,
+  `node -e 'require("fs").writeFileSync("dist/out.json", "{}")'`,
+  // Branches moved along their own history, or made new.
+  'git reset HEAD~1',
+  'git reset --soft ORIG_HEAD',
+  'git reset src/app.ts',
+  'git switch -c feature origin/feature',
+  'git branch -m old new',
+  // Values bash evaluates that hold no substitution, and text that holds one but is never evaluated.
+  'X=5; echo $((X * 2))',
+  'let n=n+1',
+  'declare -i count=0',
+  "printf -v pad '%5s' x",
+  "printf '%s\\n' '$(date) is literal'",
+  'read -r line < notes.txt',
+  "git commit -m 'Explain $(cmd) in the docs'",
+  '[[ -f notes.txt && $(wc -l < notes.txt) -gt 0 ]]',
+  "[ \"$X\" = 'a b' ]",
 ]
 
 const refused: ReadonlyArray<readonly [string, Expected]> = [
@@ -148,6 +215,12 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['SKIP=tsc git commit -m wip', ['deny', 'hook-bypass']],
   ['export HUSKY=0; git commit -m wip', ['deny', 'hook-bypass']],
   ['GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit', ['deny', 'hook-bypass']],
+  // A program git runs that the environment names.
+  ['GIT_EXTERNAL_DIFF=\'sh -c "git commit -n -m y"\' git diff', ['deny', 'hook-bypass']],
+  ['GIT_SSH_COMMAND=\'sh -c "git commit -n -m y"\' git fetch', ['deny', 'hook-bypass']],
+  ['GIT_PAGER=\'sh -c "git commit -n -m y"\' git log', ['deny', 'hook-bypass']],
+  ['PAGER=\'sh -c "git commit -n -m y"\' git log', ['deny', 'hook-bypass']],
+  ['export GIT_EDITOR="git commit -n -m y"; git rebase -i HEAD~2', ['deny', 'hook-bypass']],
   ['git -c core.hooksPath=/dev/null commit -m wip', ['deny', 'hook-bypass']],
   ['git -c core.hookspath=/dev/null commit', ['deny', 'hook-bypass']],
   ['git --config-env=core.hooksPath=EMPTY commit', ['deny', 'hook-bypass']],
@@ -178,6 +251,23 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['W=wrangler; $W deploy', ['deny', 'hook-bypass']],
   ['${WRANGLER:-wrangler} deploy', ['deny', 'hook-bypass']],
   ['git -c "$(echo core.hooksPath)=/dev/null" commit', ['deny', 'hook-bypass']],
+  // A value set on the line that bash evaluates, in arithmetic, a subscript or PS4, running its substitution.
+  ["X='a[$(git commit -n -m x)]'; echo $((X))", ['ask', 'unreadable']],
+  ["X='a[$(git commit -n -m x)]'; (( X ))", ['ask', 'unreadable']],
+  ["X='a[$(git commit -n -m x)]'; [[ $X -eq 1 ]]", ['ask', 'unreadable']],
+  ["X='a[$(git commit -n -m x)]'; declare -i Y=X", ['ask', 'unreadable']],
+  ['X="a[\\`git commit -n -m x\\`]"; echo $((X))', ['ask', 'unreadable']],
+  ["export X='a[$(git commit -n -m x)]'; bash -c 'echo $((X))'", ['ask', 'unreadable']],
+  ["read X <<< 'a[$(git commit -n -m x)]'; echo $((X))", ['ask', 'unreadable']],
+  ["printf -v X 'a[$(git commit -n -m x)]'; echo $((X))", ['ask', 'unreadable']],
+  ["unset 'a[$(git commit -n -m x)]'", ['ask', 'unreadable']],
+  ["let 'x=a[$(git commit -n -m x)]'", ['ask', 'unreadable']],
+  ["test -v 'a[$(git commit -n -m x)]'", ['ask', 'unreadable']],
+  ["[ -v 'a[$(git commit -n -m x)]' ]", ['ask', 'unreadable']],
+  ["[[ x -lt 'a[$(git commit -n -m x)]' ]]", ['ask', 'unreadable']],
+  ["mapfile -t lines <<< 'a[$(git commit -n -m x)]'; echo $((lines))", ['ask', 'unreadable']],
+  ['[[ "a[\\$(git commit -n -m x)]" -eq 0 ]]', ['ask', 'unreadable']],
+  ["PS4='$(git commit -n -m x)'; set -x; true", ['ask', 'unreadable']],
   // Writing a commit by hand, which runs no hook.
   ['git update-ref refs/heads/main $(git commit-tree HEAD^{tree} -p HEAD -m wip)', ['deny', 'hook-bypass']],
   ['git hash-object -w -t commit commit.txt', ['deny', 'hook-bypass']],
@@ -193,9 +283,14 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['yarn wrangler deploy', ['ask', 'deploy']],
   ['./node_modules/.bin/wrangler deploy', ['ask', 'deploy']],
   ['node node_modules/wrangler/bin/wrangler.js deploy', ['ask', 'deploy']],
+  ['node node_modules/wrangler/wrangler-dist/cli.js deploy', ['ask', 'deploy']],
+  ['./node_modules/wrangler/bin/wrangler.js deploy', ['ask', 'deploy']],
+  ['bun node_modules/.bin/wrangler deploy', ['ask', 'deploy']],
+  ['node node_modules/.bin/npm publish', ['ask', 'publish']],
   ['CLOUDFLARE_ACCOUNT_ID=abc wrangler deploy', ['ask', 'deploy']],
   ['env -i PATH=/usr/bin wrangler deploy', ['ask', 'deploy']],
   ['bun run build && wrangler deploy', ['ask', 'deploy']],
+  ['GIT_EDITOR="wrangler deploy" git commit', ['ask', 'deploy']],
   ['sh -c "bunx wrangler deploy"', ['ask', 'deploy']],
   ['W=wrangler; "$W" deploy', ['ask', 'deploy']],
   ['"${WRANGLER:-wrangler}" deploy', ['ask', 'deploy']],
@@ -283,6 +378,10 @@ describe('commandPolicy', () => {
 
     expect(verdict).toMatchObject({ decision: 'deny', subject: "git '$(…)' -n" })
     expect(verdict.decision !== 'allow' && verdict.reason).toContain('may run `git commit -n`')
+  })
+
+  test('names a program git runs that an expansion gives', () => {
+    expect(commandPolicy('GIT_PAGER="$PAGER" git log')).toMatchObject({ decision: 'ask', rule: 'unreadable', reason: expect.stringContaining('GIT_PAGER, a program git runs') })
   })
 
   test('names the script a command came from', () => {

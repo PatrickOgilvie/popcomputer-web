@@ -31,6 +31,33 @@ describe('machine 60: the shell reader', () => {
     expect(decision("{ echo 'git commit -n -m x'; } | bash")).toBe('ask')
   })
 
+  test('M60.T15, M60.T20: a compound command after `!` or `time`', () => {
+    for (const command of [
+      'time { git commit -n -m x; }',
+      '! { git commit -n -m x; }',
+      'if ! { git commit -n -m x; }; then :; fi',
+      'time while true; do git commit -n -m x; done',
+      'time -p until false; do git commit -n -m x; done',
+      '! for x in a; do git commit -n -m x; done',
+      'time { HUSKY=0 git commit -m x; }',
+      '! ! git commit -n -m x',
+      'time ! git commit -n -m x',
+      '! time { git commit -n -m x; }',
+      'time time { git commit -n -m x; }',
+      'echo $(time if true; then git commit -n -m x; fi)',
+      `${'! '.repeat(16)}{ git commit -n -m x; }`,
+    ]) {
+      expect(decision(command)).toBe('deny')
+    }
+    for (const [command, rule] of [['time { wrangler deploy; }', 'deploy'], ['time { git push; }', 'push'], ['time { npm publish; }', 'publish']] as const) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule })
+    }
+    expect(commandPolicy(`${'! '.repeat(17)}{ git commit -n -m x; }`)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    // After an assignment `time` is a program, which runs a command named `{`, and `echo`'s `{` is a word.
+    expect(decision('X=1 time { git commit -n -m x; }')).toBe('allow')
+    expect(decision('echo { git commit -n -m x; }')).toBe('allow')
+  })
+
   test('M60.T19: an alias of two commands', () => {
     expect(decision("shopt -s expand_aliases\nalias g='true && git commit -n -m x'\ng")).toBe('deny')
     expect(decision("alias g='git status'\ng")).toBe('ask')
@@ -94,6 +121,19 @@ describe('machine 60: the shell reader', () => {
     expect(decision('echo ${X:-$(git commit --no-verify -m x)}')).toBe('deny')
   })
 
+  test("M60.T62, M60.T77: a backquote or a substitution in any `${...}` operand runs", () => {
+    for (const operator of [':-', ':+', ':=', '?', '#', '%', '/a/']) {
+      expect(decision('echo ${X' + operator + '`git commit -n -m x`}')).toBe('deny')
+      expect(decision('echo "${X' + operator + '`git commit -n -m x`}"')).toBe('deny')
+    }
+    expect(decision('echo ${X#$(git commit -n -m x)}')).toBe('deny')
+    expect(decision('echo ${X%%$(git commit -n -m x)}')).toBe('deny')
+    expect(commandPolicy('echo ${X:-`wrangler deploy`}')).toMatchObject({ decision: 'ask', rule: 'deploy' })
+    expect(decision('cat <<EOF\n${X:-`git commit -n -m x`}\nEOF')).toBe('deny')
+    // Escaped, the backquotes are text.
+    expect(decision('echo ${X:-\\`git commit -n -m x\\`}')).toBe('allow')
+  })
+
   test("M60.T63: a default's variable is not empty", () => {
     expect(decision('Y=git; ${X:-$Y} commit -n -m x')).toBe('deny')
   })
@@ -101,6 +141,27 @@ describe('machine 60: the shell reader', () => {
   test("M60.T69: `$'...'`'s \\u escapes", () => {
     expect(decision("$'\\u0067it' commit -n -m x")).toBe('deny')
     expect(decision("$'\\U00000067it' commit -n -m x")).toBe('deny')
+  })
+
+  test('M60.T72: a backquote inside a backquote, its own backquotes escaped', () => {
+    const nested = (line: string) => ['echo `echo \\`' + line + '\\``', 'x=`echo \\`' + line + '\\``', 'echo "`echo \\`' + line + '\\``"']
+    for (const line of ['git commit -n -m x', 'HUSKY=0 git commit -m x', 'git -c core.hooksPath=/dev/null commit -m x']) {
+      for (const command of nested(line)) expect(decision(command)).toBe('deny')
+    }
+    for (const [line, rule] of [['wrangler deploy', 'deploy'], ['git push', 'push'], ['npm publish', 'publish']] as const) {
+      for (const command of nested(line)) expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule })
+    }
+    // Inside double quotes, a backquote's `\"` is a quote; inside `$(...)` or a heredoc it is text.
+    expect(decision('echo "`git commit \\"-n\\" -m x`"')).toBe('deny')
+    expect(decision('echo `git commit \\"-n\\" -m x`')).toBe('allow')
+    // zsh reads it so in arithmetic inside the quotes too, where bash keeps the backslash.
+    expect(decision('echo "$((`git commit \\"-n\\" -m x` + 1))"')).toBe('deny')
+    expect(decision('echo "$(echo `git commit \\"-n\\" -m x`)"')).toBe('allow')
+    expect(decision('cat <<EOF\n`git commit \\"-n\\" -m x`\nEOF')).toBe('allow')
+    // Each backquote counts toward the substitutions the reader follows.
+    const within = (levels: number) => `${'echo $('.repeat(levels)}echo \`echo \\\`echo hi\\\`\`${')'.repeat(levels)}`
+    expect(commandPolicy(within(15))).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision(within(14))).toBe('allow')
   })
 
   test("M60.T77: an unquoted heredoc's substitutions run", () => {
@@ -157,14 +218,138 @@ describe('machine 61: the policy walkers', () => {
     expect(decision('find . -name "*.tmp" -delete')).toBe('allow')
   })
 
+  test('M61.T16: code that writes the paths its strings name', () => {
+    for (const command of [
+      `node -e 'require("fs").writeFileSync(".git/hooks/pre-commit","exit 0")'`,
+      `python3 -c 'open(".git/hooks/pre-commit","w").write("exit 0")'`,
+      `perl -e 'open(F, ">.git/hooks/pre-commit"); print F "exit 0"'`,
+      `ruby -e 'File.write(".git/hooks/pre-commit", "exit 0")'`,
+      `php -r 'file_put_contents(".git/hooks/pre-commit", "exit 0");'`,
+      `awk 'BEGIN { print "exit 0" > ".git/hooks/pre-commit" }'`,
+      `bun -e 'await Bun.write(".git/config", "")'`,
+    ]) {
+      expect(decision(command)).toBe('deny')
+    }
+    expect(commandPolicy(`node -e 'require("fs").writeFileSync("lint-debt.json", "{}")'`)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    const hooks = 'import { writeFileSync } from "node:fs"\nwriteFileSync(".git/hooks/pre-commit", "exit 0")\n'
+    expect(decision('bun scripts/hooks.ts', { readFile: (path) => (path === 'scripts/hooks.ts' ? hooks : undefined) })).toBe('deny')
+    // Reading one changes nothing.
+    expect(decision(`node -e 'console.log(require("fs").readFileSync(".git/hooks/pre-commit", "utf8"))'`)).toBe('allow')
+    expect(decision(`python3 -c 'print(open("lint-debt.json").read())'`)).toBe('allow')
+  })
+
+  test('M61.T16: gawk -i inplace and patch change the files they name', () => {
+    expect(decision("awk -i inplace '{print}' .git/hooks/pre-commit")).toBe('deny')
+    expect(commandPolicy("gawk --include=inplace -f fix.awk lint-debt.json", { readFile: () => '{ print }' })).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(decision("awk '{print}' .git/hooks/pre-commit")).toBe('allow')
+
+    const patch = (path: string) => `--- a/${path}\t2026-01-01\n+++ b/${path}\n@@ -1 +1 @@\n-x\n+exit 0\n`
+    const patches: Readonly<Record<string, string>> = {
+      'hooks.patch': patch('.git/hooks/pre-commit'),
+      'debt.patch': patch('lint-debt.json'),
+      'src.patch': patch('src/app.ts'),
+      'renamed.patch': 'diff --git a/x.json b/lint-debt.json\nrename from x.json\nrename to lint-debt.json\n',
+      'lint-debt.json': '{}\n',
+    }
+    const withPatches = { readFile: (path: string) => patches[path] }
+    expect(commandPolicy('patch -p1 < x.patch')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision('patch -p1 < hooks.patch', withPatches)).toBe('deny')
+    expect(commandPolicy('patch -p1 -i debt.patch', withPatches)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(commandPolicy('cat debt.patch | patch -p1', withPatches)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('patch lint-debt.json src.patch', withPatches)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(commandPolicy('patch -o lint-debt.json -i src.patch', withPatches)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(decision('patch -d .git/hooks -p1 < src.patch', withPatches)).toBe('deny')
+    expect(commandPolicy('patch --bogus < src.patch', withPatches)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision('patch -p1 < src.patch', withPatches)).toBe('allow')
+    // The file a patch is read from is not one it writes.
+    expect(decision('patch -p1 -i lint-debt.json', withPatches)).toBe('allow')
+    expect(decision('patch --dry-run -p1 < hooks.patch', withPatches)).toBe('allow')
+    expect(commandPolicy('git apply renamed.patch', withPatches)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(decision('git apply --directory=.git/hooks src.patch', withPatches)).toBe('deny')
+    expect(decision('git apply < hooks.patch', withPatches)).toBe('deny')
+    expect(decision('git apply src.patch', withPatches)).toBe('allow')
+    expect(decision('git apply --stat hooks.patch', withPatches)).toBe('allow')
+    expect(decision('git apply --check --apply src.patch', withPatches)).toBe('allow')
+    expect(decision('git apply --check --apply hooks.patch', withPatches)).toBe('deny')
+  })
+
   test('M61.T17: commands that run a command', () => {
     expect(decision("trap 'git commit -n -m x' EXIT")).toBe('deny')
     expect(decision('coproc git commit -n -m x')).toBe('deny')
     expect(decision('coproc NAME { git commit -n -m x; }')).toBe('deny')
   })
 
+  test('M61.T17: commands that run the command their arguments give', () => {
+    for (const command of [
+      'arch -arm64 git commit -n -m x',
+      'arch -arch x86_64 -e HUSKY=0 git commit -m x',
+      'xcrun git commit -n -m x',
+      'xcrun -sdk macosx git commit -n -m x',
+      'script -q /dev/null git commit -n -m x',
+      "script -qc 'git commit -n -m x' /dev/null",
+      'cross-env HUSKY=0 git commit -m x',
+      'npx cross-env HUSKY=0 git commit -m x',
+      "cross-env-shell 'git commit -n -m x'",
+      'npx dotenv -- git commit -n -m x',
+      'dotenv -e .env git commit -n -m x',
+      'dotenv -v HUSKY=0 -- git commit -m x',
+      "npx concurrently 'git commit -n -m x'",
+      "concurrently -n a,b 'bun test' 'git commit -n -m x'",
+      'flock /tmp/l git commit -n -m x',
+      "flock -w 5 /tmp/l -c 'git commit -n -m x'",
+      "parallel ::: 'git commit -n -m x'",
+      'parallel git ::: commit ::: -n',
+      "parallel -j 4 ::: 'git commit -n -m x'",
+      "echo 'git commit -n -m x' | parallel",
+      "ssh -o ProxyCommand='git commit -n -m x' x",
+      "ssh -o 'ProxyCommand git commit -n -m x' x",
+      "ssh -oLocalCommand='git commit -n -m x' x",
+    ]) {
+      expect(decision(command)).toBe('deny')
+    }
+    expect(commandPolicy("concurrently 'npm:deploy'", { scripts: { deploy: 'wrangler deploy' } })).toMatchObject({ decision: 'ask', rule: 'deploy' })
+    expect(commandPolicy("concurrently 'npm:watch-*'")).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('parallel :::: commands.txt')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('cat commands.txt | parallel')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('xcrun --bogus git status')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('dotenv -c git status')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy('script .git/hooks/pre-commit true')).toMatchObject({ decision: 'deny', rule: 'hook-bypass' })
+    for (const command of ['xcrun -- git commit -n -m x', 'xcrun -v git commit -n -m x', 'dotenv -c prod -- git commit -n -m x']) expect(decision(command)).toBe('deny')
+    // `xcrun -f` names the tool's path, and runs nothing.
+    expect(decision('xcrun -f git commit -n -m x')).toBe('allow')
+    for (const command of [
+      'script --bogus x',
+      'script -c "$CMD" /dev/null',
+      'flock --bogus /tmp/l true',
+      'flock /tmp/l -c "$CMD"',
+      'ssh -Z host',
+      "awk --bogus '{}'",
+      'dotenv --bogus -- bun test',
+      `parallel echo ::: ${Array.from({ length: 33 }, (_, at) => `a${at}`).join(' ')}`,
+      'ssh -o ProxyCommand=./proxy.sh host',
+    ]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    }
+    expect(commandPolicy('script -c "$CMD" /dev/null')).toMatchObject({ reason: expect.stringContaining('a command for script that an expansion gives') })
+    expect(commandPolicy('flock /tmp/l -c "$CMD"')).toMatchObject({ reason: expect.stringContaining('a command for flock that an expansion gives') })
+    // What ssh runs on the host is read for the rules only: a script there is no file the fence opens here.
+    for (const command of ['ssh host ./scripts/run.sh', 'ssh -o RemoteCommand=./scripts/run.sh host']) expect(decision(command)).toBe('allow')
+    expect(decision(`parallel echo ::: ${Array.from({ length: 32 }, (_, at) => `a${at}`).join(' ')}`)).toBe('allow')
+  })
+
+  test('M61.T17: programs whose code runs a command', () => {
+    expect(decision(`awk 'BEGIN{system("git commit -n -m x")}'`)).toBe('deny')
+    expect(decision(`gawk -v x=1 'BEGIN{system("git commit -n -m x")}'`)).toBe('deny')
+    expect(decision(`osascript -e 'do shell script "git commit -n -m x"'`)).toBe('deny')
+    expect(commandPolicy(`awk 'BEGIN{system("date")}'`)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy(`awk -f prog.awk notes.txt`)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(commandPolicy(`osascript -e 'tell app "Terminal" to do script "date"'`)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision("awk -F, '{print $1}' notes.txt")).toBe('allow')
+    expect(decision(`osascript -e 'display notification "done"'`)).toBe('allow')
+  })
+
   test('M61.T18: runners of JavaScript and TypeScript', () => {
-    for (const runner of ['tsx', 'ts-node', 'deno run']) expect(decision(`${runner} scripts/x.ts`, { readFile })).toBe('deny')
+    for (const runner of ['tsx', 'ts-node', 'deno run', 'babel-node', 'ts-node-dev', 'ts-node-dev --respawn', 'tsnd']) expect(decision(`${runner} scripts/x.ts`, { readFile })).toBe('deny')
   })
 
   test('M61.T22: HUSKY set to what the fence cannot read', () => {
@@ -176,6 +361,14 @@ describe('machine 61: the policy walkers', () => {
     expect(decision('GIT_CONFIG_GLOBAL=g git commit -m x')).toBe('ask')
     expect(decision('GIT_CONFIG=g git commit -m x')).toBe('ask')
     expect(decision('GIT_DIR=elsewhere git commit -m x')).toBe('ask')
+  })
+
+  test('M61.T23: HOME and XDG_CONFIG_HOME point git at another global config', () => {
+    for (const command of ['XDG_CONFIG_HOME=/tmp/x git commit -m x', 'HOME=/tmp/x git commit -m x', 'HOME=/tmp/x; git commit -m x', 'env HOME=/tmp/x git commit -m x']) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'hook-bypass' })
+    }
+    // Empty, git reads ~/.config/git/config, as it does without it.
+    expect(decision('XDG_CONFIG_HOME= git commit -m x')).toBe('allow')
   })
 
   test("M61.T26: a wrapper's option the fence does not read", () => {
@@ -229,6 +422,71 @@ describe('machine 61: the policy walkers', () => {
     expect(decision(`bun -pe 'require("child_process").execSync("git commit -n -m x")'`)).toBe('deny')
     expect(decision(`bun --eval='require("child_process").execSync("git commit -n -m x")'`)).toBe('deny')
     expect(decision(`python3 -Bc 'import os; os.system("git commit -n -m x")'`)).toBe('deny')
+  })
+
+  test('M48: the ledger written from another commit, into the index, or by git from a patch', () => {
+    for (const command of [
+      'git apply x.patch',
+      'git apply --cached x.patch',
+      'git update-index --cacheinfo 100644,abc,lint-debt.json',
+      'git update-index --cacheinfo 100644 abc lint-debt.json',
+      'git update-index --force-remove lint-debt.json',
+      'git update-index --index-info < entries.txt',
+      'git checkout HEAD~1 -- .',
+      'git checkout HEAD~1 .',
+      'git checkout main -- "*.json"',
+      'git checkout HEAD~1 -- :/',
+      'git restore -s HEAD~1 -- .',
+      'git restore --source=main .',
+      'git restore --source main -- .',
+      'git reset HEAD~1 -- lint-debt.json',
+      'git reset main -- .',
+      'git reset --hard HEAD~1',
+      'git reset --keep HEAD~1',
+      'git read-tree HEAD~1',
+      'git checkout-index -f lint-debt.json',
+      'git checkout-index -a --prefix=.githooks/',
+    ]) {
+      expect(decision(command)).not.toBe('allow')
+    }
+    expect(decision('git checkout-index -a --prefix=.git/hooks/')).toBe('deny')
+    expect(commandPolicy('git update-index --index-info <<EOF\n100644 abc\tlint-debt.json\nEOF')).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    // A pathspec the fence cannot place covers the whole tree; a glob covers what it matches.
+    for (const command of [
+      'git checkout HEAD~1 -- "$DIR"',
+      'git checkout HEAD~1 -- $DIR',
+      'cd "$X" && git checkout HEAD~1 -- src',
+      'git checkout HEAD~1 -- ..',
+      'git checkout HEAD~1 -- /repo',
+      'git checkout main -- *.json',
+      'git checkout main -- "lint-debt.jso?"',
+      'git checkout main -- lint-debt.jso?',
+    ]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    }
+    // From the index or HEAD, whose ledger is the one the gate holds the count to; a switch of branch; or no change.
+    for (const command of [
+      'git checkout -- .',
+      'git checkout HEAD -- .',
+      'git restore .',
+      'git restore --staged .',
+      'git reset --hard',
+      'git reset --hard HEAD',
+      'git reset --soft HEAD~1',
+      'git reset HEAD~1',
+      'git checkout main',
+      'git checkout main -- src',
+      'git checkout -- src/app.ts',
+      'git -C app checkout HEAD~1 -- .',
+      'git read-tree -n HEAD~1',
+      'git checkout-index -a',
+      'git checkout-index --prefix=.git/hooks/',
+      'git update-index --stdin <<< src/app.ts',
+      'git checkout main -- "src/*.ts"',
+      'git checkout main -- "?.ts"',
+    ]) {
+      expect(decision(command)).toBe('allow')
+    }
   })
 
   test("M61.T58, M48.T8: the fence's own CLI by another path", () => {
@@ -294,6 +552,23 @@ describe('machine 61: the policy walkers', () => {
     expect(decision("git -c 'alias.x=!git commit' x -n -m y")).toBe('deny')
   })
 
+  test('M61.T88: an alias `git config` sets on the line, and one the fence cannot see', () => {
+    for (const command of [
+      'git config alias.x commit && git x -n -m y',
+      'git config --global alias.x "commit -a" && git x -n -m y',
+      "git config alias.x '!git commit' && git x -n -m y",
+      'git config set alias.X commit; git x -n -m y',
+    ]) {
+      expect(decision(command)).toBe('deny')
+    }
+    // `-n` is commit's way past the hooks, so a command git does not have, which may be an alias of commit's, asks.
+    for (const command of ['git ci -n -m y', 'git ci -anm y', 'git Commit -n -m y']) expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    // An alias never shadows git's own command; an unset one is gone.
+    expect(decision('git config alias.log commit && git log -n 5')).toBe('allow')
+    expect(commandPolicy('git config --unset alias.x commit && git x -n -m y')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision('git ci -m y')).toBe('allow')
+  })
+
   test('M61.T89: `-c include.path`', () => {
     expect(decision('git -c include.path=g commit -m x')).toBe('ask')
     expect(decision('git -c core.fsmonitor=x status')).toBe('ask')
@@ -305,6 +580,53 @@ describe('machine 61: the policy walkers', () => {
       expect(decision(command)).toBe('ask')
     }
     for (const command of ['git merge --abort', 'git cherry-pick -n FETCH_HEAD', 'git rebase --abort', 'git merge-base HEAD main']) expect(decision(command)).toBe('allow')
+  })
+
+  test('M61.T99: commands that move a branch to commits this gate never checked', () => {
+    for (const command of [
+      'git fetch ../other main && git reset --hard FETCH_HEAD',
+      'git reset --soft origin/main',
+      'git reset FETCH_HEAD',
+      'git reset abc1234',
+      'git reset HEAD@{1}',
+      'git reset --soft main',
+      'git reset --hard FETCH_HEAD --',
+      'git update-ref refs/heads/main FETCH_HEAD',
+      'git update-ref -m sync HEAD abc1234',
+      'git update-ref --stdin < refs.txt',
+      'git branch -f main FETCH_HEAD',
+      'git branch --force main',
+      'git branch -M feature main',
+      'git branch -C feature main',
+      'git switch -C main FETCH_HEAD',
+      'git switch --force-create main',
+      'git checkout -B main --track origin/main',
+      'git -C ../other commit -m x',
+      'cd .. && git commit -m x',
+    ]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'hook-bypass' })
+    }
+    for (const command of [
+      'git reset --soft HEAD~1',
+      'git reset HEAD^',
+      'git reset --mixed @~2',
+      'git reset --soft ORIG_HEAD',
+      'git reset -- src/app.ts',
+      'git reset src/app.ts',
+      'git reset --soft origin/main -- src',
+      'git update-ref -d refs/heads/old abc1234',
+      'git update-ref refs/heads/main',
+      'git branch -f',
+      'git branch feature',
+      'git branch -D old',
+      'git branch -m old new',
+      'git switch -c feature origin/feature',
+      'git checkout -b feature',
+      'git -C app commit -m x',
+      'cd app && git commit -m x',
+    ]) {
+      expect(decision(command)).toBe('allow')
+    }
   })
 
   test('M61.T100: `send-pack` pushes', () => {
@@ -371,6 +693,52 @@ describe('machine 61: the policy walkers', () => {
     expect(decision('cd .git && echo x > hooks/pre-commit')).toBe('deny')
     expect(decision('cd "$DIR" && echo x > pre-commit')).toBe('ask')
     expect(decision('(cd .git/hooks); echo x > pre-commit')).toBe('allow')
+  })
+
+  test('M61.T134: a link to a protected path, or to a directory above one, changes it', () => {
+    for (const command of [
+      "ln -s .git/hooks h && echo 'exit 0' > h/pre-commit",
+      "ln -s .git/hooks/pre-commit x; echo 'exit 0' > x",
+      'ln -s .git g',
+      'ln -sf ../.git/config sub/c',
+      'ln .git/hooks/pre-commit x',
+      'ln -s .git/hooks',
+      'ln -s /repo/.git/hooks h',
+      'ln -s -t links .git/hooks',
+      'ln -s "$ROOT/.git" g',
+      'cp -s .git/hooks/pre-commit x',
+      'cp -al .git/hooks h',
+      'cp --link .git/config c',
+      'ln -s ~/.gitconfig g',
+      'ln -s ../app/node_modules/@popcomputer/web/dist w',
+    ]) {
+      expect(decision(command)).toBe('deny')
+    }
+    expect(commandPolicy('ln -s lint-debt.json debt.json')).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    expect(commandPolicy('ln -s .githooks h')).toMatchObject({ decision: 'ask', rule: 'fence-change' })
+    // A path through `.` still names the files below it; a copy is no link.
+    for (const command of [
+      'ln -s ../shared/config.ts src/config.ts',
+      'ln -s . self',
+      'ln -s /repo/node_modules node_modules',
+      'ln -s ../app/node_modules nm',
+      'cp .git/hooks/pre-commit /tmp/pre-commit',
+      'cp -a .git/hooks /tmp/hooks',
+    ]) {
+      expect(decision(command)).toBe('allow')
+    }
+  })
+
+  test('M48 (a stated limit): `git stash pop` brings back files the fence cannot list, so it runs; the gate refuses a raised ledger it brings back', () => {
+    expect(decision('git stash pop')).toBe('allow')
+    expect(decision('git stash apply stash@{1}')).toBe('allow')
+  })
+
+  test("M48.T26: the mark `--allow-increase` leaves in git's directory, which the gate trusts a raised ledger by", () => {
+    expect(decision("echo '{}' > .git/popweb-fence/lint-debt.json.json")).toBe('deny')
+    expect(decision('cp lint-debt.json .git/popweb-fence/lint-debt.json.json')).toBe('deny')
+    expect(filePolicy('/repo/.git/worktrees/app/popweb-fence/lint-debt.json.json').decision).toBe('deny')
+    expect(decision('cat .git/popweb-fence/lint-debt.json.json')).toBe('allow')
   })
 
   test("M61.T136: git's config, where core.hooksPath lives", () => {
