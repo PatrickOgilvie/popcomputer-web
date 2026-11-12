@@ -437,6 +437,44 @@ describe('a body file() streams', () => {
     expect(log).toEqual(['released'])
   })
 
+  test('M22.T14: answered to a HEAD request, which sends no body, releases the services the action had', async () => {
+    const { app, routes, worker } = harness()
+    const log: string[] = []
+    const ctx = worker()
+
+    routes.provide(held(log)).get('/rows', action(file(chunks([], 3), { contentType: 'text/csv' })))
+
+    expect((await app.request('/rows', { method: 'HEAD' }, testEnv({}))).status).toBe(200)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(log).toEqual(['released'])
+
+    expect((await app.request('/rows', { method: 'HEAD' }, testEnv({}), ctx.context)).status).toBe(200)
+    await ctx.settled()
+    expect(log).toEqual(['released', 'released'])
+  })
+
+  test('M22.T14: replaced by the answer to a middleware that failed after it, releases the services the action had', async () => {
+    const log: string[] = []
+    const app = new Hono()
+    const { routes } = setupWeb(app, {
+      version: '1',
+      render: (page) => JSON.stringify(page),
+      middleware: [async (_c, next) => {
+        await next()
+        throw new Error('the middleware failed after the route answered')
+      }],
+    })
+
+    routes.provide(held(log)).get('/rows', action(file(chunks([], 3), { contentType: 'text/csv' })))
+
+    const res = await app.request('/rows', api, testEnv({}))
+
+    expect(res.status).toBe(500)
+    await res.text()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(log).toEqual(['released'])
+  })
+
   test('M22.T9: that fails part way ends the body and reaches the error observer', async () => {
     const { app, routes, events } = harness()
     const failing = Stream.make('one\n').pipe(Stream.concat(Stream.die(new Error('the second chunk died'))))

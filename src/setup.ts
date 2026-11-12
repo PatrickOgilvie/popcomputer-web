@@ -35,6 +35,7 @@ import {
   type CoreServices,
 } from './effect/routing.js'
 import {
+  cancelUnsentBodies,
   createEffectBridge,
   drainRequestBackground,
   getRequestExecutionContextClient,
@@ -646,6 +647,10 @@ function createSetupMiddleware<
       applyRouteFactsByPath(app, c)
 
       await next()
+
+      // A body the final answer will not send, as a HEAD request's or one a
+      // later failure's answer replaced, would hold what it streams from forever.
+      cancelUnsentBodies(c)
 
       if (keptFrom(c, 'route')) {
         const kept = withoutSharedCaching(c.res)

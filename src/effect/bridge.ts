@@ -341,6 +341,13 @@ export interface BackgroundSupervisor {
   readonly settle: (release: () => Promise<void>, runtime?: ReportingRuntime) => Promise<void>
   /** A body that holds the request's services until it ends or the client cancels it. */
   readonly holdUntilSent: (body: ReadableStream<Uint8Array>) => ReadableStream<Uint8Array>
+  /**
+   * Cancel each held body the answer will not send, which nothing would
+   * otherwise read or cancel: every one for a HEAD request, whose body Hono
+   * drops, and otherwise each but the answer's own, as one a later failure's
+   * answer replaced.
+   */
+  readonly cancelUnsent: (answer: ReadableStream<Uint8Array> | null, head: boolean) => void
 }
 
 /**
@@ -358,6 +365,16 @@ export function holdUntilSent<E extends Env>(c: HonoContext<E>, response: Respon
   streamsAsRead(held)
 
   return new Response(held, { status: response.status, statusText: response.statusText, headers: response.headers })
+}
+
+/**
+ * Cancel the bodies `file()` streams that the request's final answer will not
+ * send, so the services they hold are released: see
+ * `BackgroundSupervisor.cancelUnsent`. setupWeb's outermost member calls it
+ * once every member has answered.
+ */
+export function cancelUnsentBodies<E extends Env>(c: HonoContext<E>): void {
+  openWebContext(c).backgroundSupervisor?.cancelUnsent(c.res.body, c.req.method === 'HEAD')
 }
 
 /**
@@ -407,6 +424,7 @@ function createBackgroundSupervisor<E extends Env>(
   // Bodies being sent, which hold the request's services: outside a Worker
   // too, a release waits for them, after the answer.
   let sending = 0
+  const unsent = new Set<ReadableStream<Uint8Array>>()
 
   const hold = (work: Promise<unknown>): void => {
     const held: Promise<void> = work.then(() => undefined, () => undefined).then(() => {
@@ -493,9 +511,10 @@ function createBackgroundSupervisor<E extends Env>(
       sent = resolve
     }).then(() => {
       sending -= 1
+      unsent.delete(held)
     }))
 
-    return new ReadableStream<Uint8Array>({
+    const held = new ReadableStream<Uint8Array>({
       pull: (controller) => reader.read().then(
         (chunk) => {
           if (!chunk.done) return controller.enqueue(chunk.value)
@@ -510,9 +529,19 @@ function createBackgroundSupervisor<E extends Env>(
       ),
       cancel: (reason) => reader.cancel(reason).finally(sent),
     })
+
+    unsent.add(held)
+
+    return held
   }
 
-  return { client, hasPending, settle, holdUntilSent }
+  const cancelUnsent: BackgroundSupervisor['cancelUnsent'] = (answer, head) => {
+    for (const body of unsent) {
+      if ((head || body !== answer) && !body.locked) hold(body.cancel('The answer does not send this body.'))
+    }
+  }
+
+  return { client, hasPending, settle, holdUntilSent, cancelUnsent }
 }
 
 function getOrCreateBackgroundSupervisor<E extends Env>(
