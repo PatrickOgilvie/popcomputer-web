@@ -239,6 +239,26 @@ const COMMIT_VALUE_LONG = new Set([
 ])
 const CONFIG_VALUE_OPTIONS = new Set(['-f', '--file', '--blob', '--type', '--default', '--comment', '--value'])
 
+/** git's own commands, which an alias never shadows; any other may be an alias the fence cannot see. */
+const GIT_COMMANDS = new Set([
+  'add', 'am', 'annotate', 'apply', 'archimport', 'archive', 'backfill', 'bisect', 'blame', 'branch', 'bugreport', 'bundle', 'cat-file',
+  'check-attr', 'check-ignore', 'check-mailmap', 'check-ref-format', 'checkout', 'checkout-index', 'cherry', 'cherry-pick', 'citool', 'clean',
+  'clone', 'column', 'commit', 'commit-graph', 'commit-tree', 'config', 'count-objects', 'credential', 'credential-cache', 'credential-store',
+  'cvsexportcommit', 'cvsimport', 'cvsserver', 'daemon', 'describe', 'diagnose', 'diff', 'diff-files', 'diff-index', 'diff-pairs', 'diff-tree',
+  'difftool', 'fast-export', 'fast-import', 'fetch', 'fetch-pack', 'filter-branch', 'fmt-merge-msg', 'for-each-ref', 'for-each-repo',
+  'format-patch', 'fsck', 'fsck-objects', 'gc', 'get-tar-commit-id', 'grep', 'gui', 'hash-object', 'help', 'hook', 'http-backend',
+  'http-fetch', 'http-push', 'imap-send', 'index-pack', 'init', 'init-db', 'instaweb', 'interpret-trailers', 'last-modified', 'log',
+  'ls-files', 'ls-remote', 'ls-tree', 'mailinfo', 'mailsplit', 'maintenance', 'merge', 'merge-base', 'merge-file', 'merge-index',
+  'merge-octopus', 'merge-one-file', 'merge-ours', 'merge-recursive', 'merge-resolve', 'merge-subtree', 'merge-tree', 'mergetool', 'mktag',
+  'mktree', 'multi-pack-index', 'mv', 'name-rev', 'notes', 'p4', 'pack-objects', 'pack-redundant', 'pack-refs', 'patch-id', 'prune',
+  'prune-packed', 'pull', 'push', 'quiltimport', 'range-diff', 'read-tree', 'rebase', 'receive-pack', 'reflog', 'refs', 'remote', 'repack',
+  'replace', 'replay', 'repo', 'request-pull', 'rerere', 'reset', 'restore', 'rev-list', 'rev-parse', 'revert', 'rm', 'send-email',
+  'send-pack', 'shell', 'shortlog', 'show', 'show-branch', 'show-index', 'show-ref', 'sparse-checkout', 'stage', 'stash', 'status',
+  'stripspace', 'submodule', 'subtree', 'svn', 'switch', 'symbolic-ref', 'tag', 'unpack-file', 'unpack-objects', 'update-index',
+  'update-ref', 'update-server-info', 'upload-archive', 'upload-pack', 'var', 'verify-commit', 'verify-pack', 'verify-tag', 'version',
+  'whatchanged', 'worktree', 'write-tree',
+])
+
 /** git's global options that take a value. */
 const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--super-prefix', '--list-cmds', '--attr-source'])
 
@@ -384,6 +404,8 @@ class Inspection {
   readonly findings: Finding[] = []
   /** Aliases the line defines, by name, which bash with `expand_aliases` and zsh run in place of the command. */
   private readonly aliases = new Map<string, string>()
+  /** git aliases `git config` sets on the line, by name, which git runs in place of a command it does not have. */
+  private readonly gitAliases = new Map<string, string>()
 
   /**
    * @param reading The files and package scripts being read on the way to
@@ -1260,6 +1282,13 @@ class Inspection {
     if (options.some((arg) => NO_VERIFY.test(arg)) || (sub === 'commit' && commitSkipsHooks(options))) {
       return this.deny(subject, 'skips the git hooks that run the commit gate. Fix what the gate reports and commit again; only the owner changes the gate.', context)
     }
+    if (!GIT_COMMANDS.has(sub)) {
+      const alias = this.gitAliases.get(sub.toLowerCase())
+      if (alias !== undefined) return this.gitAlias(alias, rest, subject, at)
+      if (commitSkipsHooks(options)) {
+        return this.ask('unreadable', subject, context, `may run an alias of \`git commit\` the fence cannot see, set outside the line, where \`-n\` skips the git hooks that run the commit gate. Approve it only if you expected it.`)
+      }
+    }
     if (GIT_SURFACE.commitWriters.has(sub) || (sub === 'hash-object' && writesCommitObject(options))) {
       return this.deny(subject, 'writes a commit by hand, which runs none of the git hooks that run the commit gate. Commit with `git commit`, which runs them.', context)
     }
@@ -1341,7 +1370,10 @@ class Inspection {
 
     const setting = GIT_SURFACE.settings.find((entry) => entry.key.test(name))
     if (setting?.finding === 'deny') return this.deny(subject, setting.reason, context)
-    if (setting?.finding === 'alias' && value !== undefined) return this.gitAlias(value, [], subject, context)
+    if (setting?.finding === 'alias' && value !== undefined) {
+      if (!unsets) this.gitAliases.set(name.slice('alias.'.length), value)
+      return this.gitAlias(value, [], subject, context)
+    }
     if (setting?.finding === 'ask') return this.ask('hook-bypass', subject, context, setting.reason)
     if (GIT_SURFACE.programs.test(name) && !unsets) {
       this.ask('hook-bypass', subject, context, 'writes a git setting that names a program git runs, which can do anything a command can. Approve it only if you expected it.')

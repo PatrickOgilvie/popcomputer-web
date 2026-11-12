@@ -432,6 +432,23 @@ describe('machine 61: the policy walkers', () => {
     expect(decision("git -c 'alias.x=!git commit' x -n -m y")).toBe('deny')
   })
 
+  test('M61.T88: an alias `git config` sets on the line, and one the fence cannot see', () => {
+    for (const command of [
+      'git config alias.x commit && git x -n -m y',
+      'git config --global alias.x "commit -a" && git x -n -m y',
+      "git config alias.x '!git commit' && git x -n -m y",
+      'git config set alias.X commit; git x -n -m y',
+    ]) {
+      expect(decision(command)).toBe('deny')
+    }
+    // `-n` is commit's way past the hooks, so a command git does not have, which may be an alias of commit's, asks.
+    for (const command of ['git ci -n -m y', 'git ci -anm y', 'git Commit -n -m y']) expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    // An alias never shadows git's own command; an unset one is gone.
+    expect(decision('git config alias.log commit && git log -n 5')).toBe('allow')
+    expect(commandPolicy('git config --unset alias.x commit && git x -n -m y')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision('git ci -m y')).toBe('allow')
+  })
+
   test('M61.T89: `-c include.path`', () => {
     expect(decision('git -c include.path=g commit -m x')).toBe('ask')
     expect(decision('git -c core.fsmonitor=x status')).toBe('ask')

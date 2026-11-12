@@ -126,6 +126,11 @@ const allowed: ReadonlyArray<string> = [
   'GIT_EDITOR=true git commit --amend --no-edit',
   'GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key" git fetch',
   'export EDITOR=vim',
+  // git's own commands with an `-n` of their own, and an alias of one.
+  'git log -n 5',
+  'git grep -n TODO src',
+  'git shortlog -sn',
+  'git config alias.lg "log --oneline" && git lg -n 5',
 ]
 
 const refused: ReadonlyArray<readonly [string, Expected]> = [
