@@ -163,6 +163,12 @@ const GIT_PROGRAMS = new Set([
   'GIT_EXTERNAL_DIFF', 'GIT_SSH_COMMAND', 'GIT_SSH', 'GIT_PROXY_COMMAND', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_PAGER', 'PAGER', 'MANPAGER',
   'LESSOPEN', 'GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'EDITOR', 'VISUAL',
 ])
+/**
+ * Builtins that evaluate a word as arithmetic or a variable's name, as
+ * `unset 'a[$(cmd)]'` and `let` do, or set a value later evaluated so, as
+ * `read` and `printf -v` do: a command substitution in it runs.
+ */
+const EVALUATES = new Set(['let', 'unset', 'declare', 'typeset', 'local', 'export', 'readonly', 'read', 'mapfile', 'readarray', 'test', '[', 'printf'])
 /** Builtins that set variables, whose `NAME=value` arguments the commands after them see. */
 const DECLARATIONS = new Set(['export', 'declare', 'typeset', 'readonly', 'local'])
 
@@ -550,6 +556,7 @@ class Inspection {
 
   /** An env var that switches git hooks off or points git elsewhere, before a command or exported for the ones after it. */
   private environment(name: string, value: string, subject: string, context: Context, command: string): void {
+    if (holdsSubstitution(value)) this.unreadable(subject, `${name}'s value, whose command substitution bash runs where it evaluates the value: in arithmetic, a subscript or PS4`, context)
     const dynamic = isDynamic(value)
     const switchesHooksOff =
       ((name === 'HUSKY' || name === 'LEFTHOOK') && (dynamic || /^(0|false|no|off)$/i.test(value))) ||
@@ -602,6 +609,7 @@ class Inspection {
     const next = (rest: ReadonlyArray<string>) => this.words(rest, command, deeper(context))
 
     if (FENCE_CLI.test(head)) return this.fenceCli(args, words, context)
+    if (EVALUATES.has(name) && (name !== 'printf' || args.includes('-v'))) this.evaluated(name, args, command, subject, context)
     if (this.aliases.has(head)) this.script(`${this.aliases.get(head)} ${scriptOf(args)}`, deeper(context))
     if (Object.hasOwn(INTERPRETERS, interpreterName(name))) {
       // perl -pi and ruby -i edit the files they name; their code is read too.
@@ -896,6 +904,15 @@ class Inspection {
     if (READ_BY_NAME.has(name)) return this.words([name, ...args], command, context)
     if (name !== '' && /(^|\/)node_modules\//.test(known(head))) return
     this.unreadable(shown(words.map(display)), 'a command name that an expansion or a glob gives', context)
+  }
+
+  /** A builtin that evaluates its words, or the value it reads, as arithmetic or a subscript, where a command substitution in them runs. */
+  private evaluated(name: string, args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    // What `read`, `mapfile` and `readarray` read on their input.
+    const input = this.stdinText(command, context)
+    if (args.some(holdsSubstitution) || (typeof input === 'string' && holdsSubstitution(input))) {
+      this.unreadable(subject, 'a word or a value holding a command substitution, which bash runs where it evaluates it as arithmetic or a subscript', context)
+    }
   }
 
   /** The words after the `NAME=value` assignments `env`, `sudo` and `doas` take before a command, each checked. */
@@ -1801,6 +1818,11 @@ function unknownOption(command: string, word: string): string {
 /** A python, perl or ruby by its versioned name. */
 function interpreterName(name: string): string {
   return /^python[\d.]*$/.test(name) ? 'python' : name
+}
+
+/** Whether text the shell does not expand where it is set holds a command substitution, which it runs where it evaluates the text. */
+function holdsSubstitution(text: string): boolean {
+  return /\$\(|`/.test(known(text))
 }
 
 /** Whether a word with unread parts could be `target`, its unread parts giving whatever text it needs. */

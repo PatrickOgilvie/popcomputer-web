@@ -145,6 +145,16 @@ const allowed: ReadonlyArray<string> = [
   'git reset src/app.ts',
   'git switch -c feature origin/feature',
   'git branch -m old new',
+  // Values bash evaluates that hold no substitution, and text that holds one but is never evaluated.
+  'X=5; echo $((X * 2))',
+  'let n=n+1',
+  'declare -i count=0',
+  "printf -v pad '%5s' x",
+  "printf '%s\\n' '$(date) is literal'",
+  'read -r line < notes.txt',
+  "git commit -m 'Explain $(cmd) in the docs'",
+  '[[ -f notes.txt && $(wc -l < notes.txt) -gt 0 ]]',
+  "[ \"$X\" = 'a b' ]",
 ]
 
 const refused: ReadonlyArray<readonly [string, Expected]> = [
@@ -241,6 +251,23 @@ const refused: ReadonlyArray<readonly [string, Expected]> = [
   ['W=wrangler; $W deploy', ['deny', 'hook-bypass']],
   ['${WRANGLER:-wrangler} deploy', ['deny', 'hook-bypass']],
   ['git -c "$(echo core.hooksPath)=/dev/null" commit', ['deny', 'hook-bypass']],
+  // A value set on the line that bash evaluates, in arithmetic, a subscript or PS4, running its substitution.
+  ["X='a[$(git commit -n -m x)]'; echo $((X))", ['ask', 'unreadable']],
+  ["X='a[$(git commit -n -m x)]'; (( X ))", ['ask', 'unreadable']],
+  ["X='a[$(git commit -n -m x)]'; [[ $X -eq 1 ]]", ['ask', 'unreadable']],
+  ["X='a[$(git commit -n -m x)]'; declare -i Y=X", ['ask', 'unreadable']],
+  ['X="a[\\`git commit -n -m x\\`]"; echo $((X))', ['ask', 'unreadable']],
+  ["export X='a[$(git commit -n -m x)]'; bash -c 'echo $((X))'", ['ask', 'unreadable']],
+  ["read X <<< 'a[$(git commit -n -m x)]'; echo $((X))", ['ask', 'unreadable']],
+  ["printf -v X 'a[$(git commit -n -m x)]'; echo $((X))", ['ask', 'unreadable']],
+  ["unset 'a[$(git commit -n -m x)]'", ['ask', 'unreadable']],
+  ["let 'x=a[$(git commit -n -m x)]'", ['ask', 'unreadable']],
+  ["test -v 'a[$(git commit -n -m x)]'", ['ask', 'unreadable']],
+  ["[ -v 'a[$(git commit -n -m x)]' ]", ['ask', 'unreadable']],
+  ["[[ x -lt 'a[$(git commit -n -m x)]' ]]", ['ask', 'unreadable']],
+  ["mapfile -t lines <<< 'a[$(git commit -n -m x)]'; echo $((lines))", ['ask', 'unreadable']],
+  ['[[ "a[\\$(git commit -n -m x)]" -eq 0 ]]', ['ask', 'unreadable']],
+  ["PS4='$(git commit -n -m x)'; set -x; true", ['ask', 'unreadable']],
   // Writing a commit by hand, which runs no hook.
   ['git update-ref refs/heads/main $(git commit-tree HEAD^{tree} -p HEAD -m wip)', ['deny', 'hook-bypass']],
   ['git hash-object -w -t commit commit.txt', ['deny', 'hook-bypass']],

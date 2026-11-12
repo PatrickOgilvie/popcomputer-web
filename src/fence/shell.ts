@@ -209,6 +209,10 @@ class Reader {
         this.comment(node)
         return undefined
       case 'test_command':
+        // bash evaluates `[[ x -eq y ]]`'s operands as arithmetic, and `-v`'s subscript: a substitution quoted in them runs there.
+        if (node.descendantsOfType(['raw_string', 'ansi_c_string', 'string_content', 'word']).some((part) => /\$\(|`/.test(part.text.replace(/\\(.)/g, '$1')))) {
+          this.unreadable.push(`\`${clip(node.text)}\`, whose quoted command substitution bash runs where it evaluates an operand`)
+        }
         for (const child of node.namedChildren) this.inner(child, shell)
         return undefined
       default:
