@@ -446,11 +446,15 @@ const READ_BY_NAME = new Set([
   'arch', 'xcrun', 'script', 'cross-env', 'cross-env-shell', 'dotenv', 'flock', 'concurrently', 'parallel', 'ssh', 'awk', 'gawk', 'mawk', 'nawk',
   'patch', 'lockf',
 ])
-/** Commands that print, search or ignore their arguments and run none of them, as `grep -rn git commit` does. */
+/** Commands that print, display, search or ignore their arguments and run none of them, as `grep -rn git commit` does. */
 const RUNS_NONE = new Set([
   'echo', 'print', 'printf', 'grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'which', 'whence', 'where', 'whereis', 'type', 'man', 'whatis',
-  'apropos', 'info', 'help', 'tldr', 'true', 'false', ':',
+  'apropos', 'info', 'help', 'tldr', 'true', 'false', ':', 'logger', 'say', 'terminal-notifier', 'notify-send',
 ])
+/** Options whose value is prose, as a pull request's title or a commit's message, and no command line. */
+const PROSE_OPTIONS = new Set(['--title', '--body', '--message', '-m', '--subject', '--description', '--notes', '--comment'])
+/** Shell operators that join commands in a line: `&&`, `||`, `;` and `|`. */
+const JOINS_COMMANDS = /&&|;|\|/
 /**
  * Names the policy reads that only a shell runs, as no program file has
  * them: a program that runs its arguments runs none of these, and `.` and
@@ -817,18 +821,25 @@ class Inspection {
    * command line one of them gives whole, as `tmux new 'git push'` and
    * `hyperfine` do. From the first argument naming a program the policy
    * reads, the arguments are read as that command, and each argument before
-   * it whose command line begins with such a name is read as that command
-   * line, each in an inspection of its own. When the fence would not allow
-   * one on its own, it asks the owner; when it would, the program adds
-   * nothing. A program's strings are read for the rules alone, and a
-   * reading's probe, which looks only for what the rules find, reads none.
+   * it that a shell would run as a command line, as `commandLine` tells, is
+   * read as that line, each in an inspection of its own; an option that
+   * names prose, as `--title`, gives none. When the fence would not allow one
+   * on its own, it asks the owner; when it would, the program adds nothing.
+   * A program's strings are read for the rules alone, and a reading's probe,
+   * which looks only for what the rules find, reads none.
    */
   private unknownProgram(program: string, args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
     if (context.inCode || this.probing) return
     const start = args.findIndex((arg) => !isDynamic(arg) && namesProgram(arg))
+    const own = start === -1 ? args : args.slice(0, start)
 
-    for (const arg of start === -1 ? args : args.slice(0, start)) {
-      const line = commandLine(arg)
+    for (let k = 0; k < own.length; k++) {
+      const [option, value] = splitOption(own[k])
+      if (PROSE_OPTIONS.has(option)) {
+        if (value === undefined) k++
+        continue
+      }
+      const line = commandLine(own[k])
       if (line === undefined) continue
       const answer = this.alone((inner) => inner.script(line, deeper(context)))
       if (answer.decision !== 'allow') return this.mayRun(program, `the command line \`${line}\``, answer, subject, context)
@@ -1984,16 +1995,33 @@ function namesProgram(word: string): boolean {
 }
 
 /**
- * An argument as the command line a program may run: its text, or an
- * option's value, as `--exec='wrangler deploy'`'s, when it holds more than one
- * word and its first, after any assignments, names a program the policy reads.
+ * Whether a word names a command a shell runs that the policy reads: a
+ * shell's own, as `exec` and `.`, among them, but not zsh's `-`, for which
+ * `sh` has no command.
+ */
+function startsCommand(word: string): boolean {
+  const name = basename(word)
+  return name !== '-' && READ_BY_NAME.has(interpreterName(name))
+}
+
+/**
+ * An argument as the command line a program may hand a shell: its text, or
+ * an option's value, as `--exec='wrangler deploy'`'s. It is one when it
+ * holds more than one word and its first, after any assignments, starts a
+ * command the policy reads, which a shell's own name, as `exec` or `.`, does
+ * only when another word names a program the policy reads; or when an
+ * operator joins commands in it, as in `cd app && wrangler deploy`, the
+ * shell's grammar reads it, and a word in it names such a program. A jq
+ * filter, as `. | keys` or `.a | .b`, is none.
  */
 function commandLine(arg: string): string | undefined {
   const text = evalText(arg)
   const line = /^--[\w-]+=([^]*)$/.exec(text)?.[1] ?? text
   const words = line.trim().split(/\s+/)
-  const first = words.findIndex((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word))
-  return words.length > 1 && first !== -1 && namesProgram(words[first]) ? line : undefined
+  const first = words.find((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word))
+  const names = () => line.split(/[\s;&|()<>"'`{}]+/).some((word) => word !== '' && namesProgram(word))
+  if (words.length > 1 && first !== undefined && startsCommand(first) && (namesProgram(first) || names())) return line
+  return JOINS_COMMANDS.test(line) && names() && readScript(line).unreadable.length === 0 ? line : undefined
 }
 
 /** Whether text the shell does not expand where it is set holds a command substitution, which it runs where it evaluates the text. */

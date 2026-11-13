@@ -178,6 +178,39 @@ describe('a command line given whole, as one argument, to a program the fence do
     ["grep -rn 'git commit -n' src", 'allow'],
     ["echo 'git push'", 'allow'],
     ["rg 'wrangler deploy' docs", 'allow'],
+    // Nor do those that only display them.
+    ['logger "wrangler deploy done"', 'allow'],
+    ['say "git push finished"', 'allow'],
+    ["terminal-notifier -message 'git push done'", 'allow'],
+    ["notify-send 'git push' done", 'allow'],
+    // An option that names prose gives no command line.
+    ['gh pr create --title "git push now asks" --body "wrangler deploy"', 'allow'],
+    ['gh pr comment 12 --body "git merge --no-commit now asks"', 'allow'],
+    ['gh pr create --title="git push now asks" --body="cd app; wrangler deploy"', 'allow'],
+    ["tool -m 'git push; wrangler deploy'", 'allow'],
+    ["tool --subject 'git push' --description 'wrangler deploy' --notes 'npm publish' --comment 'git push'", 'allow'],
+    ['claude -p "git push the branch"', unreadable],
+    // A shell runs the line, so a shell's own names begin one: not zsh's `-`, which `sh` has no command for.
+    ["tool 'exec git push'", unreadable],
+    ["tool '. ./env.sh && git push'", unreadable],
+    ["tool 'eval git commit -n -m x'", unreadable],
+    ["tool 'builtin command git push'", unreadable],
+    ["tool '- git push'", 'allow'],
+    // Commands an operator joins, whatever the first, when the grammar reads the line and a word names a program the policy reads.
+    ["tmux new 'cd app && wrangler deploy'", unreadable],
+    ["tmux new 'cd app; git commit -n -m x'", unreadable],
+    ["tool 'cd app || npm publish'", unreadable],
+    ["tool 'cat list | xargs git push'", unreadable],
+    ["tool 'cd app && op run -- wrangler deploy'", unreadable],
+    ["tool --exec='cd app && git push'", unreadable],
+    ["tmux new 'cd app && bun run dev'", 'allow'],
+    ["jq '.scripts | keys' package.json", 'allow'],
+    [`jq '.[] | select(.name == "git push")' list.json`, 'allow'],
+    [`jq ". | to_entries[] | .key" list.json`, 'allow'],
+    ['jq ".a | .$KEY" list.json', 'allow'],
+    ["cut -d '|' -f2 list.txt", 'allow'],
+    ["tr ';' '\\n'", 'allow'],
+    ["psql -c 'delete from t; drop table git'", 'allow'],
   ])
 
   test('the answer names the program and the command line it may run', () => {

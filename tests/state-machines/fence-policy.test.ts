@@ -361,6 +361,20 @@ describe('machine 61: the policy walkers', () => {
     for (const command of ["hyperfine 'git status'", "grep -rn 'git commit -n' src", "echo 'git push'"]) expect(decision(command)).toBe('allow')
   })
 
+  test('M61.T17: a command line a shell runs: one a shell-only name begins, or commands an operator joins', () => {
+    for (const command of ["tool 'exec git push'", "tool '. ./env.sh && git push'", "tmux new 'cd app && wrangler deploy'", "tmux new 'cd app; git commit -n -m x'"]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    }
+    for (const command of [
+      'gh pr create --title "git push now asks" --body "wrangler deploy"',
+      'say "git push finished"',
+      "jq '.scripts | keys' package.json",
+      "tmux new 'cd app && bun run dev'",
+    ]) {
+      expect(decision(command)).toBe('allow')
+    }
+  })
+
   test('M61.T17: programs whose code runs a command', () => {
     expect(decision(`awk 'BEGIN{system("git commit -n -m x")}'`)).toBe('deny')
     expect(decision(`gawk -v x=1 'BEGIN{system("git commit -n -m x")}'`)).toBe('deny')
