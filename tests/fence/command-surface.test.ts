@@ -90,6 +90,71 @@ describe('wrappers unwrap only through the options they read', () => {
   ])
 })
 
+describe("lockf: its options, the lock file it removes unless `-k` keeps it, then the command", () => {
+  table([
+    ['lockf -k /tmp/l git commit -n -m x', bypass],
+    ['lockf /tmp/l git commit --no-verify -m x', bypass],
+    ['lockf /tmp/l wrangler deploy', deploy],
+    ['lockf /tmp/l git push', push],
+    ['lockf -k -t 5 /tmp/l git push', push],
+    ['lockf -kst5 /tmp/l git push', push],
+    ['lockf -- /tmp/l git push', push],
+    ['/usr/bin/lockf -k /tmp/l npm publish', ['ask', 'publish']],
+    ['lockf -k /tmp/l bun test', 'allow'],
+    ['lockf -ksnw /tmp/l bun run build', 'allow'],
+    ['lockf -s -t 0 9', 'allow'],
+    ['lockf --bogus /tmp/l bun test', unreadable],
+    ['lockf -x /tmp/l bun test', unreadable],
+    ['lockf -t', unreadable],
+    ['lockf lint-debt.json true', fence],
+    ['lockf -k .git/hooks/pre-commit true', bypass],
+  ])
+})
+
+describe('a program the fence does not know, whose arguments hold a command it may run', () => {
+  table([
+    ['gtimeout 5 git commit -n -m x', unreadable],
+    ['op run -- wrangler deploy', unreadable],
+    ['doppler run --project app -- git push', unreadable],
+    ['tool --flag value npm publish', unreadable],
+    ['tool /usr/bin/git push', unreadable],
+    ['tool git $(echo commit) -n', unreadable],
+    ['tool python3 -c "import os; os.system(\'git commit -n -m x\')"', unreadable],
+    ['docker exec app git push', unreadable],
+    ['npx tool git commit -n -m x', unreadable],
+    ['bunx tool wrangler deploy', unreadable],
+    ['node_modules/.bin/tool git push', unreadable],
+    ["bash -c 'tool git push'", unreadable],
+    ['tool git push --dry-run', 'allow'],
+    ['tool bun test', 'allow'],
+    ['tool git status', 'allow'],
+    ['tool git', 'allow'],
+    ['tool --verbose', 'allow'],
+    ['docker exec -it app bash', 'allow'],
+    ['eslint . --fix', 'allow'],
+    ['tar -cf - . | tool - x', 'allow'],
+    // Commands that only print or search their arguments run none of them.
+    ['grep -rn git commit -n src', 'allow'],
+    ['rg -n wrangler deploy docs', 'allow'],
+    ['echo git push', 'allow'],
+    ["printf '%s\\n' git push", 'allow'],
+    ['which git wrangler', 'allow'],
+    ['type git push', 'allow'],
+    ['man git push', 'allow'],
+    ['true git push', 'allow'],
+    // A program's strings are read for the rules alone.
+    [`node -e 'console.log("tool git push")'`, 'allow'],
+  ])
+
+  test('the answer names the program, the arguments it holds, and that it may run them', () => {
+    const answer = commandPolicy('gtimeout 5 git commit -n -m x')
+    expect(answer).toMatchObject({ decision: 'ask', rule: 'unreadable', subject: 'gtimeout 5 git commit -n -m x' })
+    expect(answer.decision !== 'allow' && answer.reason).toContain('`gtimeout`, a program the fence does not know')
+    expect(answer.decision !== 'allow' && answer.reason).toContain('`git commit -n -m x`')
+    expect(answer.decision !== 'allow' && answer.reason).toContain('may run')
+  })
+})
+
 describe('eval, trap, su and watch read their strings as command lines', () => {
   table([
     ['eval git commit -n', bypass],

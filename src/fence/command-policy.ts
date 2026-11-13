@@ -131,6 +131,8 @@ const FLOCK_OPTIONS: OptionSpec = {
   longFlags: ['--shared', '--exclusive', '--unlock', '--nonblock', '--nb', '--close', '--no-fork', '--verbose', '--help', '--version'],
   longValues: ['--wait', '--timeout', '--conflict-exit-code', '--command'],
 }
+/** BSD's and macOS's `lockf [-knsw] [-t seconds] file command [arguments]`. */
+const LOCKF_OPTIONS: OptionSpec = { flags: 'knsw', values: 't' }
 const SSH_OPTIONS: OptionSpec = { flags: '46AaCfGgKkMNnqsTtVvXxYy', values: 'BbcDEeFIiJLlmOoPpQRSWw' }
 /** `-o` settings whose command ssh runs here, and the one it runs on the host. */
 const SSH_COMMANDS = /^(proxycommand|localcommand|knownhostscommand|remotecommand)\s*[=\s]\s*(.*)$/is
@@ -403,8 +405,21 @@ const READ_BY_NAME = new Set([
   'env', 'xargs', 'eval', 'source', '.', 'trap', 'coproc', 'alias', 'shopt', 'su', 'watch', 'find', 'sed', 'deno', 'bun', 'bunx',
   'npx', 'pnpx', 'npm', 'pnpm', 'yarn', 'git', 'wrangler', 'lefthook', 'husky', 'dd', 'curl', 'wget', 'tar', 'unzip', 'popweb-fence',
   'arch', 'xcrun', 'script', 'cross-env', 'cross-env-shell', 'dotenv', 'flock', 'concurrently', 'parallel', 'ssh', 'awk', 'gawk', 'mawk', 'nawk',
-  'patch',
+  'patch', 'lockf',
 ])
+/** Commands that print, search or ignore their arguments and run none of them, as `grep -rn git commit` does. */
+const RUNS_NONE = new Set([
+  'echo', 'print', 'printf', 'grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'which', 'whence', 'where', 'whereis', 'type', 'man', 'whatis',
+  'apropos', 'info', 'help', 'tldr', 'true', 'false', ':',
+])
+/**
+ * Names the policy reads that only a shell runs, as no program file has
+ * them: a program that runs its arguments runs none of these, and `.` and
+ * `-` among its arguments are a directory and its input.
+ */
+const SHELL_ONLY = new Set(['.', '-', 'source', 'eval', 'trap', 'exec', 'builtin', 'coproc', 'shopt', 'export', 'declare', 'typeset', 'readonly', 'local', 'noglob', 'nocorrect', 'repeat'])
+/** The shell's reserved words, which name no program: `X=1 time {` runs a command named `{`, which fails. */
+const RESERVED_WORDS = new Set(['{', '}', '!', '[[', ']]', 'if', 'then', 'else', 'elif', 'fi', 'case', 'esac', 'for', 'select', 'while', 'until', 'do', 'done', 'in', 'function'])
 
 /** The policy's answer for one shell command line, as an agent's hook passes it. */
 export function commandPolicy(command: string, options: CommandPolicyOptions = {}): FenceVerdict {
@@ -460,8 +475,14 @@ class Inspection {
    * @param reading The files and package scripts being read on the way to
    * this command, so one that names itself, as a deploy script's "run bun run
    * deploy again" does, is read once.
+   * @param probing Whether this reads one reading of a command whose words
+   * an expansion gives, whose probes read no further readings.
    */
-  constructor(private readonly options: CommandPolicyOptions, private readonly reading = new Set<string>()) {}
+  constructor(
+    private readonly options: CommandPolicyOptions,
+    private readonly reading = new Set<string>(),
+    private readonly probing = false
+  ) {}
 
   /** A command line; `context.inCode` when it is a program's string, whose placeholders are its own. */
   script(text: string, context: Context): void {
@@ -555,7 +576,7 @@ class Inspection {
 
   /** What one reading of a command's words would be answered with. */
   private probe(words: ReadonlyArray<string>, command: SimpleCommand, context: Context): ReadonlyArray<Finding> {
-    const probe = new Inspection(this.options, this.reading)
+    const probe = new Inspection(this.options, this.reading, true)
     probe.words(words, command, context)
     return probe.findings
   }
@@ -730,6 +751,8 @@ class Inspection {
         return this.dotenv(args, command, subject, context)
       case 'flock':
         return this.flock(args, command, subject, context)
+      case 'lockf':
+        return this.lockf(args, command, subject, context)
       case 'concurrently':
         return this.concurrently(args, subject, context)
       case 'parallel':
@@ -745,7 +768,38 @@ class Inspection {
         return this.patch(args, command, subject, context)
     }
 
-    if (head.includes('/') || head.endsWith('.sh')) this.program(head, args, command, context)
+    if (head.includes('/') || head.endsWith('.sh')) return this.program(head, args, command, context)
+    if (!EVALUATES.has(name) && !RUNS_NONE.has(name) && !RESERVED_WORDS.has(name)) this.unknownProgram(head, args, command, subject, context)
+  }
+
+  /**
+   * A program the policy does not know, which may run the command its
+   * arguments give, as `timeout`, `op run --` and `docker exec` do: from the
+   * first argument naming a program the policy reads, the arguments are read
+   * as that command, in an inspection of their own. When the fence would not
+   * allow that command on its own, it asks the owner; when it would, the
+   * program adds nothing. A program's strings are read for the rules alone.
+   */
+  private unknownProgram(program: string, args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    if (context.inCode) return
+    const start = args.findIndex((arg) => !isDynamic(arg) && READ_BY_NAME.has(interpreterName(basename(arg))) && !SHELL_ONLY.has(basename(arg)))
+    if (start === -1) return
+
+    const run = args.slice(start)
+    const inner = new Inspection(this.options, this.reading, this.probing)
+    inner.words(run, command, deeper(context))
+    // One reading of an expansion's words per command line: a reading's own probes do not read them again.
+    if (run.some(isDynamic) && !this.probing) inner.readings(run, command, deeper(context))
+    const answer = strongest(inner.findings)
+    if (answer.decision === 'allow') return
+
+    const verdict = answer.decision === 'deny' ? 'refuses' : 'asks the owner about'
+    this.ask(
+      'unreadable',
+      subject,
+      context,
+      `gives \`${display(program)}\`, a program the fence does not know, the arguments \`${shown(run.map(display))}\`, which it may run as a command; on its own the fence ${verdict} that command. Approve it only if you expected it.`
+    )
   }
 
   /** macOS's `arch`: its `-arm64`-style names, `-arch name`, `-d name` and `-e NAME=value`, then the command. */
@@ -812,6 +866,19 @@ class Inspection {
     if (string === undefined) return this.words(run, command, deeper(context))
     if (isDynamic(string)) return this.unreadable(subject, 'a command for flock that an expansion gives', context)
     this.script(string, deeper(context))
+  }
+
+  /**
+   * `lockf`: the lock file, which it creates and, unless `-k` keeps it,
+   * removes once the command ends, then the command.
+   */
+  private lockf(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const parsed = parseOptions(args, LOCKF_OPTIONS)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption('lockf', parsed.unknown), context)
+
+    const [file, ...run] = parsed.rest
+    if (file !== undefined) this.write(file, subject, context)
+    this.words(run, command, deeper(context))
   }
 
   /** concurrently: each word that is not an option or its value is a command line, and `npm:name` a package.json script. */
@@ -1146,12 +1213,18 @@ class Inspection {
     this.stdinScript(command, spec.kind, subject, context)
   }
 
-  /** A program a command runs by its path: Wrangler's own entry, the fence's CLI, a bin the policy reads by name, or a script read for its strings. */
+  /**
+   * A program a command runs by its path: Wrangler's own entry, the fence's
+   * CLI, a bin the policy reads by name, a package's other files, which the
+   * fence does not read, by the command their arguments may give, or a script
+   * read for its strings.
+   */
   private program(path: string, args: ReadonlyArray<string>, command: SimpleCommand, context: Context, kind?: CodeKind): void {
     if (WRANGLER_ENTRY.test(path)) return this.wrangler(args, ['wrangler', ...args], context)
     if (FENCE_CLI.test(path)) return this.fenceCli(args, ['popweb-fence', ...args], context)
     const bin = /(?:^|\/)node_modules\/\.bin\/([^/]+)$/.exec(path)?.[1] ?? ''
     if (READ_BY_NAME.has(bin)) return this.words([bin, ...args], command, deeper(context))
+    if (/(^|\/)node_modules\//.test(known(path))) return this.unknownProgram(path, args, command, shown([path, ...args].map(display)), context)
     this.file(path, kind, context, args)
   }
 

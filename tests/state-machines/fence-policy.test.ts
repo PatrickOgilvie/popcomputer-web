@@ -337,6 +337,23 @@ describe('machine 61: the policy walkers', () => {
     expect(decision(`parallel echo ::: ${Array.from({ length: 32 }, (_, at) => `a${at}`).join(' ')}`)).toBe('allow')
   })
 
+  test("M61.T17: macOS's lockf runs the command after its lock file", () => {
+    for (const command of ['lockf -k /tmp/l git commit -n -m x', 'lockf /tmp/l git commit --no-verify -m x', 'lockf -t 5 /tmp/l git commit -n -m x']) {
+      expect(decision(command)).toBe('deny')
+    }
+    expect(commandPolicy('lockf /tmp/l wrangler deploy')).toMatchObject({ decision: 'ask', rule: 'deploy' })
+    expect(commandPolicy('lockf /tmp/l git push')).toMatchObject({ decision: 'ask', rule: 'push' })
+    expect(commandPolicy('lockf --bogus /tmp/l bun test')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision('lockf -k /tmp/l bun test')).toBe('allow')
+  })
+
+  test('M61.T17: a program the fence does not know, whose arguments name a command the fence reads', () => {
+    for (const command of ['gtimeout 5 git commit -n -m x', 'tool /tmp/l wrangler deploy', 'npx tool git push', 'tool git $(echo commit) -n']) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    }
+    for (const command of ['tool -k /tmp/l bun test', 'grep -rn git commit -n src', 'echo git push', 'man git push']) expect(decision(command)).toBe('allow')
+  })
+
   test('M61.T17: programs whose code runs a command', () => {
     expect(decision(`awk 'BEGIN{system("git commit -n -m x")}'`)).toBe('deny')
     expect(decision(`gawk -v x=1 'BEGIN{system("git commit -n -m x")}'`)).toBe('deny')

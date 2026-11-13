@@ -78,7 +78,7 @@ agent's hook passes it, and answers in that agent's format.
 | A release | `npm publish`, `bun publish`, `pnpm publish` | asks the owner |
 | A push | `git push`, `git send-pack` | asks the owner |
 | A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/` or the directory `core.hooksPath` names, `.husky/`, `.pre-commit-config.yaml`, `.simple-git-hooks.json`, `.claude/settings.json`, `lint-debt.json`, written as they are or by `git checkout <commit> -- .`, `git reset --hard <commit>` or `git apply`; `popweb-fence debt --allow-increase` | asks the owner |
-| What it cannot read | a command name a variable gives, `bash -c "$CMD"`, an alias, a script it cannot open, code that can start a process, a pipe into a shell from a command whose output it cannot know, a value holding a quoted `$(...)`, which bash runs where it evaluates the value as arithmetic | asks the owner |
+| What it cannot read | a command name a variable gives, `bash -c "$CMD"`, an alias, a script it cannot open, code that can start a process, a pipe into a shell from a command whose output it cannot know, a value holding a quoted `$(...)`, which bash runs where it evaluates the value as arithmetic; a program it does not know whose arguments, from the first that names a command it reads, make a command it would not allow, as `gtimeout 5 git push` (not `echo`, `grep` or another that only prints or searches them) | asks the owner |
 
 `wrangler deploy --dry-run`, `npm publish --dry-run`, `git push --dry-run`
 and D1's local database (`--local`, the default) need no one.
@@ -86,7 +86,7 @@ and D1's local database (`--local`, the default) need no one.
 The hook parses a command line with tree-sitter's bash grammar and judges
 every command the tree holds: in lists, pipes, subshells, `$(...)`,
 heredocs and arithmetic, in `sh -c`, `eval` and `trap` strings, behind
-`env`, `sudo`, `xargs`, `npx`, `cross-env` and `parallel`, in the
+`env`, `sudo`, `xargs`, `npx`, `cross-env`, `lockf` and `parallel`, in the
 `package.json` scripts a runner names, so `bun run deploy` asks when its
 script deploys, and in the scripts and programs, awk's among them, a command
 runs. A `cd` on the line moves the directory it reads paths and scripts
