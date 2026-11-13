@@ -121,7 +121,8 @@ from that tab's history: only the server knows the session ended.
 
 [`DataCache.tla`](state-machines/DataCache.tla): one value under one tag,
 and `cacheSet` given the Effect that reads the record, or, as
-`CacheSetGiven = "value"`, a value an action read in an earlier step.
+`CacheSetGiven = "value"`, a value its request or job read in an earlier
+step.
 
 - **NoReadAfterPurgeReturnsTheOldValue**: once a write's purge has run, no
   read returns the value from before it, but one `cacheSet` was given after
@@ -130,13 +131,14 @@ and `cacheSet` given the Effect that reads the record, or, as
   already replaced where a read would find it. Given its read, `cacheSet`
   reads the generations first, as `cache` does, so a value the read returned
   before a purge is stored under the older generation and never read. Given
-  a value, it stores against the generations as they are when it runs, and
-  the rule breaks: a known limit of that form.
+  a value, it stores nothing once a tag's generation was made after its
+  request or job began, which a generation's name says.
 
-Given its read, both hold on the code over 405 states
-(`DataCache.code.cfg`); given a value, the first holds over 417 and the
-second breaks in three steps (`DataCache.code.value.cfg`), as
-`tests/cache.test.ts` and `tests/fuzz/data-cache.test.ts` also find. On
+Both hold on the code: given its read over 402 states
+(`DataCache.code.cfg`), and given a value over 425
+(`DataCache.code.value.cfg`), as `tests/cache.test.ts` also finds. Before
+the work's start was checked, the second broke in three steps given a value.
+A purge writes a new generation whether or not the store shows one. On
 1.6, `cacheSet` stored no tag and `cacheGet` read none: a value stored by
 `cache` or `cacheSet`, its record written and purged, came back from
 `cacheGet`. `cache` reads the generations

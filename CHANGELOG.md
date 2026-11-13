@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - a value holding a quoted command substitution that bash evaluates as arithmetic, a subscript or `PS4`, which asks.
 - `popweb-fence debt --check` takes a raised ledger only with the mark `--update --allow-increase` now leaves in `.git/popweb-fence/`, which no commit carries and the hook refuses an agent's write to. A ledger naming HEAD as `raisedFrom`, written by a patch, a stash or an editor, passed the gate. A ledger raised before upgrading and not yet committed needs `--allow-increase` again.
 - A signed cookie with a `maxAge` signs its expiry with its value, so a copy kept past the `maxAge` reads as none. The signature covered only the name and value, so a value someone copied stayed valid for as long as they kept it. A value an earlier release signed still reads, as it did; changing the secret ends those.
+- `cacheSet` given a value, in a route or a job, stores nothing once one of its tags was purged, or its key invalidated, since the request or job began, give or take a second for the clocks of Cloudflare's locations. It stored the value as current, so one read before a write whose purge ran first was served until its `ttl`. A tag's generation already names when it was made. `DataCache.tla` now holds given a value, and describes the purge's generation as the code has written it since 1.15.0, whether or not the store shows one.
 
 ## [1.15.0] - 2026-11-08
 

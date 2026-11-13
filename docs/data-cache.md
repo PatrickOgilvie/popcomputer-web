@@ -79,10 +79,13 @@ yield* cacheSet(`projects:${project.id}:summary`, summarizeProject(project.id), 
 })
 ```
 
-Given a value read earlier, `cacheSet` records them as they are when it
-runs, and cannot know when the value was read: a value read before a write
-whose purge ran before `cacheSet` stays until its `ttl`. Give a tagged
-`cacheSet` its read, or compute the value through `cache`.
+Given a value read earlier in a route or a job, `cacheSet` takes it as read
+after the request or job began, and stores nothing once one of its tags was
+purged, or its key invalidated, since then, give or take a second for the
+clocks of Cloudflare's locations: the next read computes it again. Outside a
+route or job, as in a script, it cannot know when the value was read and
+stores it as current. Giving a tagged `cacheSet` its read, or computing the
+value through `cache`, skips only purges during the read.
 
 Inside `dbTransaction` what the cache keeps waits for the commit, since a
 rollback would leave a value that never was: `cacheSet` stores once it commits,

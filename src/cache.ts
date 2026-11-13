@@ -13,6 +13,7 @@ import { CacheService, ExecutionContextService, type CacheClient } from './effec
 import { CacheError } from './effect/errors.js'
 import { observeOrLog } from './effect/error-observer.js'
 import { afterCommit, inTransaction } from './effect/commit.js'
+import { WorkBegan } from './effect/work-began.js'
 import type { CacheTag } from './effect/response-cache.js'
 
 // ============================================================================
@@ -90,7 +91,9 @@ const newGeneration: Effect.Effect<string> = Effect.gen(function* () {
  */
 const readTagGenerations = (
   client: CacheClient,
-  tags: ReadonlyArray<string>
+  tags: ReadonlyArray<string>,
+  /** Filled with the tags this read gave their first generation. */
+  created?: Set<string>
 ): Effect.Effect<Readonly<Record<string, string>>, CacheError> =>
   Effect.forEach(
     tags,
@@ -101,11 +104,28 @@ const readTagGenerations = (
 
       const first = yield* newGeneration
       yield* client.put(tagGenerationKey(tag), first, { expirationTtl: TAG_GENERATION_TTL_SECONDS })
+      created?.add(tag)
 
       return [tag, first] as const
     }),
     { concurrency: 'unbounded' }
   ).pipe(Effect.map((entries) => Object.fromEntries(entries)))
+
+/**
+ * How far one Worker's clock may read from another's, or from the time it
+ * last updated: a Worker's clock moves only between reads and writes.
+ */
+const CLOCK_MARGIN_MS = 1000
+
+/** A generation as newGeneration names it: the milliseconds it was made, then a random number, in base 36. */
+const GENERATION = /^([0-9a-z]+)\.-?[0-9a-z]+$/
+
+/** When a generation was made, or none for one whose name is not newGeneration's. */
+const generationMadeAt = (generation: string): Option.Option<number> => {
+  const made = GENERATION.exec(generation)?.[1]
+
+  return made === undefined ? Option.none() : Option.some(Number.parseInt(made, 36))
+}
 
 /**
  * Whether every tag an entry was stored with is still at the generation it
@@ -506,10 +526,11 @@ export const cacheGet = <V>(
  * generations, as `cache()` does, so invalidating any of them makes it a miss
  * for both. Given the Effect that reads the value, such as a `dbQuery`,
  * `cacheSet` reads the generations before it runs the Effect, so a purge that
- * follows a write during the read leaves the entry a miss. Given a value read
- * earlier, it records them as they are when it runs, and cannot know when the
- * value was read: one read before a write whose purge ran first stays until
- * its `ttl`.
+ * follows a write during the read leaves the entry a miss. Given a value, in
+ * a route or a job, it takes the value as read after the request or job
+ * began, and stores nothing once one of its tags was purged, or its key
+ * invalidated, since then. Outside both, it cannot know when the value was
+ * read, and stores it against the generations as they are.
  *
  * @example
  * ```typescript
@@ -557,11 +578,24 @@ export function cacheSet<V, E, R>(
 
     const totalTtlSeconds = Math.ceil((ttlMs + swrMs) / 1000)
     const tags = options.tags ?? []
+    const created = new Set<string>()
     // Its tags' generations, as cache() records them, so an invalidation of
     // any of them makes the entry a miss. They are read before the value is,
     // when cacheSet is given its read, so a purge during the read counts.
-    const generations = tags.length === 0 ? undefined : yield* readTagGenerations(cacheService, tags)
-    const since = yield* Clock.currentTimeMillis
+    const generations = tags.length === 0 ? undefined : yield* readTagGenerations(cacheService, tags, created)
+    // Given a value, the earliest it can have been read is when the request
+    // or job began: a purge or invalidation since may have replaced it.
+    const began = Effect.isEffect(given) ? Option.none<number>() : yield* WorkBegan
+    const since = Option.isSome(began) ? began.value - CLOCK_MARGIN_MS : yield* Clock.currentTimeMillis
+
+    if (Option.isSome(began) && generations !== undefined) {
+      const purgedSince = Object.entries(generations).some(([tag, generation]) =>
+        !created.has(tag) && Option.match(generationMadeAt(generation), { onNone: () => true, onSome: (made) => made >= since })
+      )
+
+      if (purgedSince) return
+    }
+
     const value = Effect.isEffect(given) ? yield* given : given
     const t = yield* Clock.currentTimeMillis
 
@@ -670,7 +704,8 @@ export const cacheInvalidatePrefix = (
 /**
  * Give each tag a cached entry uses a new generation, so every entry `cache`
  * stored with it is a miss. A route runs it with its purges after a
- * successful write. A tag no entry uses costs one store read and no write. A
+ * successful write. Each tag costs one store write, whether or not an entry
+ * uses it, since a location KV has not yet shown one to may hold one. A
  * store failure is reported and the entries stay until they expire; without
  * a cache store it does nothing.
  */

@@ -53,6 +53,7 @@ import {
 import { AuthUserService, RequestService, type DatabaseService } from './services.js'
 import { isGuard } from './guard.js'
 import { RouteRecords, routeModelsLayer, routeModelsOnce, type RouteModels } from './route-models.js'
+import { workBeganLayer } from './work-began.js'
 import type {
   AuthService,
   ExecutionContextService,
@@ -827,7 +828,8 @@ export class EffectRouteBuilder<
     let fullLayer: Layer.Layer<never, AppError, never> = Layer.mergeAll(
       requestLayer,
       Layer.succeed(PendingPurges, makePendingPurges()),
-      Layer.succeed(PendingCacheTags, makePendingCacheTags())
+      Layer.succeed(PendingCacheTags, makePendingCacheTags()),
+      workBeganLayer(openWebContext(c).testServices)
     )
 
     for (const layer of this.layers) {
@@ -1279,7 +1281,9 @@ export class EffectRouteBuilder<
           contextLayer,
           Layer.succeed(PendingPurges, makePendingPurges()),
           Layer.succeed(PendingCacheTags, makePendingCacheTags()),
-          Layer.succeed(SharedComputations, [])
+          Layer.succeed(SharedComputations, []),
+          // Before the records load, on the clock the action reads.
+          workBeganLayer(openWebContext(c).testServices)
         )
       )
 

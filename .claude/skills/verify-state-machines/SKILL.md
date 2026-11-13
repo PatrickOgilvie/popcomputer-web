@@ -23,7 +23,7 @@ describe. A change touches a model when it changes any of these:
 |---|---|---|
 | `SignInLimits.tla` | `src/effect/sign-in-limits.ts`: `withinSignInLimits`, `rowStates`, `cooldownAfter`, `sweepSignInFailures`, `assertSignInLimitsConfig`; its callers in `src/effect/auth.ts` (`callEndpoint`, `betterAuthHandler`) | `tests/effect/sign-in-limits.test.ts` |
 | `HistoryClear.tla` | `src/middleware.ts` `web()`: the render's `encryptHistory`, `clearHistory` and `version`, and the 409 for a partial reload from another visitor; `src/response-output.ts` `finishResponse`: the clear raised once the response is answered; `src/session-cookies.ts`: `endsSession`, `startsSession`, `expiresTheCookie`; `src/page-version.ts`; the clear in `src/flash.ts`; `isCacheableRequest`'s version check in `src/page-cache.ts`; `renderPage` in `src/effect/responses.ts`; `@inertiajs/core`'s popstate and back-forward version checks | `tests/security/history.test.ts`, `tests/render-options.test.ts` |
-| `DataCache.tla` | `src/cache.ts`: `cache`, `cacheGet`, `cacheSet` given its read or a value, `readTagGenerations`, `invalidateCacheTags` | `tests/cache.test.ts` (`cache tags`); `tests/fuzz/data-cache.test.ts` drives the same calls through random sequences |
+| `DataCache.tla` | `src/cache.ts`: `cache`, `cacheGet`, `cacheSet` given its read or a value, `readTagGenerations`, `generationMadeAt`, `invalidateCacheTags`, `writeTagGenerations`; `src/effect/work-began.ts` and where `src/effect/routing.ts` gives a route and a job `workBeganLayer` | `tests/cache.test.ts` (`cache tags`); `tests/fuzz/data-cache.test.ts` drives the same calls through random sequences |
 | `MagicLink.tla` | the magic link in `docs/auth-plugins.md`; `showMagicLink`, `verifyMagicLink` and their routes in `tests/better-auth/app.ts`; `better-auth`'s magic-link plugin | `tests/better-auth/seam.test.ts` (`magic links`) |
 | `Flash.tla` | `src/flash.ts` `flashCookieTable`, `openFlash`; the render's `flash.take()` in `src/middleware.ts`; `finishResponse` in `src/response-output.ts`, which moves the table on the answer sent | none: its rule breaks, a known limit |
 
@@ -50,7 +50,12 @@ better-auth 1.7.16, whose magic-link plugin changed only in form (its
 came to refuse a counted call beside a Better Auth whose options it cannot
 read, a check before any count that adds no step to the model; its line
 references moved to the code (the success's delete, cited as line 452, is
-586), and its three configs gave what step 2 says.
+586), and its three configs gave what step 2 says. `DataCache.tla` was
+brought to the code on 2026-11-12: a purge writes a new generation whether
+or not the store shows one (since `0bf0833`), and `cacheSet` given a value
+stores nothing once a tag's generation was made after its request or job
+began, so `DataCache.code.value.cfg` now holds; its three configs gave what
+step 2 says, and the value config also held at `Steps = 10`.
 
 ## Run the check
 
@@ -63,9 +68,8 @@ references moved to the code (the success's delete, cited as line 452, is
 2. Compare with what each config must give:
    - every `*.code.cfg`, `*.code.always.cfg` and `SignInLimits.chart.cfg`:
      every rule holds;
-   - `DataCache.code.value.cfg`, `cacheSet` given a value read earlier:
-     `CacheSetStoresOnlyCurrentValues` breaks, a known limit, and
-     `NoReadAfterPurgeReturnsTheOldValue` holds;
+   - `DataCache.code.value.cfg`, `cacheSet` given a value read earlier in
+     its request or job: every rule holds;
    - `SignInLimits.1.6.cfg`: `AtMostMaxGuessesAtOnce`,
      `OwnerSignInClearsCount` and `NoFreshBudgetAfterCooldown` break;
    - `HistoryClear.1.6.cfg`, `HistoryClear.1.6.always.cfg` and

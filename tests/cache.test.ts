@@ -22,7 +22,7 @@ import { setupWeb } from '../src/setup.js'
 import { action } from '../src/effect/action.js'
 import { json } from '../src/effect/responses.js'
 import { purgeCache } from '../src/effect/response-cache.js'
-import { testEnv } from '../src/testing.js'
+import { testClock, testEnv } from '../src/testing.js'
 
 // ============================================================================
 // Test ExecutionContext Layer
@@ -1385,6 +1385,109 @@ describe('cache tags', () => {
 
     await routes.run(purgeCache('environments:e1'), env)
     expect(await evaluated()).toBe(3)
+  })
+
+  // An action reads a record, another request writes it and purges its tag,
+  // then the action gives cacheSet the value it read: the old one.
+  function valueGivenLater() {
+    const { storeLayer } = makeTestCache()
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) }).services({ request: () => storeLayer })
+    const tagged = { ttl: Duration.hours(1), tags: ['projects:p1'] }
+    let version = 1
+
+    const readThenSet = Effect.gen(function* () {
+      const value = version
+
+      if (version === 1) {
+        version = 2
+        yield* invalidateCacheTags(['projects:p1'])
+      }
+
+      yield* cacheSet('project:p1', value, S.Number, tagged)
+
+      return Option.getOrNull(yield* cacheGet('project:p1', S.Number))
+    })
+
+    routes.get('/project', action(Effect.gen(function* () {
+      return yield* json({ cached: yield* readThenSet })
+    })))
+
+    return { app, routes, readThenSet }
+  }
+
+  it('cacheSet given a value in a route stores nothing once its tag was purged since the request began', async () => {
+    const time = await testClock()
+    const { app } = valueGivenLater()
+    const env = testEnv(time.layer)
+    const cached = async () => (await (await app.request('/project', {}, env)).json() as { cached: number | null }).cached
+
+    expect(await cached()).toBeNull()
+
+    // A later request, with no purge since it began, stores what it read.
+    await time.advance('2 seconds')
+    expect(await cached()).toBe(2)
+  })
+
+  it('cacheSet given a value in a job stores nothing once its tag was purged since the job began', async () => {
+    const time = await testClock()
+    const { routes, readThenSet } = valueGivenLater()
+    const env = testEnv(time.layer)
+
+    expect(await routes.run(readThenSet, env)).toBeNull()
+
+    await time.advance('2 seconds')
+    expect(await routes.run(readThenSet, env)).toBe(2)
+  })
+
+  // A route that gives cacheSet a value under two tags, and one that purges a tag.
+  function twoTagged() {
+    const { storeLayer, store } = makeTestCache()
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) }).services({ request: () => storeLayer })
+
+    routes
+      .get('/team', action(Effect.gen(function* () {
+        yield* cacheSet('team:t1', 'read', S.String, { ttl: Duration.hours(1), tags: ['teams:t1', 'projects:p1'] })
+
+        return yield* json({ cached: Option.getOrNull(yield* cacheGet('team:t1', S.String)) })
+      })))
+      .post('/purge', action(Effect.gen(function* () {
+        yield* invalidateCacheTags(['projects:p1'])
+
+        return yield* json({ purged: true })
+      })))
+
+    return { app, store }
+  }
+
+  it('cacheSet given a value stores nothing when any one of its tags was purged since the work began', async () => {
+    const time = await testClock()
+    const { app } = twoTagged()
+    const env = testEnv(time.layer)
+    const cached = async () => (await (await app.request('/team', {}, env)).json() as { cached: string | null }).cached
+
+    // teams:t1 gets its first generation from this cacheSet, which is no purge.
+    await app.request('/purge', { method: 'POST' }, env)
+    expect(await cached()).toBeNull()
+
+    // A purge exactly the clocks' second before the work began still counts.
+    await time.advance('1 second')
+    expect(await cached()).toBeNull()
+
+    await time.advance('1 millis')
+    expect(await cached()).toBe('read')
+  })
+
+  it('cacheSet given a value stores nothing under a generation whose name says no time', async () => {
+    const time = await testClock()
+    const { app, store } = twoTagged()
+    const env = testEnv(time.layer)
+
+    store.set('popweb:tag:projects:p1', { value: 'made-elsewhere', expiresAt: Number.MAX_SAFE_INTEGER })
+    await time.advance('1 hour')
+
+    expect((await (await app.request('/team', {}, env)).json() as { cached: string | null }).cached).toBeNull()
   })
 
   it('writes a new generation for a purged tag even where none is stored, since KV may not yet show one', async () => {
