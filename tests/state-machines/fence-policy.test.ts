@@ -582,6 +582,21 @@ describe('machine 61: the policy walkers', () => {
     for (const command of ['git merge --abort', 'git cherry-pick -n FETCH_HEAD', 'git rebase --abort', 'git merge-base HEAD main']) expect(decision(command)).toBe('allow')
   })
 
+  test('M61.T99: a merge fast-forwards whenever it can, `--no-commit` or not', () => {
+    for (const command of [
+      'git merge --no-commit feature',
+      'git merge --no-commit --ff-only feature',
+      'git merge --no-commit --ff feature',
+      'git merge --no-ff --no-commit --ff feature',
+      'git merge --no-ff --no-commit --commit feature',
+      'git merge --no-f --no-commit feature',
+      'git merge --abort --no-abort feature',
+    ]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'hook-bypass' })
+    }
+    for (const command of ['git merge --no-ff --no-commit feature', 'git merge --no-commit --no-ff feature']) expect(decision(command)).toBe('allow')
+  })
+
   test('M61.T99: commands that move a branch to commits this gate never checked', () => {
     for (const command of [
       'git fetch ../other main && git reset --hard FETCH_HEAD',

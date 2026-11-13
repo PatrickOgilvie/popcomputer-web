@@ -304,15 +304,40 @@ const GIT_SURFACE = {
   otherSetting: { finding: 'ask', reason: 'sets a git setting for this command, which can move the hooks or name a program git runs. Approve it only if you expected it.' },
   /** Settings `git config` may write for good that name a program git runs. */
   programs: /^(core\.(fsmonitor|pager|editor|sshcommand|askpass|worktree)|sequence\.editor|diff\.external|credential\.helper|gpg\.program|uploadpack\.packobjectshook|init\.templatedir)$|^(filter|diff|merge|pager)\./,
-  /** Commands that commit without the pre-commit hook, and their options with which they make no commit. */
+  /**
+   * Commands that commit without the pre-commit hook, and their options with
+   * which they make no commit. A merge's are read as git reads them, by
+   * `mergeMakesNoCommit`: it fast-forwards whenever it can, `--no-commit` or not.
+   */
   commitsWithoutHook: {
     pull: [],
-    merge: ['--abort', '--quit', '--no-commit'],
+    merge: [],
     'cherry-pick': ['--abort', '--quit', '--no-commit', '-n'],
     revert: ['--abort', '--quit', '--no-commit', '-n'],
     am: ['--abort', '--quit', '--show-current-patch'],
     rebase: ['--abort', '--quit', '--show-current-patch', '--edit-todo'],
   } as Readonly<Record<string, ReadonlyArray<string>>>,
+  /**
+   * `git merge`'s options, by what they take: nothing, a value attached or
+   * in the next word, or only an attached one. Any other may abbreviate one
+   * of them, as `--no-f` does `--no-ff` and `--mess` does `--message`.
+   */
+  mergeOptions: {
+    flags: new Set([
+      '--stat', '--no-stat', '--summary', '--no-summary', '--compact-summary', '--no-compact-summary', '--no-log', '--squash', '--no-squash',
+      '--commit', '--no-commit', '--edit', '--no-edit', '--no-cleanup', '--ff', '--no-ff', '--ff-only', '--rerere-autoupdate',
+      '--no-rerere-autoupdate', '--verify-signatures', '--no-verify-signatures', '--no-strategy', '--no-strategy-option', '--no-message',
+      '--no-into-name', '--verbose', '--no-verbose', '--quiet', '--no-quiet', '--abort', '--no-abort', '--quit', '--no-quit', '--continue',
+      '--no-continue', '--allow-unrelated-histories', '--no-allow-unrelated-histories', '--progress', '--no-progress', '--no-gpg-sign',
+      '--autostash', '--no-autostash', '--overwrite-ignore', '--no-overwrite-ignore', '--signoff', '--no-signoff', '--verify',
+    ]),
+    values: new Set(['--cleanup', '--strategy', '--strategy-option', '--message', '--file', '--into-name']),
+    attached: new Set(['--log', '--gpg-sign']),
+    shortFlags: 'neqv',
+    shortValues: 'mFsX',
+    /** `-S`, whose key is the rest of its cluster. */
+    shortAttached: 'S',
+  },
   /** Commands that send commits to a remote. */
   pushes: new Set(['push', 'send-pack', 'http-push']),
   /** Commands that write a commit by hand, which runs none of the hooks. */
@@ -1364,7 +1389,7 @@ class Inspection {
     if (GIT_SURFACE.commitWriters.has(sub) || (sub === 'hash-object' && writesCommitObject(options))) {
       return this.deny(subject, 'writes a commit by hand, which runs none of the git hooks that run the commit gate. Commit with `git commit`, which runs them.', context)
     }
-    if (Object.hasOwn(GIT_SURFACE.commitsWithoutHook, sub) && !options.some((arg) => GIT_SURFACE.commitsWithoutHook[sub].includes(arg))) {
+    if (Object.hasOwn(GIT_SURFACE.commitsWithoutHook, sub) && !makesNoCommit(sub, options)) {
       this.ask('hook-bypass', subject, context, `makes or brings in commits without the pre-commit hook that runs the commit gate. Approve it only if you expected it.`)
     }
     if (GIT_SURFACE.pushes.has(sub)) {
@@ -1945,6 +1970,57 @@ function patchedPaths(text: string): string[] {
     for (const path of git === null ? [header?.[1] ?? '/dev/null'] : [git[1], git[2]]) if (path !== '/dev/null') paths.push(path.replace(/^"|"$/g, ''))
   }
   return paths
+}
+
+/** Whether a command that commits without the pre-commit hook makes no commit with these options. */
+function makesNoCommit(sub: string, options: ReadonlyArray<string>): boolean {
+  if (sub === 'merge') return mergeMakesNoCommit(options)
+  return options.some((arg) => GIT_SURFACE.commitsWithoutHook[sub].includes(arg))
+}
+
+/**
+ * Whether `git merge` makes no commit. git reads the last of each pair: the
+ * last of `--abort` and `--no-abort` is `--abort`, or of `--quit` and
+ * `--no-quit` is `--quit`, or the last of `--ff`, `--no-ff` and `--ff-only`
+ * is `--no-ff` and of `--commit` and `--no-commit` is `--no-commit`, since
+ * git fast-forwards whenever it can, `--no-commit` or not. An option the
+ * fence does not know may abbreviate either of a pair, or take the next word
+ * as its value: the merge may commit.
+ */
+function mergeMakesNoCommit(options: ReadonlyArray<string>): boolean {
+  const spec = GIT_SURFACE.mergeOptions
+  const read: string[] = []
+
+  for (let k = 0; k < options.length; k++) {
+    const arg = options[k]
+    if (arg === '-' || !arg.startsWith('-')) continue
+    if (arg.startsWith('--')) {
+      const [name, value] = splitOption(arg)
+      if (spec.values.has(name)) {
+        if (value === undefined) k++
+      } else if (!spec.attached.has(name) && !(spec.flags.has(name) && value === undefined)) {
+        return false
+      }
+      read.push(name)
+      continue
+    }
+    for (let p = 1; p < arg.length; p++) {
+      const letter = arg[p]
+      if (spec.shortValues.includes(letter)) {
+        if (p === arg.length - 1) k++
+        break
+      }
+      if (spec.shortAttached.includes(letter)) break
+      if (!spec.shortFlags.includes(letter)) return false
+    }
+  }
+
+  const last = (...pair: ReadonlyArray<string>) => read.filter((name) => pair.includes(name)).at(-1)
+  return (
+    last('--abort', '--no-abort') === '--abort' ||
+    last('--quit', '--no-quit') === '--quit' ||
+    (last('--ff', '--no-ff', '--ff-only') === '--no-ff' && last('--commit', '--no-commit') === '--no-commit')
+  )
 }
 
 /** `git hash-object -w -t commit`, which writes a commit object by hand. */
