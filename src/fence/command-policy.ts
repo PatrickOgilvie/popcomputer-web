@@ -514,8 +514,8 @@ class Inspection {
    * @param reading The files and package scripts being read on the way to
    * this command, so one that names itself, as a deploy script's "run bun run
    * deploy again" does, is read once.
-   * @param probing Whether this reads one reading of a command whose words
-   * an expansion gives, whose probes read no further readings.
+   * @param probing Whether this is a probe of one reading of a command whose
+   * words an expansion gives, which looks only for what the rules find.
    */
   constructor(
     private readonly options: CommandPolicyOptions,
@@ -813,31 +813,51 @@ class Inspection {
 
   /**
    * A program the policy does not know, which may run the command its
-   * arguments give, as `timeout`, `op run --` and `docker exec` do: from the
-   * first argument naming a program the policy reads, the arguments are read
-   * as that command, in an inspection of their own. When the fence would not
-   * allow that command on its own, it asks the owner; when it would, the
-   * program adds nothing. A program's strings are read for the rules alone.
+   * arguments give, as `timeout`, `op run --` and `docker exec` do, or a
+   * command line one of them gives whole, as `tmux new 'git push'` and
+   * `hyperfine` do. From the first argument naming a program the policy
+   * reads, the arguments are read as that command, and each argument before
+   * it whose command line begins with such a name is read as that command
+   * line, each in an inspection of its own. When the fence would not allow
+   * one on its own, it asks the owner; when it would, the program adds
+   * nothing. A program's strings are read for the rules alone, and a
+   * reading's probe, which looks only for what the rules find, reads none.
    */
   private unknownProgram(program: string, args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
-    if (context.inCode) return
-    const start = args.findIndex((arg) => !isDynamic(arg) && READ_BY_NAME.has(interpreterName(basename(arg))) && !SHELL_ONLY.has(basename(arg)))
+    if (context.inCode || this.probing) return
+    const start = args.findIndex((arg) => !isDynamic(arg) && namesProgram(arg))
+
+    for (const arg of start === -1 ? args : args.slice(0, start)) {
+      const line = commandLine(arg)
+      if (line === undefined) continue
+      const answer = this.alone((inner) => inner.script(line, deeper(context)))
+      if (answer.decision !== 'allow') return this.mayRun(program, `the command line \`${line}\``, answer, subject, context)
+    }
     if (start === -1) return
 
     const run = args.slice(start)
-    const inner = new Inspection(this.options, this.reading, this.probing)
-    inner.words(run, command, deeper(context))
-    // One reading of an expansion's words per command line: a reading's own probes do not read them again.
-    if (run.some(isDynamic) && !this.probing) inner.readings(run, command, deeper(context))
-    const answer = strongest(inner.findings)
-    if (answer.decision === 'allow') return
+    const answer = this.alone((inner) => {
+      inner.words(run, command, deeper(context))
+      if (run.some(isDynamic)) inner.readings(run, command, deeper(context))
+    })
+    if (answer.decision !== 'allow') this.mayRun(program, `the arguments \`${shown(run.map(display))}\``, answer, subject, context)
+  }
 
+  /** The answer for what `read` reads in an inspection of its own. */
+  private alone(read: (inner: Inspection) => void): FenceVerdict {
+    const inner = new Inspection(this.options, this.reading)
+    read(inner)
+    return strongest(inner.findings)
+  }
+
+  /** A program the fence does not know, given what it may run, which the fence would not allow on its own. */
+  private mayRun(program: string, given: string, answer: FenceVerdict, subject: string, context: Context): void {
     const verdict = answer.decision === 'deny' ? 'refuses' : 'asks the owner about'
     this.ask(
       'unreadable',
       subject,
       context,
-      `gives \`${display(program)}\`, a program the fence does not know, the arguments \`${shown(run.map(display))}\`, which it may run as a command; on its own the fence ${verdict} that command. Approve it only if you expected it.`
+      `gives \`${display(program)}\`, a program the fence does not know, ${given}, which it may run as a command; on its own the fence ${verdict} that command. Approve it only if you expected it.`
     )
   }
 
@@ -1955,6 +1975,25 @@ function unknownOption(command: string, word: string): string {
 /** A python, perl or ruby by its versioned name. */
 function interpreterName(name: string): string {
   return /^python[\d.]*$/.test(name) ? 'python' : name
+}
+
+/** Whether a word names, or is a path to, a program the policy reads by name, which a program may run. */
+function namesProgram(word: string): boolean {
+  const name = basename(word)
+  return READ_BY_NAME.has(interpreterName(name)) && !SHELL_ONLY.has(name)
+}
+
+/**
+ * An argument as the command line a program may run: its text, or an
+ * option's value, as `--exec='wrangler deploy'`'s, when it holds more than one
+ * word and its first, after any assignments, names a program the policy reads.
+ */
+function commandLine(arg: string): string | undefined {
+  const text = evalText(arg)
+  const line = /^--[\w-]+=([^]*)$/.exec(text)?.[1] ?? text
+  const words = line.trim().split(/\s+/)
+  const first = words.findIndex((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word))
+  return words.length > 1 && first !== -1 && namesProgram(words[first]) ? line : undefined
 }
 
 /** Whether text the shell does not expand where it is set holds a command substitution, which it runs where it evaluates the text. */

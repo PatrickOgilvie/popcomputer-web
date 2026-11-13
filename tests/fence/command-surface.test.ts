@@ -155,6 +155,39 @@ describe('a program the fence does not know, whose arguments hold a command it m
   })
 })
 
+describe('a command line given whole, as one argument, to a program the fence does not know', () => {
+  table([
+    ["tmux new-session -d 'git commit -n -m x'", unreadable],
+    ["hyperfine 'git push'", unreadable],
+    ["nodemon --exec 'wrangler deploy'", unreadable],
+    ["nodemon --exec='wrangler deploy'", unreadable],
+    ["entr -s 'HUSKY=0 git commit -m x'", unreadable],
+    ['tool "git commit $FLAGS"', unreadable],
+    [`tool "sh -c 'git push'"`, unreadable],
+    ["tool 'npm publish' --watch", unreadable],
+    ["hyperfine 'git status'", 'allow'],
+    ["hyperfine 'bun test' 'bun run build'", 'allow'],
+    ["nodemon --exec 'bun run dev'", 'allow'],
+    // The arguments of the command the program's arguments name are that command's own.
+    ["gtimeout 5 git commit -m 'git push later'", 'allow'],
+    // A command line whose first word is no name the policy reads, or an expansion, is not read.
+    ["tool --title 'Fix: git push asks'", 'allow'],
+    ['tool "$CMD"', 'allow'],
+    ['tool "$X git push"', 'allow'],
+    // Commands that only print or search their arguments run none of them.
+    ["grep -rn 'git commit -n' src", 'allow'],
+    ["echo 'git push'", 'allow'],
+    ["rg 'wrangler deploy' docs", 'allow'],
+  ])
+
+  test('the answer names the program and the command line it may run', () => {
+    const answer = commandPolicy("tmux new-session -d 'git commit -n -m x'")
+    expect(answer).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(answer.decision !== 'allow' && answer.reason).toContain('`tmux`, a program the fence does not know')
+    expect(answer.decision !== 'allow' && answer.reason).toContain('the command line `git commit -n -m x`')
+  })
+})
+
 describe('eval, trap, su and watch read their strings as command lines', () => {
   table([
     ['eval git commit -n', bypass],

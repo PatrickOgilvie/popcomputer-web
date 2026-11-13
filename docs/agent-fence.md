@@ -78,7 +78,7 @@ agent's hook passes it, and answers in that agent's format.
 | A release | `npm publish`, `bun publish`, `pnpm publish` | asks the owner |
 | A push | `git push`, `git send-pack` | asks the owner |
 | A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/` or the directory `core.hooksPath` names, `.husky/`, `.pre-commit-config.yaml`, `.simple-git-hooks.json`, `.claude/settings.json`, `lint-debt.json`, written as they are or by `git checkout <commit> -- .`, `git reset --hard <commit>` or `git apply`; `popweb-fence debt --allow-increase` | asks the owner |
-| What it cannot read | a command name a variable gives, `bash -c "$CMD"`, an alias, a script it cannot open, code that can start a process, a pipe into a shell from a command whose output it cannot know, a value holding a quoted `$(...)`, which bash runs where it evaluates the value as arithmetic; a program it does not know whose arguments, from the first that names a command it reads, make a command it would not allow, as `gtimeout 5 git push` (not `echo`, `grep` or another that only prints or searches them) | asks the owner |
+| What it cannot read | a command name a variable gives, `bash -c "$CMD"`, an alias, a script it cannot open, code that can start a process, a pipe into a shell from a command whose output it cannot know, a value holding a quoted `$(...)`, which bash runs where it evaluates the value as arithmetic; a program it does not know whose arguments, from the first that names a command it reads, make a command it would not allow, as `gtimeout 5 git push`, or one of which, a command line beginning with such a name, does, as `tmux new 'git push'` (not `echo`, `grep` or another that only prints or searches them) | asks the owner |
 
 `wrangler deploy --dry-run`, `npm publish --dry-run`, `git push --dry-run`
 and D1's local database (`--local`, the default) need no one.
@@ -184,12 +184,12 @@ script a command runs is one the policy cannot open, so it asks.
 
 The hook is a guard that keeps an agent to the rules, not a security
 boundary: it reads the command line, not the system it runs on. It cannot
-see an alias set outside the line, a `make` or `just` target, a command or
-path a program builds at run time, what `git stash pop` brings back, or a
-fence file in a directory a command removes whole. What cannot be skipped
-is a required CI check that runs the gate on every pull request. When a
-spelling gets past the hook, add the case to the policy's tests first, as
-`AGENTS.md` says.
+see an alias set outside the line, a `make`, `just`, `turbo`, `lerna` or
+`nx` target, a command or path a program builds at run time, what
+`git stash pop` brings back, or a fence file in a directory a command
+removes whole. What cannot be skipped is a required CI check that runs the
+gate on every pull request. When a spelling gets past the hook, add the
+case to the policy's tests first, as `AGENTS.md` says.
 
 ## The debt report
 
