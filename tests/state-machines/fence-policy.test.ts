@@ -614,6 +614,20 @@ describe('machine 61: the policy walkers', () => {
     for (const command of ['git merge --no-ff --no-commit feature', 'git merge --no-commit --no-ff feature']) expect(decision(command)).toBe('allow')
   })
 
+  test('M61.T99: a cherry-pick or revert commits when the last of `-n`, `--no-commit` and `--commit` is `--commit`', () => {
+    for (const command of [
+      'git cherry-pick -n --commit feature',
+      'git cherry-pick --no-commit --commit feature',
+      'git cherry-pick -n --no-no-commit feature',
+      'git revert -n --commit HEAD',
+      'git revert --no-commit --commit HEAD',
+      'git cherry-pick -n --comm feature',
+    ]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'hook-bypass' })
+    }
+    for (const command of ['git cherry-pick --commit -n feature', 'git revert --no-commit HEAD', 'git cherry-pick -n -X --commit feature']) expect(decision(command)).toBe('allow')
+  })
+
   test('M61.T99: commands that move a branch to commits this gate never checked', () => {
     for (const command of [
       'git fetch ../other main && git reset --hard FETCH_HEAD',

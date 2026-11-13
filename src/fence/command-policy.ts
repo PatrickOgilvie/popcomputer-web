@@ -284,6 +284,23 @@ const GIT_COMMANDS = new Set([
 /** git's global options that take a value. */
 const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--super-prefix', '--list-cmds', '--attr-source'])
 
+/** A git command's options, by what they take: nothing, a value attached or in the next word, or only an attached one. */
+interface GitOptions {
+  readonly flags: ReadonlySet<string>
+  readonly values: ReadonlySet<string>
+  readonly attached: ReadonlySet<string>
+  readonly shortFlags: string
+  readonly shortValues: string
+  /** Short options whose value, if any, is the rest of their cluster, as `-S`'s key. */
+  readonly shortAttached: string
+}
+/** The options `git cherry-pick` and `git revert` share that take no value; `--no-no-commit` is `--commit`. */
+const SEQUENCER_FLAGS = [
+  '--quit', '--continue', '--abort', '--skip', '--no-cleanup', '--no-commit', '--commit', '--no-no-commit', '--edit', '--no-edit', '--signoff',
+  '--no-signoff', '--no-mainline', '--rerere-autoupdate', '--no-rerere-autoupdate', '--no-strategy', '--no-strategy-option', '--no-gpg-sign',
+]
+const SEQUENCER_VALUES = ['--cleanup', '--mainline', '--strategy', '--strategy-option']
+
 /**
  * git's dangerous surface, as data: each way a git command can get past the
  * commit gate, with what the policy answers.
@@ -308,38 +325,60 @@ const GIT_SURFACE = {
   programs: /^(core\.(fsmonitor|pager|editor|sshcommand|askpass|worktree)|sequence\.editor|diff\.external|credential\.helper|gpg\.program|uploadpack\.packobjectshook|init\.templatedir)$|^(filter|diff|merge|pager)\./,
   /**
    * Commands that commit without the pre-commit hook, and their options with
-   * which they make no commit. A merge's are read as git reads them, by
-   * `mergeMakesNoCommit`: it fast-forwards whenever it can, `--no-commit` or not.
+   * which they make no commit. Where git reads a command's options in pairs,
+   * `makesNoCommit` reads them as git does too.
    */
   commitsWithoutHook: {
     pull: [],
-    merge: [],
+    merge: ['--abort', '--quit', '--no-commit'],
     'cherry-pick': ['--abort', '--quit', '--no-commit', '-n'],
     revert: ['--abort', '--quit', '--no-commit', '-n'],
     am: ['--abort', '--quit', '--show-current-patch'],
     rebase: ['--abort', '--quit', '--show-current-patch', '--edit-todo'],
   } as Readonly<Record<string, ReadonlyArray<string>>>,
   /**
-   * `git merge`'s options, by what they take: nothing, a value attached or
-   * in the next word, or only an attached one. Any other may abbreviate one
-   * of them, as `--no-f` does `--no-ff` and `--mess` does `--message`.
+   * The options of the commands that commit without the hook and whose
+   * options git reads in pairs, the last of each winning. Any other may be
+   * one of a pair, as `--no-no-commit` is `--commit`, or abbreviate one, as
+   * `--no-f` does `--no-ff`, or one that takes the next word, as `--mess`
+   * does `--message`.
    */
-  mergeOptions: {
-    flags: new Set([
-      '--stat', '--no-stat', '--summary', '--no-summary', '--compact-summary', '--no-compact-summary', '--no-log', '--squash', '--no-squash',
-      '--commit', '--no-commit', '--edit', '--no-edit', '--no-cleanup', '--ff', '--no-ff', '--ff-only', '--rerere-autoupdate',
-      '--no-rerere-autoupdate', '--verify-signatures', '--no-verify-signatures', '--no-strategy', '--no-strategy-option', '--no-message',
-      '--no-into-name', '--verbose', '--no-verbose', '--quiet', '--no-quiet', '--abort', '--no-abort', '--quit', '--no-quit', '--continue',
-      '--no-continue', '--allow-unrelated-histories', '--no-allow-unrelated-histories', '--progress', '--no-progress', '--no-gpg-sign',
-      '--autostash', '--no-autostash', '--overwrite-ignore', '--no-overwrite-ignore', '--signoff', '--no-signoff', '--verify',
-    ]),
-    values: new Set(['--cleanup', '--strategy', '--strategy-option', '--message', '--file', '--into-name']),
-    attached: new Set(['--log', '--gpg-sign']),
-    shortFlags: 'neqv',
-    shortValues: 'mFsX',
-    /** `-S`, whose key is the rest of its cluster. */
-    shortAttached: 'S',
-  },
+  pairedOptions: {
+    merge: {
+      flags: new Set([
+        '--stat', '--no-stat', '--summary', '--no-summary', '--compact-summary', '--no-compact-summary', '--no-log', '--squash', '--no-squash',
+        '--commit', '--no-commit', '--edit', '--no-edit', '--no-cleanup', '--ff', '--no-ff', '--ff-only', '--rerere-autoupdate',
+        '--no-rerere-autoupdate', '--verify-signatures', '--no-verify-signatures', '--no-strategy', '--no-strategy-option', '--no-message',
+        '--no-into-name', '--verbose', '--no-verbose', '--quiet', '--no-quiet', '--abort', '--no-abort', '--quit', '--no-quit', '--continue',
+        '--no-continue', '--allow-unrelated-histories', '--no-allow-unrelated-histories', '--progress', '--no-progress', '--no-gpg-sign',
+        '--autostash', '--no-autostash', '--overwrite-ignore', '--no-overwrite-ignore', '--signoff', '--no-signoff', '--verify',
+      ]),
+      values: new Set(['--cleanup', '--strategy', '--strategy-option', '--message', '--file', '--into-name']),
+      attached: new Set(['--log', '--gpg-sign']),
+      shortFlags: 'neqv',
+      shortValues: 'mFsX',
+      shortAttached: 'S',
+    },
+    'cherry-pick': {
+      flags: new Set([
+        ...SEQUENCER_FLAGS, '--ff', '--no-ff', '--allow-empty', '--no-allow-empty', '--allow-empty-message', '--no-allow-empty-message',
+        '--keep-redundant-commits', '--no-keep-redundant-commits',
+      ]),
+      values: new Set([...SEQUENCER_VALUES, '--empty']),
+      attached: new Set(['--gpg-sign']),
+      shortFlags: 'nesx',
+      shortValues: 'mX',
+      shortAttached: 'S',
+    },
+    revert: {
+      flags: new Set([...SEQUENCER_FLAGS, '--reference', '--no-reference']),
+      values: new Set(SEQUENCER_VALUES),
+      attached: new Set(['--gpg-sign']),
+      shortFlags: 'nes',
+      shortValues: 'mX',
+      shortAttached: 'S',
+    },
+  } as Readonly<Record<string, GitOptions>>,
   /** Commands that send commits to a remote. */
   pushes: new Set(['push', 'send-pack', 'http-push']),
   /** Commands that write a commit by hand, which runs none of the hooks. */
@@ -2045,23 +2084,39 @@ function patchedPaths(text: string): string[] {
   return paths
 }
 
-/** Whether a command that commits without the pre-commit hook makes no commit with these options. */
+/**
+ * Whether a command that commits without the pre-commit hook makes no
+ * commit with these options: one of them says so and, where git reads the
+ * options in pairs, every one is an option the fence knows and the last of
+ * each pair agrees. A merge makes none after `--abort` or `--quit`, or with
+ * `--no-ff` and `--no-commit`, since git fast-forwards whenever it can,
+ * `--no-commit` or not; a cherry-pick or revert none after `--abort` or
+ * `--quit`, which end what is in progress or fail, or when the last of `-n`,
+ * `--no-commit` and `--commit` is not `--commit`.
+ */
 function makesNoCommit(sub: string, options: ReadonlyArray<string>): boolean {
-  if (sub === 'merge') return mergeMakesNoCommit(options)
-  return options.some((arg) => GIT_SURFACE.commitsWithoutHook[sub].includes(arg))
+  if (!options.some((arg) => GIT_SURFACE.commitsWithoutHook[sub].includes(arg))) return false
+  if (!Object.hasOwn(GIT_SURFACE.pairedOptions, sub)) return true
+  const read = readGitOptions(options, GIT_SURFACE.pairedOptions[sub])
+  if (read === undefined) return false
+
+  const last = (...pair: ReadonlyArray<string>) => read.filter((name) => pair.includes(name)).at(-1)
+  if (sub === 'merge') {
+    return (
+      last('--abort', '--no-abort') === '--abort' ||
+      last('--quit', '--no-quit') === '--quit' ||
+      (last('--ff', '--no-ff', '--ff-only') === '--no-ff' && last('--commit', '--no-commit') === '--no-commit')
+    )
+  }
+  const commit = last('-n', '--no-commit', '--commit', '--no-no-commit')
+  return read.includes('--abort') || read.includes('--quit') || commit === '-n' || commit === '--no-commit'
 }
 
 /**
- * Whether `git merge` makes no commit. git reads the last of each pair: the
- * last of `--abort` and `--no-abort` is `--abort`, or of `--quit` and
- * `--no-quit` is `--quit`, or the last of `--ff`, `--no-ff` and `--ff-only`
- * is `--no-ff` and of `--commit` and `--no-commit` is `--no-commit`, since
- * git fast-forwards whenever it can, `--no-commit` or not. An option the
- * fence does not know may abbreviate either of a pair, or take the next word
- * as its value: the merge may commit.
+ * A git command's options in the order it reads them, short ones letter by
+ * letter, without their values; undefined when one is not among `spec`'s.
  */
-function mergeMakesNoCommit(options: ReadonlyArray<string>): boolean {
-  const spec = GIT_SURFACE.mergeOptions
+function readGitOptions(options: ReadonlyArray<string>, spec: GitOptions): string[] | undefined {
   const read: string[] = []
 
   for (let k = 0; k < options.length; k++) {
@@ -2072,28 +2127,23 @@ function mergeMakesNoCommit(options: ReadonlyArray<string>): boolean {
       if (spec.values.has(name)) {
         if (value === undefined) k++
       } else if (!spec.attached.has(name) && !(spec.flags.has(name) && value === undefined)) {
-        return false
+        return undefined
       }
       read.push(name)
       continue
     }
     for (let p = 1; p < arg.length; p++) {
       const letter = arg[p]
+      if (!spec.shortFlags.includes(letter) && !spec.shortValues.includes(letter) && !spec.shortAttached.includes(letter)) return undefined
+      read.push(`-${letter}`)
       if (spec.shortValues.includes(letter)) {
         if (p === arg.length - 1) k++
         break
       }
       if (spec.shortAttached.includes(letter)) break
-      if (!spec.shortFlags.includes(letter)) return false
     }
   }
-
-  const last = (...pair: ReadonlyArray<string>) => read.filter((name) => pair.includes(name)).at(-1)
-  return (
-    last('--abort', '--no-abort') === '--abort' ||
-    last('--quit', '--no-quit') === '--quit' ||
-    (last('--ff', '--no-ff', '--ff-only') === '--no-ff' && last('--commit', '--no-commit') === '--no-commit')
-  )
+  return read
 }
 
 /** `git hash-object -w -t commit`, which writes a commit object by hand. */
