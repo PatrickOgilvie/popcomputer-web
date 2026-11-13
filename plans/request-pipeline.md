@@ -590,8 +590,9 @@ For 2.0, cut when a breaking change brings applications something they feel:
   answer 500 after a minor upgrade.
 - `back()` reading the form's page.
 
-Separate work: moving the fence to its own package; several queues in one
-Worker, dispatched by the batch's queue name.
+Separate work: several queues in one Worker, dispatched by the batch's
+queue name. Moving the fence to its own package was dropped on 2026-11-13:
+the owner keeps it in popweb, beside the AGENTS.md rules it enforces.
 
 ## Releases
 
