@@ -12,7 +12,7 @@ import { flash, json, redirect } from '../../src/effect/responses.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { requiredString } from '../../src/effect/schema.js'
 import { cookie } from '../../src/effect/cookies.js'
-import { readCookie, testBrowser } from '../../src/testing.js'
+import { readCookie, testBrowser, testClock, testEnv } from '../../src/testing.js'
 
 const cartCookie = cookie('cart', S.Struct({ id: S.String, items: S.Number }), { maxAge: '30 days', path: '/r' })
 // A pointer the server trusts only when the signature holds.
@@ -145,6 +145,87 @@ describe('signed cookies', () => {
     expect(await read(forged)).toBeNull()
     expect(await read(tampered)).toBeNull()
     expect(Option.getOrNull(readCookie(set, impersonationCookie))).toEqual({ id: 'imp-1' })
+  })
+
+  // A pass the server trusts for an hour: a copy kept past it reads as none.
+  const passCookie = cookie('pass', S.String, { maxAge: '1 hour', signed: { secret: 'COOKIE_SECRET' } })
+
+  async function passApp() {
+    const time = await testClock(new Date('2026-03-01T09:00:00Z'))
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    routes
+      .post('/pass', action(Effect.gen(function* () {
+        yield* passCookie.set('pass-1.5')
+
+        return yield* json({ given: true })
+      })))
+      .get('/pass', action(Effect.gen(function* () {
+        return yield* json({ pass: Option.getOrNull(yield* passCookie.read) })
+      })))
+
+    const bindings = testEnv(time.layer, env)
+    const read = async (cookieHeader: string) =>
+      (await (await app.request('/pass', { headers: { Cookie: cookieHeader } }, bindings)).json()).pass
+    const set = await app.request('/pass', { method: 'POST' }, bindings)
+    const written = set.headers.getSetCookie().find((value) => value.startsWith('pass='))?.split(';')[0] ?? ''
+
+    return { time, read, set, written }
+  }
+
+  test('a signed cookie with a lifetime reads as none once a copy outlives it', async () => {
+    const { time, read, set, written } = await passApp()
+
+    expect(await read(written)).toBe('pass-1.5')
+    expect(Option.getOrNull(readCookie(set, passCookie))).toBe('pass-1.5')
+
+    await time.advance('59 minutes')
+    expect(await read(written)).toBe('pass-1.5')
+
+    // The second its Max-Age ends, as the browser drops it.
+    await time.advance('1 minute')
+    expect(await read(written)).toBeNull()
+  })
+
+  test('a signed cookie without a lifetime keeps a value that ends in digits whole', async () => {
+    const noteCookie = cookie('note', S.String, { signed: { secret: 'COOKIE_SECRET' } })
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
+
+    routes
+      .post('/note', action(Effect.gen(function* () {
+        yield* noteCookie.set('v1.5')
+
+        return yield* json({ noted: true })
+      })))
+      .get('/note', action(Effect.gen(function* () {
+        return yield* json({ note: Option.getOrNull(yield* noteCookie.read) })
+      })))
+
+    const set = await app.request('/note', { method: 'POST' }, env)
+    const written = set.headers.getSetCookie().find((value) => value.startsWith('note='))?.split(';')[0] ?? ''
+
+    expect(Option.getOrNull(readCookie(set, noteCookie))).toBe('v1.5')
+    expect((await (await app.request('/note', { headers: { Cookie: written } }, env)).json()).note).toBe('v1.5')
+  })
+
+  test('the expiry is signed, so a copy cannot move it', async () => {
+    const { time, read, written } = await passApp()
+    const [prefix = '', , signature = ''] = /^(.*)\.(\d+)\.([^.]+)$/.exec(written)?.slice(1) ?? []
+
+    expect(prefix).toBe('pass=pass-1.5')
+
+    await time.advance('2 hours')
+    expect(await read(`${prefix}.${Math.floor(Date.parse('2026-03-01T13:00:00Z') / 1000)}.${signature}`)).toBeNull()
+  })
+
+  test('a value signed before expiries were signed still reads', async () => {
+    const { read } = await passApp()
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.COOKIE_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+    const signature = Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode('pass=pass-1.5'))).toString('base64url')
+
+    expect(await read(`pass=pass-1.5.${signature}`)).toBe('pass-1.5')
   })
 })
 

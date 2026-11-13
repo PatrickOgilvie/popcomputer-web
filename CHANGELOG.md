@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - a branch moved to commits the gate may never have checked, which now asks: `git reset` to a commit other than HEAD's own, `update-ref`, `branch -f`, `-M` or `-C`, `switch -C`, `checkout -B`, and `git commit` in a directory above the line's;
   - a value holding a quoted command substitution that bash evaluates as arithmetic, a subscript or `PS4`, which asks.
 - `popweb-fence debt --check` takes a raised ledger only with the mark `--update --allow-increase` now leaves in `.git/popweb-fence/`, which no commit carries and the hook refuses an agent's write to. A ledger naming HEAD as `raisedFrom`, written by a patch, a stash or an editor, passed the gate. A ledger raised before upgrading and not yet committed needs `--allow-increase` again.
+- A signed cookie with a `maxAge` signs its expiry with its value, so a copy kept past the `maxAge` reads as none. The signature covered only the name and value, so a value someone copied stayed valid for as long as they kept it. A value an earlier release signed still reads, as it did; changing the secret ends those.
 
 ## [1.15.0] - 2026-11-08
 

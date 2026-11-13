@@ -37,7 +37,10 @@ Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS. An unsigned
 cookie holds whatever a visitor sends, so it suits a preference or a pointer
 the server checks. One the server must trust is declared with
 `signed: { secret: 'COOKIE_SECRET' }`, naming the binding that holds the
-secret, and a value without a valid signature reads as none. A secret the
+secret, and a value without a valid signature reads as none. With a
+`maxAge`, the signature covers the value's expiry too, so a copy kept past
+it reads as none. A value an earlier release signed without its expiry
+still reads; rotate the secret to end those. A secret the
 bindings lack fails when the cookie is first read or set, so set a signed
 cookie before the writes it goes with.
 

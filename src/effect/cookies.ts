@@ -11,7 +11,7 @@
  * yield* cartCookie.clear
  */
 
-import { Context, Duration, Effect, Option, Schema as S } from 'effect'
+import { Clock, Context, Duration, Effect, Option, Schema as S } from 'effect'
 import { BindingsService } from './services.js'
 import type { BindingName } from './config.js'
 
@@ -32,9 +32,11 @@ export interface CookieOptions {
   readonly httpOnly?: boolean
   /**
    * Sign the value with the secret in this binding (HMAC-SHA256 over the
-   * cookie's name and value), so a value the browser changed or made up reads
-   * as none. An unsigned cookie holds what any visitor sends: use it for a
-   * preference or a pointer the server checks, never for authority.
+   * cookie's name and value, and its expiry when it has a `maxAge`), so a
+   * value the browser changed or made up reads as none, and so does a copy
+   * kept past its `maxAge`. An unsigned cookie holds what any visitor sends:
+   * use it for a preference or a pointer the server checks, never for
+   * authority.
    */
   readonly signed?: { readonly secret: BindingName }
 }
@@ -125,8 +127,27 @@ export function cookie<A, I>(name: string, schema: S.Codec<A, I, never, never>, 
       : Option.orElse(decodeValue(raw), () => decodeJson(raw))
 
   const signing = options.signed
-  // A signed value is `value.signature`; the value is the part before the last dot.
-  const unsigned = (raw: string): string => (signing === undefined ? raw : raw.slice(0, Math.max(0, raw.lastIndexOf('.'))))
+  // How long a signed value stays valid, when the cookie has a lifetime: the
+  // browser drops the cookie then, and a copy kept past it must not read.
+  const signedLifetime = signing === undefined || options.maxAge === undefined
+    ? undefined
+    : Math.floor(Duration.toSeconds(Duration.fromInputUnsafe(options.maxAge)))
+
+  // A signed value is `value.signature`, or `value.expiry.signature` when it
+  // expires, the expiry in seconds since the epoch. The two sign different
+  // text, `name=value` and `name=value;expires=expiry`: a cookie value holds
+  // no `;`, so neither signature passes for the other, and a value signed
+  // before expiries were signed still reads.
+  const unsigned = (raw: string): string => {
+    if (signing === undefined) return raw
+
+    const value = raw.slice(0, Math.max(0, raw.lastIndexOf('.')))
+    const dated = signedLifetime === undefined ? null : /^(.*)\.\d+$/s.exec(value)
+
+    return dated?.[1] ?? value
+  }
+  const signedText = (value: string, expiry: string | undefined) =>
+    expiry === undefined ? `${name}=${value}` : `${name}=${value};expires=${expiry}`
 
   const secret: Effect.Effect<string, never, BindingsService> = Effect.flatMap(BindingsService, (bindings) => {
     const binding = signing?.secret ?? ''
@@ -137,9 +158,9 @@ export function cookie<A, I>(name: string, schema: S.Codec<A, I, never, never>, 
       : Effect.die(new Error(`Cookie '${name}' is signed with the secret in ${binding}, which this request's bindings lack.`))
   })
 
-  const signatureOf = (value: string) =>
+  const signatureOf = (text: string) =>
     Effect.flatMap(secret, (key) =>
-      Effect.promise(async () => base64Url(await crypto.subtle.sign('HMAC', await hmacKey(key), encoder.encode(`${name}=${value}`))))
+      Effect.promise(async () => base64Url(await crypto.subtle.sign('HMAC', await hmacKey(key), encoder.encode(text))))
     )
 
   const verified = (raw: string): Effect.Effect<Option.Option<string>, never, BindingsService> => {
@@ -150,16 +171,34 @@ export function cookie<A, I>(name: string, schema: S.Codec<A, I, never, never>, 
 
     if (signature === undefined) return Effect.succeedNone
 
-    const value = raw.slice(0, dot)
+    const signedPart = raw.slice(0, dot)
+    const dated = /^(.*)\.(\d+)$/s.exec(signedPart)
 
-    return Effect.flatMap(secret, (key) =>
-      Effect.promise(async () =>
-        (await crypto.subtle.verify('HMAC', await hmacKey(key), signature, encoder.encode(`${name}=${value}`)))
-          ? Option.some(value)
-          : Option.none()
-      )
-    )
+    return Effect.gen(function* () {
+      const key = yield* secret
+      const verify = (text: string) =>
+        Effect.promise(async () => crypto.subtle.verify('HMAC', await hmacKey(key), signature, encoder.encode(text)))
+
+      // A value signed with its expiry reads until then, whatever the
+      // declaration now says; one signed without reads as it always has.
+      if (dated !== null && (yield* verify(signedText(dated[1] ?? '', dated[2])))) {
+        const now = yield* Clock.currentTimeMillis
+
+        return Number(dated[2]) * 1000 > now ? Option.some(dated[1] ?? '') : Option.none()
+      }
+
+      return (yield* verify(signedText(signedPart, undefined))) ? Option.some(signedPart) : Option.none()
+    })
   }
+
+  const withSignature = (stored: string): Effect.Effect<string, never, BindingsService> =>
+    Effect.gen(function* () {
+      if (signedLifetime === undefined) return `${stored}.${yield* signatureOf(signedText(stored, undefined))}`
+
+      const expiry = String(Math.floor((yield* Clock.currentTimeMillis) / 1000) + signedLifetime)
+
+      return `${stored}.${expiry}.${yield* signatureOf(signedText(stored, expiry))}`
+    })
 
   return {
     name,
@@ -174,11 +213,7 @@ export function cookie<A, I>(name: string, schema: S.Codec<A, I, never, never>, 
         Effect.mapError((issue) => new Error(`The value for cookie '${name}' does not match its schema: ${issue.message}`)),
         Effect.orDie,
         Effect.map((encoded) => (typeof encoded === 'string' && !encoded.startsWith('"') ? encoded : JSON.stringify(encoded))),
-        Effect.flatMap((stored) =>
-          signing === undefined
-            ? Effect.succeed(stored)
-            : Effect.map(signatureOf(stored), (signature) => `${stored}.${signature}`)
-        ),
+        Effect.flatMap((stored) => (signing === undefined ? Effect.succeed(stored) : withSignature(stored))),
         Effect.map((stored) => jar.set({ name, value: stored, options }))
       )
     ),
