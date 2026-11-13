@@ -103,6 +103,18 @@ describe('@popcomputer/web/lint', () => {
     expect(found(lint('invalid-actions.ts'))).toEqual(expected('invalid-actions.ts').sort())
   })
 
+  test('tells a call the transaction holds until it commits from work that happens though its writes roll back', () => {
+    const messages = lint('invalid-database.ts')
+      .filter((diagnostic) => diagnostic.rule === 'no-external-work-in-transaction')
+      .map((diagnostic) => diagnostic.message)
+    const about = (name: string) => messages.filter((message) => message.includes(name))
+
+    for (const held of ['background()', 'cacheSet()']) {
+      expect(about(held)).toEqual([expect.stringContaining('until it commits and drops it')])
+    }
+    expect(about('Effect.sleep()')).toEqual([expect.stringContaining('roll back')])
+  })
+
   test('reports each binding that does not say who may load its record', () => {
     expect(found(lint('invalid-bindings.ts'))).toEqual(expected('invalid-bindings.ts').sort())
   })
@@ -111,11 +123,11 @@ describe('@popcomputer/web/lint', () => {
     expect(found(lint('invalid-directives.ts'))).toEqual(expected('invalid-directives.ts').sort())
   })
 
-  test('reports each setting that weakens a protection, as a warning', () => {
+  test('reports each setting that weakens a protection, as an error the gate fails on', () => {
     const diagnostics = lint('invalid-security.ts')
 
     expect(found(diagnostics)).toEqual(expected('invalid-security.ts').sort())
-    expect(new Set(diagnostics.map((diagnostic) => diagnostic.severity))).toEqual(new Set(['warning']))
+    expect(new Set(diagnostics.map((diagnostic) => diagnostic.severity))).toEqual(new Set(['error']))
   })
 
   test('reports each route builder whose result is dropped', () => {
@@ -162,8 +174,8 @@ describe('@popcomputer/web/lint', () => {
     expect(Object.keys(lint.rules)).toHaveLength(Object.keys(plugin.rules).length)
     expect(lint.rules['popcomputer-web/no-catch-all-in-action']).toBe('warn')
     expect(lint.rules['popcomputer-web/no-unscoped-write']).toBe('error')
-    expect(lint.rules['popcomputer-web/explain-security-loosening']).toBe('warn')
-    expect(webLint({ 'explain-security-loosening': 'error' }).rules['popcomputer-web/explain-security-loosening']).toBe('error')
+    expect(lint.rules['popcomputer-web/explain-security-loosening']).toBe('error')
+    expect(webLint({ 'explain-security-loosening': 'warn' }).rules['popcomputer-web/explain-security-loosening']).toBe('warn')
     expect(lint.jsPlugins).toEqual([{ name: 'popcomputer-web', specifier: '@popcomputer/web/lint' }])
   })
 })

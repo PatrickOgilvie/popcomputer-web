@@ -1097,7 +1097,8 @@ export class Redirect extends Data.TaggedClass('Redirect')<{
   }
 
   /**
-   * Create a redirect back (303 for POST/PUT/DELETE).
+   * Create a 303 redirect to `fallback`. It reads no `Referer`: an action that
+   * sends the visitor back to the page they came from returns `back()`.
    */
   static back(fallback = '/'): Redirect {
     return new Redirect({ url: fallback, status: 303 })

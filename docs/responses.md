@@ -101,8 +101,10 @@ and so does one whose `Authorization` header holds a token, such as
 `Bearer`, which a browser never adds by itself. `Basic`, `Digest`,
 `Negotiate` and `NTLM` credentials are checked like a cookie, since a browser
 resends the ones it cached, as behind a staging gate, with another site's
-form. A native app or another site that posts to the application is listed
-in `security: { verifyOrigin: { allowedOrigins: ['https://admin.example'] } }`.
+form. An origin the application owns that posts to it, such as its native
+app's or its own admin site's, is listed in
+`security: { verifyOrigin: { allowedOrigins: ['https://admin.example'] } }`:
+it posts with the visitor's cookies, past the check.
 
 Every response also gets, unless it sets its own, `X-Content-Type-Options:
 nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, which keeps the

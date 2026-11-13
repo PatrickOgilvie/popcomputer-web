@@ -104,7 +104,7 @@ export const explainSecurityLoosening: LintRule = {
       headersOff:
         `headers: false sends none of the security headers the framework adds, so another site may frame the application's pages to trick a visitor into clicking, and responses lose nosniff and the referrer policy. Use headers: { frames: 'same-origin' } to let the application frame its own pages. ${ACKNOWLEDGE}`,
       bodyLimit:
-        `bodyLimit {{bytes}} reads more than the 1 MiB default of a body before it refuses one, which every visitor can send. Use the larger limit on the one action that takes large files, validateRequest(Schema, { bodyLimit }), rather than for every route. ${ACKNOWLEDGE}`,
+        `bodyLimit {{bytes}} reads more than the 1 MiB default of a body before it refuses one, which every visitor can send. Use the larger limit on the one action that takes large files, form(Schema, { bodyLimit }), or validateRequest(Schema, { bodyLimit }) after a check only some visitors pass, rather than for every route. ${ACKNOWLEDGE}`,
       historyPlain:
         `{{setting}} keeps signed-in pages' props in the browser's history unencrypted, so Back after sign-out can show the previous user's pages to the next person at the computer. Use the default, 'signed-in', which encrypts them with a key the tab forgets when the session ends. ${ACKNOWLEDGE}`,
       emailVerification:

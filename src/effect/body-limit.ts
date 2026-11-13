@@ -4,7 +4,8 @@
  * Parsing a body holds it in memory several times over (its bytes, the
  * parsed form and its files), in the isolate every request shares, so the
  * framework reads one only up to a limit: setupWeb's `bodyLimit`, which an
- * action that takes uploads raises with validateRequest's. What it does not
+ * action that takes uploads raises with its form's, or with validateRequest's
+ * after a check only some visitors pass. What it does not
  * read, the rest of a refused body or one nothing read, it drops before the
  * answer.
  */
@@ -12,8 +13,9 @@
 import { Data } from 'effect'
 
 /**
- * The most bytes a request body may have unless setupWeb's `bodyLimit` or
- * validateRequest's says otherwise: 1 MiB, ample for a form or a JSON body.
+ * The most bytes a request body may have unless setupWeb's `bodyLimit`, a
+ * form's or validateRequest's says otherwise: 1 MiB, ample for a form or a
+ * JSON body.
  */
 export const DEFAULT_BODY_LIMIT = 1024 * 1024
 

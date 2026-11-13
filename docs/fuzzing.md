@@ -8,7 +8,7 @@ lifecycle's steps. Its pieces stand alone, on Effect's generators
 
 | Piece | What it gives |
 | --- | --- |
-| `fuzz(arbitrary, holds, { runs, shrinks, examples })` | runs a property: resolves when every case holds, rejects with the case shrunk through up to `shrinks` candidates (1,000, or `FUZZ_SHRINKS`), why it was refused and a replay token; shrinking stops, saying so, with a quarter of `fuzzTimeout` left, and a failure the input does not explain stops the run unshrunk; `examples` are checked on every run, before the generated cases |
+| `fuzz(arbitrary, holds, { runs, shrinks, examples })` | runs a property: resolves when every case holds, rejects with the case shrunk through up to `shrinks` candidates (1,000, or `FUZZ_SHRINKS`), why it was refused and a replay token; shrinking stops, saying so, with a quarter of `fuzzTimeout` left, and a failure the input does not explain stops the run unshrunk; `examples` are checked on every run, before the generated cases, except a `FUZZ_REPLAY` run, which checks only its case |
 | `pick`, `oneOf`, `weighted`, `textOf`, `stepsOf`, `anyText`, `show` | generators that shrink toward their first choice, sequences of a lifecycle's steps of every length up to `maxLength`, and a value shown with its invisible characters escaped |
 | `fuzzRequest({ paths, routes, params, people })` | requests to the application's declared paths, and a form for each route that writes, from each person and a signed-out visitor |
 | `ownership(routes, table)` | the keys `strangerWrites` reads a table's rows by: its primary key and the column its binding's `ownedBy` names |

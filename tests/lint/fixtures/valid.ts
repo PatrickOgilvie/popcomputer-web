@@ -21,7 +21,10 @@ import {
   validateRequest,
 } from '@popcomputer/web/effect'
 import { endpoint } from '@popcomputer/web/endpoint'
+import { kvCache, type KVNamespaceLike } from '@popcomputer/web/cache'
 import { projects, tasks } from './schema'
+
+declare const projectsKv: KVNamespaceLike
 
 // A page action that declares its input answers JSON as any action may: it is no endpoint.
 export const renames = action(form(S.Struct({ name: S.String })), (input) => Effect.gen(function* () {
@@ -44,6 +47,8 @@ export const archive = action(Effect.gen(function* () {
     yield* dbMutation((db) => db.update(projects).set({ name: input.name }).where(and(eq(projects.id, project.id), eq(projects.userId, auth.user.id))))
     yield* dbMutation((db) => db.delete(tasks).where(eq(tasks.projectId, project.id)))
     yield* dbMutation((db) => db.insert(tasks).values({ id: 't1', projectId: project.id }))
+    // Building a cache layer reaches no store: only the cache's reads and writes are outside work.
+    yield* Effect.succeed(kvCache(projectsKv))
   }))
   yield* dbQuery((db) => db.run(sql`SELECT * FROM projects WHERE name = ${input.name}`))
   yield* background('notify', Effect.promise(() => fetch('https://hooks.example/archived')))

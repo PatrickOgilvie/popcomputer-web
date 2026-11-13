@@ -3,8 +3,8 @@
  *
  * Bun strips types without checking them, so a test can compile in Bun and
  * still contradict the package's types, and agents copy patterns from tests.
- * Test files augment the package's types differently (WebDatabaseType,
- * WebAuthUserType, ...), so each file is checked with the sources alone.
+ * Test files register the package's types differently, each with its own
+ * `Register`, so each file is checked with the sources alone.
  *
  * Run: bun tests/typecheck-tests.ts [test files...]
  */

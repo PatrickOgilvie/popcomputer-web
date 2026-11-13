@@ -65,3 +65,47 @@ describe('an Inertia visit from a command-line or AI user agent', () => {
     expect(await response.json()).toMatchObject({ httpStatus: 422 })
   })
 })
+
+/**
+ * A User-Agent makes a failure JSON only when the request does not ask for
+ * HTML: a browser whose User-Agent names one of those clients still posts a
+ * plain form, and its failed form goes back to its page.
+ */
+describe('a User-Agent naming a command-line or AI client', () => {
+  const browserAgents = ['Mozilla/5.0 (Macintosh) claude-desktop/1.0', 'Mozilla/5.0 (X11) SomeCLI/2.1']
+  const clientAgents = ['curl/8.7.1', 'claude-code/1.0', 'anthropic-sdk/0.30']
+  const browserHeaders = { Accept: 'text/html,application/xhtml+xml,*/*;q=0.8' }
+
+  test.each(browserAgents)('sends a plain form post that asks for HTML back to its page: %s', async (agent) => {
+    const response = await createApp().request('/notes', {
+      method: 'POST',
+      headers: { ...browserHeaders, 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': agent },
+      body: '',
+    })
+
+    expect(response.status).toBe(303)
+    expect(response.headers.get('Location')).toBe('/notes')
+  })
+
+  test.each(browserAgents)('renders a page for a failure when the request asks for HTML: %s', async (agent) => {
+    const response = await createApp().request('/locked', {
+      method: 'POST',
+      headers: { ...browserHeaders, 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': agent },
+      body: '',
+    })
+
+    expect(response.status).toBe(403)
+    expect(response.headers.get('Content-Type')).toContain('text/html')
+  })
+
+  test.each(clientAgents)('answers JSON when the request asks for no HTML: %s', async (agent) => {
+    const response = await createApp().request('/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': agent },
+      body: '',
+    })
+
+    expect(response.status).toBe(422)
+    expect(await response.json()).toMatchObject({ httpStatus: 422 })
+  })
+})

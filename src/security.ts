@@ -22,7 +22,7 @@ export interface VerifyOriginConfig {
   /**
    * Additional origins to allow beyond the request's own origin.
    * Pass exact origin strings (e.g. `https://app.example.com`,
-   * `journeymannative://`) or a predicate for full control.
+   * `myapp://`) or a predicate for full control.
    *
    * The request's own origin (scheme + host of `c.req.url`) is always allowed
    * when {@link VerifyOriginConfig.allowSameOrigin} is true (the default).
@@ -107,7 +107,7 @@ function originOf(url: string | undefined | null): string | null {
  *   version,
  *   render,
  *   security: {
- *     verifyOrigin: { allowedOrigins: ['journeymannative://'] },
+ *     verifyOrigin: { allowedOrigins: ['myapp://'] },
  *   },
  * })
  *

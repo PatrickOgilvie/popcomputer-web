@@ -213,7 +213,7 @@ a file the parser cannot read. A reason follows ` -- `, as
 
 `popweb-fence debt --update` writes the ledger, `lint-debt.json`: each
 directive without its line, so moving code changes nothing. Commit it.
-Before the first `--update`, give each warning the application means a
+Before the first `--update`, give each loosening the application means a
 reasoned disable comment, as `explain-security-loosening` on a binding
 public by design: the first ledger records them, and each later one is the
 owner's to allow. `popweb-fence debt --check`, the gate's last step, reads

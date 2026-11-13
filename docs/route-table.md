@@ -44,8 +44,8 @@ updateProject, { purges: true })`:
   `bodyLimit` when it sets one. A route whose action declares no input has
   none.
 
-The framework builds each route's handler from its row, so the table says
-what the route does. `routes.getRegistry().all()` gives the rows themselves,
+The framework builds each route's handler from its row and the layers its
+builder provides, so the table says what the route does. `routes.getRegistry().all()` gives the rows themselves,
 an endpoint's with its contract and a route's with its `params` schema.
 
 The table is sealed by the application's first request, when Hono builds its

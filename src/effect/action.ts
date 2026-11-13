@@ -85,19 +85,15 @@ export const actionInputOf = (action: object): FormInputDeclaration<unknown, unk
  * Mark an Effect as a route action.
  *
  * Everything an action does is opt-in: it yields the services and helpers it
- * needs and ends every branch with a response helper.
+ * needs and ends every branch with a response helper. An action that takes
+ * input declares it with `form(Schema)`, the overload below.
  *
  * @example
- * const createProject = action(
+ * const showProject = action(
  *   Effect.gen(function* () {
- *     const auth = yield* authorize()
- *     const input = yield* validateRequest(S.Struct({ name: requiredString }))
+ *     const project = yield* bound('project')
  *
- *     const [project] = yield* dbMutation((db) =>
- *       db.insert(projects).values({ ...input, userId: auth.user.id }).returning()
- *     )
- *
- *     return yield* redirect(paths.project, { project: project.id })
+ *     return yield* render('Projects/Show', { project })
  *   })
  * )
  */

@@ -52,9 +52,10 @@ type UndeclaredBindings<Given> = [Exclude<keyof Given, keyof RegisteredBindings>
  * Build a request env that adds `layer` to the request's Effect runtime.
  *
  * Services in `layer` replace the ones effectBridge provides for the request,
- * such as `AuthUserService` and `DatabaseService`, and supply services the
- * application provides through `setupWeb`'s `services`. A layer that a
- * route registers with `.provide()` still takes precedence for that route.
+ * such as `AuthUserService` and `DatabaseService`, and the application's own,
+ * whether `web.services(...)` gives them or a route's `.provide()` does: the
+ * test's layer goes over the route's own, so a fake replaces a service
+ * wherever the application gives it.
  *
  * The env has each binding passed in with the type it was given, so a test
  * reads its database as `env.DB`, and may have any of the others.

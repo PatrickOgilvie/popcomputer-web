@@ -161,8 +161,9 @@ interface WebSetupOptions<E extends Env> extends WebConfig {
    * The most bytes `validateRequest` and `betterAuthHandler` read of a
    * request body, 1 MiB unless set: a larger one is refused before it is
    * parsed, with a 413, or for a page's form, the form's `form` error. An
-   * action that takes uploads raises it with
-   * `validateRequest(Schema, { bodyLimit })`.
+   * action that takes uploads raises it with `form(Schema, { bodyLimit })`,
+   * or with `validateRequest(Schema, { bodyLimit })` after a check only some
+   * visitors pass.
    */
   bodyLimit?: number
 
@@ -308,6 +309,12 @@ export type WebRouteServices<HasDatabase extends boolean, Auth, CustomServices> 
   | ([Auth] extends [never] ? never : AuthService)
   | CustomServices
 
+/** Route paths by name, as `src/paths.ts` declares them. */
+export type RoutePaths = Readonly<Record<string, string>>
+
+/** The paths `routes` registers on: the declared ones, or any path when none are. */
+export type RoutePath<Paths extends RoutePaths> = [Paths] extends [never] ? string : Paths[keyof Paths]
+
 /**
  * The configured application returned by {@link setupWeb}. It carries the
  * types its setup declares: register it once, and the rest of the
@@ -322,12 +329,6 @@ export type WebRouteServices<HasDatabase extends boolean, Auth, CustomServices> 
  * }
  * ```
  */
-/** Route paths by name, as `src/paths.ts` declares them. */
-export type RoutePaths = Readonly<Record<string, string>>
-
-/** The paths `routes` registers on: the declared ones, or any path when none are. */
-export type RoutePath<Paths extends RoutePaths> = [Paths] extends [never] ? string : Paths[keyof Paths]
-
 export interface WebApplication<
   E extends Env,
   Services = BaseServices,

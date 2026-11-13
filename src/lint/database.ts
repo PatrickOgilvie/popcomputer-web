@@ -154,6 +154,8 @@ const EXTERNAL_GLOBALS = new Set(['fetch', 'setTimeout', 'setInterval', 'queueMi
 const EXTERNAL_WEB = new Set(['background', 'betterAuthCall'])
 const EXTERNAL_CACHE = new Set(['cache', 'cacheGet', 'cacheSet', 'cacheInvalidate', 'cacheInvalidatePrefix', 'invalidateCacheTags'])
 const EXTERNAL_EFFECT = new Set(['sleep', 'promise', 'tryPromise'])
+/** The calls `dbTransaction` holds until it commits, and drops on a rollback. */
+const HELD_UNTIL_COMMIT = new Set(['background', 'cacheSet', 'invalidateCacheTags'])
 const CACHE = new Set(['@popcomputer/web/cache'])
 
 export const noExternalWorkInTransaction: LintRule = {
@@ -163,6 +165,8 @@ export const noExternalWorkInTransaction: LintRule = {
     messages: {
       external:
         'A transaction holds its locks until it commits. Call {{name}} before or after dbTransaction, so a slow or failing call cannot hold the locks, and nothing outside the database happens for writes that roll back.',
+      held:
+        'dbTransaction holds {{name}} until it commits and drops it if the transaction rolls back. Call it after dbTransaction, so the code reads in the order it runs.',
     },
   },
   create(context) {
@@ -177,6 +181,7 @@ export const noExternalWorkInTransaction: LintRule = {
 
         const callee = unwrap(node.callee)
         let name: string | undefined
+        let held = false
 
         if (isIdentifier(callee) && EXTERNAL_GLOBALS.has(callee.name) && !imports.isImported(callee.name)) {
           name = `${callee.name}()`
@@ -185,13 +190,17 @@ export const noExternalWorkInTransaction: LintRule = {
           const cache = imports.calledName(node, CACHE)
           const effect = imports.calledName(node, EFFECT, 'Effect')
 
-          if (web !== undefined && EXTERNAL_WEB.has(web)) name = `${web}()`
-          else if (cache !== undefined && EXTERNAL_CACHE.has(cache)) name = `${cache}()`
-          else if (effect !== undefined && EXTERNAL_EFFECT.has(effect)) name = `Effect.${effect}()`
+          if (web !== undefined && EXTERNAL_WEB.has(web)) {
+            name = `${web}()`
+            held = HELD_UNTIL_COMMIT.has(web)
+          } else if (cache !== undefined && EXTERNAL_CACHE.has(cache)) {
+            name = `${cache}()`
+            held = HELD_UNTIL_COMMIT.has(cache)
+          } else if (effect !== undefined && EXTERNAL_EFFECT.has(effect)) name = `Effect.${effect}()`
           else if (isMember(callee) && propertyName(callee) === 'waitUntil') name = 'waitUntil()'
         }
 
-        if (name !== undefined) context.report({ node, messageId: 'external', data: { name } })
+        if (name !== undefined) context.report({ node, messageId: held ? 'held' : 'external', data: { name } })
       },
     }
   },

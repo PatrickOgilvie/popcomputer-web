@@ -783,7 +783,6 @@ export async function compileBindingPlan<Schema extends object>(
   return plan
 }
 
-/** The table's single primary key column, else the column the route looks rows up by. */
 /**
  * The column a binding looks its record up by: the one its placeholder
  * names, as `{post:slug}`, or for `{post}` the table's `id`, else, for a
@@ -808,6 +807,7 @@ function isColumnProperty(table: object, key: string): boolean {
   return column instanceof Object && 'columnType' in column
 }
 
+/** The table's single primary key column, else the column the route looks rows up by. */
 async function primaryKeyOf(table: Table, lookupColumn: string): Promise<string> {
   const { getTableColumns } = await loadDrizzle()
   const primary = Object.entries(getTableColumns(table) ?? {}).filter(([, column]) => column.primary)
@@ -1200,8 +1200,8 @@ export async function findRelation<Schema extends object>(
         if (info) return info
       }
     } catch {
-      // Malformed relations definition - fall through to null; resolveBindings
-      // warns in development when a nested binding could not be scoped.
+      // Malformed relations definition - fall through to null, and a nested
+      // binding no relation scopes fails as its plan compiles.
     }
   }
 

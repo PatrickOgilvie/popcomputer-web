@@ -7,7 +7,7 @@ TypeScript give up on the types that later errors are about.
 
 | Where, and what it says | What it means | What to do |
 | --- | --- | --- |
-| A registration, `missingServices: "@popcomputer/web/Database"` | The action uses a service the setup does not provide | Configure it in `setupWeb` (`database`, `auth.client`, `services`), or `routes.provide(layer)` |
+| A registration, `missingServices: "@popcomputer/web/Database"` | The action uses a service the setup does not provide | Configure it in `setupWeb` (`database`, `auth.client`), give the application's own with `web.services({ app, request })`, or `routes.provide(layer)` |
 | A registration, `unhandledErrors: "PaymentDeclined"` | The action can fail with an error the boundary cannot answer | Turn it into a response with `Effect.catchTag`: `invalid`, `notFound`, `httpError`, `flash` then `back`. A failure the action cannot answer, such as another system being down: pipe that call through `Effect.orDie`, which answers 500. A list cut off with `... 7 more ...` shows whole with `"noErrorTruncation": true` in `tsconfig.json` |
 | A registration, `missingRouteModels: "project"` | The action, or a guard it is registered under, calls `bound('project')`, and the path has no `{project}` | Register it on a path with the placeholder, or read the record by an id from the action's `form(Schema)` |
 | A registration or `action(...)`, `Effect<..., unknown, unknown>` or `missingServices: "unnamed service"` | An earlier type error inside the action made its type unknown | Fix the first error inside the action |

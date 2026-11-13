@@ -100,16 +100,11 @@ export interface WebLintConfig {
 }
 
 /**
- * The rules on as warnings unless configured otherwise: a setting that
- * weakens a protection may be meant, and is acknowledged with a reasoned
- * disable comment rather than refused.
- */
-const WARNINGS: ReadonlySet<string> = new Set(['explain-security-loosening'])
-
-/**
- * An Oxlint configuration with every rule on, as an error but
- * `explain-security-loosening`, a warning. Pass the severity of a rule to
- * change it, as `{ 'no-catch-all-in-action': 'warn' }`.
+ * An Oxlint configuration with every rule on, as an error. A setting that
+ * weakens a protection may be meant: `explain-security-loosening` is an error
+ * too, so the gate fails it until a reasoned disable comment acknowledges it
+ * where it is set, as debt only the owner raises. Pass the severity of a rule
+ * to change it, as `{ 'no-catch-all-in-action': 'warn' }`.
  *
  * @example
  * export default defineConfig({ ...webLint(), ignorePatterns: ['dist'] })
@@ -118,7 +113,7 @@ export function webLint(severities: Readonly<Record<string, RuleSeverity>> = {})
   const configured: Record<string, RuleSeverity> = {}
 
   for (const name of Object.keys(rules)) {
-    configured[`${PLUGIN_NAME}/${name}`] = Object.hasOwn(severities, name) ? severities[name] : WARNINGS.has(name) ? 'warn' : 'error'
+    configured[`${PLUGIN_NAME}/${name}`] = Object.hasOwn(severities, name) ? severities[name] : 'error'
   }
 
   return { jsPlugins: [{ name: PLUGIN_NAME, specifier: '@popcomputer/web/lint' }], rules: configured }

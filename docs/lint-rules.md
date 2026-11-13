@@ -34,7 +34,7 @@ a component. The examples in `docs/`, the README and `AGENTS.md` pass them.
 | `no-testing-in-production` | An import of `@popcomputer/web/testing` (whose `signedIn` signs a request in with no session) or `@popcomputer/web/fuzz` from a file that is not a test | The helpers in tests only; `authorize()` or `currentUser` in the application |
 | `no-server-imports-in-pages` | A page or component (under `src/pages/`, `src/components/` or `src/layouts/`, or importing `@popcomputer/web/react`) importing server code: `@popcomputer/web`, `/effect`, `/auth`, `/env`, `/cache`, `/drizzle`, `drizzle-orm`, the Drizzle schema, the env module or an action | Props declared in `src/pages.ts`, `href` from `@popcomputer/web/paths`, and `import type` for types |
 | `require-disable-reason` | A comment turning off one of these rules, or every rule, with no reason after `--` | `// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`, or the API the rule names |
-| `explain-security-loosening` (a warning) | A setting that weakens a protection the framework gives: `routeBinding(table, { public: true })`, `betterAuthHandler({ settable: [...] })`, `verifyOrigin`'s `allowedOrigins` or `verifyOrigin: false`, `security.headers: false`, a `bodyLimit` over 1 MiB, `history: { encrypt: false }` or `encryptHistory: false`, and `betterAuth` with password sign-in but no `requireEmailVerification: true`, or with `autoSignInAfterVerification: true` | The default, or a reasoned disable comment where it is set, which puts the choice before a reviewer |
+| `explain-security-loosening` | A setting that weakens a protection the framework gives: `routeBinding(table, { public: true })`, `betterAuthHandler({ settable: [...] })`, `verifyOrigin`'s `allowedOrigins` or `verifyOrigin: false`, `security.headers: false`, a `bodyLimit` over 1 MiB, `history: { encrypt: false }` or `encryptHistory: false`, and `betterAuth` with password sign-in but no `requireEmailVerification: true`, or with `autoSignInAfterVerification: true` | The default, or a reasoned disable comment where it is set, which puts the choice before a reviewer |
 
 ## What each rule sees
 
@@ -180,9 +180,11 @@ TypeScript 5 or 6 the package is `@effect/language-service`, with
 A line that breaks a rule on purpose says why, as
 `// oxlint-disable-next-line popcomputer-web/no-sql-interpolation -- the values are constants`,
 and `require-disable-reason` reports one that does not.
-`explain-security-loosening` is a warning: a setting it reports may be
-meant, and the reasoned disable comment is how it is acknowledged, so the
-next reader sees why the protection is weaker there.
+A setting `explain-security-loosening` reports may be meant, and the
+reasoned disable comment is how it is acknowledged, so the next reader sees
+why the protection is weaker there. It is an error like the others, so the
+commit gate fails a loosening nobody acknowledged, and the comment counts as
+debt, which only the owner raises ([the agent fence](agent-fence.md)).
 `webLint({ 'no-catch-all-in-action': 'warn' })` changes a rule's severity, and
 `webLint()` spreads into a larger configuration,
 `defineConfig({ ...webLint(), ignorePatterns: ['dist'] })`.

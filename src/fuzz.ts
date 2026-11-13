@@ -58,7 +58,8 @@ export interface FuzzOptions<A = never> {
    * Inputs checked by the same property on every run, before the cases it
    * generates and however few `FUZZ_RUNS` asks for, for what chance reaches
    * too rarely to count on, such as one request for each write an application
-   * makes. A refused example is reported as it is, unshrunk.
+   * makes. A refused example is reported as it is, unshrunk. A `FUZZ_REPLAY`
+   * run checks only the case its token names, and no examples.
    */
   readonly examples?: ReadonlyArray<A>
 }

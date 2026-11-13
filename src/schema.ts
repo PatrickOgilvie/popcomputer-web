@@ -1,8 +1,9 @@
 /**
  * `@popcomputer/web/schema`: Effect Schema validators for request input.
  *
- * They accept form posts as well as JSON. Validate with `validateRequest` from
- * `@popcomputer/web/effect`.
+ * They accept form posts as well as JSON. Declare an action's input with
+ * `form(Schema)` from `@popcomputer/web/effect`, or read it with
+ * `validateRequest` when its schema depends on what the action did first.
  */
 
 // Schema Validators (Effect Schema based)

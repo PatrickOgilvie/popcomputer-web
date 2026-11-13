@@ -49,7 +49,8 @@ the number of rows changed); a count followed by an insert lets concurrent
 requests pass the limit together.
 
 A write that breaks a constraint fails with `DatabaseConstraintViolation`,
-which names the constraint kind (`unique`, `foreign-key`, `not-null`, `check`)
+which names the constraint kind (`unique`, `foreign-key`, `not-null`, `check`,
+`exclusion`, `trigger`, or `unknown` when the database's report names none)
 and, when the driver reports them, its `columns`. Any other failure is a
 `DatabaseError`. `uniqueFieldErrors` turns a unique violation into field errors
 the form shows:

@@ -58,11 +58,11 @@ describe('verifyOrigin', () => {
   })
 
   test('allows configured extra origins', async () => {
-    const app = createApp({ allowedOrigins: ['journeymannative://'] })
+    const app = createApp({ allowedOrigins: ['myapp://'] })
 
     const res = await app.request('https://app.test/', {
       method: 'POST',
-      headers: { Origin: 'journeymannative://' },
+      headers: { Origin: 'myapp://' },
     })
 
     expect(res.status).toBe(200)

@@ -4,13 +4,15 @@ A JSON client gets every failure in one envelope, whatever its status. A
 request is a JSON client when it asks for JSON or sends a JSON body, or when
 it asks for no HTML while sending an `Accept` header, as `fetch` does with
 `*/*`, or an `Authorization` header, as an API client with a bearer token
-does. So is a request whose User-Agent names a command-line or AI client
-(`curl`, `claude`, `CLI`), such as an agent checking a page with `curl`.
-Browsers ask for HTML on every visit and form post, so they get pages,
+does. Browsers ask for HTML on every visit and form post, so they get pages,
 a signed-out visitor goes to sign in, and a failed form goes back to the
 form; a signed-out JSON client gets a 401 instead. An Inertia visit
 (`X-Inertia: true`) always gets Inertia's page protocol, whatever its
 User-Agent or `Accept`. `prefersJson` and `jsonOrRender` decide the same way.
+A failure also answers JSON to a request that does not ask for HTML and
+whose User-Agent names a command-line or AI client (`curl`, `claude`,
+`CLI`), such as an agent checking a page with `curl`; `prefersJson` does not
+read the User-Agent.
 
 ```json
 {
