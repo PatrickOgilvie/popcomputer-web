@@ -189,9 +189,12 @@ yield* tagCache(recordCacheTag('projects', 'project-1'))
 
 `purgeCache` works the same in an Effect run by `routes.run`, such as a
 queue consumer that changes a record: the purge runs once the Effect succeeds,
-and a purge that fails fails the run, so the queue retries the message and a
-scheduled run is recorded as failed. The job runs again on a retry, so it
-must be safe to repeat.
+and a purge that still fails after two more tries fails the run, so the
+queue retries the message and a scheduled run is recorded as failed. The job
+runs again on a retry, so it must be safe to repeat. Each Workers Cache purge
+is repeated once, ten seconds later, in the background: a GET that read a
+record before the write, and whose response Workers Cache stored after the
+first purge, keeps its old page no longer than that.
 Work given to `background()`, or to `ExecutionContextService`'s
 `runInBackground` or `schedule`, purges what it names once it succeeds,
 whether it runs after the response, as in a Worker, or before it, as in

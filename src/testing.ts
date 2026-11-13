@@ -957,15 +957,16 @@ export async function testClock(start: Date | number = Date.UTC(2026, 0, 1)): Pr
           throw error
         }
       )
+      // A rejection is the caller's, through the promise returned below; until
+      // then it waits with a handler, or the runtime reports it unhandled.
+      observed.catch(() => undefined)
       // oxlint-disable-next-line effecttsgo/global-date -- How long the work has been quiet is real time, which a read waits through.
       let quiet = { activity, at: Date.now() }
 
       for (let turns = 0; !settled; turns += 1) {
         if (turns >= maxTurns) {
           // The timeout is the failure this test reports; a later rejection of
-          // the abandoned work is not.
-          observed.catch(() => undefined)
-
+          // the abandoned work, already handled above, is not.
           throw new Error(`The work did not settle within ${maxTurns} turns of the event loop.`)
         }
 

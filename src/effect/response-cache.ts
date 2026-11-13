@@ -20,8 +20,8 @@
  * distinct from CacheService, the KV-backed data cache inside actions.
  */
 
-import { Predicate, Context, Data, Effect, Exit, Option, Schema as S } from 'effect'
-import { CacheService } from './services.js'
+import { Predicate, Context, Data, Duration, Effect, Exit, Option, Schedule, Schema as S } from 'effect'
+import { CacheService, type ExecutionContextClient } from './services.js'
 import { writeTagGenerations } from '../cache.js'
 import { cell, type Refused, type Table } from '../machine.js'
 import { afterCommit } from './commit.js'
@@ -931,14 +931,26 @@ export function resolveWorkersCachePurgeApi(
 }
 
 /**
- * Create a ResponseCacheClient over the Workers Cache purge API.
+ * How long after a purge Workers Cache is purged again. A GET that read a
+ * record before a write, and whose response Workers Cache stores only after
+ * the write's purge, would keep the old page until its `maxAge`; the second
+ * purge removes any such page whose response ends within this time.
+ */
+export const REPEAT_PURGE_AFTER = Duration.seconds(10)
+
+/** How many times a Workers Cache purge the API refused or failed is tried again. */
+const PURGE_RETRIES = 2
+
+/**
+ * Create a ResponseCacheClient over the Workers Cache purge API. Given
+ * `schedule`, the request's or job's background work, each purge that
+ * succeeds is repeated once, `REPEAT_PURGE_AFTER` later, in the background.
  */
 export function createWorkersResponseCacheClient(
-  cache: WorkersCachePurgeApi
+  cache: WorkersCachePurgeApi,
+  options: { readonly schedule?: ExecutionContextClient['schedule'] } = {}
 ): ResponseCacheClient {
-  return {
-    isAvailable: true,
-    purge: (input) => {
+  const purgeOnce = (input: ResponseCachePurgeInput): Effect.Effect<void, ResponseCachePurgeError> => {
       // SAFETY: The surrounding adapter established this value's runtime invariant before restoring the precise TypeScript contract.
       const preparedTags = input.everything
         ? PreparedCacheTags.valid({ tags: [] })
@@ -986,9 +998,23 @@ export function createWorkersResponseCacheClient(
                   : ResponseCachePurgeFailure.InvalidWorkersCachePurgeResult(),
             })
           )
-        })
+        }),
+        // A refused or failed call is tried twice more before the purge fails,
+        // which fails the work after its writes committed: a job then runs
+        // again whole, and a request answers 500 though its write stands.
+        Effect.retry({ times: PURGE_RETRIES, schedule: Schedule.exponential('200 millis') })
       )
-    },
+  }
+  const schedule = options.schedule
+
+  return {
+    isAvailable: true,
+    purge: (input) =>
+      schedule === undefined
+        ? purgeOnce(input)
+        : purgeOnce(input).pipe(
+            Effect.tap(() => schedule('cache.purge.repeat', Effect.sleep(REPEAT_PURGE_AFTER).pipe(Effect.andThen(purgeOnce(input)))))
+          ),
   }
 }
 

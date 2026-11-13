@@ -88,9 +88,13 @@ not decode, or whose work fails, or whose services fail to build, is logged
 once and left for the queue to retry, after which the queue drops it or
 moves it to its dead-letter queue. Bindings the env declaration refuses
 leave each message to retry, as [the env declaration](env.md) says. The handler also receives the message's `id` and `attempts`, for work
-that must happen once however often a message is delivered. A job whose
-`purgeCache` purge fails has failed too: it rejects, and the queue retries
-the message.
+that must happen once however often a message is delivered. A Workers Cache
+purge the API refuses is tried twice more in place; one that still fails
+fails the job too: it rejects, and the queue retries the message. One that
+succeeds is repeated ten seconds later in the background, which the job
+waits for like any background work it starts. A job runs
+again on a retry, and Cloudflare Queues deliver each message at least once,
+so a job must be safe to run twice.
 
 A test calls the handlers as the platform does, with `testEnv`'s bindings, so
 its fakes, clock and database apply. `testQueue()` from

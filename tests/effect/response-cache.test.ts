@@ -13,7 +13,8 @@
 import { describe, test, expect } from 'bun:test'
 import { Hono, type Context as HonoContext, type MiddlewareHandler } from 'hono'
 import type { BlankEnv } from 'hono/types'
-import { Cause, Context, Effect, Exit, Layer, Schema as S } from 'effect'
+import { Cause, Context, Effect, Exit, Fiber, Layer, Schema as S } from 'effect'
+import { TestClock } from 'effect/testing'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { validateRequest } from '../../src/effect/validation.js'
 import { web } from '../../src/middleware.js'
@@ -38,6 +39,8 @@ import { betterAuthCall, loadUser } from '../../src/effect/auth.js'
 import { webServices } from '../../src/request-context.js'
 import { DEFAULT_CACHE_CONTROL } from '../../src/page-cache.js'
 import { setupWeb } from '../../src/setup.js'
+import { action } from '../../src/effect/action.js'
+import { testClock, testEnv } from '../../src/testing.js'
 
 const recordingCacheLayer = () => {
   const purges: ResponseCachePurgeInput[] = []
@@ -982,6 +985,43 @@ describe('purges route option', () => {
     expect(register).toThrow("Route '/posts' has purges: true")
   })
 
+  test("in a Worker, a route's purge of Workers Cache is repeated in the background ten seconds later", async () => {
+    const time = await testClock()
+    const calls: Array<{ tags?: string[] }> = []
+    const background: Array<Promise<unknown>> = []
+    const executionCtx = {
+      waitUntil: (promise: Promise<unknown>) => {
+        background.push(promise)
+      },
+      passThroughOnException: () => undefined,
+      props: {},
+      cache: {
+        purge: async (input: { tags?: string[] }) => {
+          calls.push(input)
+
+          return { success: true, errors: [] }
+        },
+      },
+    }
+    const app = new Hono()
+    const { routes } = setupWeb(app, { version: '1.0.0', render: (page) => JSON.stringify(page) })
+
+    routes.post('/posts', action(Effect.gen(function* () {
+      yield* purgeCache('posts')
+
+      return yield* json({ saved: true })
+    })))
+
+    const res = await app.request('/posts', { method: 'POST' }, testEnv(time.layer), executionCtx)
+
+    expect(res.status).toBe(200)
+    expect(calls).toEqual([{ tags: ['posts'] }])
+
+    await time.advance('10 seconds')
+    await Promise.all(background)
+    expect(calls).toEqual([{ tags: ['posts'] }, { tags: ['posts'] }])
+  })
+
   test('purgeCache adds what the action changed to the route\'s purges', async () => {
     const { purges, layer } = recordingCacheLayer()
     const app = createApp()
@@ -1158,6 +1198,54 @@ describe('ResponseCacheService default client', () => {
 })
 
 describe('Workers ResponseCacheClient', () => {
+  // A GET that read a record before a write can hand Workers Cache its old
+  // page after the write's purge: the purge again in the background removes it.
+  test('purges again in the background, ten seconds later, once a purge succeeds', async () => {
+    const calls: Array<{ tags?: string[] }> = []
+    const repeats: Array<Fiber.Fiber<unknown, unknown>> = []
+    let accept = true
+
+    const client = createWorkersResponseCacheClient(
+      {
+        purge: async (input) => {
+          calls.push(input)
+
+          return accept ? { success: true, errors: [] } : { success: false, errors: [{ code: 10000, message: 'rate limited' }] }
+        },
+      },
+      {
+        schedule: <A, E, R>(_operation: string, effect: Effect.Effect<A, E, R>): Effect.Effect<void, never, R> =>
+          Effect.map(Effect.forkChild(effect), (fiber) => {
+            repeats.push(fiber)
+          }),
+      }
+    )
+
+    expect(client.isAvailable).toBe(true)
+
+    await Effect.gen(function* () {
+      yield* client.purge({ tags: ['posts:1'] })
+      expect(calls).toEqual([{ tags: ['posts:1'] }])
+      expect(repeats).toHaveLength(1)
+
+      yield* TestClock.adjust('9 seconds')
+      expect(calls).toHaveLength(1)
+
+      yield* TestClock.adjust('1 second')
+      yield* Fiber.joinAll(repeats)
+      expect(calls).toEqual([{ tags: ['posts:1'] }, { tags: ['posts:1'] }])
+
+      // A purge refused three times, tried again after 200 and 400 ms,
+      // fails and schedules nothing: its failure is the answer.
+      accept = false
+      const refused = yield* Effect.forkChild(Effect.flip(client.purge({ tags: ['posts:2'] })))
+      yield* TestClock.adjust('1 second')
+      expect(yield* Fiber.join(refused)).toBeInstanceOf(ResponseCachePurgeError)
+      expect(calls.slice(2)).toEqual([{ tags: ['posts:2'] }, { tags: ['posts:2'] }, { tags: ['posts:2'] }])
+      expect(repeats).toHaveLength(1)
+    }).pipe(Effect.provide(TestClock.layer()), Effect.runPromise)
+  })
+
   test('encodes tags before calling Workers Cache', async () => {
     const calls: Array<{ tags?: string[]; purgeEverything?: boolean }> = []
 

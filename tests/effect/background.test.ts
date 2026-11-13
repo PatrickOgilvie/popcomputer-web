@@ -15,7 +15,7 @@ import {
 } from '../../src/effect/error-observer.js'
 import { effectRoutes } from '../../src/effect/routing.js'
 import { ExecutionContextService } from '../../src/effect/services.js'
-import { testEnv } from '../../src/testing.js'
+import { testClock, testEnv } from '../../src/testing.js'
 
 class ScopedBackgroundResource extends Context.Service<
   ScopedBackgroundResource,
@@ -351,17 +351,19 @@ describe.each(detachers)('purgeCache in work given to $name', ({ detach, operati
   test('purges the Workers Cache and the data cache once work after the response succeeds', async () => {
     const { app, listing, release } = listingApp(detach)
     const worker = workerContext(true)
+    const time = await testClock()
 
     expect(await listing(worker.ctx)).toEqual(['post-1'])
 
-    const res = await app.request('/posts/hide', { method: 'POST' }, {}, worker.ctx)
+    const res = await app.request('/posts/hide', { method: 'POST' }, testEnv(time.layer), worker.ctx)
 
     expect(res.status).toBe(202)
     expect(worker.purges).toEqual([])
     await release()
-    await worker.settle()
+    await time.settle(worker.settle())
 
-    expect(worker.purges).toEqual([{ tags: ['posts:post-1', 'posts'] }])
+    // The purge, and its repeat ten seconds later.
+    expect(worker.purges).toEqual([{ tags: ['posts:post-1', 'posts'] }, { tags: ['posts:post-1', 'posts'] }])
     expect(await listing(worker.ctx)).toEqual([])
   })
 
@@ -378,27 +380,30 @@ describe.each(detachers)('purgeCache in work given to $name', ({ detach, operati
   test('purges once work a routes.run job hands it succeeds', async () => {
     const { routes, hide, listing, release } = listingApp(detach)
     const worker = workerContext(true)
+    const time = await testClock()
 
     expect(await listing(worker.ctx)).toEqual(['post-1'])
-    await routes.run(hide, {}, worker.ctx)
+    await routes.run(hide, testEnv(time.layer), worker.ctx)
     await release()
-    await worker.settle()
+    await time.settle(worker.settle())
 
-    expect(worker.purges).toEqual([{ tags: ['posts:post-1', 'posts'] }])
+    expect(worker.purges).toEqual([{ tags: ['posts:post-1', 'posts'] }, { tags: ['posts:post-1', 'posts'] }])
     expect(await listing(worker.ctx)).toEqual([])
   })
 
   test("reports a refused purge as the work's failure, leaving the response alone", async () => {
     const { app, events, release } = listingApp(detach)
     const worker = workerContext(false)
+    const time = await testClock()
 
-    const res = await app.request('/posts/hide', { method: 'POST' }, {}, worker.ctx)
+    const res = await app.request('/posts/hide', { method: 'POST' }, testEnv(time.layer), worker.ctx)
 
     expect(res.status).toBe(202)
     await release()
-    await worker.settle()
+    await time.settle(worker.settle())
 
-    expect(worker.purges).toEqual([{ tags: ['posts:post-1', 'posts'] }])
+    // Tried three times before the work fails.
+    expect(worker.purges).toEqual(Array.from({ length: 3 }, () => ({ tags: ['posts:post-1', 'posts'] })))
     expect(events).toHaveLength(1)
     expect(events[0].error).toBeInstanceOf(ResponseCachePurgeError)
     expect(events[0].metadata).toEqual({ operation })

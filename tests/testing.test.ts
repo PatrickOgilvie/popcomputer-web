@@ -360,6 +360,28 @@ describe('testClock', () => {
 })
 
 describe('testClock settle', () => {
+  test("rejects with the work's own failure, and leaves none unhandled while it waits", async () => {
+    const time = await testClock(new Date('2026-01-01T00:00:00Z'))
+    const unhandled: unknown[] = []
+    const record = (reason: unknown) => {
+      unhandled.push(reason)
+    }
+
+    process.on('unhandledRejection', record)
+
+    try {
+      // A job that waits on the clock, then fails, as a refused purge's retries do.
+      const failing = Effect.runPromise(Effect.sleep('1 second').pipe(Effect.andThen(Effect.fail(new Error('refused'))), Effect.provide(time.layer)))
+
+      await expect(time.settle(failing)).rejects.toThrow('refused')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    } finally {
+      process.off('unhandledRejection', record)
+    }
+
+    expect(unhandled).toEqual([])
+  })
+
   test('moves the clock until a request that waits on it finishes', async () => {
     const time = await testClock(new Date('2026-01-01T00:00:00Z'))
     const app = new Hono()

@@ -285,17 +285,20 @@ describe('a job whose cache purge fails', () => {
     test(`fails its run when the purge is ${name}: run and scheduled reject, and the queue retries`, async () => {
       const { routes } = createApp()
       const { ctx, purged } = make()
-      const env = { REGION: 'weur' }
+      // The purge is tried again after 200 and 400 ms, on the test's clock.
+      const time = await testClock()
+      const env = testEnv(time.layer, { REGION: 'weur' })
 
-      await expect(routes.run(unpublish('p2'), env, ctx)).rejects.toBeInstanceOf(ResponseCachePurgeError)
-      await expect(routes.scheduled(() => unpublish('p2'))({ cron: '0 3 * * *', scheduledTime: 0 }, env, ctx)).rejects.toBeInstanceOf(ResponseCachePurgeError)
+      await expect(time.settle(routes.run(unpublish('p2'), env, ctx))).rejects.toBeInstanceOf(ResponseCachePurgeError)
+      await expect(time.settle(routes.scheduled(() => unpublish('p2'))({ cron: '0 3 * * *', scheduledTime: 0 }, env, ctx))).rejects.toBeInstanceOf(ResponseCachePurgeError)
 
       const batch = testBatch([{ project: 'p2' }])
-      await routes.queue(Unpublish, (message) => unpublish(message.project))(batch, env, ctx)
+      await time.settle(routes.queue(Unpublish, (message) => unpublish(message.project))(batch, env, ctx))
 
       expect(batch.acked()).toEqual([])
       expect(batch.retried()).toEqual([{ project: 'p2' }])
-      expect(purged).toEqual([['projects:p2'], ['projects:p2'], ['projects:p2']])
+      // Three runs, each trying the purge three times before it fails.
+      expect(purged).toEqual(Array.from({ length: 9 }, () => ['projects:p2']))
     })
   }
 
@@ -345,15 +348,17 @@ describe('a job whose cache purge fails', () => {
   test('resolves and acknowledges when the purge is accepted', async () => {
     const { routes } = createApp()
     const { ctx, purged } = worker(async () => ({ success: true, errors: [] }))
-    const env = { REGION: 'weur' }
+    // Each purge is repeated ten seconds later, which the run waits for, on the test's clock.
+    const time = await testClock()
+    const env = testEnv(time.layer, { REGION: 'weur' })
 
-    expect(await routes.run(unpublish('p2'), env, ctx)).toBe('p2')
-    await routes.scheduled(() => unpublish('p2'))({ cron: '0 3 * * *', scheduledTime: 0 }, env, ctx)
+    expect(await time.settle(routes.run(unpublish('p2'), env, ctx))).toBe('p2')
+    await time.settle(routes.scheduled(() => unpublish('p2'))({ cron: '0 3 * * *', scheduledTime: 0 }, env, ctx))
 
     const batch = testBatch([{ project: 'p2' }])
-    await routes.queue(Unpublish, (message) => unpublish(message.project))(batch, env, ctx)
+    await time.settle(routes.queue(Unpublish, (message) => unpublish(message.project))(batch, env, ctx))
 
     expect(batch.acked()).toEqual([{ project: 'p2' }])
-    expect(purged).toEqual([['projects:p2'], ['projects:p2'], ['projects:p2']])
+    expect(purged).toEqual(Array.from({ length: 6 }, () => ['projects:p2']))
   })
 })

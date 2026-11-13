@@ -700,7 +700,9 @@ export function buildContextLayer<E extends Env, CustomServices = never>(
     resolveWorkersCachePurgeApi(executionCtx).pipe(
       Effect.map((api) =>
         api
-          ? createWorkersResponseCacheClient(api)
+          // Each purge is repeated once in the background, for a page whose
+          // response Workers Cache stored after the first.
+          ? createWorkersResponseCacheClient(api, { schedule: backgroundSupervisor.client.schedule })
           : createUnavailableResponseCacheClient()
       )
     )
