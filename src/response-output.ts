@@ -121,7 +121,7 @@ export function finishResponse<E extends Env>(c: Context<E>, response: Response)
   }
 
   const flashCookie = flash?.cookie(pageMark === null
-    ? { page: false, status: followed.status }
+    ? { page: false, status: followed.status, location: followed.headers.get('Location') ?? undefined }
     : { page: true, cleared: pageMark === CLEARING_PAGE })
   const cookies = [...(flashCookie === undefined ? [] : [flashCookie]), ...appCookies]
   const setNames = new Set([...followed.headers.getSetCookie(), ...cookies].map(setCookieName))

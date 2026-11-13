@@ -16,7 +16,7 @@ and the lint rules name it where an action reaches for something else.
 | Go back to the page the request came from | `back(paths.projects)` | [Responses](actions.md#responses-and-failures) |
 | Send the visitor elsewhere from a helper or a guard | `redirectNow(paths.onboarding)` | [Responses](actions.md#responses-and-failures) |
 | Show a domain error beside a form field | `invalid({ amount: 'Too low.' })` | [Rules live in services](services.md#rules-live-in-services-actions-decide-what-a-failure-means) |
-| Hand a message to the next page | `flash('success', 'Saved.')` | [Flash and failed forms](forms.md#flash-messages-and-failed-forms) |
+| Hand a message to the page a redirect leads to | `flash('success', 'Saved.')` | [Flash and failed forms](forms.md#flash-messages-and-failed-forms) |
 | Answer a JSON API | an `endpoint` contract, implemented with `action(endpoint, handler)` | [JSON endpoints](endpoints.md) |
 | Answer JSON from a page's action | `json(Schema, value)` or `jsonOrRender('Page', props)` | [JSON responses](json.md#json-responses-declared-by-a-schema) |
 | Answer a failure with a body a client reads | `httpError(status, message, Schema, body)` | [Failures a client reads](json.md#failures-a-client-reads) |

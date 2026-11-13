@@ -118,8 +118,8 @@ export default Index
 ## Flash messages and failed forms
 
 `yield* flash('success', 'Project saved.')` before any of them hands a value to
-the next page the user sees, as Inertia's page `flash` field: the page a
-redirect renders, or the page the same request renders.
+the page the user sees next, as Inertia's page `flash` field: the page a
+redirect leads to, or the page the same request renders.
 
 A form submission that fails validation, whether in its action's `form`,
 `validateRequest` or as a `ValidationError` the action fails with, redirects
@@ -149,12 +149,16 @@ Better Auth's refusal when the action maps it to no field. A page reads it
 as `errors.form`, from its `errors` prop or a `FormErrors`, which always has
 `form`; Inertia types `useForm().errors` by the form's own fields only.
 
-Errors and flash values travel in a short-lived `HttpOnly` cookie that the
-next page to render reads and clears. A request that only redirects, such as
-a home page sending visitors to their dashboard, passes them on, so a failed
-form whose `Referer` was missing still shows its errors where it lands. The
-cookie is readable, not encrypted: never flash a secret, such as a new API key
-shown once; render the page with it from the action instead.
+Errors and flash values travel in a short-lived `HttpOnly` cookie that names
+the page they are for, the path and query the redirect leads to: that page
+reads and clears them, and a page another tab renders meanwhile leaves them.
+A page that only redirects, such as a home page sending visitors to their
+dashboard, passes them on to where it leads, so a failed form whose `Referer`
+was missing still shows its errors where it lands. Those a redirect to
+another site, or an answer that is no redirect, leave go to whichever page
+renders next. The cookie is readable, not encrypted: never flash a secret,
+such as a new API key shown once; render the page with it from the action
+instead.
 
 A JSON client gets a 422 instead of the redirect. Invalid query parameters on
 a page visit render the error page with 422, with the invalid fields as

@@ -38,6 +38,27 @@ function pages() {
 
       return yield* redirect('/next')
     })))
+    .post('/saved-then-forbid', action(Effect.gen(function* () {
+      yield* flash('notice', 'Saved.')
+
+      return yield* redirect('/render-then-forbid')
+    })))
+    .post('/saved-then-redirect', action(Effect.gen(function* () {
+      yield* flash('notice', 'Saved.')
+
+      return yield* redirect('/render-then-redirect')
+    })))
+    .post('/saved-elsewhere', action(Effect.gen(function* () {
+      yield* flash('notice', 'Saved.')
+
+      return yield* redirect('https://elsewhere.example/landing')
+    })))
+    .post('/projects', action(Effect.gen(function* () {
+      yield* validateRequest(S.Struct({ name: requiredString }))
+
+      return yield* redirect('/next')
+    })))
+    .get('/projects/new', action(render('Projects/New', {})))
     .get('/render-then-forbid', action(Effect.gen(function* () {
       yield* render('Next', {})
 
@@ -105,7 +126,7 @@ describe('the flash', () => {
     const { app } = pages()
     const browser = testBrowser(app, testEnv({}))
 
-    await browser.request('/saved', { method: 'POST' })
+    await browser.request('/saved-then-forbid', { method: 'POST' })
     const page = await (await browser.request('/render-then-forbid', { headers: inertia })).json()
 
     expect(page.flash).toEqual({ notice: 'Saved.' })
@@ -116,7 +137,7 @@ describe('the flash', () => {
     const { app } = pages()
     const browser = testBrowser(app, testEnv({}))
 
-    await browser.request('/saved', { method: 'POST' })
+    await browser.request('/saved-then-redirect', { method: 'POST' })
     await browser.request('/render-then-redirect', { headers: inertia })
 
     expect(await shownAfter(browser)).toEqual({ notice: 'Saved.' })
@@ -153,6 +174,75 @@ describe('the flash', () => {
 
     expect(res.status).toBe(409)
     expect(await shownAfter(browser)).toEqual({ notice: 'Saved.' })
+  })
+
+  test("a page another tab renders at another address leaves the flash for the page the redirect leads to", async () => {
+    const { app } = pages()
+    const browser = testBrowser(app, testEnv({}))
+
+    await browser.request('/saved', { method: 'POST' })
+    const otherResponse = await browser.request('/home', { headers: inertia })
+
+    expect((await otherResponse.json()).flash).toEqual({})
+    // It writes no cookie: what it was sent may be older than the cookie by the time it answers.
+    expect(otherResponse.headers.getSetCookie()).toEqual([])
+    expect(await shownAfter(browser)).toEqual({ notice: 'Saved.' })
+    // Shown once.
+    expect(await shownAfter(browser)).toEqual({})
+  })
+
+  test("a failed form's errors go back to the form's page, whatever page another tab renders first", async () => {
+    const { app } = pages()
+    const browser = testBrowser(app, testEnv({}))
+
+    await browser.request('/projects/new', { headers: inertia })
+    const failed = await browser.request('/projects', { method: 'POST', body: new URLSearchParams('name='), headers: { Accept: 'text/html' } })
+
+    expect(failed.headers.get('Location')).toBe('/projects/new')
+    expect((await (await browser.request('/next', { headers: inertia })).json()).props.errors).toEqual({})
+    expect(Object.keys((await (await browser.request('/projects/new', { headers: inertia })).json()).props.errors)).toEqual(['name'])
+  })
+
+  test('a redirect from the page a flash is for carries it on to where it leads', async () => {
+    const { app } = pages()
+    const browser = testBrowser(app, testEnv({}))
+
+    await browser.request('/saved-then-redirect', { method: 'POST' })
+    // The page it is for redirects instead: /render-then-redirect sends it on to /next.
+    await browser.request('/render-then-redirect', { headers: inertia })
+
+    expect((await (await browser.request('/home', { headers: inertia })).json()).flash).toEqual({})
+    expect(await shownAfter(browser)).toEqual({ notice: 'Saved.' })
+  })
+
+  test('a flash a redirect to another site leaves goes to whichever page renders next, as it did', async () => {
+    const { app } = pages()
+    const browser = testBrowser(app, testEnv({}))
+
+    await browser.request('/saved-elsewhere', { method: 'POST' })
+
+    expect((await (await browser.request('/home', { headers: inertia })).json()).flash).toEqual({ notice: 'Saved.' })
+  })
+
+  test('two flashes for different pages go to whichever page renders next, together, as both did', async () => {
+    const { app } = pages()
+    const browser = testBrowser(app, testEnv({}))
+
+    await browser.request('/saved', { method: 'POST' })
+    await browser.request('/saved-then-forbid', { method: 'POST' })
+
+    expect((await (await browser.request('/home', { headers: inertia })).json()).flash).toEqual({ notice: 'Saved.' })
+    expect(await shownAfter(browser)).toEqual({})
+  })
+
+  test('a flash cookie an earlier release wrote, naming no page, goes to whichever page renders next', async () => {
+    const { app } = pages()
+    const browser = testBrowser(app, testEnv({}))
+    const written = JSON.stringify({ errors: {}, flash: { notice: 'Saved.' }, until: Date.now() + 60_000 })
+
+    browser.setCookie('popweb-flash', Buffer.from(written).toString('base64url'), '/')
+
+    expect((await (await browser.request('/home', { headers: inertia })).json()).flash).toEqual({ notice: 'Saved.' })
   })
 
   test('M2.T29: a flash beside the history clear still lasts its minute, though the clear outlives it', async () => {
@@ -244,32 +334,67 @@ describe('the flash', () => {
     expect((await (await browser.request('/next', { headers: inertia })).json()).flash).toEqual({ notice: 'kept' })
   })
 
-  test('only a 3xx carries the cookie on, renewing it', async () => {
+  test('only a 3xx from the page a flash is for carries it on, renewing it, and one from another page writes nothing', async () => {
     const app = new Hono()
     const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page) })
 
     routes
-      .post('/saved', action(Effect.gen(function* () {
+      .post('/saved/{code}', action(Effect.gen(function* () {
+        const request = yield* RequestService
         yield* flash('notice', 'Saved.')
 
-        return yield* redirect('/next')
+        return yield* redirect(`/status/${request.param('code')}`)
       })))
       .get('/status/{code}', action(Effect.gen(function* () {
         const request = yield* RequestService
 
         return new Response(null, { status: Number(request.param('code')) })
       })))
+      .get('/page', action(render('Page', {})))
 
-    const browser = testBrowser(app, testEnv({}))
+    // The flash is for /status/{code}; `at` is the status the request there answers.
+    const writes = async (code: number, at = code) => {
+      const browser = testBrowser(app, testEnv({}))
 
-    await browser.request('/saved', { method: 'POST' })
+      await browser.request(`/saved/${code}`, { method: 'POST' })
 
-    const writes = async (status: number) => (await browser.request(`/status/${status}`)).headers.getSetCookie().length
+      return (await browser.request(`/status/${at}`)).headers.getSetCookie().length
+    }
 
     expect(await writes(299)).toBe(0)
     expect(await writes(300)).toBe(1)
     expect(await writes(399)).toBe(1)
     expect(await writes(400)).toBe(0)
+    // What a redirect from another page sent may be older than the cookie.
+    expect(await writes(300, 301)).toBe(0)
+
+    // A 3xx that names no Location leads to no page: the flash goes to whichever renders next.
+    const browser = testBrowser(app, testEnv({}))
+    await browser.request('/saved/300', { method: 'POST' })
+    await browser.request('/status/300')
+    expect((await (await browser.request('/page', { headers: inertia })).json()).flash).toEqual({ notice: 'Saved.' })
+  })
+
+  test("the history's clear, which names no page, passes through a redirect that changes nothing without a write", async () => {
+    const app = new Hono()
+    // history.encrypt: true, so only the flag clears: under the default, every guest's page does.
+    const { routes } = setupWeb(app, { version: '1', render: (page) => JSON.stringify(page), history: { encrypt: true } })
+
+    routes
+      .post('/bye', action(Effect.succeed(new Response(null, { status: 303, headers: { Location: '/hop', 'Set-Cookie': 'better-auth.session_token=; Max-Age=0; Path=/' } }))))
+      .get('/hop', action(redirect('/next')))
+      .get('/next', action(render('Next', {})))
+
+    // From no cookie, and from one this code cannot read, which the answer replaces.
+    for (const held of [undefined, 'not-a-flash-cookie']) {
+      const browser = testBrowser(app, testEnv({}))
+
+      if (held !== undefined) browser.setCookie('popweb-flash', held, '/')
+
+      expect((await browser.request('/bye', { method: 'POST' })).headers.getSetCookie().some((cookie) => cookie.startsWith('popweb-flash='))).toBe(true)
+      expect((await browser.request('/hop')).headers.getSetCookie()).toEqual([])
+      expect((await (await browser.request('/next', { headers: inertia })).json()).clearHistory).toBe(true)
+    }
   })
 
   test('M2.T35: over the cookie\'s budget, as many field errors as fit go on, and the form says the rest did not', () => {

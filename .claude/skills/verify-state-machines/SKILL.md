@@ -25,7 +25,7 @@ describe. A change touches a model when it changes any of these:
 | `HistoryClear.tla` | `src/middleware.ts` `web()`: the render's `encryptHistory`, `clearHistory` and `version`, and the 409 for a partial reload from another visitor; `src/response-output.ts` `finishResponse`: the clear raised once the response is answered; `src/session-cookies.ts`: `endsSession`, `startsSession`, `expiresTheCookie`; `src/page-version.ts`; the clear in `src/flash.ts`; `isCacheableRequest`'s version check in `src/page-cache.ts`; `renderPage` in `src/effect/responses.ts`; `@inertiajs/core`'s popstate and back-forward version checks | `tests/security/history.test.ts`, `tests/render-options.test.ts` |
 | `DataCache.tla` | `src/cache.ts`: `cache`, `cacheGet`, `cacheSet` given its read or a value, `readTagGenerations`, `generationMadeAt`, `invalidateCacheTags`, `writeTagGenerations`; `src/effect/work-began.ts` and where `src/effect/routing.ts` gives a route and a job `workBeganLayer` | `tests/cache.test.ts` (`cache tags`); `tests/fuzz/data-cache.test.ts` drives the same calls through random sequences |
 | `MagicLink.tla` | the magic link in `docs/auth-plugins.md`; `showMagicLink`, `verifyMagicLink` and their routes in `tests/better-auth/app.ts`; `better-auth`'s magic-link plugin | `tests/better-auth/seam.test.ts` (`magic links`) |
-| `Flash.tla` | `src/flash.ts` `flashCookieTable`, `openFlash`; the render's `flash.take()` in `src/middleware.ts`; `finishResponse` in `src/response-output.ts`, which moves the table on the answer sent | none: its rule breaks, a known limit |
+| `Flash.tla` | `src/flash.ts` `flashCookieTable`, `openFlash`, `isFor`, `addressed`, `merged`; the render's `flash.take()` in `src/middleware.ts`; `finishResponse` in `src/response-output.ts`, which moves the table on the answer sent and hands it the redirect's `Location` | `tests/state-machines/browser-session.test.ts` (`the flash`) |
 
 Also count as touching a model: a new function that writes the same state
 (a `rateLimit` row, the flash cookie, a page's `version`, a tag's
@@ -55,7 +55,10 @@ brought to the code on 2026-11-12: a purge writes a new generation whether
 or not the store shows one (since `0bf0833`), and `cacheSet` given a value
 stores nothing once a tag's generation was made after its request or job
 began, so `DataCache.code.value.cfg` now holds; its three configs gave what
-step 2 says, and the value config also held at `Steps = 10`.
+step 2 says, and the value config also held at `Steps = 10`. `Flash.tla` was
+rewritten on 2026-11-13, when the cookie came to name the page its errors are
+for: it gained `OtherAt` and a `1.15` design, and its three configs gave what
+step 2 says.
 
 ## Run the check
 
@@ -77,8 +80,12 @@ step 2 says, and the value config also held at `Steps = 10`.
    - `DataCache.1.6.cfg`: `NoReadAfterPurgeReturnsTheOldValue` and
      `CacheSetStoresOnlyCurrentValues` break;
    - `MagicLink.1.6.cfg`: `OnlyTheMemberSignsIn` and `TheMemberSignsIn` break;
-   - `Flash.cfg`: `TheFormShowsItsErrors` breaks.
-   The `1.6` configs model release 1.6.0, the code before these rules held.
+   - `Flash.cfg`, the other page at another address: every rule holds;
+   - `Flash.same.cfg`, the other page at the form's own address:
+     `TheFormShowsItsErrors` breaks, a known limit;
+   - `Flash.1.15.cfg`: `TheFormShowsItsErrors` breaks.
+   The `1.6` configs model release 1.6.0, and `Flash.1.15.cfg` release 1.15.0,
+   the code before these rules held.
    A `1.6` config whose rule stops breaking means the model lost the ability
    to fail: find out why before trusting a pass.
 3. Run the replay tests, which drive each bug path through the real app:

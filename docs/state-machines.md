@@ -17,7 +17,7 @@ to check a change against them.
 |---|---|---|---|
 | An account's sign-ins | `src/effect/sign-in-limits.ts` `withinSignInLimits`, `sweepSignInFailures` | spent, counting, cooling, cooled: conditions on its `rateLimit` row | a password sign-in, its answer, time, the sweep |
 | Inertia's history | `src/middleware.ts` `web()`, `src/page-version.ts` | per tab: its key, its entries, its page's version; per browser: the session cookie and the clear | a page, an answer that ends or starts a session, Back |
-| Flash and a failed form's errors | `src/flash.ts` `flashCookieTable`, `openFlash` | empty, holding, unreadable | the answer actually sent: a page, a redirect, anything else, a prefetch |
+| Flash and a failed form's errors | `src/flash.ts` `flashCookieTable`, `openFlash` | empty, holding (for a page's address, or for the next page), unreadable | the answer actually sent: a page at its address or another, a redirect from it or another, anything else, a prefetch |
 | Purges a route owes | `src/effect/response-cache.ts` `pendingPurgesTable`, `pendingCacheTagsTable` | open with tags and whether a write committed, then settled; a later add is a defect | `purgeCache`, `tagCache`, a committed write, the work's success or failure |
 | `routes.run`, `routes.queue`, `routes.scheduled` | `src/effect/routing.ts` `runJobs`, `failRun`, `run` | registered, done, resolved or rejected; a message acked or retried | the job's exit, its purge |
 | Background work of a request | `src/effect/bridge.ts` `createBackgroundSupervisor` | idle, pending, draining, drained, disposed | `background()`, `waitUntil`, the runtimes' disposal |
@@ -161,22 +161,29 @@ click on an expired link.
 ### A failed form's errors
 
 [`Flash.tla`](state-machines/Flash.tla): a form that fails, and another
-request from the same browser, a poll or another tab, that renders a page.
+request from the same browser, a poll or another tab, that renders a page at
+another address or at the form's own.
 
-- **TheFormShowsItsErrors** breaks, and stays a known limit: the flash
-  cookie is one value per browser, so a page the other request renders after
-  the form's answer takes the errors, and the form's own page shows none.
-  Inertia follows the form's redirect at once, so only a request in flight
-  then can take them.
+- **TheFormShowsItsErrors**: the form's errors show on the page its redirect
+  lands on. The cookie names that page's address, and a page at another
+  address takes none of them and writes the cookie only for what it changed,
+  since what its request sent may be older than the cookie.
+
+It holds on the code when the other page is at another address
+(`Flash.cfg`), and breaks when it is at the form's own (`Flash.same.cfg`), a
+known limit below. On 1.15.0 (`Flash.1.15.cfg`), whose cookie named no page,
+it broke whichever page the other request rendered. Inertia follows the
+form's redirect at once, so only a request in flight then can take them.
 
 ## Known limits
 
 The models found these, or the inventory did. They are open: each is fixed
 in 1.x where the fix breaks no application, and the rest wait for 2.0.
 
-- A failed form's errors, and flash values, go to the next page the browser
-  renders, in whichever tab. Two pages that leave with one cookie, from two tabs
-  or a page and a reload, both show them.
+- A failed form's errors, and flash values, go to the page their redirect
+  leads to, but the cookie is one per browser: two tabs on that same address,
+  or a page there and its reload, may each take or both show them. Those a
+  redirect to another site leaves go to whichever page renders next.
 - A visit served from Inertia's prefetch cache never reaches the server, so a
   flash waits for the next page that does. Only Inertia's client can change
   that.

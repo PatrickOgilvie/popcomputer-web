@@ -73,7 +73,7 @@ TypeScript example here and in `docs/` type-checks against the package.
    through the declaration; sign one the server must trust
    (`signed: { secret: 'COOKIE_SECRET' }`), since an unsigned one holds
    whatever the visitor sends. `yield* flash(key, value)` before a redirect hands a
-   message to the next page; a helper or guard layer that must send the
+   message to the page it leads to; a helper or guard layer that must send the
    visitor elsewhere fails with `redirectNow(path, params)`. Expected
    failures are typed Effect failures:
    turn a domain error into a response with `Effect.catchTags`, such as

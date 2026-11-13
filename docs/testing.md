@@ -117,8 +117,8 @@ redirects with `browser.follow(res)`, repeating the request for a 307 or 308
 and resolving a relative `Location`; `browser.setCookie(name, value, path)`
 gives it a cookie, and `browser.clearCookie(name, path)` drops one.
 
-A form's next page receives its `flash` values and field errors through a
-cookie the redirect sets. `testBrowser(app, env).follow(res)` requests the
+The page a form's redirect leads to receives its `flash` values and field
+errors through a cookie the redirect sets, which names that page. `testBrowser(app, env).follow(res)` requests the
 redirect's `Location` as the browser would, with that cookie, whether the
 browser sent the form or the test posted it with `app.request`. Post with a
 `Referer`, as a browser does, so a failed form goes back to it:
