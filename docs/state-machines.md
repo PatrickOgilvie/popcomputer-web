@@ -171,24 +171,28 @@ request from the same browser, a poll or another tab, that renders a page.
 
 ## Known limits
 
-The models found these, or the inventory did, and the framework keeps them:
+The models found these, or the inventory did. They are open: each is fixed
+in 1.x where the fix breaks no application, and the rest wait for 2.0.
 
 - A failed form's errors, and flash values, go to the next page the browser
   renders, in whichever tab. Two pages that leave with one cookie, from two tabs
   or a page and a reload, both show them.
 - A visit served from Inertia's prefetch cache never reaches the server, so a
-  flash waits for the next page that does.
+  flash waits for the next page that does. Only Inertia's client can change
+  that.
 - A chunk a deploy removed fails after the server answered: the page reloads, and
-  the flash it took has gone.
-- A job whose purge fails after its writes committed is retried whole, as
-  [background work](background.md) says, so a job must be safe to run twice.
-- A value given to `cacheSet` that was read before a write whose purge ran
-  before `cacheSet` is stored as current, until its `ttl`. Given the Effect
-  that reads it instead, `cacheSet` keeps no value a purge during the read
-  made stale.
-- A GET that read a record before a write and stores its response after the
-  write's purge keeps the old page in Workers Cache until its `maxAge`.
-  `cache` refuses such an entry by its tags' generations; Workers Cache
-  answers before the Worker runs.
-- A signed application cookie's signature covers its name and value, not its
-  expiry, so a copied value stays valid after its `Max-Age`.
+  the flash it took has gone. Keeping it needs the browser to say it showed
+  the page.
+- A job is retried whole when its purge still fails after two more tries, and
+  Cloudflare Queues deliver a message at least once, so a job must be safe to
+  run twice, as [background work](background.md) says.
+- A value given to `cacheSet` outside a route or job, as in a script, or read
+  before its request or job began, is stored as current when a purge ran
+  before `cacheSet`, until its `ttl`.
+- A GET that read a record before a write, and whose response Workers Cache
+  stores more than ten seconds after the write's purge, keeps the old page
+  until its `maxAge`. Each purge of Workers Cache is repeated once, ten
+  seconds after it succeeds, for responses stored in between.
+- A signed cookie's value an earlier release wrote, before the expiry was
+  signed with it, stays valid after its `Max-Age` until the cookie is set
+  again or its secret changes.
