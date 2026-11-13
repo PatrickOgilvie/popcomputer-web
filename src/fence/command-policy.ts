@@ -131,6 +131,8 @@ const FLOCK_OPTIONS: OptionSpec = {
   longFlags: ['--shared', '--exclusive', '--unlock', '--nonblock', '--nb', '--close', '--no-fork', '--verbose', '--help', '--version'],
   longValues: ['--wait', '--timeout', '--conflict-exit-code', '--command'],
 }
+/** BSD's and macOS's `lockf [-knsw] [-t seconds] file command [arguments]`. */
+const LOCKF_OPTIONS: OptionSpec = { flags: 'knsw', values: 't' }
 const SSH_OPTIONS: OptionSpec = { flags: '46AaCfGgKkMNnqsTtVvXxYy', values: 'BbcDEeFIiJLlmOoPpQRSWw' }
 /** `-o` settings whose command ssh runs here, and the one it runs on the host. */
 const SSH_COMMANDS = /^(proxycommand|localcommand|knownhostscommand|remotecommand)\s*[=\s]\s*(.*)$/is
@@ -282,6 +284,23 @@ const GIT_COMMANDS = new Set([
 /** git's global options that take a value. */
 const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--super-prefix', '--list-cmds', '--attr-source'])
 
+/** A git command's options, by what they take: nothing, a value attached or in the next word, or only an attached one. */
+interface GitOptions {
+  readonly flags: ReadonlySet<string>
+  readonly values: ReadonlySet<string>
+  readonly attached: ReadonlySet<string>
+  readonly shortFlags: string
+  readonly shortValues: string
+  /** Short options whose value, if any, is the rest of their cluster, as `-S`'s key. */
+  readonly shortAttached: string
+}
+/** The options `git cherry-pick` and `git revert` share that take no value; `--no-no-commit` is `--commit`. */
+const SEQUENCER_FLAGS = [
+  '--quit', '--continue', '--abort', '--skip', '--no-cleanup', '--no-commit', '--commit', '--no-no-commit', '--edit', '--no-edit', '--signoff',
+  '--no-signoff', '--no-mainline', '--rerere-autoupdate', '--no-rerere-autoupdate', '--no-strategy', '--no-strategy-option', '--no-gpg-sign',
+]
+const SEQUENCER_VALUES = ['--cleanup', '--mainline', '--strategy', '--strategy-option']
+
 /**
  * git's dangerous surface, as data: each way a git command can get past the
  * commit gate, with what the policy answers.
@@ -304,7 +323,11 @@ const GIT_SURFACE = {
   otherSetting: { finding: 'ask', reason: 'sets a git setting for this command, which can move the hooks or name a program git runs. Approve it only if you expected it.' },
   /** Settings `git config` may write for good that name a program git runs. */
   programs: /^(core\.(fsmonitor|pager|editor|sshcommand|askpass|worktree)|sequence\.editor|diff\.external|credential\.helper|gpg\.program|uploadpack\.packobjectshook|init\.templatedir)$|^(filter|diff|merge|pager)\./,
-  /** Commands that commit without the pre-commit hook, and their options with which they make no commit. */
+  /**
+   * Commands that commit without the pre-commit hook, and their options with
+   * which they make no commit. Where git reads a command's options in pairs,
+   * `makesNoCommit` reads them as git does too.
+   */
   commitsWithoutHook: {
     pull: [],
     merge: ['--abort', '--quit', '--no-commit'],
@@ -313,6 +336,49 @@ const GIT_SURFACE = {
     am: ['--abort', '--quit', '--show-current-patch'],
     rebase: ['--abort', '--quit', '--show-current-patch', '--edit-todo'],
   } as Readonly<Record<string, ReadonlyArray<string>>>,
+  /**
+   * The options of the commands that commit without the hook and whose
+   * options git reads in pairs, the last of each winning. Any other may be
+   * one of a pair, as `--no-no-commit` is `--commit`, or abbreviate one, as
+   * `--no-f` does `--no-ff`, or one that takes the next word, as `--mess`
+   * does `--message`.
+   */
+  pairedOptions: {
+    merge: {
+      flags: new Set([
+        '--stat', '--no-stat', '--summary', '--no-summary', '--compact-summary', '--no-compact-summary', '--no-log', '--squash', '--no-squash',
+        '--commit', '--no-commit', '--edit', '--no-edit', '--no-cleanup', '--ff', '--no-ff', '--ff-only', '--rerere-autoupdate',
+        '--no-rerere-autoupdate', '--verify-signatures', '--no-verify-signatures', '--no-strategy', '--no-strategy-option', '--no-message',
+        '--no-into-name', '--verbose', '--no-verbose', '--quiet', '--no-quiet', '--abort', '--no-abort', '--quit', '--no-quit', '--continue',
+        '--no-continue', '--allow-unrelated-histories', '--no-allow-unrelated-histories', '--progress', '--no-progress', '--no-gpg-sign',
+        '--autostash', '--no-autostash', '--overwrite-ignore', '--no-overwrite-ignore', '--signoff', '--no-signoff', '--verify',
+      ]),
+      values: new Set(['--cleanup', '--strategy', '--strategy-option', '--message', '--file', '--into-name']),
+      attached: new Set(['--log', '--gpg-sign']),
+      shortFlags: 'neqv',
+      shortValues: 'mFsX',
+      shortAttached: 'S',
+    },
+    'cherry-pick': {
+      flags: new Set([
+        ...SEQUENCER_FLAGS, '--ff', '--no-ff', '--allow-empty', '--no-allow-empty', '--allow-empty-message', '--no-allow-empty-message',
+        '--keep-redundant-commits', '--no-keep-redundant-commits',
+      ]),
+      values: new Set([...SEQUENCER_VALUES, '--empty']),
+      attached: new Set(['--gpg-sign']),
+      shortFlags: 'nesx',
+      shortValues: 'mX',
+      shortAttached: 'S',
+    },
+    revert: {
+      flags: new Set([...SEQUENCER_FLAGS, '--reference', '--no-reference']),
+      values: new Set(SEQUENCER_VALUES),
+      attached: new Set(['--gpg-sign']),
+      shortFlags: 'nes',
+      shortValues: 'mX',
+      shortAttached: 'S',
+    },
+  } as Readonly<Record<string, GitOptions>>,
   /** Commands that send commits to a remote. */
   pushes: new Set(['push', 'send-pack', 'http-push']),
   /** Commands that write a commit by hand, which runs none of the hooks. */
@@ -378,8 +444,25 @@ const READ_BY_NAME = new Set([
   'env', 'xargs', 'eval', 'source', '.', 'trap', 'coproc', 'alias', 'shopt', 'su', 'watch', 'find', 'sed', 'deno', 'bun', 'bunx',
   'npx', 'pnpx', 'npm', 'pnpm', 'yarn', 'git', 'wrangler', 'lefthook', 'husky', 'dd', 'curl', 'wget', 'tar', 'unzip', 'popweb-fence',
   'arch', 'xcrun', 'script', 'cross-env', 'cross-env-shell', 'dotenv', 'flock', 'concurrently', 'parallel', 'ssh', 'awk', 'gawk', 'mawk', 'nawk',
-  'patch',
+  'patch', 'lockf',
 ])
+/** Commands that print, display, search or ignore their arguments and run none of them, as `grep -rn git commit` does. */
+const RUNS_NONE = new Set([
+  'echo', 'print', 'printf', 'grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'which', 'whence', 'where', 'whereis', 'type', 'man', 'whatis',
+  'apropos', 'info', 'help', 'tldr', 'true', 'false', ':', 'logger', 'say', 'terminal-notifier', 'notify-send',
+])
+/** Options whose value is prose, as a pull request's title or a commit's message, and no command line. */
+const PROSE_OPTIONS = new Set(['--title', '--body', '--message', '-m', '--subject', '--description', '--notes', '--comment'])
+/** Shell operators that join commands in a line: `&&`, `||`, `;` and `|`. */
+const JOINS_COMMANDS = /&&|;|\|/
+/**
+ * Names the policy reads that only a shell runs, as no program file has
+ * them: a program that runs its arguments runs none of these, and `.` and
+ * `-` among its arguments are a directory and its input.
+ */
+const SHELL_ONLY = new Set(['.', '-', 'source', 'eval', 'trap', 'exec', 'builtin', 'coproc', 'shopt', 'export', 'declare', 'typeset', 'readonly', 'local', 'noglob', 'nocorrect', 'repeat'])
+/** The shell's reserved words, which name no program: `X=1 time {` runs a command named `{`, which fails. */
+const RESERVED_WORDS = new Set(['{', '}', '!', '[[', ']]', 'if', 'then', 'else', 'elif', 'fi', 'case', 'esac', 'for', 'select', 'while', 'until', 'do', 'done', 'in', 'function'])
 
 /** The policy's answer for one shell command line, as an agent's hook passes it. */
 export function commandPolicy(command: string, options: CommandPolicyOptions = {}): FenceVerdict {
@@ -435,8 +518,14 @@ class Inspection {
    * @param reading The files and package scripts being read on the way to
    * this command, so one that names itself, as a deploy script's "run bun run
    * deploy again" does, is read once.
+   * @param probing Whether this is a probe of one reading of a command whose
+   * words an expansion gives, which looks only for what the rules find.
    */
-  constructor(private readonly options: CommandPolicyOptions, private readonly reading = new Set<string>()) {}
+  constructor(
+    private readonly options: CommandPolicyOptions,
+    private readonly reading = new Set<string>(),
+    private readonly probing = false
+  ) {}
 
   /** A command line; `context.inCode` when it is a program's string, whose placeholders are its own. */
   script(text: string, context: Context): void {
@@ -530,7 +619,7 @@ class Inspection {
 
   /** What one reading of a command's words would be answered with. */
   private probe(words: ReadonlyArray<string>, command: SimpleCommand, context: Context): ReadonlyArray<Finding> {
-    const probe = new Inspection(this.options, this.reading)
+    const probe = new Inspection(this.options, this.reading, true)
     probe.words(words, command, context)
     return probe.findings
   }
@@ -705,6 +794,8 @@ class Inspection {
         return this.dotenv(args, command, subject, context)
       case 'flock':
         return this.flock(args, command, subject, context)
+      case 'lockf':
+        return this.lockf(args, command, subject, context)
       case 'concurrently':
         return this.concurrently(args, subject, context)
       case 'parallel':
@@ -720,7 +811,65 @@ class Inspection {
         return this.patch(args, command, subject, context)
     }
 
-    if (head.includes('/') || head.endsWith('.sh')) this.program(head, args, command, context)
+    if (head.includes('/') || head.endsWith('.sh')) return this.program(head, args, command, context)
+    if (!EVALUATES.has(name) && !RUNS_NONE.has(name) && !RESERVED_WORDS.has(name)) this.unknownProgram(head, args, command, subject, context)
+  }
+
+  /**
+   * A program the policy does not know, which may run the command its
+   * arguments give, as `timeout`, `op run --` and `docker exec` do, or a
+   * command line one of them gives whole, as `tmux new 'git push'` and
+   * `hyperfine` do. From the first argument naming a program the policy
+   * reads, the arguments are read as that command, and each argument before
+   * it that a shell would run as a command line, as `commandLine` tells, is
+   * read as that line, each in an inspection of its own; an option that
+   * names prose, as `--title`, gives none. When the fence would not allow one
+   * on its own, it asks the owner; when it would, the program adds nothing.
+   * A program's strings are read for the rules alone, and a reading's probe,
+   * which looks only for what the rules find, reads none.
+   */
+  private unknownProgram(program: string, args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    if (context.inCode || this.probing) return
+    const start = args.findIndex((arg) => !isDynamic(arg) && namesProgram(arg))
+    const own = start === -1 ? args : args.slice(0, start)
+
+    for (let k = 0; k < own.length; k++) {
+      const [option, value] = splitOption(own[k])
+      if (PROSE_OPTIONS.has(option)) {
+        if (value === undefined) k++
+        continue
+      }
+      const line = commandLine(own[k])
+      if (line === undefined) continue
+      const answer = this.alone((inner) => inner.script(line, deeper(context)))
+      if (answer.decision !== 'allow') return this.mayRun(program, `the command line \`${line}\``, answer, subject, context)
+    }
+    if (start === -1) return
+
+    const run = args.slice(start)
+    const answer = this.alone((inner) => {
+      inner.words(run, command, deeper(context))
+      if (run.some(isDynamic)) inner.readings(run, command, deeper(context))
+    })
+    if (answer.decision !== 'allow') this.mayRun(program, `the arguments \`${shown(run.map(display))}\``, answer, subject, context)
+  }
+
+  /** The answer for what `read` reads in an inspection of its own. */
+  private alone(read: (inner: Inspection) => void): FenceVerdict {
+    const inner = new Inspection(this.options, this.reading)
+    read(inner)
+    return strongest(inner.findings)
+  }
+
+  /** A program the fence does not know, given what it may run, which the fence would not allow on its own. */
+  private mayRun(program: string, given: string, answer: FenceVerdict, subject: string, context: Context): void {
+    const verdict = answer.decision === 'deny' ? 'refuses' : 'asks the owner about'
+    this.ask(
+      'unreadable',
+      subject,
+      context,
+      `gives \`${display(program)}\`, a program the fence does not know, ${given}, which it may run as a command; on its own the fence ${verdict} that command. Approve it only if you expected it.`
+    )
   }
 
   /** macOS's `arch`: its `-arm64`-style names, `-arch name`, `-d name` and `-e NAME=value`, then the command. */
@@ -787,6 +936,19 @@ class Inspection {
     if (string === undefined) return this.words(run, command, deeper(context))
     if (isDynamic(string)) return this.unreadable(subject, 'a command for flock that an expansion gives', context)
     this.script(string, deeper(context))
+  }
+
+  /**
+   * `lockf`: the lock file, which it creates and, unless `-k` keeps it,
+   * removes once the command ends, then the command.
+   */
+  private lockf(args: ReadonlyArray<string>, command: SimpleCommand, subject: string, context: Context): void {
+    const parsed = parseOptions(args, LOCKF_OPTIONS)
+    if ('unknown' in parsed) return this.unreadable(subject, unknownOption('lockf', parsed.unknown), context)
+
+    const [file, ...run] = parsed.rest
+    if (file !== undefined) this.write(file, subject, context)
+    this.words(run, command, deeper(context))
   }
 
   /** concurrently: each word that is not an option or its value is a command line, and `npm:name` a package.json script. */
@@ -1121,12 +1283,18 @@ class Inspection {
     this.stdinScript(command, spec.kind, subject, context)
   }
 
-  /** A program a command runs by its path: Wrangler's own entry, the fence's CLI, a bin the policy reads by name, or a script read for its strings. */
+  /**
+   * A program a command runs by its path: Wrangler's own entry, the fence's
+   * CLI, a bin the policy reads by name, a package's other files, which the
+   * fence does not read, by the command their arguments may give, or a script
+   * read for its strings.
+   */
   private program(path: string, args: ReadonlyArray<string>, command: SimpleCommand, context: Context, kind?: CodeKind): void {
     if (WRANGLER_ENTRY.test(path)) return this.wrangler(args, ['wrangler', ...args], context)
     if (FENCE_CLI.test(path)) return this.fenceCli(args, ['popweb-fence', ...args], context)
     const bin = /(?:^|\/)node_modules\/\.bin\/([^/]+)$/.exec(path)?.[1] ?? ''
     if (READ_BY_NAME.has(bin)) return this.words([bin, ...args], command, deeper(context))
+    if (/(^|\/)node_modules\//.test(known(path))) return this.unknownProgram(path, args, command, shown([path, ...args].map(display)), context)
     this.file(path, kind, context, args)
   }
 
@@ -1364,7 +1532,7 @@ class Inspection {
     if (GIT_SURFACE.commitWriters.has(sub) || (sub === 'hash-object' && writesCommitObject(options))) {
       return this.deny(subject, 'writes a commit by hand, which runs none of the git hooks that run the commit gate. Commit with `git commit`, which runs them.', context)
     }
-    if (Object.hasOwn(GIT_SURFACE.commitsWithoutHook, sub) && !options.some((arg) => GIT_SURFACE.commitsWithoutHook[sub].includes(arg))) {
+    if (Object.hasOwn(GIT_SURFACE.commitsWithoutHook, sub) && !makesNoCommit(sub, options)) {
       this.ask('hook-bypass', subject, context, `makes or brings in commits without the pre-commit hook that runs the commit gate. Approve it only if you expected it.`)
     }
     if (GIT_SURFACE.pushes.has(sub)) {
@@ -1820,6 +1988,42 @@ function interpreterName(name: string): string {
   return /^python[\d.]*$/.test(name) ? 'python' : name
 }
 
+/** Whether a word names, or is a path to, a program the policy reads by name, which a program may run. */
+function namesProgram(word: string): boolean {
+  const name = basename(word)
+  return READ_BY_NAME.has(interpreterName(name)) && !SHELL_ONLY.has(name)
+}
+
+/**
+ * Whether a word names a command a shell runs that the policy reads: a
+ * shell's own, as `exec` and `.`, among them, but not zsh's `-`, for which
+ * `sh` has no command.
+ */
+function startsCommand(word: string): boolean {
+  const name = basename(word)
+  return name !== '-' && READ_BY_NAME.has(interpreterName(name))
+}
+
+/**
+ * An argument as the command line a program may hand a shell: its text, or
+ * an option's value, as `--exec='wrangler deploy'`'s. It is one when it
+ * holds more than one word and its first, after any assignments, starts a
+ * command the policy reads, which a shell's own name, as `exec` or `.`, does
+ * only when another word names a program the policy reads; or when an
+ * operator joins commands in it, as in `cd app && wrangler deploy`, the
+ * shell's grammar reads it, and a word in it names such a program. A jq
+ * filter, as `. | keys` or `.a | .b`, is none.
+ */
+function commandLine(arg: string): string | undefined {
+  const text = evalText(arg)
+  const line = /^--[\w-]+=([^]*)$/.exec(text)?.[1] ?? text
+  const words = line.trim().split(/\s+/)
+  const first = words.find((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word))
+  const names = () => line.split(/[\s;&|()<>"'`{}]+/).some((word) => word !== '' && namesProgram(word))
+  if (words.length > 1 && first !== undefined && startsCommand(first) && (namesProgram(first) || names())) return line
+  return JOINS_COMMANDS.test(line) && names() && readScript(line).unreadable.length === 0 ? line : undefined
+}
+
 /** Whether text the shell does not expand where it is set holds a command substitution, which it runs where it evaluates the text. */
 function holdsSubstitution(text: string): boolean {
   return /\$\(|`/.test(known(text))
@@ -1945,6 +2149,68 @@ function patchedPaths(text: string): string[] {
     for (const path of git === null ? [header?.[1] ?? '/dev/null'] : [git[1], git[2]]) if (path !== '/dev/null') paths.push(path.replace(/^"|"$/g, ''))
   }
   return paths
+}
+
+/**
+ * Whether a command that commits without the pre-commit hook makes no
+ * commit with these options: one of them says so and, where git reads the
+ * options in pairs, every one is an option the fence knows and the last of
+ * each pair agrees. A merge makes none after `--abort` or `--quit`, or with
+ * `--no-ff` and `--no-commit`, since git fast-forwards whenever it can,
+ * `--no-commit` or not; a cherry-pick or revert none after `--abort` or
+ * `--quit`, which end what is in progress or fail, or when the last of `-n`,
+ * `--no-commit` and `--commit` is not `--commit`.
+ */
+function makesNoCommit(sub: string, options: ReadonlyArray<string>): boolean {
+  if (!options.some((arg) => GIT_SURFACE.commitsWithoutHook[sub].includes(arg))) return false
+  if (!Object.hasOwn(GIT_SURFACE.pairedOptions, sub)) return true
+  const read = readGitOptions(options, GIT_SURFACE.pairedOptions[sub])
+  if (read === undefined) return false
+
+  const last = (...pair: ReadonlyArray<string>) => read.filter((name) => pair.includes(name)).at(-1)
+  if (sub === 'merge') {
+    return (
+      last('--abort', '--no-abort') === '--abort' ||
+      last('--quit', '--no-quit') === '--quit' ||
+      (last('--ff', '--no-ff', '--ff-only') === '--no-ff' && last('--commit', '--no-commit') === '--no-commit')
+    )
+  }
+  const commit = last('-n', '--no-commit', '--commit', '--no-no-commit')
+  return read.includes('--abort') || read.includes('--quit') || commit === '-n' || commit === '--no-commit'
+}
+
+/**
+ * A git command's options in the order it reads them, short ones letter by
+ * letter, without their values; undefined when one is not among `spec`'s.
+ */
+function readGitOptions(options: ReadonlyArray<string>, spec: GitOptions): string[] | undefined {
+  const read: string[] = []
+
+  for (let k = 0; k < options.length; k++) {
+    const arg = options[k]
+    if (arg === '-' || !arg.startsWith('-')) continue
+    if (arg.startsWith('--')) {
+      const [name, value] = splitOption(arg)
+      if (spec.values.has(name)) {
+        if (value === undefined) k++
+      } else if (!spec.attached.has(name) && !(spec.flags.has(name) && value === undefined)) {
+        return undefined
+      }
+      read.push(name)
+      continue
+    }
+    for (let p = 1; p < arg.length; p++) {
+      const letter = arg[p]
+      if (!spec.shortFlags.includes(letter) && !spec.shortValues.includes(letter) && !spec.shortAttached.includes(letter)) return undefined
+      read.push(`-${letter}`)
+      if (spec.shortValues.includes(letter)) {
+        if (p === arg.length - 1) k++
+        break
+      }
+      if (spec.shortAttached.includes(letter)) break
+    }
+  }
+  return read
 }
 
 /** `git hash-object -w -t commit`, which writes a commit object by hand. */

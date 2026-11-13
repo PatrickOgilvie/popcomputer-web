@@ -337,6 +337,44 @@ describe('machine 61: the policy walkers', () => {
     expect(decision(`parallel echo ::: ${Array.from({ length: 32 }, (_, at) => `a${at}`).join(' ')}`)).toBe('allow')
   })
 
+  test("M61.T17: macOS's lockf runs the command after its lock file", () => {
+    for (const command of ['lockf -k /tmp/l git commit -n -m x', 'lockf /tmp/l git commit --no-verify -m x', 'lockf -t 5 /tmp/l git commit -n -m x']) {
+      expect(decision(command)).toBe('deny')
+    }
+    expect(commandPolicy('lockf /tmp/l wrangler deploy')).toMatchObject({ decision: 'ask', rule: 'deploy' })
+    expect(commandPolicy('lockf /tmp/l git push')).toMatchObject({ decision: 'ask', rule: 'push' })
+    expect(commandPolicy('lockf --bogus /tmp/l bun test')).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(decision('lockf -k /tmp/l bun test')).toBe('allow')
+  })
+
+  test('M61.T17: a program the fence does not know, whose arguments name a command the fence reads', () => {
+    for (const command of ['gtimeout 5 git commit -n -m x', 'tool /tmp/l wrangler deploy', 'npx tool git push', 'tool git $(echo commit) -n']) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    }
+    for (const command of ['tool -k /tmp/l bun test', 'grep -rn git commit -n src', 'echo git push', 'man git push']) expect(decision(command)).toBe('allow')
+  })
+
+  test('M61.T17: a program the fence does not know, given a command line whole as one argument', () => {
+    for (const command of ["tmux new-session -d 'git commit -n -m x'", "hyperfine 'git push'", "nodemon --exec 'wrangler deploy'"]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    }
+    for (const command of ["hyperfine 'git status'", "grep -rn 'git commit -n' src", "echo 'git push'"]) expect(decision(command)).toBe('allow')
+  })
+
+  test('M61.T17: a command line a shell runs: one a shell-only name begins, or commands an operator joins', () => {
+    for (const command of ["tool 'exec git push'", "tool '. ./env.sh && git push'", "tmux new 'cd app && wrangler deploy'", "tmux new 'cd app; git commit -n -m x'"]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    }
+    for (const command of [
+      'gh pr create --title "git push now asks" --body "wrangler deploy"',
+      'say "git push finished"',
+      "jq '.scripts | keys' package.json",
+      "tmux new 'cd app && bun run dev'",
+    ]) {
+      expect(decision(command)).toBe('allow')
+    }
+  })
+
   test('M61.T17: programs whose code runs a command', () => {
     expect(decision(`awk 'BEGIN{system("git commit -n -m x")}'`)).toBe('deny')
     expect(decision(`gawk -v x=1 'BEGIN{system("git commit -n -m x")}'`)).toBe('deny')
@@ -580,6 +618,35 @@ describe('machine 61: the policy walkers', () => {
       expect(decision(command)).toBe('ask')
     }
     for (const command of ['git merge --abort', 'git cherry-pick -n FETCH_HEAD', 'git rebase --abort', 'git merge-base HEAD main']) expect(decision(command)).toBe('allow')
+  })
+
+  test('M61.T99: a merge fast-forwards whenever it can, `--no-commit` or not', () => {
+    for (const command of [
+      'git merge --no-commit feature',
+      'git merge --no-commit --ff-only feature',
+      'git merge --no-commit --ff feature',
+      'git merge --no-ff --no-commit --ff feature',
+      'git merge --no-ff --no-commit --commit feature',
+      'git merge --no-f --no-commit feature',
+      'git merge --abort --no-abort feature',
+    ]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'hook-bypass' })
+    }
+    for (const command of ['git merge --no-ff --no-commit feature', 'git merge --no-commit --no-ff feature']) expect(decision(command)).toBe('allow')
+  })
+
+  test('M61.T99: a cherry-pick or revert commits when the last of `-n`, `--no-commit` and `--commit` is `--commit`', () => {
+    for (const command of [
+      'git cherry-pick -n --commit feature',
+      'git cherry-pick --no-commit --commit feature',
+      'git cherry-pick -n --no-no-commit feature',
+      'git revert -n --commit HEAD',
+      'git revert --no-commit --commit HEAD',
+      'git cherry-pick -n --comm feature',
+    ]) {
+      expect(commandPolicy(command)).toMatchObject({ decision: 'ask', rule: 'hook-bypass' })
+    }
+    for (const command of ['git cherry-pick --commit -n feature', 'git revert --no-commit HEAD', 'git cherry-pick -n -X --commit feature']) expect(decision(command)).toBe('allow')
   })
 
   test('M61.T99: commands that move a branch to commits this gate never checked', () => {

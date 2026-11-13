@@ -90,6 +90,137 @@ describe('wrappers unwrap only through the options they read', () => {
   ])
 })
 
+describe("lockf: its options, the lock file it removes unless `-k` keeps it, then the command", () => {
+  table([
+    ['lockf -k /tmp/l git commit -n -m x', bypass],
+    ['lockf /tmp/l git commit --no-verify -m x', bypass],
+    ['lockf /tmp/l wrangler deploy', deploy],
+    ['lockf /tmp/l git push', push],
+    ['lockf -k -t 5 /tmp/l git push', push],
+    ['lockf -kst5 /tmp/l git push', push],
+    ['lockf -- /tmp/l git push', push],
+    ['/usr/bin/lockf -k /tmp/l npm publish', ['ask', 'publish']],
+    ['lockf -k /tmp/l bun test', 'allow'],
+    ['lockf -ksnw /tmp/l bun run build', 'allow'],
+    ['lockf -s -t 0 9', 'allow'],
+    ['lockf --bogus /tmp/l bun test', unreadable],
+    ['lockf -x /tmp/l bun test', unreadable],
+    ['lockf -t', unreadable],
+    ['lockf lint-debt.json true', fence],
+    ['lockf -k .git/hooks/pre-commit true', bypass],
+  ])
+})
+
+describe('a program the fence does not know, whose arguments hold a command it may run', () => {
+  table([
+    ['gtimeout 5 git commit -n -m x', unreadable],
+    ['op run -- wrangler deploy', unreadable],
+    ['doppler run --project app -- git push', unreadable],
+    ['tool --flag value npm publish', unreadable],
+    ['tool /usr/bin/git push', unreadable],
+    ['tool git $(echo commit) -n', unreadable],
+    ['tool python3 -c "import os; os.system(\'git commit -n -m x\')"', unreadable],
+    ['docker exec app git push', unreadable],
+    ['npx tool git commit -n -m x', unreadable],
+    ['bunx tool wrangler deploy', unreadable],
+    ['node_modules/.bin/tool git push', unreadable],
+    ["bash -c 'tool git push'", unreadable],
+    ['tool git push --dry-run', 'allow'],
+    ['tool bun test', 'allow'],
+    ['tool git status', 'allow'],
+    ['tool git', 'allow'],
+    ['tool --verbose', 'allow'],
+    ['docker exec -it app bash', 'allow'],
+    ['eslint . --fix', 'allow'],
+    ['tar -cf - . | tool - x', 'allow'],
+    // Commands that only print or search their arguments run none of them.
+    ['grep -rn git commit -n src', 'allow'],
+    ['rg -n wrangler deploy docs', 'allow'],
+    ['echo git push', 'allow'],
+    ["printf '%s\\n' git push", 'allow'],
+    ['which git wrangler', 'allow'],
+    ['type git push', 'allow'],
+    ['man git push', 'allow'],
+    ['true git push', 'allow'],
+    // A program's strings are read for the rules alone.
+    [`node -e 'console.log("tool git push")'`, 'allow'],
+  ])
+
+  test('the answer names the program, the arguments it holds, and that it may run them', () => {
+    const answer = commandPolicy('gtimeout 5 git commit -n -m x')
+    expect(answer).toMatchObject({ decision: 'ask', rule: 'unreadable', subject: 'gtimeout 5 git commit -n -m x' })
+    expect(answer.decision !== 'allow' && answer.reason).toContain('`gtimeout`, a program the fence does not know')
+    expect(answer.decision !== 'allow' && answer.reason).toContain('`git commit -n -m x`')
+    expect(answer.decision !== 'allow' && answer.reason).toContain('may run')
+  })
+})
+
+describe('a command line given whole, as one argument, to a program the fence does not know', () => {
+  table([
+    ["tmux new-session -d 'git commit -n -m x'", unreadable],
+    ["hyperfine 'git push'", unreadable],
+    ["nodemon --exec 'wrangler deploy'", unreadable],
+    ["nodemon --exec='wrangler deploy'", unreadable],
+    ["entr -s 'HUSKY=0 git commit -m x'", unreadable],
+    ['tool "git commit $FLAGS"', unreadable],
+    [`tool "sh -c 'git push'"`, unreadable],
+    ["tool 'npm publish' --watch", unreadable],
+    ["hyperfine 'git status'", 'allow'],
+    ["hyperfine 'bun test' 'bun run build'", 'allow'],
+    ["nodemon --exec 'bun run dev'", 'allow'],
+    // The arguments of the command the program's arguments name are that command's own.
+    ["gtimeout 5 git commit -m 'git push later'", 'allow'],
+    // A command line whose first word is no name the policy reads, or an expansion, is not read.
+    ["tool --title 'Fix: git push asks'", 'allow'],
+    ['tool "$CMD"', 'allow'],
+    ['tool "$X git push"', 'allow'],
+    // Commands that only print or search their arguments run none of them.
+    ["grep -rn 'git commit -n' src", 'allow'],
+    ["echo 'git push'", 'allow'],
+    ["rg 'wrangler deploy' docs", 'allow'],
+    // Nor do those that only display them.
+    ['logger "wrangler deploy done"', 'allow'],
+    ['say "git push finished"', 'allow'],
+    ["terminal-notifier -message 'git push done'", 'allow'],
+    ["notify-send 'git push' done", 'allow'],
+    // An option that names prose gives no command line.
+    ['gh pr create --title "git push now asks" --body "wrangler deploy"', 'allow'],
+    ['gh pr comment 12 --body "git merge --no-commit now asks"', 'allow'],
+    ['gh pr create --title="git push now asks" --body="cd app; wrangler deploy"', 'allow'],
+    ["tool -m 'git push; wrangler deploy'", 'allow'],
+    ["tool --subject 'git push' --description 'wrangler deploy' --notes 'npm publish' --comment 'git push'", 'allow'],
+    ['claude -p "git push the branch"', unreadable],
+    // A shell runs the line, so a shell's own names begin one: not zsh's `-`, which `sh` has no command for.
+    ["tool 'exec git push'", unreadable],
+    ["tool '. ./env.sh && git push'", unreadable],
+    ["tool 'eval git commit -n -m x'", unreadable],
+    ["tool 'builtin command git push'", unreadable],
+    ["tool '- git push'", 'allow'],
+    // Commands an operator joins, whatever the first, when the grammar reads the line and a word names a program the policy reads.
+    ["tmux new 'cd app && wrangler deploy'", unreadable],
+    ["tmux new 'cd app; git commit -n -m x'", unreadable],
+    ["tool 'cd app || npm publish'", unreadable],
+    ["tool 'cat list | xargs git push'", unreadable],
+    ["tool 'cd app && op run -- wrangler deploy'", unreadable],
+    ["tool --exec='cd app && git push'", unreadable],
+    ["tmux new 'cd app && bun run dev'", 'allow'],
+    ["jq '.scripts | keys' package.json", 'allow'],
+    [`jq '.[] | select(.name == "git push")' list.json`, 'allow'],
+    [`jq ". | to_entries[] | .key" list.json`, 'allow'],
+    ['jq ".a | .$KEY" list.json', 'allow'],
+    ["cut -d '|' -f2 list.txt", 'allow'],
+    ["tr ';' '\\n'", 'allow'],
+    ["psql -c 'delete from t; drop table git'", 'allow'],
+  ])
+
+  test('the answer names the program and the command line it may run', () => {
+    const answer = commandPolicy("tmux new-session -d 'git commit -n -m x'")
+    expect(answer).toMatchObject({ decision: 'ask', rule: 'unreadable' })
+    expect(answer.decision !== 'allow' && answer.reason).toContain('`tmux`, a program the fence does not know')
+    expect(answer.decision !== 'allow' && answer.reason).toContain('the command line `git commit -n -m x`')
+  })
+})
+
 describe('eval, trap, su and watch read their strings as command lines', () => {
   table([
     ['eval git commit -n', bypass],
@@ -318,6 +449,57 @@ describe("git's dangerous surface", () => {
     ['git submodule update', 'allow'],
     ['git am --abort', 'allow'],
     ['git revert --no-commit HEAD', 'allow'],
+    // A cherry-pick or revert commits when the last of `-n`, `--no-commit` and `--commit` is `--commit`.
+    ['git cherry-pick -n --commit feature', unchecked],
+    ['git cherry-pick --no-commit --commit feature', unchecked],
+    ['git cherry-pick -n --no-no-commit feature', unchecked],
+    ['git cherry-pick --no-commit -s --commit feature', unchecked],
+    ['git cherry-pick feature -n --commit', unchecked],
+    ['git revert -n --commit HEAD', unchecked],
+    ['git revert --no-commit --commit HEAD', unchecked],
+    ['git revert -n --no-no-commit HEAD', unchecked],
+    ['git cherry-pick --commit -n feature', 'allow'],
+    ['git cherry-pick -n -X --commit feature', 'allow'],
+    ['git cherry-pick -n -x --strategy-option=theirs feature', 'allow'],
+    ['git cherry-pick -n --empty keep feature', 'allow'],
+    ['git revert --no-commit --no-edit -m 1 HEAD', 'allow'],
+    ['git revert -n --reference HEAD', 'allow'],
+    ['git cherry-pick --abort', 'allow'],
+    ['git revert --quit', 'allow'],
+    // An option the fence does not know may be `--commit`; a cluster asks, as it did.
+    ['git cherry-pick -n --comm feature', unchecked],
+    ['git cherry-pick -n --bogus feature', unchecked],
+    ['git cherry-pick -n --mainline --commit feature', 'allow'],
+    ['git cherry-pick -n --reference feature', unchecked],
+    ['git revert -n -x HEAD', unchecked],
+    ['git cherry-pick -xn feature', unchecked],
+    // git fast-forwards whenever it can, `--no-commit` or not, and reads the last of each pair.
+    ['git merge --no-commit feature', unchecked],
+    ['git merge --no-commit --ff-only feature', unchecked],
+    ['git merge --no-commit --ff feature', unchecked],
+    ['git merge feature --no-commit', unchecked],
+    ['git merge --no-ff --no-commit feature', 'allow'],
+    ['git merge --no-commit --no-ff feature', 'allow'],
+    ['git merge feature --no-commit --no-ff', 'allow'],
+    ['git merge --no-ff --no-commit --ff feature', unchecked],
+    ['git merge --no-ff --no-commit --ff-only feature', unchecked],
+    ['git merge --no-ff --no-commit --commit feature', unchecked],
+    ['git merge --no-ff --no-commit -qm "--ff" feature', 'allow'],
+    ['git merge --no-ff --no-commit -X ours --no-edit feature', 'allow'],
+    // An abbreviation may be either of a pair, or take the next word as its value.
+    ['git merge --no-f --no-commit feature', unchecked],
+    ['git merge --no-ff --no-commi feature', unchecked],
+    ['git merge --no-ff --no-commit --ff-o feature', unchecked],
+    ['git merge --ff --no-commit --mess --no-ff feature', unchecked],
+    ['git merge --ff --no-commit -m --no-ff feature', unchecked],
+    ['git merge --no-ff --no-commit -Z feature', unchecked],
+    ['git merge --abort', 'allow'],
+    ['git merge --quit', 'allow'],
+    ['git merge --abort --no-abort feature', unchecked],
+    ['git merge --quit --no-quit feature', unchecked],
+    ['git merge --continue', unchecked],
+    ['git merge --squash feature', unchecked],
+    ['git merge --squash --no-commit feature', unchecked],
     ['git restore -s HEAD~1 lint-debt.json', fence],
     ['git clean -e lint-debt.json', 'allow'],
     ['git clean -f lint-debt.json', fence],

@@ -71,14 +71,14 @@ agent's hook passes it, and answers in that agent's format.
 | It finds | For example | It |
 | --- | --- | --- |
 | A way around the commit gate | `git commit --no-verify`, `-n`, `HUSKY=0`, `LEFTHOOK=0`, `-c core.hooksPath=...`, `lefthook uninstall`, a write into `.git/hooks/` or `.git/config`, by a redirect, a program's code, a patch or a link to one, a commit written by hand with `git commit-tree`, `git fast-import` or `git hash-object -t commit` | refuses it |
-| A commit the gate did not check | `git pull`, `merge`, `rebase`, `cherry-pick`, `revert` and `am`; a branch moved to another commit than its own by `reset`, `branch -f`, `update-ref`, `switch -C` or `checkout -B`; a commit in a directory above this one; settings given by `git -c` or `GIT_CONFIG_*`, and `GIT_DIR`, `HOME` or `XDG_CONFIG_HOME`; a program `GIT_PAGER`, `GIT_SSH_COMMAND` or `EDITOR` names, read as a command | asks the owner |
+| A commit the gate did not check | `git pull`, `merge`, `rebase`, `cherry-pick`, `revert` and `am`, and `merge --no-commit` unless the last of its `--ff`, `--no-ff` and `--ff-only` is `--no-ff`, since git fast-forwards whenever it can, and `cherry-pick -n` or `revert -n` whose last of `-n`, `--no-commit` and `--commit` is `--commit`; a branch moved to another commit than its own by `reset`, `branch -f`, `update-ref`, `switch -C` or `checkout -B`; a commit in a directory above this one; settings given by `git -c` or `GIT_CONFIG_*`, and `GIT_DIR`, `HOME` or `XDG_CONFIG_HOME`; a program `GIT_PAGER`, `GIT_SSH_COMMAND` or `EDITOR` names, read as a command | asks the owner |
 | A deploy | `wrangler deploy`, `wrangler versions deploy`, `wrangler rollback` | asks the owner |
 | Remote data | `wrangler d1 migrations apply --remote`, `wrangler d1 execute --remote`, any `wrangler ... --remote` | asks the owner |
 | A secret | `wrangler secret put`, `bulk` or `delete` | asks the owner |
 | A release | `npm publish`, `bun publish`, `pnpm publish` | asks the owner |
 | A push | `git push`, `git send-pack` | asks the owner |
 | A change to the fence | `oxlint.config.ts`, `lefthook.yml`, `.githooks/` or the directory `core.hooksPath` names, `.husky/`, `.pre-commit-config.yaml`, `.simple-git-hooks.json`, `.claude/settings.json`, `lint-debt.json`, written as they are or by `git checkout <commit> -- .`, `git reset --hard <commit>` or `git apply`; `popweb-fence debt --allow-increase` | asks the owner |
-| What it cannot read | a command name a variable gives, `bash -c "$CMD"`, an alias, a script it cannot open, code that can start a process, a pipe into a shell from a command whose output it cannot know, a value holding a quoted `$(...)`, which bash runs where it evaluates the value as arithmetic | asks the owner |
+| What it cannot read | a command name a variable gives, `bash -c "$CMD"`, an alias, a script it cannot open, code that can start a process, a pipe into a shell from a command whose output it cannot know, a value holding a quoted `$(...)`, which bash runs where it evaluates the value as arithmetic; a program it does not know whose arguments, from the first that names a command it reads, make a command it would not allow, as `gtimeout 5 git push`, or one of which is a command line that does, beginning with such a name or joining commands with `&&`, `\|\|`, `;` or `\|`, as `tmux new 'cd app && git push'` (not `echo`, `grep`, `say` or another that only prints, searches or displays them, nor a `--title`, `--body` or `-m` value) | asks the owner |
 
 `wrangler deploy --dry-run`, `npm publish --dry-run`, `git push --dry-run`
 and D1's local database (`--local`, the default) need no one.
@@ -86,7 +86,7 @@ and D1's local database (`--local`, the default) need no one.
 The hook parses a command line with tree-sitter's bash grammar and judges
 every command the tree holds: in lists, pipes, subshells, `$(...)`,
 heredocs and arithmetic, in `sh -c`, `eval` and `trap` strings, behind
-`env`, `sudo`, `xargs`, `npx`, `cross-env` and `parallel`, in the
+`env`, `sudo`, `xargs`, `npx`, `cross-env`, `lockf` and `parallel`, in the
 `package.json` scripts a runner names, so `bun run deploy` asks when its
 script deploys, and in the scripts and programs, awk's among them, a command
 runs. A `cd` on the line moves the directory it reads paths and scripts
@@ -184,12 +184,12 @@ script a command runs is one the policy cannot open, so it asks.
 
 The hook is a guard that keeps an agent to the rules, not a security
 boundary: it reads the command line, not the system it runs on. It cannot
-see an alias set outside the line, a `make` or `just` target, a command or
-path a program builds at run time, what `git stash pop` brings back, or a
-fence file in a directory a command removes whole. What cannot be skipped
-is a required CI check that runs the gate on every pull request. When a
-spelling gets past the hook, add the case to the policy's tests first, as
-`AGENTS.md` says.
+see an alias set outside the line, a `make`, `just`, `turbo`, `lerna` or
+`nx` target, a command or path a program builds at run time, what
+`git stash pop` brings back, or a fence file in a directory a command
+removes whole. What cannot be skipped is a required CI check that runs the
+gate on every pull request. When a spelling gets past the hook, add the
+case to the policy's tests first, as `AGENTS.md` says.
 
 ## The debt report
 
