@@ -3,7 +3,8 @@
  * Machines 50 to 53: testD1's pool, the directories it keeps databases in,
  * Miniflare's late-reply patch, and the ends of a test case. dispose() waits
  * for what the pool starts and stops, a memo that failed is not kept, a case
- * answers with its own outcome, and only Miniflare's read waits for a reply.
+ * answers with its own outcome, only Miniflare's read waits for a reply, and
+ * a database the cases share is finished by no case.
  */
 import { afterAll, describe, expect, spyOn, test } from 'bun:test'
 import { existsSync } from 'node:fs'
@@ -228,5 +229,29 @@ describe('testD1', () => {
     for (let tries = 0; tries < 50 && await tables(second).then(() => true, () => false); tries += 1) await wait(100)
 
     await expect(tables(second)).rejects.toThrow()
+  }, 60_000)
+
+  test("M52.T39, T40: a database a case asked for to share is finished by no case, so its Miniflare stays once its others are finished", async () => {
+    const d1 = pool(fixtureMigrations, 2)
+    let shared: unknown
+
+    await inTestCase(async () => {
+      shared = (await d1.reusable()).database
+    })
+    // The Miniflare's other database: with it finished, every one the Miniflare holds has been handed out.
+    await inTestCase(async () => {
+      await d1.fresh()
+    })
+
+    expect(await tables(shared)).toEqual([{ name: 'notes' }])
+  }, 60_000)
+
+  test('M52.T41: a reusable() under way when dispose() is called is stopped by it', async () => {
+    const d1 = pool()
+    const opening = d1.reusable()
+
+    await d1.dispose()
+
+    await expect((await opening).empty()).rejects.toThrow()
   }, 60_000)
 })

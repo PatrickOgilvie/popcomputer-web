@@ -2,13 +2,14 @@
 /**
  * testD1 hands each test its own migrated D1 database, on Miniflare's real D1,
  * starting another Miniflare when one's databases run out, and stops them all
- * on dispose.
+ * on dispose. A fuzz property's cases share one from reusable(), which stays
+ * until dispose and is emptied in one round trip.
  */
 
 import { afterAll, describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, utimes } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
@@ -17,7 +18,7 @@ import { readReply } from './fixtures/miniflare/dist/read-reply.js'
 import { Arbitrary, Schema as S } from 'effect'
 import { fuzz } from '../src/fuzz.js'
 import { isRunning, sweepAbandonedPools } from '../src/test-pools.js'
-import { testD1, testEnv } from '../src/testing.js'
+import { testD1, testEnv, type TestD1Reusable } from '../src/testing.js'
 import type { WebDeclaration } from '../src/effect/register.js'
 
 const migrations = join(import.meta.dir, 'fixtures', 'd1-migrations')
@@ -28,7 +29,7 @@ afterAll(() => databases.dispose())
 
 /** The D1 binding as the application declares it, which `fresh()` hands out typed. */
 interface D1 {
-  prepare(query: string): { bind(...values: unknown[]): { run(): Promise<unknown> }; all(): Promise<{ results: unknown[] }> }
+  prepare(query: string): { bind(...values: unknown[]): { run(): Promise<unknown> }; all(): Promise<{ results: Array<Record<string, unknown>> }>; run(): Promise<unknown> }
   batch(statements: ReadonlyArray<unknown>): Promise<unknown>
   exec(query: string): Promise<unknown>
 }
@@ -42,6 +43,76 @@ declare module '../src/effect/register.js' {
 const notes = async (database: D1) => (await database.prepare('SELECT body FROM notes ORDER BY body').all()).results
 
 const write = (database: D1, body: string) => database.prepare('INSERT INTO notes (body) VALUES (?)').bind(body).run()
+
+const read = async (database: D1, query: string) => (await database.prepare(query).all()).results
+
+/**
+ * A library's migrations: books that refer to their authors, who sort before
+ * them, and annotations that refer to their books, which sort after them, and
+ * to one another. Its orders are in a table named by a word SQL keeps for
+ * itself. A trigger refuses to delete Ada, another archives a deleted book,
+ * and two keep a full-text index of the titles.
+ */
+const library = join(import.meta.dir, 'fixtures', 'd1-library-migrations')
+
+/** An annotation on the first book: a reply to the one before it, unless it is the first. */
+const reply = (depth: number) => `('n${depth}', 1, ${depth === 0 ? 'NULL' : `'n${depth - 1}'`}, 'note ${depth}')`
+
+/** The library's seed: two authors, a book of each, an order for one, and annotations that reply to one another ten deep. */
+const stock = (database: D1) => database.exec([
+  "INSERT INTO authors (name) VALUES ('Ada'), ('Grace')",
+  "INSERT INTO books (author_id, title) VALUES (1, 'Notes on the engine'), (2, 'Compilers')",
+  'INSERT INTO "order" (book_id) VALUES (2)',
+  `INSERT INTO annotations (id, book_id, reply_to, body) VALUES ${Array.from({ length: 10 }, (_, depth) => reply(depth)).join(', ')}`,
+].join('\n'))
+
+/**
+ * What a database holds: its schema, and each table's rows with their rowids,
+ * whatever the tables are called, `sqlite_sequence` among them, which holds
+ * where each AUTOINCREMENT id counts from.
+ */
+async function contents(database: D1) {
+  const schema = await read(database, String.raw`SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE '\_cf\_%' ESCAPE '\' ORDER BY type, name`)
+  const tables = await read(database, String.raw`SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table' AND name NOT LIKE '\_cf\_%' ESCAPE '\' AND name <> 'sqlite_schema' ORDER BY name`)
+  const rows: Record<string, unknown> = {}
+
+  for (const { name } of tables) rows[String(name)] = await read(database, `SELECT rowid AS "row", * FROM "${String(name)}" ORDER BY rowid`)
+
+  return { schema, rows }
+}
+
+/**
+ * How many times `run` crosses from this process to `workerd`: each reply
+ * Miniflare's blocking calls read, and each request its awaited calls send.
+ */
+async function crossings(run: () => Promise<unknown>): Promise<number> {
+  const required = createRequire(import.meta.url)
+  const threads: { receiveMessageOnPort(port: unknown): unknown } = required('node:worker_threads')
+  const undici: { fetch(...request: unknown[]): unknown } = required('undici')
+  const { receiveMessageOnPort } = threads
+  const { fetch } = undici
+  let crossed = 0
+
+  threads.receiveMessageOnPort = (port) => {
+    crossed += 1
+
+    return receiveMessageOnPort(port)
+  }
+  undici.fetch = (...request) => {
+    crossed += 1
+
+    return fetch(...request)
+  }
+
+  try {
+    await run()
+  } finally {
+    threads.receiveMessageOnPort = receiveMessageOnPort
+    undici.fetch = fetch
+  }
+
+  return crossed
+}
 
 /**
  * A test run in a process of its own: it writes to databases from a pool,
@@ -406,4 +477,156 @@ describe('testD1', () => {
 
     await running.dispose()
   }, 30_000)
+})
+
+describe("testD1's reusable()", () => {
+  const libraries = testD1({ migrations: library, perMiniflare: 8 })
+
+  afterAll(() => libraries.dispose())
+
+  test("a database a case asks for to share stays, while the Miniflare's others are handed out and finished", async () => {
+    const pool = testD1({ migrations, perMiniflare: 2 })
+    const found: unknown[] = []
+    let shared: TestD1Reusable | undefined
+
+    await fuzz(everyCase, async () => {
+      // Asked for inside the first case, as a property that makes it on first use does.
+      shared ??= await pool.reusable()
+      found.push(await notes(shared.database))
+      await shared.empty()
+      await write(shared.database, `case ${found.length}`)
+      // The Miniflare's other database, finished when this case ends.
+      await write(await pool.fresh(), 'its own')
+
+      return undefined
+    }, { runs: 4 })
+
+    expect(found).toEqual([[], [{ body: 'case 1' }], [{ body: 'case 2' }], [{ body: 'case 3' }]])
+
+    if (shared === undefined) throw new Error('The first case asks for the database.')
+
+    expect(await notes(shared.database)).toEqual([{ body: 'case 4' }])
+
+    await pool.dispose()
+
+    await expect(notes(shared.database)).rejects.toThrow()
+  })
+
+  test('empty() leaves every table as a new database has it, so the same seed gives the same rows, rowids and ids', async () => {
+    const { database, empty } = await libraries.reusable()
+    const migrated = await contents(await libraries.fresh())
+    const another = await libraries.fresh()
+
+    await stock(another)
+
+    const stocked = await contents(another)
+
+    // What a case leaves: its seed, a third author, and a deleted book, which the triggers archive and take from the index.
+    await stock(database)
+    await database.exec("INSERT INTO authors (name) VALUES ('Linus')\nDELETE FROM books WHERE id = 2")
+    await empty()
+
+    expect(await contents(database)).toEqual(migrated)
+
+    await stock(database)
+
+    expect(await contents(database)).toEqual(stocked)
+  })
+
+  test('empty() takes no order from the foreign keys, which hold again once it has run', async () => {
+    const { database, empty } = await libraries.reusable()
+
+    await stock(database)
+
+    // Authors sort before the books that refer to them, and are refused while a book does.
+    await expect(database.exec("DELETE FROM authors WHERE name = 'Grace'")).rejects.toThrow(/FOREIGN KEY/)
+
+    await empty()
+
+    expect(await read(database, 'SELECT (SELECT count(*) FROM authors) AS authors, (SELECT count(*) FROM books) AS books, (SELECT count(*) FROM annotations) AS annotations')).toEqual([{ authors: 0, books: 0, annotations: 0 }])
+    await expect(database.exec("INSERT INTO books (author_id, title) VALUES (7, 'By no one')")).rejects.toThrow(/FOREIGN KEY/)
+  })
+
+  test('empty() deletes rows that refer to one another as deep as D1 cascades, and says so of any deeper', async () => {
+    const { database, empty } = await libraries.reusable()
+
+    await stock(database)
+    await empty()
+
+    expect(await read(database, 'SELECT count(*) AS annotations FROM annotations')).toEqual([{ annotations: 0 }])
+
+    // workerd runs foreign key actions ten deep and no deeper: the first of eleven replies cannot be deleted, here or in production.
+    await stock(database)
+    await database.exec(`INSERT INTO annotations (id, book_id, reply_to, body) VALUES ${reply(10)}`)
+
+    await expect(database.exec("DELETE FROM annotations WHERE id = 'n0'")).rejects.toThrow(/too many levels of trigger recursion/)
+    await expect(empty()).rejects.toThrow(/empty\(\) left the database as it was: .*too many levels of trigger recursion.*fresh\(\)/)
+    expect(await read(database, 'SELECT count(*) AS annotations FROM annotations')).toEqual([{ annotations: 11 }])
+  })
+
+  test('empty() fires no trigger, one that refuses a delete or records one, and each is there afterwards', async () => {
+    const { database, empty } = await libraries.reusable()
+
+    await stock(database)
+    await empty()
+
+    expect(await read(database, 'SELECT (SELECT count(*) FROM authors) AS authors, (SELECT count(*) FROM archive) AS archive')).toEqual([{ authors: 0, archive: 0 }])
+
+    await database.exec("INSERT INTO authors (name) VALUES ('Ada')\nINSERT INTO books (author_id, title) VALUES (1, 'Notes on the engine')\nDELETE FROM books")
+
+    await expect(database.exec('DELETE FROM authors')).rejects.toThrow(/authors_kept/)
+    expect(await read(database, 'SELECT title FROM archive')).toEqual([{ title: 'Notes on the engine' }])
+  })
+
+  test('empty() empties a full-text index with the table it reads, so a search finds only the new rows', async () => {
+    const { database, empty } = await libraries.reusable()
+    const found = (word: string) => read(database, `SELECT rowid AS book FROM titles WHERE titles MATCH '${word}'`)
+
+    await stock(database)
+
+    expect(await found('compilers')).toEqual([{ book: 2 }])
+
+    await empty()
+    await database.exec("INSERT INTO authors (name) VALUES ('Grace')\nINSERT INTO books (author_id, title) VALUES (1, 'Operating systems'), (1, 'Networks')")
+
+    expect(await found('compilers')).toEqual([])
+    expect(await found('networks')).toEqual([{ book: 2 }])
+    // The index holds what the books do, and no more.
+    await database.exec("INSERT INTO titles (titles, rank) VALUES ('integrity-check', 1)")
+  })
+
+  test('empty() crosses to workerd once, the first time as every other', async () => {
+    const { database, empty } = await libraries.reusable()
+
+    await stock(database)
+
+    expect(await crossings(empty)).toBe(1)
+    expect(await crossings(empty)).toBe(1)
+    // A statement a test prepares has crossed once before it is bound or run.
+    expect(await crossings(async () => database.prepare('DELETE FROM archive'))).toBe(1)
+  })
+
+  test('an empty() a table refuses changes nothing: its rows stay, and the triggers', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'popweb-refused-'))
+
+    await writeFile(join(root, '0000_words.sql'), [
+      'CREATE TABLE `notes` (`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL, `body` text NOT NULL);',
+      "CREATE TRIGGER `notes_kept` BEFORE DELETE ON `notes` BEGIN SELECT RAISE(ABORT, 'notes_kept'); END;",
+      // An index that keeps no text of its own cannot say which words a row held, so it refuses the delete.
+      "CREATE VIRTUAL TABLE `words` USING fts5(`body`, content='');",
+    ].join('\n--> statement-breakpoint\n'))
+
+    const pool = testD1({ migrations: root, perMiniflare: 2 })
+    const { database, empty } = await pool.reusable()
+
+    await database.exec("INSERT INTO notes (body) VALUES ('kept')\nINSERT INTO words (rowid, body) VALUES (1, 'kept')")
+
+    await expect(empty()).rejects.toThrow(/empty\(\) left the database as it was: .*contentless.*fresh\(\)/)
+
+    expect(await notes(database)).toEqual([{ body: 'kept' }])
+    await expect(database.exec('DELETE FROM notes')).rejects.toThrow(/notes_kept/)
+
+    await pool.dispose()
+    await rm(root, { recursive: true, force: true })
+  })
 })

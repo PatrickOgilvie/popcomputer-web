@@ -49,8 +49,36 @@ milliseconds and starts each case from the same rows.
 
 ## On D1
 
-Give each case a database of its own, `await databases.fresh()` from `testD1`,
-so a case that deletes a person leaves the next one its seed. A database a case
-asked for is finished when the case ends, and its Miniflare stops once all of
-its are, so a run of thousands holds one `workerd`. Keep none for a later
-case. [A database for tests](test-database.md) says more.
+Share one database between the cases and empty it as each starts, with
+`testD1`'s `databases.reusable()`, as
+[A database for tests](test-database.md#one-d1-database-for-a-propertys-cases)
+shows, rather than taking one per case with `fresh()`. A new database is
+migrated again; `empty()` deletes what the last case left, in every table,
+and restarts the ids, in one round trip to the database.
+
+What a case costs on the D1 test database is how often it crosses from the
+test to `workerd`, more than the SQL it runs: every `prepare`, every `bind`
+and every run is a round trip of its own, about 1.3, 0.75 and 1.8 ms on a
+busy laptop. There, Drizzle's `db.batch` of eleven deletes took 18 to 28 ms, and
+one `exec` of the same eleven, a statement to a line, 1.4 to 2.6 ms. So a
+case makes few statements: it seeds in one `batch`, and reads the rows its
+rules compare in one statement.
+
+On the landing template's request property, in the 2-vCPU, 4 GiB Cloudflare
+container where hosted applications are checked, a case took about 64 ms
+with a database of its own and 18.5 ms sharing one. Its 200 cases went from
+12.8 s to 5.3 s, and `FUZZ_RUNS=5000`, about 320 s at the first rate, did
+not finish before and took 92.7 s after. On a laptop the 200 went from 2.9 s
+to 1.5 s, and the 5,000 from 66 s to 25 s.
+
+A database per case, `await databases.fresh()`, is still the one to use
+where `empty()` cannot give back what the migrations made. A migration may
+insert rows the application needs, which `empty()` deletes with the rest. A
+table may refuse a `DELETE`, as a full-text index that keeps no text of its
+own does. And rows may refer to others of their table more than ten deep
+with `ON DELETE CASCADE`: `workerd` runs foreign key actions ten deep and no
+deeper, so the first of them cannot be deleted, in a test or in production.
+`empty()` then rejects, saying why, and leaves the database as it was. A
+database from `fresh()` is finished when its case ends, and its Miniflare
+stops once all of its are, so a run of thousands holds one `workerd`. Keep
+none of those for a later case.

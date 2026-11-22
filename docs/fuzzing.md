@@ -165,9 +165,9 @@ The rules each answer keeps:
   every rule, so also show that each write happens, as
   [Reaching every write](fuzz-writes.md) does.
 
-Each request starts from the seed: the cases share one database, emptied as
-each starts ([A database for tests](test-database.md)). For sequences naming
-records earlier requests created, see [Fuzzing sessions](fuzz-sessions.md).
+Each request starts from the seed: the cases share one database, emptied as each
+starts, on D1 the one `databases.reusable()` gives ([A database for tests](test-database.md)).
+For sequences naming records earlier requests created, see [Fuzzing sessions](fuzz-sessions.md).
 
 ## Building on it
 

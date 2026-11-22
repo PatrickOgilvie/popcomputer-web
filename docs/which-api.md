@@ -107,6 +107,7 @@ and the lint rules name it where an action reaches for something else.
 | Store uploads in a test | the uploads service over a `Map`, in `testEnv`'s layer | [Testing with a bucket in memory](uploads.md#testing-with-a-bucket-in-memory) |
 | Move time | `testClock()` | [Time](testing.md#time) |
 | Use the production database family | PGlite, migrated with `applyMigrations`, or a D1 database of each test's own from `testD1` | [A database for tests](test-database.md) |
+| Share one database between a fuzz property's cases | on D1, `const { database, empty } = await databases.reusable()` from `testD1`, with `await empty()` as each case starts; on PGlite, the page's `reusableDatabase()` | [One D1 database for a property's cases](test-database.md#one-d1-database-for-a-propertys-cases) |
 | Check a rule on generated inputs | `fuzz(arbitrary, holds)` from `@popcomputer/web/fuzz` | [Fuzzing](fuzzing.md) |
 | Fuzz the application's routes | `fuzzRequest({ paths, routes, params, people })`, `sendFuzzRequest`, and `brokenPromises`, `leaks`, `strangerWrites` with `ownership(routes, table)`, `refusedWrites` | [Requests to the application](fuzzing.md#requests-to-the-application) |
 | Reach each write on every run, whatever chance reaches | one request for each, as `fuzz`'s `examples` | [Reaching every write](fuzz-writes.md) |

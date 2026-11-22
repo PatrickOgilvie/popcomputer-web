@@ -256,7 +256,9 @@ TypeScript example here and in `docs/` type-checks against the package.
     production database family: PGlite for Postgres (`testEnv`'s `database`),
     migrated with `applyMigrations`, and for D1 a database of each test's own
     from `testD1({ migrations: './migrations' })`, the folder wrangler applies, stopped by
-    `afterAll(() => databases.dispose())` in `bunfig.toml`'s preload. Replace a service
+    `afterAll(() => databases.dispose())` in `bunfig.toml`'s preload; a `fuzz`
+    property's cases share the one `await databases.reusable()` gives, and
+    call its `empty()` as each starts. Replace a service
     that reaches another system with `Layer.succeed(Service, fake)` in the
     layer, wherever the application gives that service (`web.services` or
     `routes.provide`), stand in for an OAuth provider with `testOAuthProvider({ ... })`

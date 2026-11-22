@@ -29,11 +29,12 @@ and constraint errors behave the same:
   `[test] preload` names: a Miniflare left running keeps its `workerd`
   process alive after `bun test` exits, and Bun shares modules between test
   files, so an `afterAll` in the module that creates the databases stops them
-  while other files still use them. A `fuzz` property that takes a database
-  per case needs nothing more: a database a case asked for is finished when
-  the case ends, and a Miniflare stops once it has handed out all of its and
-  they are finished, so a run of thousands holds one `workerd` at a time, and
-  the last stops at `dispose()`. A case must keep none for a later one; a
+  while other files still use them. A database a `fuzz` case asked for with
+  `fresh()` is finished when the case ends, and a Miniflare stops once it has
+  handed out all of its and they are finished, so a run of thousands holds
+  one `workerd` at a time, and the last stops at `dispose()`. A case must
+  keep none of those for a later one: cases that share a database take it
+  from `reusable()`, [below](#one-d1-database-for-a-propertys-cases). A
   database made outside a case, as in `beforeAll`, stays until `dispose()`. A
   loop of your own that makes thousands may call `dispose()` between rounds:
   the next `fresh()` starts again. A run killed before it could `dispose()`
@@ -135,6 +136,54 @@ seeds: that empties every table, those no rule watches too, and restarts
 their ids, in a few milliseconds, so each case starts as a new copy would.
 Empty it as a case starts, not as it ends, so a case that throws leaves the
 next nothing. [Fuzzing](fuzzing.md#requests-to-the-application) shows one.
+
+## One D1 database for a property's cases
+
+On D1 the cases share the database `databases.reusable()` gives. It is new
+and migrated, and kept until `dispose()` wherever it was asked for, inside
+the first case or outside any, with the Miniflare it runs in.
+
+```ts
+// One database for every case of the property, and how to empty it.
+const { database, empty } = await databases.reusable()
+
+// The seed, prepared once: every prepare is a round trip to the database.
+const seedRows = [
+  database.prepare(`INSERT INTO user (id, name, email) VALUES ('ada', 'Ada', 'ada@example.com'), ('grace', 'Grace', 'grace@example.com')`),
+  database.prepare(`INSERT INTO projects (id, user_id, name, slug) VALUES ('p-ada', 'ada', 'Apollo', 'apollo'), ('p-grace', 'grace', 'Gemini', 'gemini')`),
+]
+
+// A case starts from the seed in two round trips: one empties, one seeds.
+async function seed() {
+  await empty()
+  await database.batch(seedRows)
+}
+```
+
+Each case calls `seed()` as it starts, then sends its requests with
+`testEnv({ ...testBindings, DB: database })`, as
+[Fuzzing](fuzzing.md#requests-to-the-application) does with PGlite's.
+
+`empty()` deletes every row of every table the migrations made, those no
+rule watches too, and restarts their ids, AUTOINCREMENT's among them, so
+each case starts as a new database would. The tables, indexes and triggers
+stay as they were. It is one batch, prepared when the database was made, so
+it crosses to the database once, and Miniflare runs a batch as one
+transaction: the database is emptied or, where a table refuses, left as it
+was, and `empty()` rejects, saying why. The transaction defers the foreign
+keys, so the tables' order does not matter, and no trigger fires, as none
+does for `truncate` on Postgres. A row a migration inserted goes with the
+rest, so a seed that needs one writes it again.
+
+On the D1 test database every `prepare`, every `bind` and every run is a
+round trip from the test to `workerd`, a millisecond or two each on a busy
+laptop, and they are most of what a case costs. A statement prepared, bound
+and run alone crosses six times, and one bound into a `batch`, as Drizzle's
+`db.batch([...])` binds each of its, three; the statements above, prepared
+once, cross with their batch and not again. Make few statements: seed in
+one `batch`, read the rows a rule compares in one statement, and never
+delete table by table. [Long fuzz runs](fuzz-runs.md#on-d1) has the
+measurements, and says when a database per case is still the one to use.
 
 A test whose visitors sign in through the application, as a `testBrowser`
 does, needs no layer: `testEnv(testBindings, { database: testDb })`.

@@ -2,7 +2,8 @@
  * The bounds of one fuzz case, for what a case makes for itself. `fuzz` runs
  * each case here, and `testD1` hears when a case took a database, so a run of
  * thousands of cases stops each Miniflare as its cases finish, while a
- * database made outside a case stays until `dispose()`. Not an entrypoint.
+ * database made outside a case, or one the cases share from `reusable()`,
+ * stays until `dispose()`. Not an entrypoint.
  */
 import type { AsyncLocalStorage } from 'node:async_hooks'
 

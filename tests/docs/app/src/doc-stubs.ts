@@ -37,6 +37,7 @@ export declare function loadTasks(projectId: string): Effect.Effect<ReadonlyArra
 /** The project an API request's bearer key belongs to; a missing or revoked key is a 401. */
 export declare const apiKeyProject: Effect.Effect<typeof projects.$inferSelect, UnauthorizedError>
 export { testDb } from './test-db'
+export { databases } from './test-d1'
 export { testBindings } from './test-bindings'
 
 export interface AuditEvent {

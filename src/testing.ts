@@ -171,6 +171,29 @@ export interface TestD1Options {
   readonly perMiniflare?: number
 }
 
+/** One D1 database for the cases of a `fuzz` property to share, and how to empty it as each case starts. */
+export interface TestD1Reusable {
+  /** The database, newly created and migrated, typed as the application's D1 binding. */
+  readonly database: RegisteredD1
+  /**
+   * Delete every row of every table the migrations made, those no test names
+   * too, and restart their ids, AUTOINCREMENT's among them, so the next case
+   * starts as a new database would. The tables, indexes and triggers stay as
+   * they were. Call it as a case starts, before the case seeds, so a case that
+   * throws leaves the next nothing.
+   *
+   * It is one batch, prepared when the database was made, so it crosses to
+   * the database once, and Miniflare runs a batch as one transaction: the
+   * database is emptied or, where a table refuses, left as it was, and the
+   * call rejects with the reason. The transaction defers the foreign keys, so
+   * the tables' order does not matter, and no trigger fires, as none does for
+   * Postgres's TRUNCATE: one that refuses a delete, or records one in another
+   * table, would leave rows behind. A row a migration inserted is deleted
+   * with the rest.
+   */
+  readonly empty: () => Promise<void>
+}
+
 /** Fresh D1 databases for tests, each in a Miniflare that `dispose()` stops. */
 export interface TestD1 {
   /**
@@ -179,6 +202,15 @@ export interface TestD1 {
    * its Miniflare stops once it has no other to hand out or still in use.
    */
   fresh(): Promise<RegisteredD1>
+  /**
+   * A newly created and migrated D1 database for the cases of a `fuzz`
+   * property to share, with the `empty()` each case calls as it starts:
+   * emptying one takes a single round trip, where a database of its own takes
+   * a migration. Unlike one from `fresh()`, it is kept until `dispose()`
+   * wherever it was asked for, inside a case or outside one, and so is the
+   * Miniflare it runs in.
+   */
+  reusable(): Promise<TestD1Reusable>
   /**
    * Stop every Miniflare the databases run in, once every test file is done
    * with them, and remove the databases' files, resolving once they are gone.
@@ -308,6 +340,48 @@ async function loadMiniflare(): Promise<new (options: object) => MiniflareLike> 
   }
 }
 
+/** A name as SQLite reads it, whatever characters it holds. */
+const quoted = (name: string): string => `"${name.replaceAll('"', '""')}"`
+
+/**
+ * What `reusable()` reads of a database's schema, in one batch.
+ *
+ * The tables to empty: every table and virtual table the migrations made,
+ * which leaves out D1's own (`_cf_...`, which it lets no statement read) and
+ * SQLite's (`sqlite_...`), all but `sqlite_sequence`, which holds where each
+ * AUTOINCREMENT id counts from. A virtual table's shadow tables are emptied
+ * through it, and it goes first, since a full-text index over another
+ * table's rows reads them to remove its entries.
+ *
+ * The triggers, with the SQL that made each.
+ */
+const SCHEMA_READS = [
+  String.raw`SELECT name FROM pragma_table_list WHERE schema = 'main' AND type IN ('table', 'virtual') AND name NOT LIKE '\_cf\_%' ESCAPE '\' AND (name = 'sqlite_sequence' OR name NOT LIKE 'sqlite\_%' ESCAPE '\') ORDER BY type DESC, name`,
+  `SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY rowid`,
+] as const
+
+/** What Miniflare's D1 answers `SCHEMA_READS` with. */
+const SchemaRead = S.Tuple([
+  S.Struct({ results: S.Array(S.Struct({ name: S.String })) }),
+  S.Struct({ results: S.Array(S.Struct({ name: S.String, sql: S.String })) }),
+])
+
+/**
+ * The statements that empty a database, in the order one batch runs them.
+ * The foreign keys are checked when the batch commits, by when no row is
+ * left to break one, so the tables go in any order, and ON DELETE RESTRICT
+ * waits with them. The triggers are dropped for the deletes and made again
+ * after them, in the order they were made.
+ */
+function emptyingStatements([tables, triggers]: typeof SchemaRead.Type): ReadonlyArray<string> {
+  return [
+    'PRAGMA defer_foreign_keys = on',
+    ...triggers.results.map((trigger) => `DROP TRIGGER ${quoted(trigger.name)}`),
+    ...tables.results.map((table) => `DELETE FROM ${quoted(table.name)}`),
+    ...triggers.results.map((trigger) => trigger.sql),
+  ]
+}
+
 /**
  * Fresh, migrated Cloudflare D1 databases for tests, on Miniflare's real D1
  * in process. Starting Miniflare takes a moment, so one holds many databases,
@@ -316,8 +390,10 @@ async function loadMiniflare(): Promise<new (options: object) => MiniflareLike> 
  * keeps its `workerd` process alive after `bun test` exits. In a `fuzz`
  * property that takes a database per case, each Miniflare stops once it has
  * handed out all its databases and their cases have ended, so a run holds one
- * at a time; the last stops at `dispose()`. The first database removes what a
- * killed run left.
+ * at a time; the last stops at `dispose()`. A property whose cases share one
+ * database takes it from `reusable()` and empties it as each case starts,
+ * which costs a case one round trip where a database of its own costs a
+ * migration. The first database removes what a killed run left.
  *
  * @example
  * // src/test-support.ts
@@ -326,12 +402,21 @@ async function loadMiniflare(): Promise<new (options: object) => MiniflareLike> 
  *
  * // test/preload.ts
  * afterAll(() => databases.dispose())
+ *
+ * @example
+ * // One database for every case of a fuzz property, emptied as each starts.
+ * const { database, empty } = await databases.reusable()
+ *
+ * test('any request keeps the rules', () => fuzz(requests, async (sent) => {
+ *   await empty()
+ *   // Seed `database`, then send the request with testEnv({ ...testBindings, DB: database }).
+ * }), fuzzTimeout)
  */
 export function testD1(options: TestD1Options): TestD1 {
   const names = Array.from({ length: options.perMiniflare ?? 64 }, (_, index) => `TEST_D1_${index}`)
   // What the pool holds: each Miniflare it started and has not stopped, each
-  // stop under way, and each fresh() under way, all of which dispose() waits
-  // for, so nothing the pool started outlives it.
+  // stop under way, and each fresh() or reusable() under way, all of which
+  // dispose() waits for, so nothing the pool started outlives it.
   const started = new Set<StartedMiniflare>()
   const stopping = new Set<Promise<void>>()
   const starting = new Set<Promise<unknown>>()
@@ -368,7 +453,13 @@ export function testD1(options: TestD1Options): TestD1 {
     if (running.finished === names.length && started.has(running)) await stop(running)
   }
 
-  const open = async (): Promise<RegisteredD1> => {
+  /**
+   * Take one of a Miniflare's databases and migrate it. One a case asked for
+   * is finished when the case ends, unless it is `shared`: that one is never
+   * finished, wherever it was asked for, so its Miniflare cannot stop under
+   * the cases still to use it.
+   */
+  const open = async (shared: boolean): Promise<TestD1Database> => {
     const Miniflare = await (miniflare ??= kept(loadMiniflare(), () => {
       miniflare = undefined
     }))
@@ -390,7 +481,7 @@ export function testD1(options: TestD1Options): TestD1 {
     const name = names[running.next] ?? names[0] ?? 'TEST_D1_0'
     running.next += 1
 
-    whenTestCaseEnds(() => finish(running))
+    if (!shared) whenTestCaseEnds(() => finish(running))
 
     const database = await running.miniflare.getD1Database(name)
     const migrations = await (statements ??= kept(readMigrations(options.migrations), () => {
@@ -399,26 +490,51 @@ export function testD1(options: TestD1Options): TestD1 {
 
     if (migrations.length > 0) await database.batch(migrations.map((sql) => database.prepare(sql)))
 
-    // SAFETY: Miniflare's D1 is Cloudflare's, which the application's D1 binding declares.
-    return database as RegisteredD1
+    return database
   }
+
+  /** Begin what `dispose()` waits for. One asked for while the pool stops starts once it has stopped. */
+  const begin = <A>(start: () => Promise<A>): Promise<A> => {
+    const opening = (disposing ?? Promise.resolve()).then(start)
+    const tracked = opening.then(() => undefined, () => undefined).then(() => {
+      starting.delete(tracked)
+    })
+
+    starting.add(tracked)
+
+    return opening
+  }
+
+  // SAFETY: Miniflare's D1 is Cloudflare's, which the application's D1 binding declares.
+  const asBinding = (database: TestD1Database): RegisteredD1 => database as RegisteredD1
 
   return {
     fresh() {
-      // One asked for while the pool stops starts once it has stopped.
-      const opening = (disposing ?? Promise.resolve()).then(open)
-      const tracked = opening.then(() => undefined, () => undefined).then(() => {
-        starting.delete(tracked)
+      return begin(async () => asBinding(await open(false)))
+    },
+    reusable() {
+      return begin(async () => {
+        const database = await open(true)
+        const schema = S.decodeUnknownSync(SchemaRead)(await database.batch(SCHEMA_READS.map((sql) => database.prepare(sql))))
+        // Prepared here, once: each prepare crosses to workerd, and a batch of them crosses once.
+        const emptying = emptyingStatements(schema).map((sql) => database.prepare(sql))
+
+        return {
+          database: asBinding(database),
+          empty: async () => {
+            try {
+              await database.batch(emptying)
+            } catch (cause) {
+              throw new Error(`testD1's empty() left the database as it was: ${cause instanceof Error ? cause.message : String(cause)}. Where a table cannot be emptied, give each case a database of its own with fresh().`, { cause })
+            }
+          },
+        }
       })
-
-      starting.add(tracked)
-
-      return opening
     },
     dispose() {
       // oxlint-disable-next-line effecttsgo/async-function -- The pool stops Miniflare and removes files, outside any Effect, for a test's afterAll.
       disposing ??= (async () => {
-        // What fresh() is starting finishes first, so this stops it too.
+        // What fresh() or reusable() is starting finishes first, so this stops it too.
         await Promise.all(starting)
 
         const files = directory
