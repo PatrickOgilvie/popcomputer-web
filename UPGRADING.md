@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.15.0
+# Upgrading to @popcomputer/web 1.16.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.15.0.
+`honertia` package it was renamed from, to 1.16.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -31,10 +31,13 @@ bindings a test passes, which the same section notes, 1.13.2 needs
 Better Auth 1.7.16, with its security fixes, which the same section notes
 with the rows to check after it, 1.14.0 fixes two security bugs, one of
 which can need a change, which [From 1.13 to 1.14](#from-113-to-114) lists,
-and 1.15.0 fixes three more and makes mistakes that went unnoticed fail where
-they are made, which [From 1.14 to 1.15](#from-114-to-115) lists. So the
+1.15.0 fixes three more and makes mistakes that went unnoticed fail where
+they are made, which [From 1.14 to 1.15](#from-114-to-115) lists, and 1.16.0
+gives a fuzz property on D1 one database for its cases and has the lint
+rules fail a loosening nobody acknowledged, which
+[From 1.15 to 1.16](#from-115-to-116) lists. So the
 path is one jump: make the 1.0.0 changes below,
-install 1.15.0, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
+install 1.16.0, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
 shows, check the lists in [From 1.4 to 1.5](#from-14-to-15),
 [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17),
 [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19),
@@ -42,8 +45,9 @@ shows, check the lists in [From 1.4 to 1.5](#from-14-to-15),
 [From 1.10 to 1.11](#from-110-to-111),
 [From 1.11 to 1.12](#from-111-to-112),
 [From 1.12 to 1.13](#from-112-to-113),
-[From 1.13 to 1.14](#from-113-to-114) and
-[From 1.14 to 1.15](#from-114-to-115), and you are done.
+[From 1.13 to 1.14](#from-113-to-114),
+[From 1.14 to 1.15](#from-114-to-115) and
+[From 1.15 to 1.16](#from-115-to-116), and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -77,9 +81,10 @@ you installed:
 18. [From 1.12 to 1.13](#from-112-to-113)
 19. [From 1.13 to 1.14](#from-113-to-114)
 20. [From 1.14 to 1.15](#from-114-to-115)
-21. [Tooling after the upgrade](#tooling-after-the-upgrade)
-22. [Checklist](#checklist)
-23. [A worked example](#a-worked-example)
+21. [From 1.15 to 1.16](#from-115-to-116)
+22. [Tooling after the upgrade](#tooling-after-the-upgrade)
+23. [Checklist](#checklist)
+24. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -93,7 +98,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.15.0 needs:
+- **Check the peer dependencies.** 1.16.0 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -110,12 +115,12 @@ you installed:
   warning, so move each peer you use with it. Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
-- **Install 1.15.0** with the peers your application uses, removing `honertia`
+- **Install 1.16.0** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.15.0 effect@^4.0.0
+  bun add @popcomputer/web@^1.16.0 effect@^4.0.0
   bun add 'better-auth@>=1.7.16 <1.8.0'  # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
@@ -131,25 +136,26 @@ you installed:
 
 | You are on | Do these sections |
 | --- | --- |
-| `honertia` 0.1.x | [From Effect 3](#from-effect-3), [From `honertia`](#from-honertia), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.14 to 1.15](#from-114-to-115) |
-| 0.1.x to 0.3.x | [From Effect 3](#from-effect-3), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.14 to 1.15](#from-114-to-115) |
-| 0.4.x | [0.4 to 0.5](#04-to-05), [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.14 to 1.15](#from-114-to-115) |
-| 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.14 to 1.15](#from-114-to-115) |
-| 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.14 to 1.15](#from-114-to-115) |
-| 0.7.x | [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.14 to 1.15](#from-114-to-115) |
-| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.6.x | [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.7.x | [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.8.x | [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.9.x | [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.10.x | [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.11.x | [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.12.x | [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.13.x | [1.13 to 1.14](#from-113-to-114), then [1.14 to 1.15](#from-114-to-115) |
-| 1.14.x | [1.14 to 1.15](#from-114-to-115) only |
+| `honertia` 0.1.x | [From Effect 3](#from-effect-3), [From `honertia`](#from-honertia), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
+| 0.1.x to 0.3.x | [From Effect 3](#from-effect-3), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
+| 0.4.x | [0.4 to 0.5](#04-to-05), [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
+| 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
+| 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
+| 0.7.x | [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
+| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.6.x | [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.7.x | [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.8.x | [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.9.x | [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.10.x | [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.11.x | [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.12.x | [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.13.x | [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.14.x | [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
+| 1.15.x | [1.15 to 1.16](#from-115-to-116) only |
 
 `honertia` and `@popcomputer/web` share one version line, so `honertia` 0.1.45
 is "0.1.x". The 0.4 to 0.7 sections hardly apply to an application coming from
@@ -1947,6 +1953,102 @@ What else may need a look:
   `popweb-fence debt --update --allow-increase`. The package now depends on
   `web-tree-sitter` and `oxc-parser`, neither of which compiles on install.
 
+## From 1.15 to 1.16
+
+Install the newest 1.16 release:
+
+```bash
+bun add @popcomputer/web@~1.16.0
+```
+
+1.16.0 adds `testD1`'s `reusable()`, one D1 database for the cases of a
+`fuzz` property to share, and fixes what was found since 1.15.0. Three of
+the fixes need no change: a sign-up for a member's address no longer deletes
+the member when Better Auth answers it 500, a signed cookie with a `maxAge`
+signs its expiry with its value, and a browser whose User-Agent names a
+command-line or AI client gets pages again. Two can fail a commit gate that
+passed on 1.15, so check these first:
+
+- **A setting that weakens a protection.** `webLint()` turns
+  `explain-security-loosening` on as an error, where it was a warning
+  `bunx oxlint` passed, so the gate fails each such setting nobody
+  acknowledged: `public: true` on a route binding, a `settable` list,
+  `allowedOrigins`, a `bodyLimit` over 1 MiB and the others
+  [Lint rules](docs/lint-rules.md) lists. Run `bunx oxlint`, and above each
+  one the application means, say why:
+  `// oxlint-disable-next-line popcomputer-web/explain-security-loosening -- <reason>`.
+  Each comment counts as debt, which `popweb-fence debt --check` holds to the
+  ledger, so the owner records them with
+  `bunx popweb-fence debt --update --allow-increase`. Or keep the rule a
+  warning, `webLint({ 'explain-security-loosening': 'warn' })` in
+  `oxlint.config.ts`, which loosens the fence and is the owner's to decide.
+- **A debt ledger raised before the upgrade.** `popweb-fence debt --check`
+  takes a raised `lint-debt.json` only with the mark
+  `--update --allow-increase` now leaves in `.git/popweb-fence/`. A ledger
+  raised on 1.15 and not yet committed needs it again:
+  `bunx popweb-fence debt --update --allow-increase`.
+
+What else may need a look:
+
+- **A fuzz property on D1.** Its cases can share one database, emptied in
+  one round trip as each starts:
+  `const { database, empty } = await databases.reusable()`, then
+  `await empty()` before a case seeds, as
+  [A database for tests](docs/test-database.md#one-d1-database-for-a-propertys-cases)
+  shows. A property that kept a database from `fresh()`, asked for inside a
+  case, for its later cases, as `shared ??= await databases.fresh()` does,
+  takes it from `reusable()`: one from `fresh()` is finished when its case
+  ends, so its Miniflare can stop under the cases after it. A database for
+  each case still works, and
+  [Long fuzz runs](docs/fuzz-runs.md#on-d1) says when it is the one to use.
+  On PGlite the docs' examples share one database too, with
+  `docs/test-database.md`'s `reusableDatabase()`: starting PGlite took about
+  234 ms a case, against 9 ms to empty every table and seed it again.
+- **A test that hands a job a Workers execution context.** Each Workers
+  Cache purge is repeated once, ten seconds after it succeeds, in the
+  background, and `routes.run`, `routes.scheduled` and `routes.queue` wait
+  for the background work a job starts. A test whose context has
+  `cache.purge` waits for it too: give the job the test clock,
+  `testEnv(time.layer, testBindings)`, and run it through `time.settle`, as
+  `await time.settle(routes.scheduled(job)(event, env, ctx))`.
+- **A flash before a redirect to no page.** A failed form's errors and flash
+  values go to the page their redirect leads to, and a page at another
+  address takes none of them. An application that flashes before
+  redirecting to a path no page of its own renders, such as a static file,
+  sees the flash end with its minute instead of on the page after: where it
+  should show, redirect to a page.
+- **`cacheSet` given a value.** In a route or a job it stores nothing once
+  one of its tags was purged, or its key invalidated, since the request or
+  job began, where it stored the value as current. So an action that purges
+  a record's tag and then stores a value under it stores nothing. Give
+  `cacheSet` the Effect that reads the value,
+  `cacheSet(key, effect, Schema, { ttl, tags })`, which stores what it reads
+  after the purge, as [The data cache](docs/data-cache.md) shows.
+- **Workers Cache purges.** The repeat doubles the purge calls a write
+  makes, and a job that purges ends ten seconds later. A purge the API
+  refuses or fails is tried twice more, after 200 and 400 ms, before it
+  fails the work.
+- **A signed cookie an earlier release wrote.** A copy of its value kept
+  past its `maxAge` still reads, as it did, since its expiry was not signed
+  with it. Changing the cookie's secret, the owner's step, ends those.
+- **The agent fence.** The command hook asks more often: before a
+  `git merge --no-commit` that may fast-forward, which `--no-ff` rules out;
+  a `git cherry-pick` or `git revert` given `--commit` after `-n`; an option
+  of theirs it does not know; a branch moved to commits the gate may never
+  have checked, by `git reset` to a commit other than HEAD's own,
+  `update-ref`, `branch -f`, `-M` or `-C`, `switch -C` or `checkout -B`;
+  `HOME` or `XDG_CONFIG_HOME` pointing git at another global config; and a
+  program it does not know given a command the hook would not allow on its
+  own, in its arguments or whole as one argument, as
+  `op run -- wrangler deploy` and `tmux new 'cd app && wrangler deploy'`
+  are.
+- **`popweb-mutate` and a test that runs `src/` in another process.** Name
+  the test in `package.json`,
+  `"popweb-mutate": { "reachedBy": { "<glob of src/ files>": ["<test file>"] } }`,
+  and it runs against every mutant of the files the glob matches, which
+  were reported as survivors no test reaches, as
+  [Mutation testing](docs/mutation.md) explains.
+
 ## Tooling after the upgrade
 
 - **`tsconfig.json`** needs the DOM library and JSX for React pages, and
@@ -2023,8 +2125,8 @@ What else may need a look:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.15.0`.
-- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19), [From 1.9 to 1.10](#from-19-to-110), [From 1.10 to 1.11](#from-110-to-111), [From 1.11 to 1.12](#from-111-to-112), [From 1.12 to 1.13](#from-112-to-113), [From 1.13 to 1.14](#from-113-to-114) and [From 1.14 to 1.15](#from-114-to-115) that applies to your application is done.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.16.0`.
+- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19), [From 1.9 to 1.10](#from-19-to-110), [From 1.10 to 1.11](#from-110-to-111), [From 1.11 to 1.12](#from-111-to-112), [From 1.12 to 1.13](#from-112-to-113), [From 1.13 to 1.14](#from-113-to-114), [From 1.14 to 1.15](#from-114-to-115) and [From 1.15 to 1.16](#from-115-to-116) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.
