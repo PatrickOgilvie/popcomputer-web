@@ -182,13 +182,13 @@ setTimeout(() => workerData.port.postMessage('late'), 50)
  * A run in a process of its own that makes `cases` cases of `fuzz`, each with
  * a database, and prints how many `workerd` processes it held at its most.
  */
-const fuzzRun = (cases: number) => `
+const fuzzRun = (cases: number, reuse: boolean) => `
 import { spawnSync } from 'node:child_process'
 import { Arbitrary, Schema as S } from 'effect'
 import { fuzz } from ${JSON.stringify(join(import.meta.dir, '..', 'src', 'fuzz.ts'))}
 import { testD1 } from ${JSON.stringify(join(import.meta.dir, '..', 'src', 'testing.ts'))}
 
-const pool = testD1({ migrations: ${JSON.stringify(migrations)}, perMiniflare: 2 })
+const pool = testD1({ migrations: ${JSON.stringify(migrations)}, perMiniflare: 2, reuse: ${reuse} })
 const running = () => spawnSync('pgrep', ['-P', String(process.pid), 'workerd']).stdout.toString().split('\\n').filter(Boolean).length
 let peak = 0
 
@@ -377,8 +377,8 @@ describe('testD1', () => {
     }
   })
 
-  test('a fuzz case\'s databases are finished when it ends, so a run stops each Miniflare they fill', async () => {
-    const pool = testD1({ migrations, perMiniflare: 2 })
+  test('with reuse off, a fuzz case\'s databases are finished when it ends, so a run stops each Miniflare they fill', async () => {
+    const pool = testD1({ migrations, perMiniflare: 2, reuse: false })
     const taken: D1[] = []
 
     await fuzz(everyCase, async () => {
@@ -432,12 +432,21 @@ describe('testD1', () => {
     await pool.dispose()
   })
 
-  test('a run of many cases never holds more than the Miniflare it is filling', async () => {
-    const run = Bun.spawn(['bun', '-e', fuzzRun(12)], { stdout: 'pipe', stderr: 'inherit' })
+  test('with reuse off, a run of many cases never holds more than the Miniflare it is filling', async () => {
+    const run = Bun.spawn(['bun', '-e', fuzzRun(12, false)], { stdout: 'pipe', stderr: 'inherit' })
     const output = await new Response(run.stdout).text()
 
     expect(await run.exited).toBe(0)
     expect(Number(output.trim())).toBe(1)
+  }, 30_000)
+
+  test('a run of many cases holds the five databases it hands round, in the Miniflares they fill', async () => {
+    const run = Bun.spawn(['bun', '-e', fuzzRun(40, true)], { stdout: 'pipe', stderr: 'inherit' })
+    const output = await new Response(run.stdout).text()
+
+    expect(await run.exited).toBe(0)
+    // Two databases a Miniflare: five take three.
+    expect(Number(output.trim())).toBe(3)
   }, 30_000)
 
   test('a later run removes what a killed run left: its folder and its workerd', async () => {
@@ -477,6 +486,76 @@ describe('testD1', () => {
 
     await running.dispose()
   }, 30_000)
+})
+
+describe("testD1's reuse of a database whose test has ended", () => {
+  const pool = testD1({ migrations, perMiniflare: 8 })
+  const taken: D1[] = []
+
+  afterAll(() => pool.dispose())
+
+  for (const index of [0, 1, 2, 3, 4, 5]) {
+    test(`test ${index} gets a database as new, and writes to it`, async () => {
+      const database = await pool.fresh()
+
+      expect(await notes(database)).toEqual([])
+      await write(database, `test ${index}`)
+      taken.push(database)
+    })
+  }
+
+  test("the sixth test got the first's database, emptied as it was handed out, once four others waited behind it", async () => {
+    expect(new Set(taken).size).toBe(5)
+    expect(taken[5]).toBe(taken[0])
+    // Ended, and waiting: nothing empties it until it is handed out again.
+    expect(await notes(taken[1] ?? taken[0])).toEqual([{ body: 'test 1' }])
+  })
+
+  test('a case that changed its database\'s schema leaves it to no later case, which gets another', async () => {
+    const cases = testD1({ migrations, perMiniflare: 8 })
+    const handed: D1[] = []
+    const saw: string[][] = []
+
+    await fuzz(everyCase, async () => {
+      const database = await cases.fresh()
+
+      saw.push((await read(database, "SELECT name FROM sqlite_master WHERE name = 'extra'")).map((row) => String(row.name)))
+      if (handed.length === 0) await database.exec('CREATE TABLE extra (x)')
+      handed.push(database)
+
+      return undefined
+    }, { runs: 8 })
+
+    expect(saw.flat()).toEqual([])
+    // The sixth case would have had the first's: it got a sixth database.
+    expect(new Set(handed).size).toBe(6)
+    expect(handed.slice(5)).not.toContain(handed[0])
+    await cases.dispose()
+  })
+
+  test('a pool whose migrations insert rows hands out no database twice, as emptying would delete them', async () => {
+    const seeded = await mkdtemp(join(tmpdir(), 'seeded-migrations-'))
+    await writeFile(join(seeded, '0000_seeded.sql'), "CREATE TABLE notes (body TEXT NOT NULL UNIQUE);\n--> statement-breakpoint\nINSERT INTO notes (body) VALUES ('seeded');\n")
+    const cases = testD1({ migrations: seeded, perMiniflare: 8 })
+    const handed: D1[] = []
+
+    try {
+      await fuzz(everyCase, async () => {
+        const database = await cases.fresh()
+
+        expect(await notes(database)).toEqual([{ body: 'seeded' }])
+        await write(database, 'mine')
+        handed.push(database)
+
+        return undefined
+      }, { runs: 7 })
+
+      expect(new Set(handed).size).toBe(7)
+    } finally {
+      await cases.dispose()
+      await rm(seeded, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("testD1's reusable()", () => {

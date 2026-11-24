@@ -279,8 +279,8 @@ TypeScript example here and in `docs/` type-checks against the package.
     rows, `db.select().from(table)`, since the rules see only the columns
     they are given, and give `fuzz` one request for each write as `examples`,
     since chance reaches a given write too rarely to count on, as
-    `docs/fuzz-writes.md` shows. Run thousands of cases once at the end of a
-    batch of work, not after each change; a failure the input does not
+    `docs/fuzz-writes.md` shows. Run thousands of cases when the owner asks
+    for them, not after each change; a failure the input does not
     explain stops the run, so look at the machine before the route it names
     (`docs/fuzz-runs.md`). Read who
     reaches each route with `routes.access()`. Send sequences of them to one
@@ -395,10 +395,12 @@ lint message names the API to use instead; fix the code rather than
 disabling the rule, and when a line breaks one on purpose, say why in the
 disable comment.
 
-Then, on TypeScript 7 too, run `bunx popweb-mutate`: it plants small bugs in the `src/` lines a
-change touches, a flipped comparison or an Effect that swallows one of its
-own errors, and lists each one no test catches, so each needs the test rule
-12 asks for (`docs/mutation.md`).
+Run `bunx popweb-mutate`, on TypeScript 7 too, and the long fuzz run (`FUZZ_RUNS=5000`)
+only when the owner asks for them, not before every finish: each takes
+minutes. `popweb-mutate` plants small bugs in the `src/` lines a change
+touches, a flipped comparison or an Effect that swallows one of its own
+errors, and lists each one no test catches, so each needs the test rule 12
+asks for (`docs/mutation.md`).
 
 A type error
 at `routes.get(...)` names the problem: `missingServices` lists services the

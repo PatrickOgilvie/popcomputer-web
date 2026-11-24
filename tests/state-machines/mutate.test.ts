@@ -454,7 +454,7 @@ test('half', () => expect(half(4)).toBe(2))
       '1 bool: killed',
       '2 skip-guard: survived',
       '2 drop-not: killed',
-      '5 boundary: survived',
+      '5 boundary: unreached',
     ])
     expect(run.results.map((result) => result.tests)).toEqual([1, 1, 1, 0])
   } finally {

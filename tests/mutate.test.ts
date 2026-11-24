@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { changedLines, defaultWorkers, findMutants, formatReport, mutate, type Result, score } from '../src/mutate.js'
+import { Effect } from 'effect'
+import { changedLines, defaultWorkers, findMutants, formatReport, machineSlots, mutate, type Result, score } from '../src/mutate.js'
 
 const fixture = join(import.meta.dir, 'fixtures', 'mutate', 'tiny.ts')
 const effectFixture = join(import.meta.dir, 'fixtures', 'mutate', 'effect.ts')
@@ -170,18 +171,19 @@ test('mutate runs each mutant against the tests that reach it and reports the on
       '25 negate-eq === → !==: killed',
       '31 skip-guard count > 1 → false: survived',
       '31 boundary > → >=: killed',
-      '32 negate-eq === → !==: survived',
+      '32 negate-eq === → !==: unreached',
     ])
     // No test runs for line 32's, which none reaches, though the plural test
-    // reaches the line above it.
+    // reaches the line above it, so it is left out of the score.
     expect(run.results.map((result) => result.tests)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0])
-    expect(score(run.results)).toBe((100 * 10) / 14)
+    expect(score(run.results)).toBe((100 * 10) / 13)
 
     const report = formatReport(run)
-    expect(report).toContain('score 71%: 9 killed, 1 timed out, 4 survived, 1 of them on a line no test reaches')
+    expect(report).toContain('score 76%: 9 killed, 1 timed out, 3 survived\nnot scored: 1 mutant on lines no test reaches, listed at the end')
     expect(report).toContain('partial: 1 test file left out, so a mutant only it would catch shows as a survivor')
     expect(report).toContain('  src/tiny.ts:4  boundary  >= → >\n      return age >= 18')
-    expect(report).toContain('  src/tiny.ts:32  negate-eq  === → !==  (no test reaches this line)')
+    expect(report).not.toContain('src/tiny.ts:32  negate-eq')
+    expect(report.endsWith('not reached, not scored: no test runs these lines, so none ran; a test that loads them brings them into the score\n  src/tiny.ts  32')).toBe(true)
     expect(report).toContain('left out, failing with no mutant planted: tests/broken.test.ts')
     expect(report).not.toContain('crashed')
 
@@ -385,7 +387,7 @@ test('a test file package.json declares reaches a file runs against its mutants,
       '11 logic && → ||: killed',
     ])
     expect(run.results.map((result) => result.tests)).toEqual([1, 1, 1])
-    expect(formatReport(run)).not.toContain('no test reaches')
+    expect(formatReport(run)).not.toContain('not scored')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -489,4 +491,110 @@ test('changedLines reads the lines each file gained from a diff without context'
   ].join('\n')
 
   expect(changedLines(diff)).toEqual(new Map([['src/a.ts', new Set([3, 4, 19])]]))
+})
+
+/** A result with nothing but its file, lines and status set apart from a placeholder mutant. */
+const resultAt = (file: string, line: number, status: Result['status'], lastLine = line): Result => ({
+  file,
+  line,
+  lastLine,
+  start: 0,
+  end: 1,
+  original: '>',
+  replacement: '>=',
+  operator: 'boundary',
+  source: 'a > b',
+  status,
+  tests: status === 'unreached' ? 0 : 1,
+})
+
+test('the lines no test reaches are listed by file as ranges, apart from a score that leaves them out', () => {
+  const run = {
+    testFiles: 1,
+    failing: [],
+    results: [
+      resultAt('src/a.ts', 2, 'killed'),
+      resultAt('src/page.tsx', 3, 'unreached'),
+      resultAt('src/page.tsx', 4, 'unreached', 5),
+      resultAt('src/page.tsx', 9, 'unreached'),
+      resultAt('src/page.tsx', 9, 'unreached'),
+      resultAt('src/b.ts', 7, 'unreached'),
+    ],
+  }
+
+  expect(score(run.results)).toBe(100)
+
+  const report = formatReport(run)
+  expect(report).toContain('score 100%: 1 killed, 0 timed out, 0 survived\nnot scored: 5 mutants on lines no test reaches, listed at the end')
+  // Only what some test reaches is scored, by file and by operator.
+  expect(report).toContain('by file\n  src/a.ts  100%  1/1\n\nby operator\n  boundary  100%  1/1\n')
+  expect(report.endsWith('so none ran; a test that loads them brings them into the score\n  src/b.ts      7\n  src/page.tsx  3-5, 9')).toBe(true)
+})
+
+test('a run whose lines no test reaches has no score to give', () => {
+  const report = formatReport({ testFiles: 0, failing: [], results: [resultAt('src/page.tsx', 3, 'unreached')] })
+
+  expect(report).toContain('score: none, as no test reaches any of their lines')
+  expect(report).not.toContain('by file')
+})
+
+test('runs on one machine take turns in its slots, so two given one test run at a time never run tests together', async () => {
+  const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'mutate-slots-')))
+  const log = join(scratch, 'log')
+  const slow = `import { expect, test } from 'bun:test'
+import { appendFileSync } from 'node:fs'
+import { plural } from '../src/tiny'
+
+test('notes when it runs', async () => {
+  appendFileSync(${JSON.stringify(log)}, 'start\\n')
+  await Bun.sleep(150)
+  appendFileSync(${JSON.stringify(log)}, 'end\\n')
+  expect(plural(1)).toBe('one')
+})
+`
+  const repos = [0, 1].map(() => tinyRepo({ 'src/tiny.ts': readFileSync(fixture, 'utf8'), 'tests/slow.test.ts': slow }, false))
+
+  try {
+    const runs = await Promise.all(repos.map((root) => mutate({ root, files: ['src/tiny.ts'], workers: 1, timeout: 5000, slots: join(scratch, 'slots') })))
+
+    expect(runs.map((run) => run.results.some((result) => result.status === 'killed'))).toEqual([true, true])
+
+    let running = 0
+    let most = 0
+    const events = readFileSync(log, 'utf8').trim().split('\n')
+    for (const event of events) {
+      running += event === 'start' ? 1 : -1
+      most = Math.max(most, running)
+    }
+    expect(events.length).toBeGreaterThan(4)
+    expect(most).toBe(1)
+    // Every slot was given back.
+    expect(spawnSync('ls', [join(scratch, 'slots')]).stdout.toString()).toBe('')
+  } finally {
+    for (const root of repos) rmSync(root, { recursive: true, force: true })
+    rmSync(scratch, { recursive: true, force: true })
+  }
+}, 120_000)
+
+test('a slot a run that died left is taken back, and one a live run holds is waited for', async () => {
+  const slots = realpathSync(mkdtempSync(join(tmpdir(), 'mutate-slot-')))
+  const ended = spawnSync(process.execPath, ['-e', '0'])
+
+  try {
+    writeFileSync(join(slots, '0'), `${ended.pid} ${hostname()} 0`)
+    const holder = await Effect.runPromise(machineSlots(slots, 1, () => undefined).holding(Effect.sync(() => readFileSync(join(slots, '0'), 'utf8'))))
+
+    expect(holder.startsWith(`${process.pid} ${hostname()} `)).toBe(true)
+    expect(existsSync(join(slots, '0'))).toBe(false)
+
+    // A live process holds it: this one, as another run in it would.
+    writeFileSync(join(slots, '0'), `${process.pid} ${hostname()} held`)
+    const waiting = performance.now()
+    setTimeout(() => rmSync(join(slots, '0')), 400)
+    await Effect.runPromise(machineSlots(slots, 1, () => undefined).holding(Effect.void))
+
+    expect(performance.now() - waiting).toBeGreaterThanOrEqual(350)
+  } finally {
+    rmSync(slots, { recursive: true, force: true })
+  }
 })

@@ -29,13 +29,21 @@ and constraint errors behave the same:
   `[test] preload` names: a Miniflare left running keeps its `workerd`
   process alive after `bun test` exits, and Bun shares modules between test
   files, so an `afterAll` in the module that creates the databases stops them
-  while other files still use them. A database a `fuzz` case asked for with
-  `fresh()` is finished when the case ends, and a Miniflare stops once it has
-  handed out all of its and they are finished, so a run of thousands holds
-  one `workerd` at a time, and the last stops at `dispose()`. A case must
-  keep none of those for a later one: cases that share a database take it
-  from `reusable()`, [below](#one-d1-database-for-a-propertys-cases). A
-  database made outside a case, as in `beforeAll`, stays until `dispose()`. A
+  while other files still use them. A database a test or a `fuzz` case
+  asked for with `fresh()` is the pool's again when it ends, and a later
+  `fresh()` gets it emptied, as `reusable()`'s `empty()` empties one, once
+  four others wait behind it: about 10 ms where migrating another took about
+  175 on an application's 35 tables, and a run of thousands of cases holds
+  five databases. A pool whose migrations insert rows reuses none, since
+  emptying would delete them, and one whose schema a test changed, or that a
+  table refuses to empty, is finished and another migrated. Turn reuse off
+  with `testD1({ migrations, reuse: false })`: then a database a `fuzz` case
+  asked for is finished when the case ends, a Miniflare stops once it has
+  handed out all of its and they are finished, and one a plain test asked
+  for stays until `dispose()`. A test or case must keep none of its
+  databases for a later one: cases that share a database take it from
+  `reusable()`, [below](#one-d1-database-for-a-propertys-cases). A database
+  made outside a test, as in `beforeAll`, stays until `dispose()`. A
   loop of your own that makes thousands may call `dispose()` between rounds:
   the next `fresh()` starts again. A run killed before it could `dispose()`
   leaves its `workerd` and its folder in the temporary directory, which the

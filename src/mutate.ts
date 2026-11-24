@@ -25,8 +25,11 @@
  * declares reach its file where coverage cannot see, in copies of a snapshot
  * of the working tree, each put back before every test run, so the checkout
  * itself is never edited and no run reads what another left. A mutant whose
- * tests fail is killed only when the files that failed pass without it. Exits
- * non-zero only when the score is below --fail-under.
+ * tests fail is killed only when the files that failed pass without it. A
+ * mutant on a line no test reaches runs nothing: it is listed apart, by line,
+ * and left out of the score. The runs on a machine share its --workers, each
+ * test run taking a turn, so runs side by side do not starve each other.
+ * Exits non-zero only when the score is below --fail-under.
  */
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import {
@@ -44,7 +47,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { availableParallelism, constants as system, tmpdir, totalmem } from 'node:os'
+import { availableParallelism, constants as system, hostname, tmpdir, totalmem } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { Data, Effect, Schema as S } from 'effect'
@@ -108,13 +111,15 @@ export interface Mutant {
 /**
  * What a mutant's tests said of it: `crashed` when they gave no answer, as
  * when a signal not its timeout ended them, or the files that failed fail
- * with no mutant planted too. A crash is not counted as caught.
+ * with no mutant planted too. A crash is not counted as caught. `unreached`
+ * when no test reaches its line, so none ran: it is listed apart and left
+ * out of the score, which says what the tests that run a line catch.
  */
-export type Status = 'killed' | 'survived' | 'timed out' | 'crashed'
+export type Status = 'killed' | 'survived' | 'timed out' | 'crashed' | 'unreached'
 
 export interface Result extends Mutant {
   readonly status: Status
-  /** The test files it ran against; 0 when no test reaches its line. */
+  /** The test files it ran against; 0, and `unreached`, when no test reaches its line. */
   readonly tests: number
   /** Why a crashed mutant's tests gave no answer. */
   readonly crash?: string
@@ -135,9 +140,12 @@ export interface Options {
   readonly files?: readonly string[]
   /** Mutate the src/ lines changed since this ref; HEAD when no files are given. */
   readonly base?: string
+  /** Test runs at once on this machine, other runs' included; by default one for each 4 GiB of memory, leaving a core free. */
   readonly workers?: number
   /** Milliseconds a mutant's tests may take; by default twice their unmutated time, plus 10 seconds. */
   readonly timeout?: number
+  /** The directory every run on the machine takes its test runs' turns in; `popweb-mutate.slots` in the temporary directory by default, apart from the runs' own `popweb-mutate-` workspaces. */
+  readonly slots?: string
   readonly log?: (line: string) => void
 }
 
@@ -839,6 +847,123 @@ export function defaultWorkers(cores: number, memory: number): number {
   return Math.max(1, Math.min(cores - 1, Math.floor(memory / MEMORY_PER_WORKER)))
 }
 
+/** A slot's file another host wrote, whose process this one cannot ask after, counts as left once it is this old. */
+const FOREIGN_SLOT_MILLIS = 15 * 60 * 1000
+
+/** How long a test run waits for a slot before the run says it is waiting. */
+const SLOT_PATIENCE_MILLIS = 2000
+
+/** Whether a process on this host is running: one that only refuses the signal is. */
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return !(error instanceof Error && 'code' in error && error.code === 'ESRCH')
+  }
+}
+
+/** The machine's test-run slots, which every run takes turns in. */
+export interface Slots {
+  /** Run `effect` once one of the machine's slots is free, holding it until the effect ends. */
+  readonly holding: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+  /** Give back every slot this run still holds, as when it is interrupted. */
+  readonly releaseAll: () => void
+}
+
+/**
+ * Slots `0` to `count - 1` in `directory`, one file each, so the runs on a
+ * machine share its workers between them rather than each taking them all: a
+ * run whose tests start while two others run waits its turn instead of
+ * starving them all of memory, which crashes their mutants. A file names the
+ * process that holds it, so a slot a killed run left is taken back. Where the
+ * directory cannot be made, the run takes no turns, as before.
+ */
+export function machineSlots(directory: string, count: number, log: (line: string) => void): Slots {
+  const host = hostname()
+  // Each slot this run holds, with what its file says, so a run beside it in
+  // the same process keeps its own.
+  const held = new Map<string, string>()
+  const token = (nonce: number) => `${process.pid} ${host} ${nonce}`
+  let nonces = 0
+
+  try {
+    mkdirSync(directory, { recursive: true })
+  } catch (error) {
+    log(`slots: ${directory} cannot be made, so this run does not share the machine with others: ${error instanceof Error ? error.message : String(error)}`)
+    return { holding: (effect) => effect, releaseAll: () => undefined }
+  }
+
+  /** Whoever holds a slot's file is gone: a process of this host's that has ended, or another host's after a long while. */
+  const left = (path: string): boolean => {
+    let holder: string
+    try {
+      holder = readFileSync(path, 'utf8')
+    } catch {
+      // Removed meanwhile, so it is free.
+      return true
+    }
+    const [pid, from] = holder.split(' ')
+    if (from === host) return !isRunning(Number(pid))
+    try {
+      return Date.now() - lstatSync(path).mtimeMs > FOREIGN_SLOT_MILLIS
+    } catch {
+      return true
+    }
+  }
+
+  /** Take a free slot, or one whose holder is gone; undefined when every one is held. */
+  const take = (): { readonly path: string; readonly token: string } | undefined => {
+    for (let slot = 0; slot < count; slot++) {
+      const path = join(directory, String(slot))
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const mine = token(nonces++)
+        try {
+          writeFileSync(path, mine, { flag: 'wx' })
+          held.set(path, mine)
+          return { path, token: mine }
+        } catch (error) {
+          if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error
+          if (!left(path)) break
+          rmSync(path, { force: true })
+        }
+      }
+    }
+    return undefined
+  }
+
+  /** Give a slot back, unless its holder is no longer this run, as after another run took back a slot it thought left. */
+  const release = (path: string, mine: string) => {
+    held.delete(path)
+    try {
+      if (readFileSync(path, 'utf8') === mine) rmSync(path, { force: true })
+    } catch {
+      // Already gone.
+    }
+  }
+
+  let told = false
+  const waitForSlot = Effect.gen(function* () {
+    const waiting = Date.now()
+    for (;;) {
+      const slot = take()
+      if (slot !== undefined) return slot
+      if (!told && Date.now() - waiting > SLOT_PATIENCE_MILLIS) {
+        told = true
+        log(`slots: waiting for other popweb-mutate runs on this machine, which share its ${count} test runs at once`)
+      }
+      yield* Effect.sleep('200 millis')
+    }
+  })
+
+  return {
+    holding: (effect) => Effect.flatMap(waitForSlot, (slot) => Effect.ensuring(effect, Effect.sync(() => release(slot.path, slot.token)))),
+    releaseAll: () => {
+      for (const [path, mine] of [...held]) release(path, mine)
+    },
+  }
+}
+
 /** The signals that end a run, which first kills its test runs and removes its workspace. */
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
 
@@ -890,9 +1015,13 @@ const runMutants = (options: Options) =>
       return [...mutated].some((each) => closure.has(each))
     })
 
-    const workers = Math.max(1, Math.min(options.workers ?? defaultWorkers(availableParallelism(), totalmem()), Math.max(candidates.length, mutants.length)))
+    // The machine's test runs at once, which every run on it shares.
+    const machine = options.workers ?? defaultWorkers(availableParallelism(), totalmem())
+    const workers = Math.max(1, Math.min(machine, Math.max(candidates.length, mutants.length)))
 
     return yield* Effect.scoped(Effect.gen(function* () {
+      const slots = machineSlots(options.slots ?? join(realpathSync(tmpdir()), 'popweb-mutate.slots'), machine, log)
+      yield* Effect.addFinalizer(() => Effect.sync(slots.releaseAll))
       const space = yield* acquireWorkspace
       const tree = snapshot(root, join(space.path, 'base'), listed, read.sources)
       const copies = Array.from({ length: workers }, (_, index) => copyAt(join(space.path, `w${index}`)))
@@ -915,7 +1044,7 @@ const runMutants = (options: Options) =>
       const counted = new Map([...mutated].map((file) => [file, new Set<number>()]))
       const sizeOf = (test: string) => readFileSync(join(tree.base, test)).length
       const measure = (test: string, copy: Copy) =>
-        Effect.gen(function* () {
+        slots.holding(Effect.gen(function* () {
           restore(tree, copy)
           rmSync(copy.coverage, { recursive: true, force: true })
           const started = performance.now()
@@ -946,7 +1075,7 @@ const runMutants = (options: Options) =>
           }
 
           coverage.set(test, { passed: passed(ending), ms, hits })
-        })
+        }))
       yield* pool([...candidates].sort((a, b) => sizeOf(b) - sizeOf(a)), measure)
 
       // A test file can fail beside the others for the memory it lost to them,
@@ -1011,23 +1140,26 @@ const runMutants = (options: Options) =>
       const results: Result[] = []
       yield* pool(jobs, ({ mutant, index, tests, cost }, copy) =>
         Effect.gen(function* () {
+          // No test runs it, so it takes no turn on the machine.
           if (tests.length === 0) {
-            results[index] = { ...mutant, status: 'survived', tests: 0 }
+            results[index] = { ...mutant, status: 'unreached', tests: 0 }
             return
           }
 
           const timeout = options.timeout ?? 10_000 + 2 * cost
-          restore(tree, copy)
-          writeFileSync(join(copy.path, mutant.file), plant(read.sources.get(mutant.file), mutant))
-          rmSync(copy.report, { force: true })
-          const ending = yield* runTests(space, copy, mutantRun(copy, tests), timeout)
-
-          const control = Effect.suspend(() => {
-            const failed = failedTests(copy, tests)
+          results[index] = yield* slots.holding(Effect.gen(function* () {
             restore(tree, copy)
-            return runTests(space, copy, mutantRun(copy, failed), timeout)
-          })
-          results[index] = { ...mutant, tests: tests.length, ...(yield* verdict(ending, control)) }
+            writeFileSync(join(copy.path, mutant.file), plant(read.sources.get(mutant.file), mutant))
+            rmSync(copy.report, { force: true })
+            const ending = yield* runTests(space, copy, mutantRun(copy, tests), timeout)
+
+            const control = Effect.suspend(() => {
+              const failed = failedTests(copy, tests)
+              restore(tree, copy)
+              return runTests(space, copy, mutantRun(copy, failed), timeout)
+            })
+            return { ...mutant, tests: tests.length, ...(yield* verdict(ending, control)) }
+          }))
         }))
 
       return { results, testFiles: candidates.length, failing }
@@ -1050,9 +1182,26 @@ export async function mutate(options: Options): Promise<Run> {
 /** Whether a mutant's tests caught it: they failed on it, or never finished. */
 const caught = (result: Result) => result.status === 'killed' || result.status === 'timed out'
 
-/** Caught mutants, killed or timed out, as a share of all of them. */
+/** Whether some test reaches a mutant's line, so it counts towards the score. */
+const reached = (result: Result) => result.status !== 'unreached'
+
+/** Caught mutants, killed or timed out, as a share of those some test reaches. */
 export function score(results: readonly Result[]): number {
-  return results.length === 0 ? 100 : (100 * results.filter(caught).length) / results.length
+  const scored = results.filter(reached)
+  return scored.length === 0 ? 100 : (100 * scored.filter(caught).length) / scored.length
+}
+
+/** Line numbers as ranges, `3-5, 9`. */
+function ranges(lines: Iterable<number>): string {
+  const sorted = [...new Set(lines)].sort((a, b) => a - b)
+  const parts: string[] = []
+  for (let first = 0; first < sorted.length;) {
+    let last = first
+    while (last + 1 < sorted.length && sorted[last + 1] === sorted[last] + 1) last++
+    parts.push(last === first ? `${sorted[first]}` : `${sorted[first]}-${sorted[last]}`)
+    first = last + 1
+  }
+  return parts.join(', ')
 }
 
 const shorten = (text: string, length = 60) => {
@@ -1071,37 +1220,42 @@ function table(results: readonly Result[], key: (result: Result) => string): str
   })
 }
 
-/** The run as a person reads it: the score, by file and by operator, then each survivor. */
+/**
+ * The run as a person reads it: the score of the mutants some test reaches,
+ * by file and by operator, then each survivor, and the lines no test reaches,
+ * as ranges by file, apart from the score.
+ */
 export function formatReport(run: Run): string {
   const { results } = run
   if (results.length === 0) return 'No mutants: no src/ lines to mutate.'
 
+  const scored = results.filter(reached)
   const count = (status: Status) => results.filter((result) => result.status === status).length
   const survivors = results.filter((result) => result.status === 'survived')
   const timedOut = results.filter((result) => result.status === 'timed out')
   const crashed = results.filter((result) => result.status === 'crashed')
-  const unreached = survivors.filter((survivor) => survivor.tests === 0).length
+  const unreached = results.filter((result) => !reached(result))
   const files = [...new Set(results.map((result) => result.file))]
   const left = run.failing.length
 
   const lines = [
     `${results.length} mutants in ${files.length === 1 ? files[0] : `${files.length} files`}, against the ${run.testFiles} test files that load ${files.length === 1 ? 'it' : 'them'}`,
     '',
-    `score ${Math.floor(score(results))}%: ${count('killed')} killed, ${count('timed out')} timed out, ${crashed.length === 0 ? '' : `${crashed.length} crashed, `}${count('survived')} survived${unreached === 0 ? '' : `, ${unreached} of them on ${unreached === 1 ? 'a line' : 'lines'} no test reaches`}`,
+    scored.length === 0
+      ? 'score: none, as no test reaches any of their lines'
+      : `score ${Math.floor(score(results))}%: ${count('killed')} killed, ${count('timed out')} timed out, ${crashed.length === 0 ? '' : `${crashed.length} crashed, `}${count('survived')} survived`,
+    ...(unreached.length === 0 ? [] : [`not scored: ${unreached.length} ${unreached.length === 1 ? 'mutant' : 'mutants'} on lines no test reaches, listed at the end`]),
     ...(left === 0 ? [] : [`partial: ${left === 1 ? '1 test file left out, so a mutant only it would catch' : `${left} test files left out, so a mutant only they would catch`} shows as a survivor`]),
-    '',
-    'by file',
-    ...table(results, (result) => result.file),
-    '',
-    'by operator',
-    ...table(results, (result) => result.operator),
   ]
+
+  if (scored.length > 0) {
+    lines.push('', 'by file', ...table(scored, (result) => result.file), '', 'by operator', ...table(scored, (result) => result.operator))
+  }
 
   if (survivors.length > 0) {
     lines.push('', 'survived: no test fails when this line changes')
     for (const survivor of survivors) {
-      const unreached = survivor.tests === 0 ? '  (no test reaches this line)' : ''
-      lines.push(`  ${survivor.file}:${survivor.line}  ${survivor.operator}  ${edit(survivor)}${unreached}`, `      ${shorten(survivor.source, 110)}`)
+      lines.push(`  ${survivor.file}:${survivor.line}  ${survivor.operator}  ${edit(survivor)}`, `      ${shorten(survivor.source, 110)}`)
     }
   }
 
@@ -1117,6 +1271,16 @@ export function formatReport(run: Run): string {
 
   if (run.failing.length > 0) {
     lines.push('', `left out, failing with no mutant planted: ${run.failing.join(', ')}`)
+  }
+
+  if (unreached.length > 0) {
+    const byFile = new Map<string, number[]>()
+    for (const result of unreached) {
+      for (let line = result.line; line <= result.lastLine; line++) push(byFile, result.file, line)
+    }
+    const width = Math.max(...[...byFile.keys()].map((file) => file.length))
+    lines.push('', 'not reached, not scored: no test runs these lines, so none ran; a test that loads them brings them into the score')
+    for (const [file, numbers] of [...byFile].sort(([a], [b]) => a.localeCompare(b))) lines.push(`  ${file.padEnd(width)}  ${ranges(numbers)}`)
   }
 
   return lines.join('\n')

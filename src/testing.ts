@@ -16,7 +16,7 @@ import { TestClock } from 'effect/testing'
 import { AuthUserService, type AuthUser, type DatabaseType, type DefaultAuthUser } from './effect/services.js'
 import type { Registered } from './effect/register.js'
 import { attachTestDatabase, attachTestLayer } from './effect/test-env.js'
-import { whenTestCaseEnds } from './test-case.js'
+import { whenTestCaseEnds, whenTestEnds } from './test-case.js'
 import { held, receive, sent, type CookieJar } from './cookie-jar.js'
 import { hostTag, POOL_DIRECTORY, removePoolDirectory, sweepAbandonedPools } from './test-pools.js'
 import type { PageName } from './effect/pages.js'
@@ -169,6 +169,18 @@ export interface TestD1Options {
   readonly migrations: string
   /** How many databases one Miniflare holds before another starts. Default 64. */
   readonly perMiniflare?: number
+  /**
+   * Hand a later `fresh()` the database of a test or `fuzz` case that has
+   * ended, emptied as `reusable()`'s `empty()` empties one, rather than
+   * migrate another: about 10 ms where a migration of an application's 35
+   * tables takes about 175. Default true. A pool whose migrations insert rows
+   * never reuses one, since emptying would delete them, nor does it hand out
+   * one whose schema a test changed, or that a table refuses to empty: each
+   * of those is finished and another migrated. A database waits for four
+   * others to end before it is handed out again, so work a finished test left
+   * running still writes where no test reads.
+   */
+  readonly reuse?: boolean
 }
 
 /** One D1 database for the cases of a `fuzz` property to share, and how to empty it as each case starts. */
@@ -197,9 +209,13 @@ export interface TestD1Reusable {
 /** Fresh D1 databases for tests, each in a Miniflare that `dispose()` stops. */
 export interface TestD1 {
   /**
-   * A newly created, migrated and empty D1 database, typed as the application's
-   * D1 binding. One a `fuzz` case asks for is finished when the case ends, and
-   * its Miniflare stops once it has no other to hand out or still in use.
+   * A migrated and empty D1 database, typed as the application's D1 binding.
+   * One a test or `fuzz` case asks for is the pool's again when it ends: a
+   * later `fresh()` gets it emptied, as new, unless `reuse` is off. When it
+   * is, or the pool cannot reuse it, one a `fuzz` case asked for is finished
+   * when the case ends, and its Miniflare stops once it has no other to hand
+   * out or still in use. One asked for outside a test, or in a test while the
+   * pool reuses none, is kept until `dispose()`.
    */
   fresh(): Promise<RegisteredD1>
   /**
@@ -367,6 +383,31 @@ const SchemaRead = S.Tuple([
 ])
 
 /**
+ * A database's schema as one string, D1's own tables left out, so a database
+ * whose schema a test changed is not handed out again as new.
+ */
+const SCHEMA_PRINT = String.raw`SELECT coalesce(group_concat(entry, char(10)), '') AS schema FROM (SELECT type || ' ' || name || ' ' || coalesce(sql, '') AS entry FROM sqlite_master WHERE name NOT LIKE '\_cf\_%' ESCAPE '\' ORDER BY type, name)`
+
+/** What Miniflare's D1 answers `SCHEMA_PRINT` with, alone or first in a batch. */
+const SchemaPrint = S.Struct({ results: S.Array(S.Struct({ schema: S.String })) })
+
+/** What Miniflare's D1 answers a batch of `SELECT count(*) AS rows` with. */
+const RowCounts = S.Array(S.Struct({ results: S.Array(S.Struct({ rows: S.Number })) }))
+
+/**
+ * How many databases whose test has ended wait before the longest waiting is
+ * handed out again: work a test left running, which it should not, then
+ * writes where no test reads, as it did when each test's database was its own.
+ */
+const REUSE_AFTER = 4
+
+/** What a pool that hands out emptied databases read from the first one it migrated. */
+interface Reuse {
+  readonly schema: typeof SchemaRead.Type
+  readonly print: string
+}
+
+/**
  * The statements that empty a database, in the order one batch runs them.
  * The foreign keys are checked when the batch commits, by when no row is
  * left to break one, so the tables go in any order, and ON DELETE RESTRICT
@@ -453,6 +494,72 @@ export function testD1(options: TestD1Options): TestD1 {
     if (running.finished === names.length && started.has(running)) await stop(running)
   }
 
+  // Whether the pool hands out emptied databases, read from the first one it
+  // migrated, and those whose test or case has ended, the longest ended first.
+  let reuse: Promise<Reuse | undefined> | undefined
+  const spares: Array<{ readonly database: TestD1Database; readonly running: StartedMiniflare }> = []
+  // Each spare's emptying batch, prepared the first time it is handed out
+  // again, since each prepare crosses to workerd.
+  const emptiers = new WeakMap<TestD1Database, ReadonlyArray<unknown>>()
+
+  /**
+   * Whether a newly migrated database can stand for the next: unless `reuse`
+   * is off, or the migrations inserted rows, which emptying would delete, the
+   * tables and triggers to empty it by, and its schema to compare with.
+   */
+  const readReuse = async (database: TestD1Database): Promise<Reuse | undefined> => {
+    if (options.reuse === false) return undefined
+
+    const [tables, triggers, printed] = S.decodeUnknownSync(S.Tuple([S.Unknown, S.Unknown, SchemaPrint]))(
+      await database.batch([...SCHEMA_READS, SCHEMA_PRINT].map((sql) => database.prepare(sql))),
+    )
+    const schema = S.decodeUnknownSync(SchemaRead)([tables, triggers])
+    const emptiable = schema[0].results.map((table) => table.name)
+    const counts = emptiable.length === 0
+      ? []
+      : S.decodeUnknownSync(RowCounts)(await database.batch(emptiable.map((table) => database.prepare(`SELECT count(*) AS rows FROM ${quoted(table)}`))))
+
+    if (counts.some((count) => (count.results[0]?.rows ?? 0) > 0)) return undefined
+
+    return { schema, print: printed.results[0]?.schema ?? '' }
+  }
+
+  /** Empty a spare, as `reusable()`'s `empty()` does, and whether it now stands for a new one: false when its schema changed, or a table refused. */
+  const emptied = async (database: TestD1Database, reusing: Reuse): Promise<boolean> => {
+    try {
+      let batch = emptiers.get(database)
+
+      if (batch === undefined) {
+        batch = [SCHEMA_PRINT, ...emptyingStatements(reusing.schema)].map((sql) => database.prepare(sql))
+        emptiers.set(database, batch)
+      }
+
+      const [printed] = S.decodeUnknownSync(S.NonEmptyArray(S.Unknown))(await database.batch(batch))
+
+      return S.decodeUnknownSync(SchemaPrint)(printed).results[0]?.schema === reusing.print
+    } catch {
+      return false
+    }
+  }
+
+  /** A test or case that took a database has ended: keep it for a later `fresh()`, or finish it. */
+  const release = async (running: StartedMiniflare, database: TestD1Database | undefined): Promise<void> => {
+    if (database !== undefined && started.has(running) && (await reuse) !== undefined) {
+      spares.push({ database, running })
+
+      return
+    }
+
+    await finish(running)
+  }
+
+  /** Have a database released when the case or test that took it ends: a `fuzz` case's, or, where the pool reuses databases, a `bun test` test's. */
+  const releaseWhenDone = async (running: StartedMiniflare, database: TestD1Database): Promise<void> => {
+    const end = () => release(running, database)
+
+    if (!whenTestCaseEnds(end) && (await reuse) !== undefined) await whenTestEnds(end)
+  }
+
   /**
    * Take one of a Miniflare's databases and migrate it. One a case asked for
    * is finished when the case ends, unless it is `shared`: that one is never
@@ -481,7 +588,10 @@ export function testD1(options: TestD1Options): TestD1 {
     const name = names[running.next] ?? names[0] ?? 'TEST_D1_0'
     running.next += 1
 
-    if (!shared) whenTestCaseEnds(() => finish(running))
+    // Asked for in a case, which may end before the database is ready: that
+    // end finishes it, as one never handed out.
+    let ready: TestD1Database | undefined
+    const inCase = !shared && whenTestCaseEnds(() => release(running, ready))
 
     const database = await running.miniflare.getD1Database(name)
     const migrations = await (statements ??= kept(readMigrations(options.migrations), () => {
@@ -489,8 +599,36 @@ export function testD1(options: TestD1Options): TestD1 {
     }))
 
     if (migrations.length > 0) await database.batch(migrations.map((sql) => database.prepare(sql)))
+    if (shared) return database
+
+    // Read from the first database migrated, before any test writes to it; a
+    // read that fails reuses none.
+    if ((await (reuse ??= readReuse(database).catch(() => undefined))) !== undefined && !inCase) {
+      await whenTestEnds(() => release(running, database))
+    }
+    ready = database
 
     return database
+  }
+
+  /** The longest waiting spare, emptied, once more than `REUSE_AFTER` wait; one that cannot stand for a new database is finished. */
+  const spare = async (): Promise<TestD1Database | undefined> => {
+    const reusing = await reuse
+
+    while (reusing !== undefined && spares.length > REUSE_AFTER) {
+      const waiting = spares.shift()
+
+      if (waiting === undefined) break
+      if (await emptied(waiting.database, reusing)) {
+        await releaseWhenDone(waiting.running, waiting.database)
+
+        return waiting.database
+      }
+
+      await finish(waiting.running)
+    }
+
+    return undefined
   }
 
   /** Begin what `dispose()` waits for. One asked for while the pool stops starts once it has stopped. */
@@ -510,7 +648,7 @@ export function testD1(options: TestD1Options): TestD1 {
 
   return {
     fresh() {
-      return begin(async () => asBinding(await open(false)))
+      return begin(async () => asBinding((await spare()) ?? await open(false)))
     },
     reusable() {
       return begin(async () => {
@@ -542,6 +680,9 @@ export function testD1(options: TestD1Options): TestD1 {
         current = undefined
         directory = undefined
         statements = undefined
+        // The next pool reads its migrations again, so it decides again too.
+        reuse = undefined
+        spares.length = 0
         await Promise.all([...started].map(stop))
 
         while (stopping.size > 0) await Promise.allSettled(stopping)

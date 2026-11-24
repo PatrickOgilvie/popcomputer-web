@@ -122,8 +122,8 @@ describe("the pool's directories", () => {
 
 describe('testD1', () => {
   const pools: Array<ReturnType<typeof testD1>> = []
-  const pool = (migrations = fixtureMigrations, perMiniflare = 2) => {
-    const made = testD1({ migrations, perMiniflare })
+  const pool = (migrations = fixtureMigrations, perMiniflare = 2, reuse = true) => {
+    const made = testD1({ migrations, perMiniflare, reuse })
 
     pools.push(made)
 
@@ -215,8 +215,8 @@ describe('testD1', () => {
     await first
   }, 60_000)
 
-  test('M52.T32: a database a case asked for without waiting is finished when the case ends, so its Miniflare stops', async () => {
-    const d1 = pool(fixtureMigrations, 2)
+  test('M52.T32: with reuse off, a database a case asked for without waiting is finished when the case ends, so its Miniflare stops', async () => {
+    const d1 = pool(fixtureMigrations, 2, false)
     let second: unknown
 
     await inTestCase(() => {
