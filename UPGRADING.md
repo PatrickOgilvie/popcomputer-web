@@ -1,7 +1,7 @@
-# Upgrading to @popcomputer/web 1.16.0
+# Upgrading to @popcomputer/web 1.17.0
 
 This guide takes an application on any release before 1.0.0, or on the
-`honertia` package it was renamed from, to 1.16.0.
+`honertia` package it was renamed from, to 1.17.0.
 
 1.1.0, 1.2.0, 1.2.2, 1.2.3, 1.2.4 and 1.3.0 change nothing that an application
 written for 1.0.0 needs to change, and the `1.0.0-next` pre-releases were never
@@ -32,12 +32,15 @@ Better Auth 1.7.16, with its security fixes, which the same section notes
 with the rows to check after it, 1.14.0 fixes two security bugs, one of
 which can need a change, which [From 1.13 to 1.14](#from-113-to-114) lists,
 1.15.0 fixes three more and makes mistakes that went unnoticed fail where
-they are made, which [From 1.14 to 1.15](#from-114-to-115) lists, and 1.16.0
+they are made, which [From 1.14 to 1.15](#from-114-to-115) lists, 1.16.0
 gives a fuzz property on D1 one database for its cases and has the lint
 rules fail a loosening nobody acknowledged, which
-[From 1.15 to 1.16](#from-115-to-116) lists. So the
+[From 1.15 to 1.16](#from-115-to-116) lists, and 1.17.0 makes test runs
+faster by default, reusing a finished test's D1 database and scoring
+`popweb-mutate` on the lines tests reach, which
+[From 1.16 to 1.17](#from-116-to-117) lists. So the
 path is one jump: make the 1.0.0 changes below,
-install 1.16.0, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
+install 1.17.0, give each binding its option as [From 1.3 to 1.4](#from-13-to-14)
 shows, check the lists in [From 1.4 to 1.5](#from-14-to-15),
 [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17),
 [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19),
@@ -46,8 +49,9 @@ shows, check the lists in [From 1.4 to 1.5](#from-14-to-15),
 [From 1.11 to 1.12](#from-111-to-112),
 [From 1.12 to 1.13](#from-112-to-113),
 [From 1.13 to 1.14](#from-113-to-114),
-[From 1.14 to 1.15](#from-114-to-115) and
-[From 1.15 to 1.16](#from-115-to-116), and you are done.
+[From 1.14 to 1.15](#from-114-to-115),
+[From 1.15 to 1.16](#from-115-to-116) and
+[From 1.16 to 1.17](#from-116-to-117), and you are done.
 
 The framework's own documents back every step here. They ship in the package,
 so the installed copies in `node_modules/@popcomputer/web/` match the version
@@ -82,9 +86,10 @@ you installed:
 19. [From 1.13 to 1.14](#from-113-to-114)
 20. [From 1.14 to 1.15](#from-114-to-115)
 21. [From 1.15 to 1.16](#from-115-to-116)
-22. [Tooling after the upgrade](#tooling-after-the-upgrade)
-23. [Checklist](#checklist)
-24. [A worked example](#a-worked-example)
+22. [From 1.16 to 1.17](#from-116-to-117)
+23. [Tooling after the upgrade](#tooling-after-the-upgrade)
+24. [Checklist](#checklist)
+25. [A worked example](#a-worked-example)
 
 ## Before you start
 
@@ -98,7 +103,7 @@ you installed:
   your application's own Effect code moves at the same time as the framework.
   Work on a branch, and follow the order in
   [Together with the framework](#together-with-the-framework).
-- **Check the peer dependencies.** 1.16.0 needs:
+- **Check the peer dependencies.** 1.17.0 needs:
 
   | Package | Range | Needed when |
   | --- | --- | --- |
@@ -115,12 +120,12 @@ you installed:
   warning, so move each peer you use with it. Each floor is the first release with the security fixes for the parts the
   package uses. Hono 5 and Drizzle 1.0 are outside the ranges.
 
-- **Install 1.16.0** with the peers your application uses, removing `honertia`
+- **Install 1.17.0** with the peers your application uses, removing `honertia`
   if you are on it:
 
   ```bash
   bun remove honertia                    # if you are on honertia
-  bun add @popcomputer/web@^1.16.0 effect@^4.0.0
+  bun add @popcomputer/web@^1.17.0 effect@^4.0.0
   bun add 'better-auth@>=1.7.16 <1.8.0'  # if you use Better Auth
   bun add 'drizzle-orm@>=0.45.2 <1.0.0'  # if you use Drizzle
   ```
@@ -136,26 +141,27 @@ you installed:
 
 | You are on | Do these sections |
 | --- | --- |
-| `honertia` 0.1.x | [From Effect 3](#from-effect-3), [From `honertia`](#from-honertia), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
-| 0.1.x to 0.3.x | [From Effect 3](#from-effect-3), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
-| 0.4.x | [0.4 to 0.5](#04-to-05), [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
-| 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
-| 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
-| 0.7.x | [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.15 to 1.16](#from-115-to-116) |
-| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.6.x | [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.7.x | [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.8.x | [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.9.x | [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.10.x | [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.11.x | [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.12.x | [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.13.x | [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.14.x | [1.14 to 1.15](#from-114-to-115), then [1.15 to 1.16](#from-115-to-116) |
-| 1.15.x | [1.15 to 1.16](#from-115-to-116) only |
+| `honertia` 0.1.x | [From Effect 3](#from-effect-3), [From `honertia`](#from-honertia), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.16 to 1.17](#from-116-to-117) |
+| 0.1.x to 0.3.x | [From Effect 3](#from-effect-3), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.16 to 1.17](#from-116-to-117) |
+| 0.4.x | [0.4 to 0.5](#04-to-05), [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.16 to 1.17](#from-116-to-117) |
+| 0.5.x | [0.5 to 0.6](#05-to-06), [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.16 to 1.17](#from-116-to-117) |
+| 0.6.x | [0.6 to 0.7](#06-to-07), then [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.16 to 1.17](#from-116-to-117) |
+| 0.7.x | [0.7 to 1.0](#from-07-to-10), and each section from [1.3 to 1.4](#from-13-to-14) to [1.16 to 1.17](#from-116-to-117) |
+| 1.0.x to 1.2.x | [1.0 to 1.3](#from-10-to-13), [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.3.x | [1.3 to 1.4](#from-13-to-14), [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.4.x | [1.4 to 1.5](#from-14-to-15), [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.5.x | [1.5 to 1.6](#from-15-to-16), [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.6.x | [1.6 to 1.7](#from-16-to-17), [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.7.x | [1.7 to 1.8](#from-17-to-18), [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.8.x | [1.8 to 1.9](#from-18-to-19), [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.9.x | [1.9 to 1.10](#from-19-to-110), [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.10.x | [1.10 to 1.11](#from-110-to-111), [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.11.x | [1.11 to 1.12](#from-111-to-112), [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.12.x | [1.12 to 1.13](#from-112-to-113), [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.13.x | [1.13 to 1.14](#from-113-to-114), [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.14.x | [1.14 to 1.15](#from-114-to-115), [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.15.x | [1.15 to 1.16](#from-115-to-116), then [1.16 to 1.17](#from-116-to-117) |
+| 1.16.x | [1.16 to 1.17](#from-116-to-117) only |
 
 `honertia` and `@popcomputer/web` share one version line, so `honertia` 0.1.45
 is "0.1.x". The 0.4 to 0.7 sections hardly apply to an application coming from
@@ -2049,6 +2055,39 @@ What else may need a look:
   were reported as survivors no test reaches, as
   [Mutation testing](docs/mutation.md) explains.
 
+## From 1.16 to 1.17
+
+Install the newest 1.17 release:
+
+```bash
+bun add @popcomputer/web@~1.17.0
+```
+
+1.17.0 makes test runs faster by default, and needs no change to pass. What
+may need a look:
+
+- **A test that keeps a D1 database past its end.** `testD1`'s `fresh()`
+  hands a later `fresh()` the database of a test or `fuzz` case that has
+  ended, emptied, once four others wait behind it. A test that reads a
+  database another test asked for, or work a test leaves running that a
+  later test reads, now sees it emptied, or written by another test. Keep
+  each database to the test that asked for it, or give the pool
+  `testD1({ migrations, reuse: false })`, which keeps each to one test or
+  case as 1.16 did. A pool whose migrations insert rows reuses none, and a
+  database whose schema a test changed is not handed out again.
+- **`popweb-mutate --fail-under`.** The score leaves out the mutants on
+  lines no test reaches, which the report lists apart as line ranges, so a
+  run that fell short for those lines alone now passes. Read the report's
+  `not scored:` line for them.
+- **`popweb-mutate --workers`.** It now counts the machine's test runs, other
+  runs' included: each takes a turn in `popweb-mutate.slots` in the
+  temporary directory, so a run beside another waits rather than both
+  crashing their mutants for memory.
+- **The application's own `AGENTS.md`.** The package's now asks for
+  `popweb-mutate` and long fuzz runs only when the owner does, not before
+  every finish, since each takes minutes. An application whose `AGENTS.md`
+  copied the old steps may do the same.
+
 ## Tooling after the upgrade
 
 - **`tsconfig.json`** needs the DOM library and JSX for React pages, and
@@ -2125,8 +2164,8 @@ What else may need a look:
 
 ## Checklist
 
-- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.16.0`.
-- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19), [From 1.9 to 1.10](#from-19-to-110), [From 1.10 to 1.11](#from-110-to-111), [From 1.11 to 1.12](#from-111-to-112), [From 1.12 to 1.13](#from-112-to-113), [From 1.13 to 1.14](#from-113-to-114), [From 1.14 to 1.15](#from-114-to-115) and [From 1.15 to 1.16](#from-115-to-116) that applies to your application is done.
+- [ ] The peer dependencies are in range, and `@popcomputer/web` is `^1.17.0`.
+- [ ] Each item in [From 1.4 to 1.5](#from-14-to-15), [From 1.5 to 1.6](#from-15-to-16), [From 1.6 to 1.7](#from-16-to-17), [From 1.7 to 1.8](#from-17-to-18), [From 1.8 to 1.9](#from-18-to-19), [From 1.9 to 1.10](#from-19-to-110), [From 1.10 to 1.11](#from-110-to-111), [From 1.11 to 1.12](#from-111-to-112), [From 1.12 to 1.13](#from-112-to-113), [From 1.13 to 1.14](#from-113-to-114), [From 1.14 to 1.15](#from-114-to-115), [From 1.15 to 1.16](#from-115-to-116) and [From 1.16 to 1.17](#from-116-to-117) that applies to your application is done.
 - [ ] Each route binding says who may load its record: `bunx oxlint` reports no `require-binding-access`.
 - [ ] `bunx tsc --noEmit` passes.
 - [ ] `bunx oxlint` passes.

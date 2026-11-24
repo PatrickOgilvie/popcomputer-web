@@ -5,9 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.17.0] - 2026-11-24
 
-Faster test runs by default, measured on a 32-file application's suite and on the runs agents made of it in a day.
+This release makes test runs faster by default, measured on a 32-file application's suite and on the runs agents made of it in a day: `testD1` reuses a finished test's database, emptied, rather than migrating another, and `popweb-mutate` scores only the lines tests reach and shares the machine with the runs beside it. It asks no application to change. `UPGRADING.md`'s "From 1.16 to 1.17" lists what to look at.
 
 ### Changed
 
